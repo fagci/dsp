@@ -52,6 +52,7 @@ class BridgeService : Service() {
     private lateinit var recorder: RecHub
     private lateinit var callrec: CallRec
     private lateinit var files: FileHub
+    private lateinit var dial: DialHub
     private lateinit var power: PowerHub
     private lateinit var activity: ActivityHub
     private val started = android.os.SystemClock.elapsedRealtime()
@@ -87,6 +88,7 @@ class BridgeService : Service() {
         recorder = RecHub(this, cfg, server)
         callrec = CallRec(this, cfg, server, needs, { recorder.dir }, emit)
         files = FileHub(this, needs)
+        dial = DialHub(this, needs)
         net = NetHub(this, cfg, emit); sys = SysHub(this, cfg, emit, needs); tlsCmds = TlsCmds(this, server)
         server.onCommand = { c, j -> route(c, j) }
         tlsCmds.start()                                          // сертификат уже стоит — TLS поднимется вместе с сервером
@@ -207,6 +209,7 @@ class BridgeService : Service() {
             n.startsWith("rec.") -> recorder.exec(c, j)
             n.startsWith("callrec.") -> callrec.exec(c, j)
             n.startsWith("media.") || n.startsWith("fs.") -> files.exec(c, j)
+            n.startsWith("ussd.") || n.startsWith("call.") -> dial.exec(c, j)
             n.startsWith("vpn.") -> VpnCmds.exec(this, c, j)
             n.startsWith("tls.") -> tlsCmds.exec(c, j)
             n.startsWith("sys.") || n.startsWith("gps.mock") || n.startsWith("ui.") || n.startsWith("vol.") || n.startsWith("tts.") || n.startsWith("clip.") || n.startsWith("app.") ||

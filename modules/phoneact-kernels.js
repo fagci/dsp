@@ -1,7 +1,7 @@
 "use strict";
 /* Phone Actions: команды приложения DSP (tools/android) и разбор его записей. Без DOM — проверяется в tools/test-phoneact.mjs */
 
-const PHONE_ACTIONS=['notify','torch on','torch off','vibrate','vibrate stop','sms.send','sms.data','sms.send_raw','sms.list','contacts.find','ir.info','crash.last','alarm.set','alarm.remove','alarm.list','alarm.stop','alarm.snooze','alarm.test','boot.set','boot.list','boot.run','boot.stop','cal.calendars','cal.list','cal.add','cal.remove','rec.start','rec.stop','rec.status','rec.list','rec.read','rec.delete','rec.export','callrec.set','callrec.status','callrec.stop','media.list','media.thumb','media.read','media.save','fs.pick','fs.grants','fs.list','fs.read','fs.write','fs.mkdir','fs.delete','fs.revoke'];
+const PHONE_ACTIONS=['notify','torch on','torch off','vibrate','vibrate stop','sms.send','sms.data','sms.send_raw','sms.list','contacts.find','ir.info','crash.last','alarm.set','alarm.remove','alarm.list','alarm.stop','alarm.snooze','alarm.test','boot.set','boot.list','boot.run','boot.stop','cal.calendars','cal.list','cal.add','cal.remove','rec.start','rec.stop','rec.status','rec.list','rec.read','rec.delete','rec.export','callrec.set','callrec.status','callrec.stop','media.list','media.thumb','media.read','media.save','fs.pick','fs.grants','fs.list','fs.read','fs.write','fs.mkdir','fs.delete','fs.revoke','ussd.send','ussd.sims','call.dial','call.end','call.answer'];
 
 // адрес моста; в приложении к адресу этого телефона добавляется ключ приложения (?k=…) — с ним открыты SMS и контакты
 function phoneUrl(url,key){
@@ -93,6 +93,11 @@ function phoneCmd(p,textIn){
     case 'fs.read': return {cmd:'fs.read', grant:String(p.fsGrant||'').trim(), path:String(p.fsPath||'').trim(), offset:+p.fileOffset||0, limit:+p.fileLimit||0, text:!!p.fileText};
     case 'fs.write': return {cmd:'fs.write', grant:String(p.fsGrant||'').trim(), path:String(p.fsPath||'').trim(), mime:String(p.fileMime||'').trim(), append:!!p.fileAppend, ...(String(p.fileData||'').trim() ? {data:String(p.fileData).replace(/\s/g,'')} : {text})};
     case 'fs.mkdir': case 'fs.delete': return {cmd:p.action, grant:String(p.fsGrant||'').trim(), path:String(p.fsPath||'').trim()};
+    // USSD (баланс, тарифы…): ussdCode вида *100#, ussdSim — слот SIM с нуля (пусто — по умолчанию; ussd.sims показывает слоты); ответ сети придёт отдельной записью ussd
+    case 'ussd.send': return {cmd:'ussd.send', code:String(p.ussdCode||'').trim(), ...(String(p.ussdSim||'').trim()!=='' && +p.ussdSim>=0 ? {sim:+p.ussdSim} : {})};
+    case 'ussd.sims': case 'call.end': case 'call.answer': return {cmd:p.action};
+    // набор номера: dialDirect — звонить сразу (иначе откроется набиратель с номером)
+    case 'call.dial': return {cmd:'call.dial', number:String(p.dialNumber||'').trim(), direct:!!p.dialDirect};
     // календарь телефона (CalendarContract): calStart / calEnd — см. phoneWhen; calRemind — минуты до начала через запятую; calDays — окно списка от «сейчас»
     case 'cal.calendars': return {cmd:'cal.calendars'};
     case 'cal.list': { const now=Date.now(); return {cmd:'cal.list', from:now, to:now+(+p.calDays>0 ? +p.calDays : 7)*864e5, q:String(p.calQuery||'').trim(), limit:+p.limit||50, ...(+p.calId>0 ? {calendar:+p.calId} : {})}; }
@@ -129,6 +134,8 @@ function phoneLine(r){
       : r.kind+' '+r.id+' '+(r.name||'')+' · '+Math.round((r.size||0)/1024)+' kB'+(r.lat!=null ? ' · '+r.lat+', '+r.lon : '');
     case 'fs': return r.kind==='grant' ? 'folder '+r.grant+' '+(r.name||'') : r.kind==='data' ? 'file '+r.id+' · '+r.n+' bytes from '+r.offset+(r.eof ? ' · end' : '')
       : (r.kind==='dir' ? 'dir ' : 'file ')+r.path+(r.kind==='dir' ? '' : ' · '+Math.round((r.size||0)/1024)+' kB');
+    case 'ussd': return 'USSD '+r.code+(r.ok ? ' → '+String(r.text||'').replace(/\s+/g,' ').slice(0,160) : ' failed: '+(r.failure||'?'));
+    case 'sim': return 'SIM slot '+r.slot+' (subscription '+r.id+') '+(r.name||'');
     case 'boot': return 'patch '+r.name+(r.boot ? ' · on boot' : '')+(r.running ? ' · running' : ' · stopped');
     case 'sys': return String(r.ev||'').startsWith('alarm.') || String(r.ev||'').startsWith('boot.') || String(r.ev||'').startsWith('callrec.') ? r.ev+(r.id||r.name||r.file ? ' '+(r.id||r.name||r.file) : '')+(r.why ? ' · '+r.why : '')+(r.kind ? ' · '+r.kind : '') : 'sys '+r.ev;
     case 'bridge': return r.level+': '+r.msg;

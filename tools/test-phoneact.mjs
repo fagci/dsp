@@ -78,5 +78,11 @@ ok('fs.*: grant, path, read, write', K.phoneCmd({ action: 'fs.pick' }).cmd === '
 ok('media / fs lines', K.phoneLine({ src: 'media', kind: 'images', id: 5, name: 'a.jpg', size: 2048, lat: 52.5, lon: 13.4 }) === 'images 5 a.jpg · 2 kB · 52.5, 13.4' &&
   K.phoneLine({ src: 'fs', kind: 'grant', grant: 'g1', name: 'DSP' }) === 'folder g1 DSP' && K.phoneLine({ src: 'fs', kind: 'dir', path: 'a' }) === 'dir a' && K.phoneLine({ src: 'fs', kind: 'file', path: 'a/b.txt', size: 1024 }) === 'file a/b.txt · 1 kB' &&
   K.phoneLine({ src: 'fs', kind: 'data', id: 'a', n: 10, offset: 0, eof: true }) === 'file a · 10 bytes from 0 · end');
+ok('ussd.send: code and SIM slot', (c => c.cmd === 'ussd.send' && c.code === '*100#' && c.sim === 1)(K.phoneCmd({ action: 'ussd.send', ussdCode: ' *100# ', ussdSim: '1' })) &&
+  !('sim' in K.phoneCmd({ action: 'ussd.send', ussdCode: '*100#', ussdSim: '' })) && K.phoneCmd({ action: 'ussd.send', ussdCode: '*100#', ussdSim: '0' }).sim === 0 && K.phoneCmd({ action: 'ussd.sims' }).cmd === 'ussd.sims');
+ok('call.dial / end / answer', (c => c.cmd === 'call.dial' && c.number === '+79001234567' && c.direct === true)(K.phoneCmd({ action: 'call.dial', dialNumber: ' +79001234567 ', dialDirect: true })) &&
+  K.phoneCmd({ action: 'call.dial', dialNumber: '112' }).direct === false && K.phoneCmd({ action: 'call.end' }).cmd === 'call.end' && K.phoneCmd({ action: 'call.answer' }).cmd === 'call.answer');
+ok('ussd / sim lines', K.phoneLine({ src: 'ussd', code: '*100#', ok: true, text: 'Balance:\n12.50 RUB' }) === 'USSD *100# → Balance: 12.50 RUB' &&
+  K.phoneLine({ src: 'ussd', code: '*100#', ok: false, failure: 'service unavailable' }) === 'USSD *100# failed: service unavailable' && K.phoneLine({ src: 'sim', slot: 0, id: 3, name: 'MTS' }) === 'SIM slot 0 (subscription 3) MTS');
 console.log(bad ? bad + ' FAILED' : 'all ok');
 process.exit(bad ? 1 : 0);
