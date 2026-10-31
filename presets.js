@@ -121,8 +121,10 @@ function buildPatchList(){
 patchListEl.innerHTML='';
 const p=readP();
 const q=patchQuery.trim().toLocaleLowerCase('ru');
-const words=fzTokens(q), score=name=>{ const t=presetSub(name)+' '+name; return fzScoreWords(words,fzTokens(t),t.toLocaleLowerCase('ru')); };   // нечётко: опечатки и сокращения
-const match=name=>!q || score(name)>0;
+const words=fzTokens(q), score=name=>{ let t=presetSub(name)+' '+name; if(/[-_]/.test(t)) t+=' '+t.replace(/[-_]/g,''); return fzScoreWords(words,fzTokens(t),t.toLocaleLowerCase('ru')); };   // нечётко: опечатки и сокращения
+const th=2*words.length; let strongAny=false;            // есть точные совпадения (слово — в начале слова / внутри имени) — нечёткие не показываем
+if(q) for(const k of Object.keys(p)) if(score(k)>=th){ strongAny=true; break; }
+const match=name=>{ if(!q) return true; const sc=score(name); return strongAny ? sc>=th : sc>0; };
 const custom=Object.keys(p).filter(k=>!(k in PRESETS) &&match(k));
 const temp=custom.filter(k=>k.startsWith(TEMP_PREFIX)).sort().reverse();     // новые сверху
 const own=custom.filter(k=>!k.startsWith(TEMP_PREFIX)).sort();
@@ -144,6 +146,11 @@ for(const name of list) add(name,sub);
 }
 patchListEl.append(det);
 };
+if(q){                                                 // поиск — один список по релевантности, а не по категориям
+addGroup('search','SEARCH',[...own,...temp,...builtin].sort((a,b)=>score(b)-score(a)||a.localeCompare(b)));
+patchListEl.classList.toggle('empty',matches===0);
+return;
+}
 addGroup('temp','TEMP (autosave)',temp);
 addGroup('own','MY PATCHES',own);
 const byCat={};                                       // встроенные — по категориям, не одним списком
@@ -612,6 +619,7 @@ const PRESET_CATS={
   'SMS PDU: Build and Parse (GSM 7-bit / UCS-2, Data SMS)':'Network & IoT',
   'Phone App: Speech to Text, Text-to-Speech and Automation':'Control & Remote',
   'Phone App: Alarm Clock — Wake Up to Internet Radio':'Control & Remote',
+  'Phone App: Alarm Clock Node — List of Alarms, Set, Snooze, Stop':'Control & Remote',
   'Two Microphones':'Maps & Locating',
   'Beamforming Direction Finding (2 mics)':'Maps & Locating',
   'TDOA: Path Difference (2 mics)':'Maps & Locating',
@@ -2287,6 +2295,18 @@ stop.size.w=380; stop.size.h=360; applySize(stop);
 const lg=addNode('recLog',940,250,{});
 lg.size.w=460; applySize(lg);
 addEdge(set.id,'rec',lg.id,'rec'); addEdge(stop.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Alarm Clock Node — List of Alarms, Set, Snooze, Stop', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'One node for all alarms of the phone (DSP app): a list with time, days, title and radio, a switch to turn each alarm on / off, ✎ loads an alarm into the fields (Set alarm replaces the alarm with the same name), ▶ rings it at once, ✕ deletes it. While it rings, Snooze and Stop do the same as the buttons on the lock screen.\n'+
+  'The alarm itself is the phone\'s: AlarmManager.setAlarmClock wakes it in Doze and with the screen off, with or without the page, and it survives a reboot. Press Connect, set the time and press Set alarm. Sound: the radio stream, then the fallback sample if it does not load. Outputs: rec (alarm events fire / fallback / snooze / dismiss → Rec Log), next (the nearest alarm, text), ringing. Go (a wire) sets the alarm with the fields.'});
+nt.size.w=1000; nt.size.h=150; applySize(nt);
+const al=addNode('alarmclock',40,230,{url:'ws://127.0.0.1:8765',name:'wake',time:'7:00',days:'weekdays',label:'Good morning',stream:'https://ice1.somafm.com/groovesalad-128-mp3',sample:'default'});
+al.size.w=420; al.size.h=640; applySize(al);
+const lg=addNode('recLog',500,230,{});
+lg.size.w=460; applySize(lg);
+addEdge(al.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Phone App: Speech to Text, Text-to-Speech and Automation', function(){

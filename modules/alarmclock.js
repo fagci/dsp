@@ -115,7 +115,7 @@ function acRenderList(n){
   n.listSig=n.alarms.map(a=>a.name+a.time+a.days+a.enabled+a.label+a.url).join('');
 }
 
-def({ id:'alarmclock', title:'Phone Alarm Clock (DSP app)', cat:'Output', kw:'android app phone alarm clock wake up radio stream snooze dismiss schedule morning reminder',
+def({ id:'alarmclock', title:'Phone Alarm Clock (DSP app)', cat:'Output', kw:'android app phone alarm clock alarms list wake up radio stream snooze dismiss schedule morning reminder будильник будильники',
   ins:[{n:'go',t:'num'},{n:'cmd',t:'rec'}],
   outs:[{n:'rec',t:'rec'},{n:'next',t:'txt'},{n:'ringing',t:'num'},{n:'ok',t:'num'},{n:'new',t:'num'}],
   readout:true, tall:true, resize:true, w:400,
