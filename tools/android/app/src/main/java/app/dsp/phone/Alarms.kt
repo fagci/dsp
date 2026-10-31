@@ -64,8 +64,10 @@ object Alarms {
     @Volatile var sink: Emit? = null
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("alarms", Context.MODE_PRIVATE)
+    /** Список из хранилища; повреждённая запись пропускается, а не обнуляет весь список (иначе живые будильники «пропадали» бы из списка, оставаясь в системе). */
     fun all(ctx: Context): List<Alarm> = try {
-        val a = JSONArray(prefs(ctx).getString("list", "[]")); (0 until a.length()).map { Alarm.from(a.getJSONObject(it)) }
+        val a = JSONArray(prefs(ctx).getString("list", "[]"))
+        (0 until a.length()).mapNotNull { try { Alarm.from(a.getJSONObject(it)) } catch (e: Exception) { null } }
     } catch (e: Exception) { emptyList() }
     fun get(ctx: Context, id: String) = all(ctx).firstOrNull { it.id == id }
     @Synchronized fun put(ctx: Context, a: Alarm) {
@@ -297,6 +299,7 @@ class AlarmCmds(private val ctx: Context) {
         when (cmd) {
             "alarm.set" -> {
                 val old = j.optString("name").takeIf { it.isNotBlank() }?.let { Alarms.get(ctx, it) }
+                if (old == null && !j.has("time") && j.optString("name").isNotBlank()) return bad("no such alarm: ${j.optString("name")} (refresh the list)")      // переключатель строки, которой в телефоне уже нет
                 val (h, m) = AlarmCalc.time(j.optString("time", old?.timeText())) ?: return bad("time: HH:MM")
                 val days = if (j.has("days")) AlarmCalc.days(j.optString("days")) ?: return bad("days: mon,tue… / weekdays / weekend / daily / empty (once)") else old?.days ?: 0
                 val name = j.optString("name").trim().ifEmpty { "a%02d%02d".format(h, m) }.take(40)
@@ -313,7 +316,12 @@ class AlarmCmds(private val ctx: Context) {
             "alarm.remove" -> {
                 val name = j.optString("name")
                 if (name == "all" || name.isEmpty() && j.optBoolean("all")) { for (a in Alarms.all(ctx)) { Alarms.cancel(ctx, a.id); Alarms.drop(ctx, a.id) } }
-                else { if (Alarms.get(ctx, name) == null) return bad("no such alarm: $name"); Alarms.cancel(ctx, name); Alarms.drop(ctx, name) }
+                else {                                                      // удаление идемпотентно: нет такого — всё равно снять возможный остаток в системе
+                    if (name.isBlank()) return bad("name: the alarm to remove (or all)")
+                    val had = Alarms.get(ctx, name) != null
+                    Alarms.cancel(ctx, name); Alarms.drop(ctx, name)
+                    if (!had) return Reply.done(c, id, cmd, null, extra = arrayOf("existed" to "false"))
+                }
                 Reply.done(c, id, cmd, null)
             }
             "alarm.list" -> {

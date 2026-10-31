@@ -45,6 +45,14 @@ function alSetCmd(p){
 // включить/выключить строку списка: в alarm.set без остальных полей приложение берёт их из сохранённого будильника
 const alToggleCmd=row=>({cmd:'alarm.set', name:row.name, enabled:!row.enabled});
 
+// Список на странице сразу после нажатия, не дожидаясь ответа приложения (поправится, когда ответ придёт): переключатель меняет enabled, ✕ убирает строку.
+function alOptimistic(rows,cmd){
+  if(!cmd) return rows;
+  if(cmd.cmd==='alarm.remove') return cmd.all ? [] : rows.filter(a=>a.name!==cmd.name);
+  if(cmd.cmd==='alarm.set' && 'enabled' in cmd && !('time' in cmd)) return rows.map(a=>a.name===cmd.name ? {...a,enabled:!!cmd.enabled} : a);
+  return rows;
+}
+
 // запись {src:'alarm',…} моста → строка списка узла
 function alRow(r){
   return {name:String(r.name||''), time:String(r.time||''), days:String(r.days||''),

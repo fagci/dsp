@@ -118,7 +118,12 @@ class BridgeServer(
     /** Строки «адрес · страница · подписки» по одной на клиента. */
     fun clientLines(): List<String> = clients.map { c ->
         val a = c.sock.inetAddress?.hostAddress?.removePrefix("::ffff:") ?: "?"
-        listOf(a, c.origin.removePrefix("https://").removePrefix("http://").ifEmpty { if (c.trusted) "app" else "" }, c.subs.sorted().joinToString(",")).filter { it.isNotEmpty() }.joinToString(" · ")
+        listOf(a, whoOf(c), c.subs.sorted().joinToString(",")).filter { it.isNotEmpty() }.joinToString(" · ")
+    }
+    /** Кто подключён: страница самого приложения (её виртуальный адрес appassets.androidplatform.net — не сетевой хост) — «DSP app»; иначе адрес страницы. */
+    private fun whoOf(c: Client): String {
+        val o = c.origin.trimEnd('/')
+        return if (o == Config.APP_ORIGIN) "DSP app" else o.removePrefix("https://").removePrefix("http://").ifEmpty { if (c.trusted) "DSP app" else "" }
     }
     val listening: Boolean get() = running
     val boundPort: Int get() = ss?.localPort ?: 0
