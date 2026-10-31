@@ -17,7 +17,7 @@ class BootReceiver : BroadcastReceiver() {
                 Alarms.rescheduleAll(ctx)
                 val cfg = Config(ctx)
                 val patches = BootPatches.parse(cfg.bootPatches).isNotEmpty()       // патчи без окна (HeadlessHub) тоже поднимают мост
-                if (cfg.autoStart || patches || cfg.recOn) BridgeService.start(ctx, boot = patches)       // запись на диск тоже нужна службе
+                if (cfg.autoStart || patches || cfg.recOn || cfg.callRec) BridgeService.start(ctx, boot = patches)       // запись на диск тоже нужна службе
             }
             Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED, Intent.ACTION_MY_PACKAGE_REPLACED -> Alarms.rescheduleAll(ctx)    // будильники привязаны к часам и сбрасываются при обновлении
         }

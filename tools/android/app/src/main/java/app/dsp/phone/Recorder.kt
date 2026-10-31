@@ -22,7 +22,7 @@ object RecArgs {
     /** Не пишем на диск: личные сообщения и сырой звук / пакеты (огромные и чувствительные). */
     val DENY = setOf("sms", "mic", "pkt")
     private val NAME = Regex("[a-z0-9_]{1,24}")
-    private val FILE = Regex("[A-Za-z0-9._-]{1,100}\\.jsonl")
+    private val FILE = Regex("[A-Za-z0-9._-]{1,100}\\.(jsonl|wav)")
 
     fun subs(a: List<String>): List<String> = a.map { it.trim().lowercase() }.filter { NAME.matches(it) && it !in DENY }.distinct().take(30)
     fun subs(s: String?): List<String> = subs((s ?: "").split(',', ';', ' '))
@@ -39,7 +39,7 @@ object RecArgs {
     fun fileName(name: String, ms: Long, part: Int, zone: ZoneId): String =
         safeName(name) + "-" + DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").format(Instant.ofEpochMilli(ms).atZone(zone)) + (if (part > 0) "-$part" else "") + ".jsonl"
 
-    /** Имя файла из команды: только наши .jsonl, без путей. */
+    /** Имя файла из команды: только наши .jsonl и .wav (записи звонков), без путей. */
     fun validFile(s: String?): String? = s?.trim()?.takeIf { FILE.matches(it) && !it.contains("..") }
 
     /** Какие старейшие файлы удалить, чтобы всё влезло в cap байт; keep (текущий) не трогаем. files — (имя, размер) от старых к новым. */
@@ -144,6 +144,7 @@ class RecHub(private val ctx: Context, private val cfg: Config, private val serv
                 }
                 "rec.read" -> {
                     val f = RecArgs.validFile(j.optString("file"))?.let { File(dir, it) }?.takeIf { it.isFile } ?: return Reply.done(c, id, cmd, "file: a name from rec.list", "args")
+                    if (!f.name.endsWith(".jsonl")) return Reply.done(c, id, cmd, "only .jsonl records can be read back (a .wav is a call recording — export it)", "args")
                     synchronized(this) { try { out?.flush() } catch (e: Exception) { } }
                     val limit = Cmd.limit(j.optInt("limit"), 500, 2000); var pos = j.optLong("offset").coerceAtLeast(0)
                     val rows = ArrayList<String>()
@@ -179,7 +180,7 @@ class RecHub(private val ctx: Context, private val cfg: Config, private val serv
     private fun export(f: File): String {
         if (Build.VERSION.SDK_INT >= 29) {
             val v = ContentValues().apply {
-                put(MediaStore.Downloads.DISPLAY_NAME, f.name); put(MediaStore.Downloads.MIME_TYPE, "application/x-ndjson")
+                put(MediaStore.Downloads.DISPLAY_NAME, f.name); put(MediaStore.Downloads.MIME_TYPE, if (f.name.endsWith(".wav")) "audio/wav" else "application/x-ndjson")
                 put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/DSP")
             }
             val u = ctx.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v) ?: throw java.io.IOException("no Downloads")

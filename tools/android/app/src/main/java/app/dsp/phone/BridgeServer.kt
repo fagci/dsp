@@ -72,7 +72,8 @@ class BridgeServer(
     private val clients = CopyOnWriteArraySet<Client>()
 
     /** Внутренний получатель записей (запись на диск, RecHub): подписки и частоты учитываются в wanted() как у клиента, а записи идут в on, не в сокет. */
-    class Sink(val subs: Set<String>, val hz: Int = 0, val wifiEvery: Int = 0, val cellEvery: Int = 0, val on: (List<String>) -> Unit)
+    class Sink(val subs: Set<String>, val hz: Int = 0, val wifiEvery: Int = 0, val cellEvery: Int = 0, val on: (List<String>) -> Unit,
+              val micHz: Int = 0, val micSrc: String = "", val micDev: String = "")
     private val sinks = CopyOnWriteArraySet<Sink>()
     fun addSink(s: Sink) { sinks.add(s); onSubs() }
     fun removeSink(s: Sink) { if (sinks.remove(s)) onSubs() }
@@ -169,6 +170,9 @@ class BridgeServer(
             if (k.hz > hz) hz = k.hz
             if (k.wifiEvery > 0 && (wifi == 0 || k.wifiEvery < wifi)) wifi = k.wifiEvery
             if (k.cellEvery > 0 && (cell == 0 || k.cellEvery < cell)) cell = k.cellEvery
+            if (k.micHz > mic) mic = k.micHz
+            if (msrc.isEmpty()) msrc = k.micSrc                       // получатель записи (звонок) главнее страницы: его источник берётся первым
+            if (mdev.isEmpty()) mdev = k.micDev
         }
         for (c in clients) {
             subs.addAll(c.subs)
@@ -427,7 +431,7 @@ class BridgeServer(
 
         /** Команды действий: сокеты и ping, соединения Bluetooth, речь, управление телефоном. Нужен c.power. */
         fun powerCmd(name: String) = POWER_PREFIX.any { name.startsWith(it) } || name == "ping"
-        private val POWER_PREFIX = listOf("tcp.", "udp.", "net.", "raw.", "gatt.", "gattsrv.", "l2cap.", "nsd.", "wifi.", "aware.", "p2p.", "bt.", "ble.adv.", "speech.", "alarm.", "boot.", "cal.", "rec.", "sys.", "activity.", "ui.", "app.", "tls.", "intent", "vol.", "gps.mock", "tts.", "clip.", "media.", "screen.", "toast", "vpn.")
+        private val POWER_PREFIX = listOf("tcp.", "udp.", "net.", "raw.", "gatt.", "gattsrv.", "l2cap.", "nsd.", "wifi.", "aware.", "p2p.", "bt.", "ble.adv.", "speech.", "alarm.", "boot.", "cal.", "rec.", "callrec.", "sys.", "activity.", "ui.", "app.", "tls.", "intent", "vol.", "gps.mock", "tts.", "clip.", "media.", "screen.", "toast", "vpn.")
 
         /** Команды с личными данными или платные (SMS, контакты) — только доверенному клиенту. */
         fun sensitiveCmd(name: String) = name.startsWith("sms.") || name.startsWith("contacts.") || name.startsWith("boot.") || name.startsWith("cal.")

@@ -82,6 +82,20 @@ class Config(ctx: Context) {
         get() = sp.getInt("recTotalMb", 300)
         set(v) { sp.edit().putInt("recTotalMb", v.coerceIn(10, 5000)).apply() }
 
+    /** Запись звонков (CallRec): включена, источник (auto / voice_call / downlink / uplink / mic …), частота, минимальная длина в секундах (короче — удаляется). */
+    var callRec: Boolean
+        get() = sp.getBoolean("callRec", false)
+        set(v) { sp.edit().putBoolean("callRec", v).apply() }
+    var callSrc: String
+        get() = sp.getString("callSrc", "auto") ?: "auto"
+        set(v) { sp.edit().putString("callSrc", v).apply() }
+    var callRate: Int
+        get() = sp.getInt("callRate", 16000)
+        set(v) { sp.edit().putInt("callRate", v).apply() }
+    var callMin: Int
+        get() = sp.getInt("callMin", 3)
+        set(v) { sp.edit().putInt("callMin", v.coerceIn(0, 600)).apply() }
+
     /** Другие приложения (Tasker, MacroDroid) управляют мостом интентом app.dsp.phone.EXT. */
     var extIntents: Boolean
         get() = sp.getBoolean("extIntents", false)
