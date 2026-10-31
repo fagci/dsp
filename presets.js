@@ -45,12 +45,14 @@ const patchListEl=document.getElementById('patchList');
 const patchSearchEl=document.getElementById('patchSearch');
 const readP=()=>{ try{ return JSON.parse(LS.get(PKEY))||{}; }catch(e){ return {}; } };
 const writeP=o=>LS.set(PKEY,JSON.stringify(o));
+// Страница без окна (приложение Android, автозапуск патчей: #…&hl=1): автосохранение и temp-копии не пишет — ими владеет окно приложения
+const HEADLESS=/[#&]hl=1(&|$)/.test(location.hash);
 let currentPatchName='', patchQuery='';
 const openPatchCats=new Set(['own','temp']);          // свои патчи и temp раскрыты сразу, встроенные — свёрнуты
 const TEMP_PREFIX='temp:', TEMP_MAX=5;
 // Вместо "несохранённое пропадёт" — тихо откладываем текущий граф в раздел temp и едем дальше.
 function stashIfDirty(){
-if(!graphDirty || !Graph.nodes.length) return;
+if(HEADLESS || !graphDirty || !Graph.nodes.length) return;
 try{
 const p=readP();
 const ts=new Date().toISOString().slice(0,19).replace('T',' ');
@@ -620,6 +622,7 @@ const PRESET_CATS={
   'Phone App: Speech to Text, Text-to-Speech and Automation':'Control & Remote',
   'Phone App: Alarm Clock — Wake Up to Internet Radio':'Control & Remote',
   'Phone App: Alarm Clock Node — List of Alarms, Set, Snooze, Stop':'Control & Remote',
+  'Phone App: Boot Patches — Automation Without a Window After Reboot':'Control & Remote',
   'Two Microphones':'Maps & Locating',
   'Beamforming Direction Finding (2 mics)':'Maps & Locating',
   'TDOA: Path Difference (2 mics)':'Maps & Locating',
@@ -2307,6 +2310,20 @@ al.size.w=420; al.size.h=640; applySize(al);
 const lg=addNode('recLog',500,230,{});
 lg.size.w=460; applySize(lg);
 addEdge(al.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Boot Patches — Automation Without a Window After Reboot', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Run patches by themselves after the phone boots, with no window open. The app keeps each patch in a hidden page of 1 pixel over the other apps (it needs «Display over other apps» for DSP, the same permission as the floating windows; the page does not take touches). Their sensors, audio and Rule / Alarm automation run as usual; the page does not write the autosave, so your own window is not touched.\n'+
+  'Press Connect, put patch names (from the Patches list, separated by «;», up to 6) into «boot patches», then Run on «Save list» — it is kept in the app and used at every boot (the same list is in the app Settings). «Start now» runs them at once without a reboot, «Stop» ends them, «List» shows which are on the list and which are running. Every start / stop / crash comes on rec as boot.started / boot.stopped / boot.crashed. Only the page of the app may use these commands; a patch that is open in the app window is not the same as a patch run here — close one of them if both touch the same device.'});
+nt.size.w=1000; nt.size.h=190; applySize(nt);
+const mk=(y,action,extra)=>{ const n=addNode('phone',40,y,Object.assign({url:'ws://127.0.0.1:8765',action,notifyEv:false,torchState:false},extra)); n.size.w=420; n.size.h=330; applySize(n); return n; };
+const set=mk(270,'boot.set',{bootPatches:'Phone App: Alarm Clock Node — List of Alarms, Set, Snooze, Stop; Phone App: Sensors and Wi-Fi in the Background',alarmEv:true});
+const run=mk(620,'boot.run',{bootPatches:''});
+const lst=mk(970,'boot.list',{});
+const lg=addNode('recLog',520,270,{});
+lg.size.w=480; applySize(lg);
+addEdge(set.id,'rec',lg.id,'rec'); addEdge(run.id,'rec',lg.id,'rec'); addEdge(lst.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Phone App: Speech to Text, Text-to-Speech and Automation', function(){

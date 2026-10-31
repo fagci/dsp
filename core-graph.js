@@ -2597,6 +2597,7 @@ location.replace(location.pathname+'?_='+Date.now());
 const SS={ get(k){ try{ return sessionStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ sessionStorage.setItem(k,v); }catch(e){} } };
 function saveAuto(){
+if(HEADLESS) return;
 const s=JSON.stringify(serialize());
 LS.set(AKEY,s); SS.set('dsp-tab-graph',s); SS.set('dsp-tab-name',currentPatchName);
 }

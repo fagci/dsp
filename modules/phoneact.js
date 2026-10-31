@@ -94,6 +94,7 @@ def({ id:'phone', title:'Phone Actions (DSP app)', cat:'Output', kw:'android app
     {n:'alarmVol',t:'range',min:0,max:100,step:5,d:0,label:'alarm: alarm volume, % of the maximum (0 — leave as set)'},
     {n:'alarmSnooze',t:'range',min:1,max:120,step:1,d:9,label:'alarm: snooze, min'},
     {n:'alarmMax',t:'range',min:1,max:60,step:1,d:15,label:'alarm: stops ringing by itself after, min'},
+    {n:'bootPatches',t:'text',d:'',label:'boot patches: names separated by «;» (boot.set saves the list, boot.run / boot.stop take it or all; they run in the app without a window, up to 6)'},
     {n:'alarmEv',t:'check',d:false,label:'alarm events (fire, fallback, snooze, dismiss…) → rec (asks for «phone state» permission)'},
     {n:'smsIn',t:'check',d:false,label:'incoming SMS → rec (only the page of the app)'},
     {n:'notifyEv',t:'check',d:true,label:'taps on the notification buttons → rec'},

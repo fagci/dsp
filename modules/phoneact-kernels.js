@@ -1,7 +1,7 @@
 "use strict";
 /* Phone Actions: команды приложения DSP (tools/android) и разбор его записей. Без DOM — проверяется в tools/test-phoneact.mjs */
 
-const PHONE_ACTIONS=['notify','torch on','torch off','vibrate','vibrate stop','sms.send','sms.data','sms.send_raw','sms.list','contacts.find','ir.info','crash.last','alarm.set','alarm.remove','alarm.list','alarm.stop','alarm.snooze','alarm.test'];
+const PHONE_ACTIONS=['notify','torch on','torch off','vibrate','vibrate stop','sms.send','sms.data','sms.send_raw','sms.list','contacts.find','ir.info','crash.last','alarm.set','alarm.remove','alarm.list','alarm.stop','alarm.snooze','alarm.test','boot.set','boot.list','boot.run','boot.stop'];
 
 // адрес моста; в приложении к адресу этого телефона добавляется ключ приложения (?k=…) — с ним открыты SMS и контакты
 function phoneUrl(url,key){
@@ -51,6 +51,10 @@ function phoneCmd(p,textIn){
       if(+p.alarmVol>0) c.vol=+p.alarmVol; if(!c.name) delete c.name; return c; }
     case 'alarm.remove': return String(p.alarmName||'').trim() ? {cmd:'alarm.remove', name:String(p.alarmName).trim()} : {cmd:'alarm.remove', all:true};
     case 'alarm.list': case 'alarm.stop': case 'alarm.snooze': return {cmd:p.action};
+    // патчи без окна после перезагрузки (приложение держит страницу в окне 1×1 пиксель): bootPatches — имена через «;»
+    case 'boot.set': return {cmd:'boot.set', patches:String(p.bootPatches||'').trim()};
+    case 'boot.run': case 'boot.stop': return String(p.bootPatches||'').trim() ? {cmd:p.action, name:String(p.bootPatches).trim()} : {cmd:p.action};
+    case 'boot.list': return {cmd:'boot.list'};
     case 'alarm.test': return {cmd:'alarm.test', ...(String(p.alarmName||'').trim() ? {name:String(p.alarmName).trim()} : {url:String(p.alarmUrl||'').trim(), sample:String(p.alarmSample||'default').trim()||'default', ramp:3})};
   }
   return null;
@@ -71,7 +75,8 @@ function phoneLine(r){
     case 'notify': return 'notification '+r.nid+': '+r.action;
     case 'torch': return 'torch '+(r.on ? 'on' : 'off');
     case 'alarm': return 'alarm '+r.name+' '+r.time+' '+r.days+(r.enabled ? '' : ' (off)')+(r.label ? ' · '+r.label : '')+(r.url ? ' · radio' : '');
-    case 'sys': return String(r.ev||'').startsWith('alarm.') ? r.ev+(r.id ? ' '+r.id : '')+(r.why ? ' · '+r.why : '')+(r.kind ? ' · '+r.kind : '') : 'sys '+r.ev;
+    case 'boot': return 'patch '+r.name+(r.boot ? ' · on boot' : '')+(r.running ? ' · running' : ' · stopped');
+    case 'sys': return String(r.ev||'').startsWith('alarm.') || String(r.ev||'').startsWith('boot.') ? r.ev+(r.id||r.name ? ' '+(r.id||r.name) : '')+(r.why ? ' · '+r.why : '')+(r.kind ? ' · '+r.kind : '') : 'sys '+r.ev;
     case 'bridge': return r.level+': '+r.msg;
   }
   return r.src+'';

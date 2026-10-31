@@ -37,5 +37,11 @@ ok('IR: foreign formats (Flipper, Tasmota) and garbage', K.phoneIrCmd('IRsend 36
 ok('lines for readout', K.phoneLine({ src: 'cmd', cmd: 'torch', ok: true }) === 'torch ok' && K.phoneLine({ src: 'cmd', cmd: 'sms.send', ok: false, msg: 'bad number' }) === 'sms.send failed: bad number' &&
   K.phoneLine({ src: 'sms', dir: 'in', addr: '+7900', body: 'hi' }) === 'sms from +7900: hi' && K.phoneLine({ src: 'notify', nid: 5, action: 'open' }) === 'notification 5: open' && K.phoneLine({ src: 'torch', on: 1 }) === 'torch on' &&
   K.phoneLine({ src: 'contact', name: 'Ann', phones: ['1', '2'] }) === 'contact Ann 1, 2' && K.phoneLine({ src: 'cmd', cmd: 'sms.list', ok: true, n: 3 }) === 'sms.list ok · 3');
+ok('boot.set / run / stop / list',
+  K.phoneCmd({ action: 'boot.set', bootPatches: ' A; B ' }).patches === 'A; B' &&
+  K.phoneCmd({ action: 'boot.run', bootPatches: '' }).name === undefined && K.phoneCmd({ action: 'boot.run', bootPatches: 'A' }).name === 'A' &&
+  K.phoneCmd({ action: 'boot.stop', bootPatches: '' }).cmd === 'boot.stop' && K.phoneCmd({ action: 'boot.list' }).cmd === 'boot.list');
+ok('boot lines read well', K.phoneLine({ src: 'boot', name: 'A', boot: true, running: true }) === 'patch A · on boot · running' &&
+  K.phoneLine({ src: 'sys', ev: 'boot.started', name: 'A' }) === 'boot.started A');
 console.log(bad ? bad + ' FAILED' : 'all ok');
 process.exit(bad ? 1 : 0);

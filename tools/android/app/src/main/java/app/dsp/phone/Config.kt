@@ -51,6 +51,11 @@ class Config(ctx: Context) {
         get() = sp.getBoolean("autoStart", false)
         set(v) { sp.edit().putBoolean("autoStart", v).apply() }
 
+    /** Патчи, которые запускаются без окна при загрузке телефона (имена через «;», до BootPatches.MAX): HeadlessHub. */
+    var bootPatches: String
+        get() = sp.getString("bootPatches", "") ?: ""
+        set(v) { sp.edit().putString("bootPatches", v).apply() }
+
     /** Другие приложения (Tasker, MacroDroid) управляют мостом интентом app.dsp.phone.EXT. */
     var extIntents: Boolean
         get() = sp.getBoolean("extIntents", false)
