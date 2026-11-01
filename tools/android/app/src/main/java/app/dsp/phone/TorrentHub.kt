@@ -3,7 +3,9 @@ package app.dsp.phone
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
+import org.libtorrent4j.AnnounceEntry
 import org.libtorrent4j.Priority
+import org.libtorrent4j.Sha1Hash
 import org.libtorrent4j.SessionManager
 import org.libtorrent4j.TcpEndpoint
 import org.libtorrent4j.TorrentFlags
@@ -125,9 +127,58 @@ class TorrentCore(private val sm: SessionManager, val root: File) {
             val h = sm.find(ti.infoHash())
             if (h != null && h.isValid) it.th = h else Thread.sleep(50)
         }
-        it.th?.let { h -> h.unsetFlags(TorrentFlags.AUTO_MANAGED); h.resume() }
+        it.th?.let { h -> h.unsetFlags(TorrentFlags.AUTO_MANAGED); h.resume(); moreTrackers(h) }
         return it
     }
+
+    /** У торрента мало трекеров — добавить открытые и сразу спросить трекеры и DHT. */
+    private fun moreTrackers(h: TorrentHandle) {
+        try {
+            val have = h.trackers().map { t -> t.url().lowercase() }.toSet()
+            if (have.size < 3) for (t in TorrentArgs.TRACKERS) if (t.lowercase() !in have) h.addTracker(AnnounceEntry(t))
+            h.forceReannounce(); h.forceDHTAnnounce()
+        } catch (e: Exception) { }
+    }
+
+    /**
+     * Magnet: торрент добавляется в сессию сразу (в режиме UPLOAD_MODE — пока только метаданные) и остаётся в ней: соединения с пирами, найденными
+     * при поиске метаданных, не теряются (раньше метаданные искал временный торрент, а потом файл заново искал пиров с нуля — «0 peers»).
+     * Нет метаданных за timeoutSec — null, поиск продолжается в фоне, следующий вызов ждёт дальше.
+     */
+    fun addMagnet(src: String, timeoutSec: Int): Item? {
+        val hash = TorrentArgs.magnetHash(src)
+        if (hash.length != 40) throw IllegalArgumentException("not a magnet link with a btih hash")
+        items[hash]?.let { return it }
+        val sha = Sha1Hash.parseHex(hash)
+        var h = sm.find(sha)?.takeIf { x -> x.isValid }
+        if (h == null) {
+            val dir = File(root, hash); dir.mkdirs()
+            sm.download(TorrentArgs.withTrackers(src), dir, TorrentFlags.UPLOAD_MODE)
+            val t0 = System.currentTimeMillis()
+            while (h == null && System.currentTimeMillis() - t0 < 10_000) { h = sm.find(sha)?.takeIf { x -> x.isValid }; if (h == null) Thread.sleep(50) }
+            if (h == null) throw IllegalStateException("the session did not accept the magnet")
+            h.unsetFlags(TorrentFlags.AUTO_MANAGED); h.resume()
+        }
+        val end = System.currentTimeMillis() + timeoutSec * 1000L
+        while (!h.status().hasMetadata() && System.currentTimeMillis() < end) Thread.sleep(250)
+        if (!h.status().hasMetadata()) return null
+        val ti = h.torrentFile() ?: return null
+        val it = items.computeIfAbsent(hash) { _ -> Item(hash, ti, File(root, hash)) }
+        it.th = h
+        h.prioritizeFiles(Priority.array(Priority.IGNORE, ti.numFiles()))     // ни один файл не качается, пока плеер не выбрал свой
+        h.unsetFlags(TorrentFlags.UPLOAD_MODE)
+        moreTrackers(h)
+        return it
+    }
+
+    /** Состояние трекеров одной строкой: «opentrackr: ok; explodie: timed out». */
+    fun trackers(h: TorrentHandle): String = try {
+        h.trackers().take(5).joinToString("; ") { a ->
+            val host = a.url().substringAfter("://").substringBefore('/').substringBefore(':')
+            val ep = a.endpoints().firstOrNull()?.infohashV1()
+            host + ": " + (if (ep == null) "…" else if (ep.fails() > 0) ep.message().ifEmpty { "failed ×" + ep.fails() } else if (ep.updating()) "contacting…" else if (ep.isWorking()) "ok" else "…")
+        }
+    } catch (e: Exception) { "" }
 
     /** Файл номер idx — тот, что смотрят: он качается (остальные — нет). */
     fun select(it: Item, idx: Int) {
@@ -217,6 +268,8 @@ class TorrentHttp(private val core: TorrentCore, val token: String) {
                 val r = TorrentArgs.range(range, size) ?: return send(416, "Range Not Satisfiable", "Content-Range: bytes */$size\r\n")
                 val partial = range != null && !(r[0] == 0L && r[1] == size - 1 && !range!!.contains("bytes"))
                 val total = r[1] - r[0] + 1
+                // первые куски — до заголовков: нет пиров → честный 503 (плеер повторит), а не пустое «200» и ошибка формата
+                if (parts[0] == "GET" && !core.await(item, idx, r[0], minOf(128 * 1024L, total), 60_000)) return send(503, "Service Unavailable", "Retry-After: 3\r\n", "no pieces yet: no peers")
                 val hdr = "HTTP/1.1 ${if (partial) "206 Partial Content" else "200 OK"}\r\nConnection: close\r\nAccept-Ranges: bytes\r\nContent-Type: ${TorrentArgs.mime(name)}\r\n" +
                     "Content-Length: $total\r\n" + (if (partial) "Content-Range: bytes ${r[0]}-${r[1]}/$size\r\n" else "") + "Access-Control-Allow-Origin: *\r\n\r\n"
                 out.write(hdr.toByteArray(Charsets.ISO_8859_1)); out.flush()
@@ -269,25 +322,16 @@ class TorrentHub(private val ctx: Context) {
                 "torrent.add" -> {
                     val src = j.optString("src").trim()
                     val core = up()
-                    val ti = when {
-                        j.has("b64") -> TorrentInfo.bdecode(Base64.getDecoder().decode(j.optString("b64")))
-                        TorrentArgs.kind(src) == "magnet" -> {
-                            val have = core.get(TorrentArgs.magnetHash(src))
-                            if (have != null) have.ti
-                            else {
-                                val m = TorrentArgs.withTrackers(src)
-                                val data = sm!!.fetchMagnet(m, j.optInt("timeout", 90).coerceIn(5, 300), File(core.root, "tmp").also { it.mkdirs() })
-                                    ?: return Reply.done(c, id, cmd, "no metadata: nobody answered in time (DHT nodes: ${sm?.dhtNodes() ?: 0}) — a torrent without seeds, a network that blocks UDP, or DHT is still starting; try again", "timeout")
-                                TorrentInfo.bdecode(data)
-                            }
-                        }
-                        TorrentArgs.kind(src) == "url" -> {
-                            val bytes = URL(src).openStream().use { it.readNBytes(8 * 1024 * 1024) }
-                            TorrentInfo.bdecode(bytes)
-                        }
+                    val item = when {
+                        j.has("b64") -> core.add(TorrentInfo.bdecode(Base64.getDecoder().decode(j.optString("b64"))))
+                        TorrentArgs.kind(src) == "magnet" ->
+                            core.addMagnet(src, j.optInt("timeout", 90).coerceIn(5, 300))
+                                ?: return Reply.done(c, id, cmd, "no metadata yet (DHT nodes: ${sm?.dhtNodes() ?: 0}): nobody has answered in time. The search goes on in the background — press again to wait further; a torrent without seeds, a network that blocks UDP, or DHT is still starting", "timeout")
+                        TorrentArgs.kind(src) == "url" -> core.add(TorrentInfo.bdecode(URL(src).openStream().use { it.readNBytes(8 * 1024 * 1024) }))
                         else -> return Reply.done(c, id, cmd, "src: a magnet: link, an http(s) address of a .torrent, or b64 of the file", "args")
                     }
-                    val it = core.add(ti)
+                    val ti = item.ti
+                    val it = item
                     val fs = ti.files(); val arr = JSONArray()
                     for (i in 0 until ti.numFiles()) arr.put(JSONObject().put("i", i).put("name", fs.fileName(i)).put("path", fs.filePath(i)).put("size", fs.fileSize(i)).put("video", TorrentArgs.isVideo(fs.fileName(i))))
                     Reply.done(c, id, cmd, null, extra = arrayOf("tid" to Json.str(it.id), "name" to Json.str(ti.name()), "files" to arr.toString(), "n" to ti.numFiles().toString()))
@@ -308,14 +352,16 @@ class TorrentHub(private val ctx: Context) {
                         val h = if (hash.length == 40) sm?.find(org.libtorrent4j.Sha1Hash.parseHex(hash)) else null
                         val st = if (h != null && h.isValid) h.status() else null
                         return Reply.done(c, id, cmd, null, extra = arrayOf("state" to Json.str(st?.state()?.name?.lowercase() ?: "starting"), "peers" to (st?.numPeers() ?: 0).toString(),
-                            "seeds" to (st?.numSeeds() ?: 0).toString(), "dht" to (sm?.dhtNodes() ?: 0L).toString(), "progress" to "0", "down" to "0"))
+                            "seeds" to (st?.numSeeds() ?: 0).toString(), "dht" to (sm?.dhtNodes() ?: 0L).toString(), "progress" to "0", "down" to "0",
+                            "trk" to Json.str(if (h != null && h.isValid) core.trackers(h) else "")))
                     }
                     val st = core.status(it) ?: return Reply.done(c, id, cmd, null, extra = arrayOf("state" to Json.str("starting")))
                     val idx = it.file
                     val fdone = if (idx >= 0) (it.th?.fileProgress()?.getOrNull(idx) ?: 0L) else 0L
                     Reply.done(c, id, cmd, null, extra = arrayOf("state" to Json.str(st.state().name.lowercase()), "progress" to st.progress().toString(), "down" to st.downloadRate().toString(),
                         "up" to st.uploadRate().toString(), "peers" to st.numPeers().toString(), "seeds" to st.numSeeds().toString(), "done" to st.totalDone().toString(),
-                        "total" to st.totalWanted().toString(), "file_done" to fdone.toString()))
+                        "total" to st.totalWanted().toString(), "file_done" to fdone.toString(), "dht" to (sm?.dhtNodes() ?: 0L).toString(),
+                        "trk" to Json.str(it.th?.let { h -> core.trackers(h) } ?: "")))
                 }
                 "torrent.list" -> {
                     val core = up(); val arr = JSONArray()

@@ -280,7 +280,7 @@ function vpTorrentLine(st){
   if(stl==='starting' || stl==='checking_files' || stl==='checking_resume_data') return 'torrent: starting…';
   if(stl==='downloading_metadata') return 'torrent: looking for the metadata…';
   const peers=+st.peers||0;
-  return 'torrent: '+Math.round((+st.progress||0)*100)+' % of the torrent · ↓ '+f(+st.down||0)+' · '+peers+' peer'+(peers===1 ? '' : 's')+(+st.seeds ? ' ('+st.seeds+' seeds)' : '')+(peers===0 ? ' — no peers yet' : '');
+  return 'torrent: '+Math.round((+st.progress||0)*100)+' % of the torrent · ↓ '+f(+st.down||0)+' · '+peers+' peer'+(peers===1 ? '' : 's')+(+st.seeds ? ' ('+st.seeds+' seeds)' : '')+(peers===0 ? ' — no peers yet'+(st.dht!=null ? ' (DHT nodes: '+(+st.dht||0)+')' : '')+(st.trk ? '\ntrackers: '+st.trk : '') : '');
 }
 // торрент предмета Internet Archive (peers вместо сервера Архива); файлы раскроются в плеере
 const vpIaTorrentUrl=id=>'https://archive.org/download/'+encodeURIComponent(id)+'/'+encodeURIComponent(id)+'_archive.torrent';
