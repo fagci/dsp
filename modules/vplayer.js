@@ -217,12 +217,27 @@ let vpNativeNode=null, vpCan=null;
 function vpNativeCan(){
   if(vpCan==null){ try{ vpCan=!!(window.DspApp && typeof DspApp.playerCan==='function' && DspApp.playerCan()); }catch(e){ vpCan=false; } }
   return vpCan; }
-function vpOpenNative(n,playUrl,from){
+function vpOpenNative(n,playUrl,from,opts){
   const key=n.url, tor=n.torrent, nm=n.name; vpDestroy(n); n.url=key; n.torrent=tor; n.name=nm; n.native=true; n.started=false; vpNativeNode=n;
   n.nat={pos:(from||0)*1000,dur:0,playing:false,live:false}; n.natSave=0;
-  let ok=false; try{ ok=DspApp.playerOpen(JSON.stringify({url:playUrl,pos:Math.round((from||0)*1000),autoplay:true,speed:+n.p.speed||1,title:n.name||''})); }catch(e){}
+  let ok=false; try{ ok=DspApp.playerOpen(JSON.stringify({url:playUrl,pos:Math.round((from||0)*1000),autoplay:true,speed:+n.p.speed||1,title:n.name||'',float:!!(opts && opts.float)})); }catch(e){}
   if(!ok){ n.native=false; vpStatus(n,'the native player did not start'); return; }
-  vpStatus(n,'playing in the native player (full screen) — ✕ or Back closes it; the controls here drive it too');
+  n.natFloat=!!(opts && opts.float);
+  vpStatus(n,n.natFloat ? 'playing in the floating window over other apps (the native player) — ✕ closes it; the controls here drive it too' : 'playing in the native player (full screen) — ✕ or Back closes it; the controls here drive it too');
+}
+// ⧉ в приложении: окно приложения уходит в PiP с нативным плеером на весь экран (ExoPlayer показывает любой поток)
+function vpPip(n){
+  if(!n.url){ vpStatus(n,'start a video first'); return; }
+  if(!n.native || n.natFloat) vpOpenNative(n,n.playUrl||n.url,n.native ? n.nat.pos/1000 : (n.v.currentTime||vpResume(vpLoadMap()[n.url])));
+  setTimeout(()=>{ try{ DspApp.pip(16,9); }catch(e){} },500);
+}
+// 🗔 в приложении: нативный плеер в окне поверх других приложений (нужно разрешение «Показ поверх других окон»)
+function vpFloat(n){
+  if(n.native && n.natFloat){ vpNativeCmd('close'); return; }
+  if(!n.url){ vpStatus(n,'start a video first'); return; }
+  let ok=false; try{ ok=DspApp.floatCan(); }catch(e){}
+  if(!ok){ try{ DspApp.floatPerm(); }catch(e){} vpStatus(n,'allow «Display over other apps» for the DSP app, then press the button again'); return; }
+  vpOpenNative(n,n.playUrl||n.url,n.native ? n.nat.pos/1000 : (n.v.currentTime||vpResume(vpLoadMap()[n.url])),{float:true});
 }
 function vpNativeCmd(a,v){ try{ DspApp.playerCmd(JSON.stringify({a,v})); }catch(e){} }
 // состояние от NativePlayer.kt: {t:'state', pos, dur (мс), playing, ended, live, err, closed, title}
@@ -238,7 +253,7 @@ window.dspPlayer=function(st){
   }
   if(st.err){ vpStatus(n,'native player: '+st.err); }
   if(st.ended){ n.endPulse=1; vpNativeCmd('close'); if(n.p.advance && n.idx>=0 && n.idx+1<n.list.length) vpPick(n,n.idx+1,0); return; }
-  if(st.closed){ n.native=false; n.engineClosed=true; if(!st.err) vpStatus(n,'the native player is closed — ▶ opens it again from the saved position'); }
+  if(st.closed){ n.native=false; n.natFloat=false; n.engineClosed=true; try{ DspApp.pipOff(); }catch(e){} if(!st.err) vpStatus(n,'the native player is closed — ▶ opens it again from the saved position'); }
   n.dirty=true;
 };
 // Media Session: кнопки перемотки / дорожек в системном окне PiP, на экране блокировки и в наушниках
@@ -416,7 +431,7 @@ def({ id:'vplayer', title:'Video Player', cat:'Sources', vidEl:true, resize:true
     {n:'contb',t:'button',label:'Continue watching',fn:n=>vpResumeList(n)},
     {n:'forget',t:'button',label:'Forget saved positions',fn:n=>{ LS.set(VP_KEY,'{}'); n.bump++; vpStatus(n,'saved positions cleared'); }}],
   init(n){ n.v=document.createElement('video'); n.list=[]; n.idx=-1; n.url=''; n.name=''; n.status=''; n.warn=''; n.levels=null; n.hls=null; n.gen=0;
-    n.recQ=[]; n.torrentTried=false; n.playUrl=''; n.torrent=null; n.tline=''; n.tpoll=0; n.tbusy=false; n.tinfo=null; n.bgP=null; n.bgWs=null; n.lastPos=0; n.started=false; n.retry=0; n.tainted=false; n.native=false; n.nat=null; n.natSave=0; n.engineClosed=false; n.msAt=0; n.alts=[]; n.altI=-1; n.from=0; n.fcv=null; n.bump=0; n.meta=null; n.savedPos=-9; n.saveAt=0; n.ended=false; n.endPulse=0; n.inUrl=''; n.inCh=''; n.inSeek=null; n.nxPrev=false; n.rowsKey=''; n.ui=null; n.dirty=true; },
+    n.recQ=[]; n.natFloat=false; n.torrentTried=false; n.playUrl=''; n.torrent=null; n.tline=''; n.tpoll=0; n.tbusy=false; n.tinfo=null; n.bgP=null; n.bgWs=null; n.lastPos=0; n.started=false; n.retry=0; n.tainted=false; n.native=false; n.nat=null; n.natSave=0; n.engineClosed=false; n.msAt=0; n.alts=[]; n.altI=-1; n.from=0; n.fcv=null; n.bump=0; n.meta=null; n.savedPos=-9; n.saveAt=0; n.ended=false; n.endPulse=0; n.inUrl=''; n.inCh=''; n.inSeek=null; n.nxPrev=false; n.rowsKey=''; n.ui=null; n.dirty=true; },
   dispose(n){ if(n.hidePage) window.removeEventListener('pagehide',n.hidePage); vpDestroy(n); vpBridgeDrop(n); },
   process(n,I){
     if(Array.isArray(I.rows)){
