@@ -186,16 +186,16 @@ def({ id:'compass', lazy:'proc', title:'Compass', cat:'Indicators',
   view:{h:150}, resize:true,
   params:[{n:'tau',t:'range',min:0,max:3,step:.01,d:.2,label:'needle damping, s'},
           {n:'rel',t:'check',d:false,label:'rotate the dial to the heading (az2)'}],
-  init:n=>{ n.a=null; n.sa=0; n.b=null; n.sb=0; },
+  init:n=>{ n.a=null; n.sa=0; n.bv=null; n.sb=0; },
   process(n,I){
     const turn=(cur,v)=>cur+indSmooth(0,((v-cur+540)%360+360)%360-180,+n.p.tau);   // кратчайший путь
-    const a=indNum(I.az), b=indNum(I.az2); n.a=a; n.b=b;
+    const a=indNum(I.az), b=indNum(I.az2); n.a=a; n.bv=b;
     if(a!==null) n.sa=turn(n.sa,a);
     if(b!==null) n.sb=turn(n.sb,b);
     return {}; },
   draw(n,cv,cx){
     const W=cv.width, H=cv.height, TXT=16, R=Math.max(10,Math.min(W/2,(H-TXT)/2)-4), X=W/2, Y=(H-TXT)/2;
-    const rot=n.p.rel && n.b!==null ? n.sb : 0, rad=d=>(d-rot-90)*Math.PI/180;
+    const rot=n.p.rel && n.bv!==null ? n.sb : 0, rad=d=>(d-rot-90)*Math.PI/180;
     const pt=(d,r)=>[X+Math.cos(rad(d))*r,Y+Math.sin(rad(d))*r];
     cx.clearRect(0,0,W,H);
     cx.strokeStyle=themeColor('--axis'); cx.lineWidth=1.5; cx.beginPath(); cx.arc(X,Y,R,0,7); cx.stroke();
@@ -206,7 +206,7 @@ def({ id:'compass', lazy:'proc', title:'Compass', cat:'Indicators',
       cx.beginPath(); cx.moveTo(x1,y1); cx.lineTo(x2,y2); cx.stroke();
       if(major){ const [tx,ty]=pt(d,R*.68); cx.fillStyle=themeColor(d===0?'--err':'--scr-hi'); cx.fillText(IND_CARDS[d/45],tx,ty); }
     }
-    if(n.b!==null && !n.p.rel){                       // вторая метка — ромб на ободе
+    if(n.bv!==null && !n.p.rel){                       // вторая метка — ромб на ободе
       const [x,y]=pt(n.sb,R*.86); cx.fillStyle=themeColor('--acc2'); cx.beginPath();
       cx.moveTo(x,y-R*.07); cx.lineTo(x+R*.05,y); cx.lineTo(x,y+R*.07); cx.lineTo(x-R*.05,y); cx.fill();
     }
@@ -218,7 +218,7 @@ def({ id:'compass', lazy:'proc', title:'Compass', cat:'Indicators',
     cx.fillStyle=themeColor('--scr-hi'); cx.beginPath(); cx.arc(X,Y,R*.05,0,7); cx.fill();
     indFont(cx,TXT*.75); cx.textBaseline='alphabetic';
     const deg=v=>v===null ? '—' : Math.round(((v%360)+360)%360)+'° '+IND_CARDS[Math.round((((v%360)+360)%360)/45)%8];
-    cx.fillText(deg(n.a)+(n.b!==null ? '  ·  '+deg(n.b) : ''),X,H-3);
+    cx.fillText(deg(n.a)+(n.bv!==null ? '  ·  '+deg(n.bv) : ''),X,H-3);
     cx.textAlign='start'; }
 });
 
@@ -866,12 +866,12 @@ def({ id:'passplot', lazy:'proc', title:'Pass', cat:'Indicators', kw:'satellite 
   view:{h:130}, w:340, resize:true,
   params:[{n:'horizon',t:'num',d:0,label:'horizon, °'},
           {n:'trail',t:'range',min:0,max:3600,step:30,d:900,label:'history while visible, s'}],
-  init:n=>{ n.h=[]; n.el=null; n.az=null; n.aos=null; n.los=null; n.mx=null; },
+  init:n=>{ n.h=[]; n.ev=null; n.az=null; n.aos=null; n.los=null; n.mx=null; },
   process(n,I){
     const now=Date.now();
-    n.el=indNum(I.el); n.az=indNum(I.az); n.aos=indNum(I.aos); n.los=indNum(I.los); n.mx=indNum(I.max);
-    if(n.el!==null){
-      if(!n.h.length || now-n.h[n.h.length-1][0]>=1000) n.h.push([now,n.el]);
+    n.ev=indNum(I.el); n.az=indNum(I.az); n.aos=indNum(I.aos); n.los=indNum(I.los); n.mx=indNum(I.max);
+    if(n.ev!==null){
+      if(!n.h.length || now-n.h[n.h.length-1][0]>=1000) n.h.push([now,n.ev]);
       while(n.h.length && (now-n.h[0][0]>n.p.trail*1000 || n.h.length>4000)) n.h.shift();
     }
     return {}; },
@@ -879,7 +879,7 @@ def({ id:'passplot', lazy:'proc', title:'Pass', cat:'Indicators', kw:'satellite 
     const W=cv.width, H=cv.height, hz=+n.p.horizon||0, now=Date.now(), pl=26, pr=8, pt=18, pb=16, w=W-pl-pr, h=H-pt-pb;
     cx.clearRect(0,0,W,H);
     const have=n.aos!==null && n.los!==null && n.los>n.aos;
-    const mx=Math.max(30,Math.ceil(((have && n.mx!==null ? n.mx : 0) || 30)/15)*15), up=n.el!==null && n.el>hz;
+    const mx=Math.max(30,Math.ceil(((have && n.mx!==null ? n.mx : 0) || 30)/15)*15), up=n.ev!==null && n.ev>hz;
     const t0=have ? n.aos : now-60000, t1=have ? n.los : now+60000;
     const X=t=>pl+(t-t0)/(t1-t0)*w, Yy=e=>pt+h-clamp((e-hz)/(mx-hz),0,1)*h;
     indFont(cx,Math.min(10,H*.1)); cx.textBaseline='middle'; cx.textAlign='right';
@@ -896,8 +896,8 @@ def({ id:'passplot', lazy:'proc', title:'Pass', cat:'Indicators', kw:'satellite 
       if(now>=n.aos && now<=n.los){
         cx.strokeStyle=themeColor('--axis'); cx.setLineDash([3,3]); cx.beginPath(); cx.moveTo(X(now),pt); cx.lineTo(X(now),pt+h); cx.stroke(); cx.setLineDash([]);
         if(up){ cx.fillStyle=themeColor('--acc'); cx.shadowColor=themeColor('--acc'); cx.shadowBlur=8;
-          cx.beginPath(); cx.arc(X(now),Yy(n.el),4,0,7); cx.fill(); cx.shadowBlur=0; }
-      } else if(up){ cx.fillStyle=themeColor('--acc'); cx.beginPath(); cx.arc(clamp(X(now),pl,pl+w),Yy(n.el),4,0,7); cx.fill(); }
+          cx.beginPath(); cx.arc(X(now),Yy(n.ev),4,0,7); cx.fill(); cx.shadowBlur=0; }
+      } else if(up){ cx.fillStyle=themeColor('--acc'); cx.beginPath(); cx.arc(clamp(X(now),pl,pl+w),Yy(n.ev),4,0,7); cx.fill(); }
       cx.textAlign='center'; cx.textBaseline='top'; cx.fillStyle=themeColor('--axis');
       const hm=t=>new Date(t).toTimeString().slice(0,5);
       cx.textAlign='left'; cx.fillText(hm(n.aos),pl,pt+h+3); cx.textAlign='right'; cx.fillText(hm(n.los),pl+w,pt+h+3);
@@ -910,7 +910,7 @@ def({ id:'passplot', lazy:'proc', title:'Pass', cat:'Indicators', kw:'satellite 
     const status=!have ? 'no pass data' : now<n.aos ? 'AOS in '+fmtHMS((n.aos-now)/1000) : now<=n.los ? 'LOS in '+fmtHMS((n.los-now)/1000) : 'pass over';
     cx.fillText(status,pl,2);
     cx.textAlign='right'; cx.fillStyle=themeColor('--axis');
-    cx.fillText((n.el!==null ? 'el '+Math.round(n.el)+'°' : '')+(n.az!==null ? '  az '+Math.round(n.az)+'°' : '')+(have && n.mx!==null ? '  max '+Math.round(n.mx)+'°' : ''),W-pr,2);
+    cx.fillText((n.ev!==null ? 'el '+Math.round(n.ev)+'°' : '')+(n.az!==null ? '  az '+Math.round(n.az)+'°' : '')+(have && n.mx!==null ? '  max '+Math.round(n.mx)+'°' : ''),W-pr,2);
     cx.textAlign='start'; cx.textBaseline='alphabetic'; }
 });
 
