@@ -1,13 +1,16 @@
 name: Android app
 
 # Приложение-обёртка (WebView + мост датчиков, камеры, Wi-Fi, Bluetooth, ГНСС): tools/android.
-# Собирается только при правках приложения; со слияния в main выкладывается релиз с APK.
+# Страницы (index.html, модули, пресеты, vendor…) кладутся в APK как есть (assets/www), поэтому сборка идёт и при правках
+# веб-части: иначе в приложении оставалась бы старая. Со слияния в main выкладывается релиз с APK (номер = номер запуска).
 on:
   push:
     branches: [main]
-    paths: ['tools/android/**', '.github/workflows/android.yml']
+    paths: ['tools/android/**', '.github/workflows/android.yml',
+            'index.html', 'manifest.json', 'favicon.svg', 'styles.css', '*.js', 'README.md', 'icons/**', 'modules/**', 'vendor/**', 'data/**', 'help/**']
   pull_request:
-    paths: ['tools/android/**', '.github/workflows/android.yml']
+    paths: ['tools/android/**', '.github/workflows/android.yml',
+            'index.html', 'manifest.json', 'favicon.svg', 'styles.css', '*.js', 'README.md', 'icons/**', 'modules/**', 'vendor/**', 'data/**', 'help/**']
   workflow_dispatch:
 
 permissions:
@@ -34,13 +37,13 @@ jobs:
         with:
           name: dsp-android
           path: dsp-android-1.${{ github.run_number }}.apk
-      - name: Заметки релиза — коммиты приложения после прошлого релиза
+      - name: Заметки релиза — коммиты после прошлого релиза (приложение и веб-часть)
         run: |
           prev=$(git tag --list 'android-v*' --sort=-version:refname | head -1)
           {
-            echo "Изменения приложения${prev:+ после $prev}:"
+            echo "Изменения${prev:+ после $prev}:"
             echo
-            git log --no-merges --pretty='- %s (%h)' ${prev:+$prev..HEAD} -- tools/android | head -50
+            git log --no-merges --pretty='- %s (%h)' ${prev:+$prev..HEAD} | head -50
             echo
             echo "APK подписан постоянным ключом из репозитория — ставится поверх прежней версии. Разрешите приложению камеру, геолокацию и «Устройства поблизости»."
           } > notes.md

@@ -443,6 +443,134 @@ def({ id:'vumeter', lazy:'proc', title:'Needle Meter', cat:'Indicators', kw:'vu 
     cx.textAlign='start'; cx.textBaseline='alphabetic'; }
 });
 
+/* ---------- S-Meter (needle): стрелочный S-метр приёмника ---------- */
+// Общие куски: панель-стекло, стрелка с тенью. Угол шкалы — как у Needle Meter: стрелка качается вокруг точки под панелью.
+function pnNeedleFace(cx,x0,y0,pw,ph,face,dk,lit){
+  const cxm=x0+pw/2, rg=cx.createRadialGradient(cxm,y0+ph*.55,ph*.05,cxm,y0+ph*.55,pw*.75);
+  rg.addColorStop(0,face); rg.addColorStop(1,dk ? '#0a0c0e' : '#b9ae82');
+  cx.fillStyle=face; cx.fillRect(x0,y0,pw,ph); cx.globalAlpha=.5+.5*lit; cx.fillStyle=rg; cx.fillRect(x0,y0,pw,ph); cx.globalAlpha=1;
+}
+function pnNeedle(cx,PX,PY,tx,ty,w,col){
+  cx.save(); cx.shadowColor='rgba(0,0,0,.35)'; cx.shadowBlur=4; cx.shadowOffsetX=2; cx.shadowOffsetY=2;
+  cx.strokeStyle=col; cx.lineWidth=w; cx.lineCap='round'; cx.beginPath(); cx.moveTo(PX,PY); cx.lineTo(tx,ty); cx.stroke(); cx.restore();
+}
+function pnGlass(cx,x0,y0,pw,ph){
+  cx.fillStyle='rgba(255,255,255,.07)'; cx.beginPath(); cx.moveTo(x0,y0); cx.lineTo(x0+pw*.7,y0); cx.lineTo(x0,y0+ph*.55); cx.closePath(); cx.fill();
+  cx.restore(); cx.strokeStyle='#15171a'; cx.lineWidth=3; pnRound(cx,x0,y0,pw,ph,Math.min(10,ph*.08)); cx.stroke();
+}
+def({ id:'smeterneedle', lazy:'proc', title:'S-Meter (needle)', cat:'Indicators', kw:'s meter signal strength receiver analog needle rssi s9 dbm ham radio',
+  ins:[{n:'in',t:'num'}], outs:[{n:'s',t:'num'}], view:{h:130}, w:280, resize:true,
+  params:[{n:'s9',t:'num',d:-73,label:'S9 level, dBm (−73 HF, −93 VHF)'},
+          {n:'face',t:'text',d:'cream',label:'dial colour: '+Object.keys(PN_FACE).join(', ')+' or #rrggbb'},
+          {n:'lit',t:'range',min:0,max:1,step:.05,d:.6,label:'backlight glow'},
+          {n:'attack',t:'range',min:0,max:1,step:.005,d:.04,label:'attack, s'},
+          {n:'fall',t:'range',min:0,max:3,step:.01,d:.6,label:'fall, s'},
+          {n:'peak',t:'check',d:true,label:'peak hold marker'}],
+  init:n=>{ n.v=null; n.sv=-Infinity; n.pk=-Infinity; n.pt=0; },
+  process(n,I){
+    const p=n.p, v=indNum(I.in); n.v=v;
+    if(v===null){ n.sv=indSmooth(isFinite(n.sv) ? n.sv : +p.s9-54,+p.s9-54,+p.fall); return {s:null}; }
+    if(!isFinite(n.sv)) n.sv=v;
+    n.sv=indSmooth(n.sv,v,v>n.sv ? +p.attack : +p.fall); indPeak(n,n.sv,60);
+    return {s:n.sv<p.s9-54 ? 0 : 9+(n.sv-p.s9)/6}; },
+  draw(n,cv,cx){
+    const W=cv.width, H=cv.height, p=n.p, s9=+p.s9, face=pnFace(p.face), dk=pnDark(face), ink=dk ? '#e6e9ec' : '#2a2418';
+    cx.clearRect(0,0,W,H);
+    const m=Math.max(3,H*.03), x0=4, y0=m, pw=W-8, ph=H-2*m, cxm=x0+pw/2;
+    cx.save(); pnRound(cx,x0,y0,pw,ph,Math.min(10,ph*.08)); cx.clip(); pnNeedleFace(cx,x0,y0,pw,ph,face,dk,+p.lit);
+    const R=Math.min(ph*1.05,pw*.8), PX=cxm, PY=y0+ph*1.12, rs=Math.min(R*.9,PY-y0-ph*.2);
+    const A=Math.min(Math.PI*.33,Math.asin(clamp((pw/2-10)/rs,.2,1))), ang=f=>-A+2*A*clamp(f,0,1), pt=(a,r)=>[PX+Math.sin(a)*r,PY-Math.cos(a)*r];
+    cx.lineWidth=Math.max(1.5,R*.02); cx.strokeStyle=ink; cx.beginPath(); cx.arc(PX,PY,rs,-Math.PI/2+ang(0),-Math.PI/2+ang(.6)); cx.stroke();
+    cx.strokeStyle='#d8352a'; cx.lineWidth=Math.max(3,R*.045); cx.beginPath(); cx.arc(PX,PY,rs,-Math.PI/2+ang(.6),-Math.PI/2+ang(1)); cx.stroke();
+    const fs=Math.max(7,Math.min(12,ph*.1)); cx.font=fs+'px monospace'; cx.textAlign='center'; cx.textBaseline='middle'; cx.fillStyle=ink; cx.lineWidth=1;
+    const tick=(f,label,long,red)=>{ const a=ang(f), [x1,y1]=pt(a,rs), [x2,y2]=pt(a,rs-R*(long ? .09 : .05)), [x3,y3]=pt(a,rs-R*.17);
+      cx.strokeStyle=red ? '#d8352a' : ink; cx.fillStyle=red ? '#d8352a' : ink; cx.beginPath(); cx.moveTo(x1,y1); cx.lineTo(x2,y2); cx.stroke(); if(label) cx.fillText(label,x3,y3); };
+    for(let s=1;s<=9;s++) tick(s/9*.6,s%2===1 ? String(s) : '',s%2===1,false);
+    for(const o of [20,40,60]) tick(.6+o/60*.4,'+'+o,true,true);
+    cx.fillStyle=ink; cx.font='bold '+Math.max(9,ph*.15)+'px '+PN_FONT; cx.fillText('S',cxm,y0+ph*.5);
+    cx.font=Math.max(7,ph*.09)+'px monospace'; cx.textAlign='left'; cx.fillText(n.v===null ? '—' : indFmt(n.v)+' dBm',x0+8,y0+ph-fs-2);
+    cx.textAlign='right'; cx.fillText(n.v===null ? '' : SM_NAME(n.sv,s9),x0+pw-8,y0+ph-fs-2);
+    if(p.peak && isFinite(n.pk)){ const [a1,b1]=pt(ang(SM_FRAC(n.pk,s9)),rs+R*.01), [a2,b2]=pt(ang(SM_FRAC(n.pk,s9)),rs-R*.06); cx.strokeStyle='#e08a1e'; cx.lineWidth=Math.max(2,R*.03); cx.beginPath(); cx.moveTo(a1,b1); cx.lineTo(a2,b2); cx.stroke(); }
+    const [tx,ty]=pt(ang(isFinite(n.sv) ? SM_FRAC(n.sv,s9) : 0),rs+R*.03); pnNeedle(cx,PX,PY,tx,ty,Math.max(1.4,R*.022),dk ? '#ff9a3a' : '#111');
+    pnGlass(cx,x0,y0,pw,ph); cx.textAlign='start'; cx.textBaseline='alphabetic'; }
+});
+
+/* ---------- SWR / Power meter (перекрёстные стрелки) ---------- */
+// Левая стрелка — прямая мощность, правая — отражённая; SWR считается из них. Как у Diamond SX / Daiwa CN.
+def({ id:'swrmeter', lazy:'proc', title:'SWR / Power Meter (cross needle)', cat:'Indicators', kw:'swr power watt forward reflected cross needle vswr antenna analyzer tuner diamond',
+  ins:[{n:'fwd',t:'num'},{n:'ref',t:'num'}], outs:[{n:'swr',t:'num'}], view:{h:150}, w:300, resize:true,
+  params:[{n:'max',t:'num',d:100,label:'forward full scale, W'},
+          {n:'refmax',t:'num',d:20,label:'reflected full scale, W'},
+          {n:'warn',t:'num',d:3,label:'SWR warning above'},
+          {n:'face',t:'text',d:'cream',label:'dial colour: '+Object.keys(PN_FACE).join(', ')+' or #rrggbb'},
+          {n:'lit',t:'range',min:0,max:1,step:.05,d:.5,label:'backlight glow'},
+          {n:'tau',t:'range',min:0,max:1.5,step:.01,d:.12,label:'needle damping, s'}],
+  init:n=>{ n.f=null; n.r=null; n.sf=0; n.sr=0; n.swr=null; },
+  process(n,I){
+    const p=n.p, f=indNum(I.fwd), r=indNum(I.ref); n.f=f; n.r=r;
+    n.sf=indSmooth(n.sf,clamp(f===null ? 0 : f,0,+p.max),+p.tau); n.sr=indSmooth(n.sr,clamp(r===null ? 0 : r,0,+p.refmax),+p.tau);
+    if(f!==null && r!==null && f>0.01){ const g=Math.sqrt(clamp(r/f,0,.9999)); n.swr=(1+g)/(1-g); } else n.swr=null;
+    return {swr:n.swr}; },
+  draw(n,cv,cx){
+    const W=cv.width, H=cv.height, p=n.p, face=pnFace(p.face), dk=pnDark(face), ink=dk ? '#e6e9ec' : '#2a2418';
+    cx.clearRect(0,0,W,H);
+    const m=Math.max(3,H*.03), x0=4, y0=m, pw=W-8, ph=H-2*m;
+    cx.save(); pnRound(cx,x0,y0,pw,ph,Math.min(10,ph*.08)); cx.clip(); pnNeedleFace(cx,x0,y0,pw,ph,face,dk,+p.lit);
+    const L=Math.min(ph*.86,pw*.78), D=Math.PI/180, PYb=y0+ph*.97, PXl=x0+pw*.07, PXr=x0+pw*.93;
+    // угол стрелки от оси +x: левая 80°→20°, правая 100°→160°
+    const aL=t=>(80-60*clamp(t,0,1))*D, aR=t=>(100+60*clamp(t,0,1))*D;
+    const scale=(PX,aF,max,label,col)=>{
+      cx.strokeStyle=col; cx.fillStyle=col; cx.lineWidth=Math.max(1.5,L*.015); cx.beginPath();
+      for(let i=0;i<=40;i++){ const a=aF(i/40), x=PX+Math.cos(a)*L, y=PYb-Math.sin(a)*L; i ? cx.lineTo(x,y) : cx.moveTo(x,y); } cx.stroke();
+      const mag=Math.pow(10,Math.floor(Math.log10(max/4))), st=[1,2,5,10].map(q=>q*mag).find(q=>max/q<=6) || mag*10;
+      cx.font=Math.max(7,Math.min(11,ph*.085))+'px monospace'; cx.textAlign='center'; cx.textBaseline='middle'; cx.lineWidth=1;
+      for(let v=0; v<=max+1e-9; v+=st){ const a=aF(v/max), c=Math.cos(a), s=Math.sin(a);
+        cx.beginPath(); cx.moveTo(PX+c*L,PYb-s*L); cx.lineTo(PX+c*(L-L*.07),PYb-s*(L-L*.07)); cx.stroke();
+        cx.fillText(indFmt(+v.toPrecision(4)),PX+c*(L-L*.16),PYb-s*(L-L*.16)); }
+      cx.font='bold '+Math.max(8,ph*.1)+'px '+PN_FONT; const a=aF(.5); cx.fillText(label,PX+Math.cos(a)*(L-L*.34),PYb-Math.sin(a)*(L-L*.34)); };
+    scale(PXl,aL,+p.max,'FWD W',ink); scale(PXr,aR,+p.refmax,'REF W',dk ? '#ff8a6a' : '#b02a1a');
+    const swr=n.swr, bad=swr!==null && swr>=+p.warn;
+    cx.font='bold '+Math.max(9,ph*.14)+'px '+PN_FONT; cx.textAlign='center'; cx.textBaseline='top'; cx.fillStyle=bad ? '#d8352a' : ink;
+    cx.fillText(swr===null ? 'SWR —' : 'SWR '+(swr>=99 ? '∞' : swr.toFixed(swr<10 ? 2 : 1)),x0+pw/2,y0+ph*.08);
+    pnNeedle(cx,PXl,PYb,PXl+Math.cos(aL(n.sf/(+p.max||1)))*(L+3),PYb-Math.sin(aL(n.sf/(+p.max||1)))*(L+3),Math.max(1.4,L*.017),dk ? '#ffd24a' : '#111');
+    pnNeedle(cx,PXr,PYb,PXr+Math.cos(aR(n.sr/(+p.refmax||1)))*(L+3),PYb-Math.sin(aR(n.sr/(+p.refmax||1)))*(L+3),Math.max(1.4,L*.017),dk ? '#ff6a4a' : '#b02a1a');
+    cx.fillStyle='#15171a'; for(const X of [PXl,PXr]){ cx.beginPath(); cx.arc(X,PYb,Math.max(3,L*.035),0,7); cx.fill(); }
+    pnGlass(cx,x0,y0,pw,ph); cx.textAlign='start'; cx.textBaseline='alphabetic'; }
+});
+
+/* ---------- Tuning Meter (центр-ноль: расстройка / дискриминатор) ---------- */
+def({ id:'tunemeter', lazy:'proc', title:'Tuning Meter (centre zero)', cat:'Indicators', kw:'centre zero center discriminator afc tuning offset error needle analog fm deviation',
+  ins:[{n:'in',t:'num'}], outs:[{n:'tuned',t:'num'}], view:{h:120}, w:260, resize:true,
+  params:[{n:'range',t:'num',d:5000,label:'scale ± (same unit as the input)'},
+          {n:'tol',t:'num',d:500,label:'«in tune» band ±'},
+          {n:'unit',t:'text',d:'Hz'},
+          {n:'face',t:'text',d:'cream',label:'dial colour: '+Object.keys(PN_FACE).join(', ')+' or #rrggbb'},
+          {n:'lit',t:'range',min:0,max:1,step:.05,d:.5,label:'backlight glow'},
+          {n:'tau',t:'range',min:0,max:2,step:.01,d:.25,label:'needle damping, s'}],
+  init:n=>{ n.v=null; n.sv=0; n.ok=0; },
+  process(n,I){
+    const p=n.p, v=indNum(I.in), R=Math.abs(+p.range)||1; n.v=v;
+    n.sv=indSmooth(n.sv,v===null ? 0 : clamp(v,-R,R),+p.tau); n.ok=v!==null && Math.abs(v)<=+p.tol ? 1 : 0;
+    return {tuned:n.ok}; },
+  draw(n,cv,cx){
+    const W=cv.width, H=cv.height, p=n.p, R0=Math.abs(+p.range)||1, face=pnFace(p.face), dk=pnDark(face), ink=dk ? '#e6e9ec' : '#2a2418';
+    cx.clearRect(0,0,W,H);
+    const m=Math.max(3,H*.03), x0=4, y0=m, pw=W-8, ph=H-2*m, cxm=x0+pw/2;
+    cx.save(); pnRound(cx,x0,y0,pw,ph,Math.min(10,ph*.08)); cx.clip(); pnNeedleFace(cx,x0,y0,pw,ph,face,dk,+p.lit);
+    const R=Math.min(ph*1.05,pw*.8), PX=cxm, PY=y0+ph*1.12, rs=Math.min(R*.9,PY-y0-ph*.2);
+    const A=Math.min(Math.PI*.33,Math.asin(clamp((pw/2-10)/rs,.2,1))), ang=f=>A*clamp(f,-1,1), pt=(a,r)=>[PX+Math.sin(a)*r,PY-Math.cos(a)*r];
+    const tl=clamp((+p.tol)/R0,0,1);
+    cx.lineWidth=Math.max(1.5,R*.02); cx.strokeStyle=ink; cx.beginPath(); cx.arc(PX,PY,rs,-Math.PI/2-A,-Math.PI/2+A); cx.stroke();
+    cx.strokeStyle=n.ok ? '#2fc45a' : '#5a9a6a'; cx.lineWidth=Math.max(4,R*.05); cx.beginPath(); cx.arc(PX,PY,rs,-Math.PI/2-ang(tl),-Math.PI/2+ang(tl)); cx.stroke();
+    const fs=Math.max(7,Math.min(12,ph*.1)); cx.font=fs+'px monospace'; cx.textAlign='center'; cx.textBaseline='middle'; cx.fillStyle=ink; cx.strokeStyle=ink; cx.lineWidth=1;
+    for(let i=-5;i<=5;i++){ const f=i/5, a=ang(f), [x1,y1]=pt(a,rs), [x2,y2]=pt(a,rs-R*(i%5===0 ? .1 : .06)), [x3,y3]=pt(a,rs-R*.18);
+      cx.beginPath(); cx.moveTo(x1,y1); cx.lineTo(x2,y2); cx.stroke(); if(i%5===0 || i===0) cx.fillText(i===0 ? '0' : (i<0 ? '−' : '+')+indFmt(R0),x3,y3); }
+    cx.font='bold '+Math.max(9,ph*.15)+'px '+PN_FONT; cx.fillText(p.unit,cxm,y0+ph*.52);
+    cx.font=Math.max(7,ph*.09)+'px monospace'; cx.fillText(n.v===null ? '—' : (n.v>0 ? '+' : '')+indFmt(n.v)+' '+p.unit,cxm,y0+ph-fs-2);
+    const [tx,ty]=pt(ang(n.sv/R0),rs+R*.03); pnNeedle(cx,PX,PY,tx,ty,Math.max(1.4,R*.022),dk ? '#ff9a3a' : '#111');
+    pnGlass(cx,x0,y0,pw,ph); cx.textAlign='start'; cx.textBaseline='alphabetic'; }
+});
+
 /* ---------- Speedometer (спидометр с одометром и суточным пробегом) ---------- */
 const SP_MS={'m/s':1,'km/h':1/3.6,'mph':.44704,'kn':.514444};
 const SP_DIST={'km/h':['km',1000],'mph':['mi',1609.344],'m/s':['km',1000],'kn':['nm',1852]};
