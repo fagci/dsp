@@ -442,6 +442,7 @@ const PRESET_CATS={
   'Digital TV: IPTV (HTTP TS / HLS / M3U) → TS → Video and Sound':'Images & TV',
   'Webcams: OpenStreetMap map → Picture':'Images & TV',
   'Cameras: Table of links → IP Camera → Frames + Archive':'Images & TV',
+  'Video: Table of Sources → Player with Seek and Saved Position':'Images & TV',
   'Digital TV: DVB-T2 → record video to Files (trigger, path)':'Images & TV',
   'Analog TV: FPV Multiband Scanner (HackRF)':'Images & TV',
   'Analog TV: FPV Mosaic (one HackRF)':'Images & TV',
@@ -7034,6 +7035,21 @@ for(let i=0;i<4;i++){
 const ar=addNode('camarch',1200,190,{cam:'Gate',interval:10,motion:.03});
 ar.size.w=380; ar.size.h=340; applySize(ar);
 addEdge(cams[0].id,'img',ar.id,'img');
+markWiresDirty();
+});
+preset('Video: Table of Sources → Player with Seek and Saved Position', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A list of video sources lives in the left Table (name, url): a file (mp4 / webm) or an HLS playlist (.m3u8). Replace the examples with your own, add rows in the Table. Pick a source in the player\'s list (or ⏮ ⏭, PageUp / PageDown), or wire a Table row to «channel». '+
+  'Seek: the slider, −10 / +10 (arrows ← → on a focused player, Shift = 30 s), the «seek» input (seconds), speed in the list. The position is remembered for every address (the last 300) and the same source continues from it, also after a reload; '+
+  'every save also goes to «rec» → the right Table (key url) — your watch history with pos, dur, pct and done. A server must allow cross-origin reads for HLS (CORS); an http:// link on an https:// page is blocked by the browser.'});
+nt.size.w=1000; nt.size.h=130; applySize(nt);
+const tb=addNode('table',40,200,{list:'video/sources',key:'url',initial:false,data:'name,url\nBig Buck Bunny (mp4),https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4\nSintel (HLS),https://bitdash-a.akamaihd.net/content/sintel/hls/playlist.m3u8\nTears of Steel (HLS),https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8'});
+tb.size.w=380; tb.size.h=360; applySize(tb);
+const pl=addNode('vplayer',450,200,{});
+pl.size.w=520; pl.size.h=400; applySize(pl);
+const hs=addNode('table',1000,200,{list:'video/history',key:'url',rev:true});
+hs.size.w=380; hs.size.h=360; applySize(hs);
+addEdge(tb.id,'all',pl.id,'rows'); addEdge(pl.id,'rec',hs.id,'rec');
 markWiresDirty();
 });
 preset('Podcasts: Search → Episodes → Sound', function(){
