@@ -445,6 +445,7 @@ const PRESET_CATS={
   'Video: Table of Sources → Player with Seek and Saved Position':'Images & TV',
   'Video: Internet Archive Search → Episodes → Player':'Images & TV',
   'Video: IPTV Channels by Country (iptv-org) → Player':'Images & TV',
+  'VLC Source: Any Sound (Network Folder, Stream, Multicast) → Spectrum and Speaker (DSP app)':'Music: Player',
   'Video: Torrents (magnet / .torrent) → Player (DSP app)':'Images & TV',
   'Video: Network Folders (SMB / FTP / UPnP) and Any Format → libVLC (DSP app)':'Images & TV',
   'Digital TV: DVB-T2 → record video to Files (trigger, path)':'Images & TV',
@@ -7101,6 +7102,23 @@ pl.size.w=520; pl.size.h=440; applySize(pl);
 const hs=addNode('table',1040,200,{list:'video/history',key:'url',rev:true});
 hs.size.w=380; hs.size.h=360; applySize(hs);
 addEdge(tb.id,'all',pl.id,'rows'); addEdge(pl.id,'rec',hs.id,'rec');
+markWiresDirty();
+});
+preset('VLC Source: Any Sound (Network Folder, Stream, Multicast) → Spectrum and Speaker (DSP app)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'VLC Source takes the sound of ANY address into the graph through libVLC of the DSP app for Android: a file on a network folder (smb://nas/music/a.flac, ftp://, sftp://, nfs://), a UPnP / DLNA server (upnp://…), an internet radio or HLS stream, RTMP, RTSP, a multicast channel of the provider (udp://@239.1.1.1:1234, rtp://@…) — with AC3 / DTS / FLAC / AAC / Opus and codecs the browser does not know. The app decodes, sends raw PCM to 127.0.0.1 and the node gives «l» and «r» as ordinary signals: here to the spectrum, the oscilloscope and the speaker; wire them to any other module (filters, demodulators, a recorder, Whisper). '+
+  'Type an address into the node and press Play. «lag» is the smoothing reserve (less — shorter delay), «caching» — the cache of libVLC for a bad network. Not a browser feature: without the app the node says so. Pause with the «pause» input.'});
+nt.size.w=1000; nt.size.h=130; applySize(nt);
+const vs=addNode('vlcsrc',40,200,{url:'',rate:'graph'});
+vs.size.w=340; vs.size.h=330; applySize(vs);
+const ff=addNode('fft',420,200,{size:'4096'});
+const wf=addNode('sa',660,200,{fmin:0,fmax:12000,split:.4});
+wf.size.w=520; wf.size.h=360; applySize(wf);
+const sc=addNode('scope',420,400);
+const dc=addNode('dac',1220,200,{vol:.5});
+addEdge(vs.id,'l',ff.id,'in'); addEdge(ff.id,'spec',wf.id,'spec');
+addEdge(vs.id,'l',sc.id,'in1');
+addEdge(vs.id,'l',dc.id,'L'); addEdge(vs.id,'r',dc.id,'R');
 markWiresDirty();
 });
 preset('Video: IPTV Channels by Country (iptv-org) → Player', function(){

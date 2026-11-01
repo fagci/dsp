@@ -82,7 +82,10 @@ tasks.register<JavaExec>("runTorrentTest") {
     classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.torrenttest.TorrentTestKt")
     jvmArgs("-Djava.library.path=" + layout.buildDirectory.dir("ltnative").get().asFile.absolutePath)
 }
+tasks.register<JavaExec>("runVlcTest") {
+    classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.vlctest.VlcTestKt")
+}
 tasks.register<JavaExec>("runRtpTest") {
     classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.rtptest.RtpTestKt")
 }
-tasks.register("runTests") { dependsOn("runTorrentTest", "runRtpTest", "runScanDiagTest", "runShortcutTest", "runScreenTest", "runDialTest", "runFsTest", "runCallTest", "runMicTest", "runServerTest", "runRecordsTest", "runAlarmTest", "runBootTest", "runCalTest", "runRecTest", "runProxyTest", "runVpnEngineTest", "runTlsTest", "runTlsStoreTest") }
+tasks.register("runTests") { dependsOn("runVlcTest", "runTorrentTest", "runRtpTest", "runScanDiagTest", "runShortcutTest", "runScreenTest", "runDialTest", "runFsTest", "runCallTest", "runMicTest", "runServerTest", "runRecordsTest", "runAlarmTest", "runBootTest", "runCalTest", "runRecTest", "runProxyTest", "runVpnEngineTest", "runTlsTest", "runTlsStoreTest") }
