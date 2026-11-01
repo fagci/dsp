@@ -95,6 +95,24 @@ fun main() {
     ok("status shows progress", st != null && st.totalDone() > 0, "done=${st?.totalDone()}")
     ok("content type", all.third["Content-Type"]?.firstOrNull() == "video/mp4")
 
+    // magnet: добавляется в сессию сразу, метаданные — от раздающего (x.pe — адрес пира в ссылке), файл читается по HTTP той же раздачей, без повторного поиска пиров
+    val leech2 = session()
+    val core2 = TorrentCore(leech2, File(tmp, "leech2"))
+    val mag = "magnet:?xt=urn:btih:${item.id}&dn=clip&x.pe=127.0.0.1:$seedPort"
+    val item2 = core2.addMagnet(mag, 60)
+    ok("magnet: metadata arrives from the peer", item2 != null && item2.ti.numFiles() == 1 && item2.ti.files().fileSize(0) == data.size.toLong())
+    if (item2 != null) {
+        ok("magnet: the file is not downloaded until selected", core2.status(item2)?.totalDone() == 0L, "done=${core2.status(item2)?.totalDone()}")
+        val http2 = TorrentHttp(core2, "t2"); http2.start()
+        val m2 = get(http2.url(item2.id, 0, "clip.mp4"), "bytes=2000000-2000049")
+        ok("magnet: range read gives exact bytes", m2.first == 206 && m2.second.contentEquals(data.copyOfRange(2_000_000, 2_000_050)), "code=${m2.first}")
+        ok("trackers line is readable", core2.trackers(item2.th!!).isNotEmpty(), core2.trackers(item2.th!!))
+        ok("second addMagnet returns the same item", core2.addMagnet(mag, 5) === item2)
+        http2.stop()
+    }
+    ok("a hash that nobody serves: null after the timeout, no exception", run { val z = core2.addMagnet("magnet:?xt=urn:btih:" + "ab".repeat(20), 3); z == null })
+    leech2.stop()
+
     core.remove(item.id, true)
     ok("remove deletes files", !item.dir.exists())
     http.stop(); leech.stop(); seeder.stop()
