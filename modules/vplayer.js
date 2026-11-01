@@ -43,21 +43,26 @@ function vpDestroy(n){
 async function vpOpen(n,url,name,start,meta){
   url=String(url||'').trim();
   if(!url){ return; }
-  if(!VP_URL_RE.test(url)){ vpStatus(n,'URL must start with http:// or https:// (udp:// rtp:// rtsp:// — in the DSP app)'); return; }
+  if(!VP_URL_RE.test(url)){ vpStatus(n,'URL must start with http:// or https:// (udp:// rtp:// rtsp:// magnet: — in the DSP app)'); return; }
   if(vpIsIaPage(url)){ vpOpenItem(n,vpIaId(url)); return; }          // страница archive.org/details/… — не видео: берём файлы предмета
   vpDestroy(n);
   const g=n.gen;
   n.tainted=false; n.retry=0; n.started=false; n.native=false; n.engineClosed=false;
   n.alts=String(meta && meta.alt || '').split(/\s+/).filter(Boolean); n.altI=-1;
-  n.url=url; n.name=name || url; n.meta=meta||null; n.savedPos=-9; n.ended=false; n.pend=0;
+  n.url=url; n.playUrl=url; n.torrent=null; n.tline=''; n.name=name || url; n.meta=meta||null; n.savedPos=-9; n.ended=false; n.pend=0;
   n.warn= typeof netInsecure==='function' && /^http:/i.test(url) && netInsecure(url) ? NET_INSECURE_MSG : '';
   const from= start!=null ? +start : vpResume(vpLoadMap()[url]);
-  const v=n.v, kind=vpKind(url);
+  if(vpKind(url)==='torrent'){ vpOpenTorrent(n,url,from,g); return; }
+  vpStart(n,url,from,g);
+}
+// играть адрес playUrl (для торрента — локальный адрес файла из приложения) с позиции from; n.url остаётся «ключом» источника (позиции, история)
+async function vpStart(n,playUrl,from,g){
+  const v=n.v, kind=vpKind(playUrl);
   // нативный плеер: по выбору «engine», или сам для того, что браузер не играет (udp / rtp / rtsp, mkv / ts / avi)
   const eng=String(n.p.engine||'auto');
   if(eng.startsWith('native') || (eng==='auto' && kind==='native')){
-    if(vpNativeCan()){ vpOpenNative(n,url,from); return; }
-    if(/^(udp|rtp|rtsp):/i.test(url)){ vpStatus(n,'udp:// rtp:// rtsp:// addresses (multicast IPTV) are played by the DSP app for Android — a browser cannot open them'); return; }
+    if(vpNativeCan()){ vpOpenNative(n,playUrl,from); return; }
+    if(/^(udp|rtp|rtsp):/i.test(playUrl)){ vpStatus(n,'udp:// rtp:// rtsp:// addresses (multicast IPTV) are played by the DSP app for Android — a browser cannot open them'); return; }
   }
   v.playbackRate=+n.p.speed||1;
   if(n.p.capture) v.crossOrigin='anonymous'; else v.removeAttribute('crossorigin');
@@ -72,14 +77,64 @@ async function vpOpen(n,url,name,start,meta){
       const h=n.hls=new Hls({startPosition:from>0 ? from : -1});
       h.on(Hls.Events.ERROR,(ev,d)=>{ if(g===n.gen && d.fatal) vpStatus(n,'HLS error: '+d.type+(d.details ? ' / '+d.details : '')+(d.type==='networkError' ? ' (CORS or the address is unreachable)' : '')); });
       h.on(Hls.Events.MANIFEST_PARSED,(ev,d)=>{ n.levels=d.levels.map(l=>l.height ? l.height+'p' : Math.round(l.bitrate/1000)+'k'); n.dirty=true; });
-      h.loadSource(url); h.attachMedia(v);
+      h.loadSource(playUrl); h.attachMedia(v);
     }else if(kind==='dash') throw new Error('DASH (.mpd) is not supported — use HLS or a file');
-    else{ n.levels=null; v.src=url; }
+    else{ n.levels=null; v.src=playUrl; }
     vpMedia(n);
     if(n.p.autoplay) await v.play();
   }catch(e){
     if(g===n.gen && e.name!=='NotSupportedError' && e.name!=='AbortError') vpStatus(n,e.name==='NotAllowedError' ? 'press ▶ to play (the browser blocks autoplay)' : 'error: '+e.message);
   }
+}
+/* ---------- торренты: через мост приложения (torrent.*), файл стримится по HTTP с Range и играет как обычный ---------- */
+const VP_BRIDGE='ws://127.0.0.1:8765';
+function vpBridge(n){                                            // → Promise<NetSock>; одно соединение на узел
+  if(n.bgP) return n.bgP;
+  return n.bgP=new Promise((res,rej)=>{
+    let key=''; try{ key=(window.DspApp && DspApp.appKey && DspApp.appKey()) || ''; }catch(e){}
+    const url=typeof phoneUrl==='function' ? phoneUrl(String(n.p.bridge||VP_BRIDGE).trim(),key) : '';
+    if(!url){ n.bgP=null; return rej(new Error('the bridge address must start with ws:// or be a device name (@name)')); }
+    let ws; try{ ws=new WebSocket(url); }catch(e){ n.bgP=null; return rej(e); }
+    const ns=new NetSock(m=>{ if(ws.readyState!==1) throw new Error('the bridge is not connected'); ws.send(JSON.stringify(m)); });
+    ws.onopen=()=>{ n.bgWs=ws; res(ns); };
+    ws.onerror=()=>{ if(!n.bgWs){ n.bgP=null; rej(new Error('no connection to the bridge — torrents work through the DSP app for Android (is it running?)')); } };
+    ws.onclose=()=>{ n.bgP=null; n.bgWs=null; };
+    ws.onmessage=e=>{ if(typeof e.data!=='string') return; let j; try{ j=JSON.parse(e.data); }catch(x){ return; } for(const r of Array.isArray(j) ? j : [j]) ns.feed(r); };
+  });
+}
+function vpBridgeDrop(n){ const ws=n.bgWs; n.bgP=null; n.bgWs=null; if(ws){ ws.onopen=ws.onclose=ws.onerror=ws.onmessage=null; try{ ws.close(); }catch(e){} } }
+async function vpOpenTorrent(n,url,from,g){
+  const ref=vpTorrentRef(url);
+  vpStatus(n,'torrent: connecting to the app…');
+  try{
+    const ns=await vpBridge(n); if(g!==n.gen) return;
+    let r=n.tinfo && n.tinfo[ref.base];
+    if(!r){
+      vpStatus(n,'torrent: looking for the metadata (peers, DHT)… up to a minute');
+      r=await ns.call('torrent.add',{src:ref.base,timeout:45},75000); if(g!==n.gen) return;
+      if(typeof r.files==='string') r.files=JSON.parse(r.files);
+      (n.tinfo || (n.tinfo={}))[ref.base]=r;
+    }
+    const rows=vpTorrentRows(url,r);
+    if(!rows.length){ vpStatus(n,'torrent «'+(r.name||ref.base.slice(0,40))+'»: no video files in it'); return; }
+    let idx=ref.file;
+    if(idx==null){
+      if(rows.length>1){                                           // раздача из нескольких видео — серии: список, играет продолжение или первая
+        n.list=vpSources(rows); n.rowsKey='tor:'+ref.base; n.idx=-1; n.dirty=true; n.bump++;
+        vpStatus(n,r.name+': '+n.list.length+' videos'); vpResumeList(n); return; }
+      idx=+rows[0].url.split('#file=')[1];
+    }
+    const sr=await ns.call('torrent.stream',{tid:r.tid,file:idx},20000); if(g!==n.gen) return;
+    n.torrent={tid:r.tid,file:idx}; n.playUrl=sr.url; n.tline='torrent: starting…'; n.tpoll=0;
+    vpStatus(n,'torrent: waiting for the first pieces…');
+    vpStart(n,sr.url,from,g);
+  }catch(e){ if(g===n.gen) vpStatus(n,'torrent: '+e.message); }
+}
+// состояние раздачи — раз в 2 с, пока играет торрент
+function vpTorrentPoll(n){
+  const now=performance.now(); if(!n.torrent || n.tbusy || now-n.tpoll<2000) return;
+  n.tpoll=now; n.tbusy=true;
+  vpBridge(n).then(ns=>ns.call('torrent.status',{tid:n.torrent.tid},8000)).then(st=>{ if(n.torrent){ n.tline=vpTorrentLine(st); n.dirty=true; } }).catch(()=>{}).finally(()=>{ n.tbusy=false; });
 }
 // страница предмета Internet Archive → список файлов (серии) в плеере; продолжить с места или первый
 async function vpOpenItem(n,id){
@@ -118,7 +173,7 @@ function vpOnError(n){
     vpSetSrc(n,v.currentSrc||n.url,pos); return;
   }
   if(vpAlt(n,pos)) return;
-  if(vpNativeCan() && String(n.p.engine||'auto')!=='browser'){ vpStatus(n,'the browser cannot play this ('+vpMediaErr(code)+') — opening the native player of the app…'); vpOpenNative(n,n.url,pos); return; }
+  if(vpNativeCan() && String(n.p.engine||'auto')!=='browser'){ vpStatus(n,'the browser cannot play this ('+vpMediaErr(code)+') — opening the native player of the app…'); vpOpenNative(n,n.playUrl||n.url,pos); return; }
   vpStatus(n,'error'+at+': '+vpMediaErr(code)+(v.error && v.error.message ? ' — '+v.error.message : '')+'\n'+n.url); }
 
 /* ---------- нативный плеер приложения Android (DspApp.player*) ---------- */
@@ -126,10 +181,10 @@ let vpNativeNode=null, vpCan=null;
 function vpNativeCan(){
   if(vpCan==null){ try{ vpCan=!!(window.DspApp && typeof DspApp.playerCan==='function' && DspApp.playerCan()); }catch(e){ vpCan=false; } }
   return vpCan; }
-function vpOpenNative(n,url,from){
-  vpDestroy(n); n.url=url; n.native=true; n.started=false; vpNativeNode=n;
+function vpOpenNative(n,playUrl,from){
+  const key=n.url, tor=n.torrent, nm=n.name; vpDestroy(n); n.url=key; n.torrent=tor; n.name=nm; n.native=true; n.started=false; vpNativeNode=n;
   n.nat={pos:(from||0)*1000,dur:0,playing:false,live:false}; n.natSave=0;
-  let ok=false; try{ ok=DspApp.playerOpen(JSON.stringify({url,pos:Math.round((from||0)*1000),autoplay:true,speed:+n.p.speed||1,title:n.name||''})); }catch(e){}
+  let ok=false; try{ ok=DspApp.playerOpen(JSON.stringify({url:playUrl,pos:Math.round((from||0)*1000),autoplay:true,speed:+n.p.speed||1,title:n.name||''})); }catch(e){}
   if(!ok){ n.native=false; vpStatus(n,'the native player did not start'); return; }
   vpStatus(n,'playing in the native player (full screen) — ✕ or Back closes it; the controls here drive it too');
 }
@@ -231,7 +286,7 @@ function vpMount(n){
   const bPlay=mk('▶','play / pause (Space)',()=>vpToggle(n));
   const bCont=mk('↻','continue watching: the last started source from its position',()=>vpResumeList(n));
   const bFwd=mk('+10','forward 10 s',()=>vpSeekBy(n,10)), bNext=mk('⏭','next source',()=>vpStep(n,1)), bFull=mk('⤢','fullscreen (F, double-click the picture)',()=>vpFull(n));
-  const bNat=mk('📺','open this source in the native player of the app (mkv / ts / avi, AC3, hardware decoding)',()=>{ if(n.url) vpOpenNative(n,n.url,n.native ? (n.nat.pos/1000) : (n.v.currentTime||vpResume(vpLoadMap()[n.url]))); });
+  const bNat=mk('📺','open this source in the native player of the app (mkv / ts / avi, AC3, hardware decoding)',()=>{ if(n.url) vpOpenNative(n,n.playUrl||n.url,n.native ? (n.nat.pos/1000) : (n.v.currentTime||vpResume(vpLoadMap()[n.url]))); });
   bNat.hidden=!vpNativeCan();
   const seek=vpEl('input','vp-seek'); seek.type='range'; seek.min=0; seek.max=1000; seek.value=0;
   const time=vpEl('span','vp-time','0:00 / 0:00');
@@ -303,7 +358,7 @@ function vpDraw(n){
     u.time.textContent=vpFmt(t)+' / '+(d>0 ? vpFmt(d) : (n.url ? 'live' : '0:00')); }
   const pl=n.url && (nat ? nat.playing : !v.paused && !v.ended) ? '⏸' : '▶';
   if(u.bPlay.textContent!==pl) u.bPlay.textContent=pl;
-  const m=(n.status||'')+(n.warn ? (n.status ? '\n' : '')+n.warn : '');
+  const m=[n.status,n.torrent ? n.tline : '',n.warn].filter(Boolean).join('\n');
   if(u.msg.textContent!==m) u.msg.textContent=m;
   u.msg.hidden=!m;
 }
@@ -317,14 +372,15 @@ def({ id:'vplayer', title:'Video Player', cat:'Sources', vidEl:true, resize:true
     {n:'playb',t:'button',label:'Play',fn:n=>{ if(n.p.url) vpOpen(n,n.p.url,''); }},
     {n:'speed',t:'range',min:.25,max:3,step:.25,d:1,label:'speed'},
     {n:'engine',t:'select',opts:['auto','browser','native (app)'],d:'auto',label:'who plays: auto — the browser, and in the DSP app the native player for udp:// rtp:// rtsp:// and mkv / ts / avi (also when the browser cannot play a file); native — always the native player of the app (hardware decoders, AC3 / DTS)'},
+    {n:'bridge',t:'text',d:VP_BRIDGE,label:'torrents (magnet: links, .torrent files): bridge of the DSP app — ws://127.0.0.1:8765 or a device name (@phone); the app downloads the file as you watch'},
     {n:'capture',t:'check',d:false,label:'allow picture capture for the floating window / PiP of the app (the server must send CORS headers — otherwise the video will not play); without it the window shows a note instead of the picture'},
     {n:'autoplay',t:'check',d:true,label:'start playing at once (the browser may require a click first)'},
     {n:'advance',t:'check',d:true,label:'at the end go on to the next source of the list'},
     {n:'contb',t:'button',label:'Continue watching',fn:n=>vpResumeList(n)},
     {n:'forget',t:'button',label:'Forget saved positions',fn:n=>{ LS.set(VP_KEY,'{}'); n.bump++; vpStatus(n,'saved positions cleared'); }}],
   init(n){ n.v=document.createElement('video'); n.list=[]; n.idx=-1; n.url=''; n.name=''; n.status=''; n.warn=''; n.levels=null; n.hls=null; n.gen=0;
-    n.recQ=[]; n.lastPos=0; n.started=false; n.retry=0; n.tainted=false; n.native=false; n.nat=null; n.natSave=0; n.engineClosed=false; n.msAt=0; n.alts=[]; n.altI=-1; n.from=0; n.fcv=null; n.bump=0; n.meta=null; n.savedPos=-9; n.saveAt=0; n.ended=false; n.endPulse=0; n.inUrl=''; n.inCh=''; n.inSeek=null; n.nxPrev=false; n.rowsKey=''; n.ui=null; n.dirty=true; },
-  dispose(n){ if(n.hidePage) window.removeEventListener('pagehide',n.hidePage); vpDestroy(n); },
+    n.recQ=[]; n.playUrl=''; n.torrent=null; n.tline=''; n.tpoll=0; n.tbusy=false; n.tinfo=null; n.bgP=null; n.bgWs=null; n.lastPos=0; n.started=false; n.retry=0; n.tainted=false; n.native=false; n.nat=null; n.natSave=0; n.engineClosed=false; n.msAt=0; n.alts=[]; n.altI=-1; n.from=0; n.fcv=null; n.bump=0; n.meta=null; n.savedPos=-9; n.saveAt=0; n.ended=false; n.endPulse=0; n.inUrl=''; n.inCh=''; n.inSeek=null; n.nxPrev=false; n.rowsKey=''; n.ui=null; n.dirty=true; },
+  dispose(n){ if(n.hidePage) window.removeEventListener('pagehide',n.hidePage); vpDestroy(n); vpBridgeDrop(n); },
   process(n,I){
     if(Array.isArray(I.rows)){
       const L=vpSources(I.rows), k=L.length+'|'+L.map(c=>c.url).join('\n');
@@ -339,6 +395,7 @@ def({ id:'vplayer', title:'Video Player', cat:'Sources', vidEl:true, resize:true
     if(I.seek!=null && I.seek!==n.inSeek && isFinite(+I.seek)){ n.inSeek=I.seek; if(n.url) n.v.currentTime=Math.max(0,+I.seek); }
     const nx=(I.next||0)>.5; if(nx && !n.nxPrev) vpStep(n,1); n.nxPrev=nx;
     const v=n.v, nat=n.native && n.nat, d=nat ? nat.dur/1000 : isFinite(v.duration) ? v.duration : 0, t=nat ? nat.pos/1000 : v.currentTime||0;
+    vpTorrentPoll(n);
     const rec=n.recQ.length ? n.recQ.splice(0) : null, end=n.endPulse; n.endPulse=0;
     return {vid:v.videoWidth ? v : null, rec, name:n.name, time:t, dur:d, pct:d>0 ? t/d*100 : 0, playing:n.url && (nat ? nat.playing : !v.paused && !v.ended) ? 1 : 0, end}; },
   draw(n){

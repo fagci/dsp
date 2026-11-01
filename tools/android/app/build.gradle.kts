@@ -51,4 +51,9 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-dash:$media3")
     implementation("androidx.media3:media3-exoplayer-rtsp:$media3")
     implementation("androidx.media3:media3-ui:$media3")
+    // Торренты (команды torrent.* моста, TorrentHub.kt): libtorrent; ARM — телефоны и приставки
+    val lt = "2.1.0-39"
+    implementation("org.libtorrent4j:libtorrent4j:$lt")
+    implementation("org.libtorrent4j:libtorrent4j-android-arm64:$lt")
+    implementation("org.libtorrent4j:libtorrent4j-android-arm:$lt")
 }

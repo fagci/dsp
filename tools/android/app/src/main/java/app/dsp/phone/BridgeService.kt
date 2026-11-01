@@ -49,6 +49,7 @@ class BridgeService : Service() {
     private lateinit var alarms: AlarmCmds
     private lateinit var headless: HeadlessHub
     private lateinit var cal: CalendarHub
+    private lateinit var torrents: TorrentHub
     private lateinit var recorder: RecHub
     private lateinit var callrec: CallRec
     private lateinit var files: FileHub
@@ -86,6 +87,7 @@ class BridgeService : Service() {
         alarms = AlarmCmds(this); Alarms.sink = emit
         headless = HeadlessHub(this, cfg, emit)
         cal = CalendarHub(this, needs)
+        torrents = TorrentHub(this)
         recorder = RecHub(this, cfg, server)
         callrec = CallRec(this, cfg, server, needs, { recorder.dir }, emit)
         files = FileHub(this, needs)
@@ -229,6 +231,7 @@ class BridgeService : Service() {
             n.startsWith("alarm.") -> alarms.exec(c, j)
             n.startsWith("boot.") -> headless.exec(c, j)
             n.startsWith("cal.") -> cal.exec(c, j)
+            n.startsWith("torrent.") -> torrents.exec(c, j)
             n.startsWith("rec.") -> recorder.exec(c, j)
             n.startsWith("callrec.") -> callrec.exec(c, j)
             n.startsWith("media.") || n.startsWith("fs.") -> files.exec(c, j)
@@ -255,7 +258,7 @@ class BridgeService : Service() {
         destroyed = true
         main.removeCallbacks(tick)
         inst = null; up = false
-        power.close(); activity.close(); try { sys.stopMock() } catch (e: Exception) { }; FloatWin.closeAll(); headless.shutdown(); callrec.close(); recorder.close()
+        power.close(); activity.close(); try { torrents.close() } catch (e: Exception) { }; try { sys.stopMock() } catch (e: Exception) { }; FloatWin.closeAll(); headless.shutdown(); callrec.close(); recorder.close()
         server.stop()
         sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close(); usb.close(); actions.close(); speech.close(); gatt.close(); gattsrv.close(); l2cap.close(); wlink.close(); monitor.close(); wnet.close(); btlink.close(); adv.close(); net.close(); sys.close()
         wake?.takeIf { it.isHeld }?.release()
