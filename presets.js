@@ -582,6 +582,7 @@ const PRESET_CATS={
   'Phone App: Activity with the Screen Locked (Still, Walking, Pick-up)':'Maps & Locating',
   'Phone App: Microphone, Cell and Packets':'Maps & Locating',
   'Phone App: Wideband Microphone — Raw Source, up to 192 kHz, USB, Call Audio (root)':'Maps & Locating',
+  'Phone App: Stereo Microphone — Two Phone Mics Without Delay, Phase Difference':'Maps & Locating',
   'Phone App: Low-Latency Microphone — Monitor in Headphones, Delay Readout':'Maps & Locating',
   'Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)':'Maps & Locating',
   'Phone App: Wi-Fi, BLE and Bluetooth as Three Graphs':'Network & IoT',
@@ -1452,6 +1453,24 @@ const log=addNode('table',920,250,{list:'@patch'});
 log.size.w=480; log.size.h=300; applySize(log);
 addEdge(tx.id,'mic',sc.id,'in1'); addEdge(tx.id,'mic',ff.id,'in'); addEdge(ff.id,'spec',wf.id,'spec');
 addEdge(tx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Stereo Microphone — Two Phone Mics Without Delay, Phase Difference', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Two microphones of the phone as one stereo signal (DSP app): «microphone: channels» = stereo makes the app open ONE AudioRecord with two channels, so the samples of «mic» (left) and «micB» (right) come from the same ADC frame — no delay between the microphones, unlike two separate inputs (two getUserMedia streams or two devices, which start and drift apart). The phase difference you see is real and comes only from the sound path (the distance between the microphones).\n'+
+  'Source: unprocessed (no noise suppression, AGC, equalizer) or camcorder — many phones put the two microphones in a stereo pair there; mono = a single microphone as before. «preferred input» picks usb / wired / bluetooth / built-in (a USB stereo sound card gives two channels as well). Which microphone is left depends on the phone; if it has no stereo input, the app falls back to mono and says so in the node status (micB is then a copy of mic). Cross-Correlation shows the arrival-time difference (lagMs, at 48 kHz one sample = 0.02 ms), the sound travels 34 cm per ms.'});
+nt.size.w=1000; nt.size.h=210; applySize(nt);
+const tx=addNode('termux',40,270,{url:'ws://127.0.0.1:8765',gps:false,battery:false,mic:true,micCh:'stereo',micHz:'48000',micSrc:'unprocessed',micDev:'auto'});
+tx.size.w=380; tx.size.h=540; applySize(tx);
+const sc=addNode('scope',460,270,{});
+sc.size.w=420; sc.size.h=190; applySize(sc);
+const xc=addNode('xcorr',460,480,{maxMs:2});
+xc.size.w=420; xc.size.h=200; applySize(xc);
+const tr=addNode('trend',900,270,{span:30,auto:true});
+tr.size.w=340; tr.size.h=170; applySize(tr);
+addEdge(tx.id,'mic',sc.id,'in1'); addEdge(tx.id,'micB',sc.id,'in2');
+addEdge(tx.id,'mic',xc.id,'A'); addEdge(tx.id,'micB',xc.id,'B');
+addEdge(xc.id,'lagMs',tr.id,'in');
 markWiresDirty();
 });
 preset('Phone App: Call Recorder — Service Records Calls to WAV (root: both sides)', function(){

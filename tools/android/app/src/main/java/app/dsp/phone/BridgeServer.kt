@@ -40,6 +40,7 @@ class BridgeServer(
         @Volatile var micSrc = ""
         @Volatile var micDev = ""
         @Volatile var micLow = false
+        @Volatile var micCh = 1
         @Volatile var iface = ""
         @Volatile var filter = ""
         @Volatile var snap = 0
@@ -59,7 +60,7 @@ class BridgeServer(
     /** Что просят клиенты: источники и их параметры (при нескольких клиентах — самые частые / первые заданные). */
     data class Want(
         val subs: Set<String>, val hz: Int, val wifiEvery: Int,
-        val cellEvery: Int = 5, val micHz: Int = 16000, val micSrc: String = "", val micDev: String = "", val micLow: Boolean = false, val iface: String = "any", val filter: String = "", val snap: Int = 256, val bleOpts: String = "",
+        val cellEvery: Int = 5, val micHz: Int = 16000, val micSrc: String = "", val micDev: String = "", val micLow: Boolean = false, val micCh: Int = 1, val iface: String = "any", val filter: String = "", val snap: Int = 256, val bleOpts: String = "",
     )
 
     private class Req(val method: String, val path: String, val query: Map<String, String>, val headers: Map<String, String>)
@@ -74,7 +75,7 @@ class BridgeServer(
 
     /** Внутренний получатель записей (запись на диск, RecHub): подписки и частоты учитываются в wanted() как у клиента, а записи идут в on, не в сокет. */
     class Sink(val subs: Set<String>, val hz: Int = 0, val wifiEvery: Int = 0, val cellEvery: Int = 0, val on: (List<String>) -> Unit,
-              val micHz: Int = 0, val micSrc: String = "", val micDev: String = "")
+              val micHz: Int = 0, val micSrc: String = "", val micDev: String = "", val micCh: Int = 1)
     private val sinks = CopyOnWriteArraySet<Sink>()
     fun addSink(s: Sink) { sinks.add(s); onSubs() }
     fun removeSink(s: Sink) { if (sinks.remove(s)) onSubs() }
@@ -171,7 +172,7 @@ class BridgeServer(
 
     fun wanted(): Want {
         val subs = HashSet<String>()
-        var msrc = ""; var mdev = ""; var mlow = false
+        var msrc = ""; var mdev = ""; var mlow = false; var mch = 1
         var hz = 0; var wifi = 0; var cell = 0; var mic = 0; var iface = ""; var filter = ""; var snap = 0; var ble = ""
         for (k in sinks) {
             subs.addAll(k.subs)
@@ -181,6 +182,7 @@ class BridgeServer(
             if (k.micHz > mic) mic = k.micHz
             if (msrc.isEmpty()) msrc = k.micSrc                       // получатель записи (звонок) главнее страницы: его источник берётся первым
             if (mdev.isEmpty()) mdev = k.micDev
+            if (k.micCh > mch) mch = k.micCh
         }
         for (c in clients) {
             subs.addAll(c.subs)
@@ -191,13 +193,14 @@ class BridgeServer(
             if (msrc.isEmpty()) msrc = c.micSrc
             if (mdev.isEmpty()) mdev = c.micDev
             if (c.micLow) mlow = true
+            if (c.micCh > mch) mch = c.micCh
             if (iface.isEmpty()) iface = c.iface
             if (filter.isEmpty()) filter = c.filter
             if (c.snap > snap) snap = c.snap
             if (ble.isEmpty()) ble = c.bleOpts
         }
         return Want(subs, if (hz > 0) hz.coerceIn(1, 1000) else 20, if (wifi > 0) wifi else 10,
-            if (cell > 0) cell else 5, if (mic > 0) mic else 16000, msrc, mdev, mlow, iface.ifEmpty { "any" }, filter, if (snap > 0) snap else 256, ble)
+            if (cell > 0) cell else 5, if (mic > 0) mic else 16000, msrc, mdev, mlow, mch, iface.ifEmpty { "any" }, filter, if (snap > 0) snap else 256, ble)
     }
 
     /** Запись от источника; уйдёт подписанным клиентам в ближайшей пачке. */
@@ -427,6 +430,7 @@ class BridgeServer(
         c.micSrc = j.optString("micSrc", "").take(24)
         c.micDev = j.optString("micDev", "").take(24)
         c.micLow = j.optBoolean("micLow", false)
+        c.micCh = MicArgs.channels(j.optString("micCh", ""))
         c.iface = j.optString("iface", "")
         c.filter = j.optString("filter", "")
         c.snap = j.optInt("snap", 0)

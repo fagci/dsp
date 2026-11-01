@@ -43,6 +43,9 @@ object MicArgs {
         else -> emptyList()
     }
 
+    /** Каналов: stereo / 2 → 2 (оба микрофона одним AudioRecord — отсчёты каналов из одного кадра АЦП, сдвига между ними нет), иначе 1. */
+    fun channels(name: String?): Int = when ((name ?: "").trim().lowercase()) { "stereo", "2" -> 2; else -> 1 }
+
     /** Размер порции — 20 мс; в режиме низкой задержки — 10 мс (порций вдвое больше, зато каждая уходит на страницу раньше). */
     fun chunk(rate: Int, low: Boolean = false): Int = if (low) rate / 100 else rate / 50
 

@@ -75,7 +75,7 @@ br.close(); fs.rmSync(dir,{recursive:true,force:true});
 const kf=path.join(root,'modules/termux-kernels.js');
 if(fs.existsSync(kf)){
   const ctx=vm.createContext({atob,Float32Array,Math,Number,String,Object,Array,isFinite,Date,JSON,URL,URLSearchParams});
-  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxDev,termuxThin,termuxPoint,termuxPcm,termuxEuler,termuxApply,termuxSub,termuxLine,termuxSubMsg,termuxMicLag,termuxTaDist};',ctx);
+  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxDev,termuxThin,termuxPoint,termuxPcm,termuxEuler,termuxApply,termuxSub,termuxLine,termuxSubMsg,termuxMicLag,termuxMicK,termuxTaDist};',ctx);
   const K=ctx.K, o={};
   K.termuxApply(o,{src:'gps',lat:1,lon:2,alt:3,acc:4,speed:5,bearing:6});
   ok('apply gps',o.lat===1 && o.lon===2 && o.alt===3 && o.acc===4 && o.speed===5 && o.hdg===6);
@@ -89,6 +89,10 @@ if(fs.existsSync(kf)){
   ok('sub message: mic, cell, capture',mm.micHz===48000 && mm.cellEvery===3 && mm.iface==='wlan0' && mm.filter==='tcp port 80' && mm.snap===512 && mm.sub.join()==='cell,mic,pkt',JSON.stringify(mm));
   const ms=K.termuxSubMsg({mic:true,micHz:'96000',micSrc:'unprocessed',micDev:'usb'});
   ok('sub message: microphone source and device',ms.micHz===96000 && ms.micSrc==='unprocessed' && ms.micDev==='usb' && ms.sub.join()==='mic',JSON.stringify(ms))
+  const pst=K.termuxPcm({ch:2,pcm:Buffer.from(new Int16Array([16384,-16384,8192,-8192]).buffer).toString('base64')});
+  ok('stereo pcm: interleaved L,R decode',pst.length===4 && pst[0]===.5 && pst[1]===-.5 && pst[2]===.25 && pst[3]===-.25);
+  ok('mic channels: mono by default, stereo → 2 and sent to the app',K.termuxMicK({})===1 && K.termuxMicK({micCh:'mono'})===1 && K.termuxMicK({micCh:'stereo'})===2 && K.termuxMicK(null)===1
+    && K.termuxSubMsg({mic:true,micCh:'stereo'}).micCh==='stereo' && !('micCh' in K.termuxSubMsg({mic:true,micCh:'mono'})) && !('micCh' in K.termuxSubMsg({gps:true,micCh:'stereo'})));
   const md=K.termuxSubMsg({mic:true,micSrc:'auto',micDev:'auto'});
   ok('sub message: auto source and device are not sent',!('micSrc' in md) && !('micDev' in md))
   ok('sub message: source only with the microphone on',!('micSrc' in K.termuxSubMsg({gps:true,micSrc:'downlink'})))

@@ -40,9 +40,11 @@ function termuxRetry(n){ if(n.want && n.p.reconnect){ clearTimeout(n.timer); n.t
 // PCM микрофона → поток отсчётов с метками (ssPush, sources.js): выдаётся по часам блоков движка, как у датчиков
 function termuxMic(n,r){
   const a=termuxPcm(r), sr=+r.sr; if(!a || !(sr>0)) return;
-  const wall=performance.now()/1000, dur=a.length/sr;
-  if(!n.micT || Math.abs(n.micT-(wall-dur))>.5){ n.micT=wall-dur; if(n.micT0) ssInit(n,1); n.micT0=1; n.sExact=true; n.sLag=termuxMicLag(n.p); }
-  for(let i=0;i<a.length;i++) ssPush(n,n.micT+i/sr,[a[i]]);
+  const K=termuxMicK(n.p), rc=+r.ch===2 ? 2 : 1, fr=a.length/rc|0;   // pcm чередует L,R: отсчёты обоих каналов — один кадр с одной меткой, сдвига между ними нет
+  const wall=performance.now()/1000, dur=fr/sr;
+  if(!n.micT || Math.abs(n.micT-(wall-dur))>.5){ n.micT=wall-dur; if(n.micT0) ssInit(n,K); n.micT0=1; n.sExact=true; n.sLag=termuxMicLag(n.p); }
+  n.micCh=rc;
+  for(let i=0;i<fr;i++){ const l=a[i*rc]; ssPush(n,n.micT+i/sr,K===2 ? [l,rc===2 ? a[i*rc+1] : l] : [l]); }
   n.micT+=dur;
 }
 function termuxFeed(n,r){
@@ -68,7 +70,7 @@ const TERMUX_OUTS=['lat','lon','alt','acc','speed','hdg','ax','ay','az','gx','gy
 // Чекбоксы источников: у каждого есть скрытый вход-пин с тем же именем (число ≥0.5 — включить), появляется при подключении провода.
 const TERMUX_PINS=['gps','battery','accel','gyro','mag','light','pressure','gravity','linear','rotation','gamerot','georot','accelraw','gyroraw','magraw','proximity','ambtemp','humidity','steps','heading','hinge','wifi','ble','bt','gnss','gnssraw','nmea','cell','mic','pkt','step','devorient','sigmotion','stationary','motion','power','ext','activity','pickup','wakegest','glance','tilt','offbody'];
 def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'termux android app phone background bluetooth ble gnss satellites nmea raw measurements gps accelerometer gyroscope magnetometer battery wifi cell sensors enable gate away from home',
-  ins:TERMUX_PINS.map(k=>({n:k,t:'num'})), outs:[{n:'rec',t:'rec'},{n:'pts',t:'rec'},{n:'line',t:'txt'},{n:'nmeatxt',t:'txt'},{n:'mic',t:'sig'},{n:'go',t:'num'},...TERMUX_OUTS.map(k=>({n:k,t:'num'}))],
+  ins:TERMUX_PINS.map(k=>({n:k,t:'num'})), outs:[{n:'rec',t:'rec'},{n:'pts',t:'rec'},{n:'line',t:'txt'},{n:'nmeatxt',t:'txt'},{n:'mic',t:'sig'},{n:'micB',t:'sig'},{n:'go',t:'num'},...TERMUX_OUTS.map(k=>({n:k,t:'num'}))],
   readout:true, tall:true,
   groups:[{n:'Position & battery'},{n:'Motion (accel · gyro · mag)',open:false},{n:'Orientation & activity',open:false},{n:'Environment',open:false},{n:'Wi-Fi',open:false},{n:'Bluetooth LE / classic',open:false},{n:'GNSS',open:false},{n:'Cell & microphone',open:false},{n:'Packet capture (root)',open:false},{n:'Device records',open:false}],
   params:[
@@ -118,6 +120,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'mic',g:'Cell & microphone',t:'check',d:false,label:'microphone → output «mic» (signal), level in «micdb» (DSP app, also with the screen locked)'},
     {n:'micHz',g:'Cell & microphone',t:'select',opts:['8000','16000','22050','44100','48000','96000','192000'],d:'16000',label:'microphone: sample rate, Hz (the DSP app tries the nearest standard one if the phone cannot open it; the real one is in the record, sr). Above 8 kHz of signal needs 22050 and more'},
     {n:'micSrc',g:'Cell & microphone',t:'select',opts:['auto','unprocessed','mic','camcorder','voice_recognition','voice_comm','performance','voice_call','downlink','uplink','submix'],d:'auto',label:'microphone: source in the DSP app — auto = unprocessed (no noise suppression / AGC) if the phone has it, else mic; voice_call / downlink (the other side) / uplink (your voice) / submix (what the phone plays) need root («Allow root features» in the app Settings) and the phone\'s audio HAL to give them'},
+    {n:'micCh',g:'Cell & microphone',t:'select',opts:['mono','stereo'],d:'mono',label:'microphone: channels (DSP app) — stereo = two microphones of the phone in one recording: «mic» is the left, «micB» the right channel, samples of both from the same ADC frame, so there is no time shift between them (the phase difference is real). Use source unprocessed or camcorder; the order of the microphones depends on the phone; if it has no stereo input the app falls back to mono (see the status)',fn:n=>{ n.micT=0; }},
     {n:'micLow',g:'Cell & microphone',t:'check',d:false,label:'microphone: low latency (DSP app) — pieces of 10 ms, the bridge sends them at once, a small buffer on the phone and a short smoothing reserve here (below). Costs more CPU and risks gaps on a busy phone; for the least delay also set Block size 128 in the toolbar'},
     {n:'micLag',g:'Cell & microphone',t:'range',min:20,max:300,step:5,d:60,label:'microphone: smoothing reserve in low latency, ms (less — shorter delay, but gaps if the pieces come unevenly)',if:n=>n.p.micLow},
     {n:'micDev',g:'Cell & microphone',t:'select',opts:['auto','usb','wired','bluetooth','builtin'],d:'auto',label:'microphone: preferred input in the DSP app (a USB microphone / headset, wired, Bluetooth, built-in); noise suppression, AGC and echo cancellation are switched off anyway'},
@@ -142,7 +145,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'connect',t:'button',label:'Connect',fn:n=>termuxStart(n)},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>{ n.resume=false; termuxStop(n); }},
   ],
-  init:n=>{ ssInit(n,1); n.sExact=true; n.sLag=.25; n.micT=0; n.micT0=0; n.devSeen=new Map(); n.ptQ=[]; n.ptSeq=0; n.ws=null; n.want=false; n.timer=null; n.recQ=[]; n.lineQ=[]; n.nmeaQ=[]; n.vals={}; n.last=''; n.msgs=0; n.count=0;
+  init:n=>{ ssInit(n,termuxMicK(n.p)); n.sExact=true; n.sLag=.25; n.micT=0; n.micT0=0; n.devSeen=new Map(); n.ptQ=[]; n.ptSeq=0; n.ws=null; n.want=false; n.timer=null; n.recQ=[]; n.lineQ=[]; n.nmeaQ=[]; n.vals={}; n.last=''; n.msgs=0; n.count=0;
             n.status='not connected'; n.warn=''; n.sentSub=null; n.bridgeMsg=''; },
   dispose:n=>termuxStop(n),
   onStop:n=>{ n.resume=n.want; termuxStop(n); },       // стоп движка — отпускаем мост (датчики, микрофон на телефоне)
@@ -156,8 +159,13 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     const nm=n.nmeaQ.length ? n.nmeaQ.splice(0).join('\n')+'\n' : '';
     const o={rec, pts:n.ptQ.length ? n.ptQ.splice(0) : null, line, nmeatxt:nm, go:rec ? 1 : 0};
     for(const k of TERMUX_OUTS) o[k]=n.vals[k] ?? null;
-    if(n.p.mic){ n.sLag=termuxMicLag(n.p); const m=buf(n,'mic'); ssProcess(n,[m]); o.mic=m; }
-    else { if(n.micT){ ssInit(n,1); n.micT=0; n.micT0=0; n.sExact=true; n.sLag=.25; } o.mic=buf(n,'mic').fill(0); }
+    const K=termuxMicK(n.p);
+    if(n.p.mic){
+      if(n.sK!==K){ ssInit(n,K); n.micT=0; n.micT0=0; n.sExact=true; }
+      n.sLag=termuxMicLag(n.p); const m=buf(n,'mic'), mb=buf(n,'micB');
+      if(K===2) ssProcess(n,[m,mb]); else { ssProcess(n,[m]); mb.fill(0); }
+      o.mic=m; o.micB=mb; }
+    else { if(n.micT || n.sK!==K){ ssInit(n,K); n.micT=0; n.micT0=0; n.sExact=true; n.sLag=.25; } o.mic=buf(n,'mic').fill(0); o.micB=buf(n,'micB').fill(0); }
     return o;
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
@@ -177,7 +185,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     if(o.steps!=null) t+='\nsteps '+f(o.steps,0);
     if(o.hinge!=null) t+='\nhinge '+f(o.hinge,0)+'°';
     if(o.cdbm!=null) t+='\ncell '+f(o.cdbm,0)+' dBm'+(o.crsrp!=null ? '  RSRP '+f(o.crsrp,0)+' RSRQ '+f(o.crsrq,0) : '');
-    if(o.micdb!=null) t+='\nmic '+f(o.micdb,0)+' dBFS';
+    if(o.micdb!=null) t+='\nmic '+f(o.micdb,0)+' dBFS'+(n.p.mic && n.micCh ? ' · '+(n.micCh===2 ? 'stereo' : 'mono')+(n.p.micCh==='stereo' && n.micCh!==2 ? ' (the phone gave no stereo)' : '') : '');
     if(n.p.mic && o.micdb!=null){ const l=typeof Eng!=='undefined' && Eng.latencyMs ? Eng.latencyMs() : null, buf=Math.max(n.sLag||0,3*(n.sDt||0))*1000;
       t+='\nmic → output ≈ '+Math.round(buf+(l ? l.totalMs : 0))+' ms (smoothing '+Math.round(buf)+(l ? ' + engine '+Math.round(l.queueMs)+' + device '+Math.round(l.hardwareMs) : '')+')'; }
     if(o.orient!=null) t+='\nscreen orientation '+f(o.orient,0);
