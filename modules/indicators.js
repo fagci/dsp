@@ -1,6 +1,6 @@
 "use strict";
 /* ============================ INDICATORS ============================ */
-// Визуальные индикаторы на числовых проводах: Lamps, Gauge, LED Bar, Compass, 7-Segment.
+// Визуальные индикаторы на числовых проводах: Lamps, Gauge, LED Bar, Compass, 7-Segment, Tuning Dial, Magic Eye.
 // Все рисуются на canvas узла (работают и в дашборде), пересчёт — каждый блок (lazy:'proc').
 
 const IND_COL={green:'--t-blk',amber:'--acc',red:'--err',blue:'--t-img',teal:'--acc2',violet:'--t-spec',pink:'--t-trk'};
@@ -376,6 +376,142 @@ def({ id:'smeter', lazy:'proc', title:'S-Meter', cat:'Indicators', ins:[{n:'in',
     cx.fillText(n.v===null ? '—' : SM_NAME(n.sv,s9),6,2);
     cx.textAlign='right'; cx.fillStyle=themeColor('--axis');
     cx.fillText(n.v===null ? '' : indFmt(n.v)+' '+p.unit,W-6,2);
+    cx.textAlign='start'; cx.textBaseline='alphabetic'; }
+});
+
+/* ---------- Dial (шкала настройки приёмника: свайп / драг / колесо, инерция) ---------- */
+const DIAL_UNITS={Hz:1,kHz:1e3,MHz:1e6,GHz:1e9};
+// «круглый» шаг делений 1·2·5·10ⁿ, чтобы подписи шли не чаще, чем раз в minPx пикселей
+function dialTicks(spanU,W,minPx){
+  const raw=spanU*minPx/Math.max(1,W), pow=Math.pow(10,Math.floor(Math.log10(raw||1))), m=raw/pow;
+  const k=m<=1 ? 1 : m<=2 ? 2 : m<=5 ? 5 : 10;
+  return {major:k*pow, minor:k*pow/(k===2 ? 4 : 5)};          // 1→0.2, 2→0.5, 5→1, 10→2
+}
+function dialPut(n,f,snap){
+  const p=n.p, U=DIAL_UNITS[p.unit]||1e6, lo=Math.min(+p.min,+p.max)*U, hi=Math.max(+p.min,+p.max)*U, st=(+p.step||0)*U;
+  if(snap && p.snap && st>0) f=Math.round(f/st)*st;
+  n.f=clamp(f,lo,hi); n.p.state=String(Math.round(n.f));
+}
+def({ id:'dial', lazy:'proc', title:'Tuning Dial', cat:'Indicators', kw:'tuning scale frequency dial radio swipe drag slider vfo knob analog',
+  ins:[{n:'in',t:'num'}], outs:[{n:'f',t:'num'},{n:'touch',t:'num'}], view:{h:96}, resize:true,
+  params:[{n:'unit',t:'select',opts:Object.keys(DIAL_UNITS),d:'MHz',label:'unit (the f output is always in Hz)'},
+          {n:'min',t:'num',d:87.5,label:'band start'},{n:'max',t:'num',d:108,label:'band end'},
+          {n:'span',t:'num',d:3,label:'scale window width (scroll mode)'},
+          {n:'step',t:'num',d:.1,label:'tuning step (0 — smooth)'},
+          {n:'snap',t:'check',d:true,label:'snap to the step'},
+          {n:'mode',t:'select',opts:['scroll','fixed'],d:'scroll',label:'scroll — the scale slides under the needle; fixed — the needle runs along the whole band'},
+          {n:'inertia',t:'check',d:true,label:'keep gliding after a swipe'},
+          {n:'color',t:'text',d:'amber',label:'needle & glow: '+IND_COLORS.join(', ')+' or #rrggbb'},
+          {n:'state',t:'text',d:'',hidden:true}],
+  init:n=>{ const s=parseFloat(n.p.state), U=DIAL_UNITS[n.p.unit]||1e6;
+    n.f=isFinite(s) ? s : (+n.p.min+ +n.p.max)/2*U; n.drag=null; n.vel=0; n.lastIn=null; n.touch=0; },
+  process(n,I){
+    const v=indNum(I.in);
+    if(v!==null && v!==n.lastIn){ n.lastIn=v; if(!n.drag){ dialPut(n,v,false); n.vel=0; } }
+    if(!n.drag && n.vel){                                      // инерция после броска: затухает с τ≈0.35 с
+      const U=DIAL_UNITS[n.p.unit]||1e6, dt=indDt();
+      dialPut(n,n.f+n.vel*dt,true); n.vel*=Math.exp(-dt/.35);
+      if(Math.abs(n.vel)<(+n.p.span||1)*U*.002) n.vel=0; }
+    return {f:n.f, touch:n.touch}; },
+  draw(n,cv,cx){
+    const W=cv.width, H=cv.height, p=n.p, U=DIAL_UNITS[p.unit]||1e6, col=indColor(p.color);
+    const lo=Math.min(+p.min,+p.max)*U, hi=Math.max(+p.min,+p.max)*U, fixed=p.mode==='fixed';
+    const span=(fixed ? hi-lo : (+p.span||1)*U) || 1, f0=fixed ? lo : n.f-span/2;
+    const X=f=>(f-f0)/span*W;
+    indWire(n,cv,{
+      down:(x,y,ev)=>{ n.touch=1; n.vel=0; n.drag={x0:x,f0:n.f,t:performance.now(),lx:x,lt:performance.now(),v:0};
+        if(n.p.mode==='fixed') dialPut(n,lo+x/cv.width*(hi-lo),true); redraw(n); },
+      move:(x,y,ev)=>{ const d=n.drag; if(!d) return; const now=performance.now();
+        const w=cv.width, sp=n.p.mode==='fixed' ? hi-lo : (+n.p.span||1)*U;
+        if(n.p.mode==='fixed') dialPut(n,lo+x/w*(hi-lo),true);
+        else dialPut(n,d.f0-(x-d.x0)/w*sp,true);                // шкала едет за пальцем
+        const dt=(now-d.lt)/1000; if(dt>0.004){ d.v=d.v*.6+((d.lx-x)/w*sp/dt)*.4; d.lx=x; d.lt=now; }
+        redraw(n); },
+      up:()=>{ const d=n.drag; n.drag=null; n.touch=0;
+        if(d && n.p.inertia && n.p.mode!=='fixed' && performance.now()-d.lt<90 && Math.abs(d.v)>(+n.p.span||1)*U*.02) n.vel=d.v;
+        redraw(n); },
+      wheel:(x,y,ev)=>{ const st=(+n.p.step||(+n.p.span||1)/100)*U*(ev.shiftKey ? 10 : 1); n.vel=0;
+        dialPut(n,n.f+(ev.deltaY<0 ? st : -st),true); redraw(n); }});
+    cx.clearRect(0,0,W,H);
+    const r=Math.min(8,H*.12);                                   // стекло шкалы
+    cx.save(); cx.beginPath(); cx.roundRect(1,1,W-2,H-2,r); cx.clip();
+    const bg=cx.createLinearGradient(0,0,0,H); bg.addColorStop(0,'#1d1a14'); bg.addColorStop(.5,'#2b261b'); bg.addColorStop(1,'#15130e');
+    cx.fillStyle=bg; cx.fillRect(0,0,W,H);
+    // подсветка шкалы лампочкой за стеклом
+    const gl=cx.createRadialGradient(W/2,H*.55,2,W/2,H*.55,W*.6); gl.addColorStop(0,col); gl.addColorStop(1,'transparent');
+    cx.globalAlpha=.22; cx.fillStyle=gl; cx.fillRect(0,0,W,H); cx.globalAlpha=1;
+    const sy=H*.62, tk=dialTicks(span/U,W,Math.max(46,H*.7)), maj=tk.major*U, mnr=tk.minor*U;
+    cx.lineWidth=1; cx.textAlign='center'; cx.textBaseline='top'; indFont(cx,Math.min(13,Math.max(8,H*.17)));
+    // заглушка за краями диапазона
+    cx.fillStyle='rgba(0,0,0,.45)'; if(X(lo)>0) cx.fillRect(0,0,X(lo),H); if(X(hi)<W) cx.fillRect(X(hi),0,W-X(hi),H);
+    cx.strokeStyle='#d8cfb0'; cx.fillStyle='#d8cfb0';
+    const a=Math.max(lo,f0), b=Math.min(hi,f0+span);
+    for(let q=Math.ceil(a/mnr-1e-9); q*mnr<=b+1e-6; q++){
+      const f=q*mnr, x=Math.round(X(f))+.5, isMaj=Math.abs(f/maj-Math.round(f/maj))<1e-6;
+      cx.globalAlpha=isMaj ? .95 : .55; cx.beginPath(); cx.moveTo(x,sy); cx.lineTo(x,sy-(isMaj ? H*.26 : H*.13)); cx.stroke();
+      if(isMaj){ cx.globalAlpha=.9; cx.fillText(indFmt(+(f/U).toPrecision(8)),x,sy+3); } }
+    cx.globalAlpha=1; cx.beginPath(); cx.moveTo(0,sy+.5); cx.lineTo(W,sy+.5); cx.strokeStyle='#d8cfb0'; cx.globalAlpha=.5; cx.stroke(); cx.globalAlpha=1;
+    // шкала гаснет к краям — как стекло с подсветкой
+    const ed=cx.createLinearGradient(0,0,W,0); ed.addColorStop(0,'rgba(0,0,0,.65)'); ed.addColorStop(.12,'transparent'); ed.addColorStop(.88,'transparent'); ed.addColorStop(1,'rgba(0,0,0,.65)');
+    if(!fixed){ cx.fillStyle=ed; cx.fillRect(0,0,W,H); }
+    // стрелка
+    const nx=Math.round(fixed ? X(n.f) : W/2)+.5;
+    cx.save(); cx.shadowColor=col; cx.shadowBlur=n.touch ? 14 : 8; cx.strokeStyle=col; cx.lineWidth=2;
+    cx.beginPath(); cx.moveTo(nx,2); cx.lineTo(nx,H-2); cx.stroke(); cx.restore();
+    cx.fillStyle=col; cx.beginPath(); cx.moveTo(nx-5,0); cx.lineTo(nx+5,0); cx.lineTo(nx,7); cx.fill();
+    cx.restore();
+    cx.strokeStyle=themeColor('--axis'); cx.lineWidth=1.5; cx.beginPath(); cx.roundRect(1,1,W-2,H-2,r); cx.stroke();
+    cx.textAlign='left'; cx.textBaseline='top'; indFont(cx,Math.min(14,Math.max(9,H*.2)));
+    cx.fillStyle=col; cx.fillText(indFmt(+(n.f/U).toPrecision(9))+' '+p.unit,8,H*.1+3);
+    cx.textAlign='start'; cx.textBaseline='alphabetic'; }
+});
+
+/* ---------- Magic Eye (электронно-световой индикатор настройки: «магический глаз», 6Е5С / EM84) ---------- */
+def({ id:'eye', lazy:'proc', title:'Magic Eye', cat:'Indicators', kw:'tuning eye cats eye tube 6E5 6E5C EM84 EM80 valve radio analog level indicator',
+  ins:[{n:'in',t:'num'}], outs:[{n:'s',t:'num'}], view:{h:150}, resize:true,
+  params:[{n:'style',t:'select',opts:['eye','bar'],d:'eye',label:'eye — round 6E5 (shadow wedge closes); bar — EM84 (two bars meet)'},
+          {n:'min',t:'num',d:0},{n:'max',t:'num',d:1},
+          {n:'invert',t:'check',d:false,label:'invert (signal opens the shadow)'},
+          {n:'tau',t:'range',min:0,max:2,step:.01,d:.12,label:'phosphor damping, s'},
+          {n:'color',t:'text',d:'green',label:'phosphor: '+IND_COLORS.join(', ')+' or #rrggbb'}],
+  init:n=>{ n.v=null; n.sv=0; },
+  process(n,I){
+    const p=n.p, v=indNum(I.in); n.v=v;
+    const lo=Math.min(+p.min,+p.max), hi=Math.max(+p.min,+p.max), rng=(hi-lo)||1;
+    let t=v===null ? 0 : clamp((v-lo)/rng,0,1); if(p.invert) t=1-t;
+    n.sv=indSmooth(n.sv,t,+p.tau);
+    return {s:n.sv}; },
+  draw(n,cv,cx){
+    const W=cv.width, H=cv.height, p=n.p, col=indColor(p.color), t=n.sv;
+    cx.clearRect(0,0,W,H);
+    const glow=(a)=>{ cx.shadowColor=col; cx.shadowBlur=Math.min(W,H)*.1*a; };
+    if(p.style==='bar'){
+      const m=Math.min(W,H)*.08, w=W-2*m, h=Math.min(H-2*m,w*.28), y=(H-h)/2, bw=w/2*t;
+      cx.fillStyle='#07100b'; cx.strokeStyle=themeColor('--axis'); cx.lineWidth=2;
+      cx.beginPath(); cx.roundRect(m,y,w,h,h*.22); cx.fill(); cx.stroke();
+      cx.save(); cx.beginPath(); cx.roundRect(m+2,y+2,w-4,h-4,h*.2); cx.clip();
+      const g=cx.createLinearGradient(0,y,0,y+h); g.addColorStop(0,col); g.addColorStop(.5,'#ffffff'); g.addColorStop(1,col);
+      cx.fillStyle=g; cx.globalAlpha=.25+.7*Math.min(1,t*3); glow(1);       // слабое свечение остаётся и без сигнала
+      cx.fillRect(m,y,Math.max(w*.04,bw),h); cx.fillRect(m+w-Math.max(w*.04,bw),y,Math.max(w*.04,bw),h);
+      cx.restore(); cx.globalAlpha=1; cx.shadowBlur=0;
+      cx.fillStyle='rgba(255,255,255,.07)'; cx.beginPath(); cx.roundRect(m+4,y+3,w-8,h*.3,h*.15); cx.fill();
+    } else {
+      const R=Math.min(W,H)*.42, cx0=W/2, cy0=H/2;
+      cx.fillStyle='#0b0f0c'; cx.strokeStyle=themeColor('--axis'); cx.lineWidth=Math.max(2,R*.06);
+      cx.beginPath(); cx.arc(cx0,cy0,R*1.06,0,7); cx.fill(); cx.stroke();
+      cx.save(); cx.beginPath(); cx.arc(cx0,cy0,R,0,7); cx.clip();
+      const g=cx.createRadialGradient(cx0,cy0,R*.1,cx0,cy0,R); g.addColorStop(0,'#ffffff'); g.addColorStop(.25,col); g.addColorStop(1,'#08140c');
+      cx.fillStyle=g; cx.globalAlpha=.55+.4*t; glow(1.5); cx.fillRect(cx0-R,cy0-R,2*R,2*R); cx.shadowBlur=0; cx.globalAlpha=1;
+      // тень: клин с вершиной в центре, вниз; чем сильнее сигнал, тем он уже (6Е5: до ~90° без сигнала, смыкается при настройке)
+      const half=(1-t)*Math.PI*.46+.015;
+      cx.fillStyle='rgba(2,8,4,.94)'; cx.beginPath(); cx.moveTo(cx0,cy0);
+      cx.arc(cx0,cy0,R*1.05,Math.PI/2-half,Math.PI/2+half); cx.closePath(); cx.fill();
+      cx.restore();
+      cx.fillStyle='#050805'; cx.beginPath(); cx.arc(cx0,cy0,R*.16,0,7); cx.fill();        // колпачок катода
+      cx.strokeStyle='rgba(255,255,255,.18)'; cx.lineWidth=Math.max(1,R*.03); cx.beginPath(); cx.arc(cx0,cy0,R*.9,Math.PI*1.1,Math.PI*1.55); cx.stroke();   // блик стекла
+    }
+    cx.textAlign='left'; cx.textBaseline='top'; indFont(cx,Math.min(11,Math.max(8,H*.07)));
+    cx.fillStyle=themeColor('--axis'); cx.fillText(n.v===null ? '—' : indFmt(n.v),6,4);
     cx.textAlign='start'; cx.textBaseline='alphabetic'; }
 });
 

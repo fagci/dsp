@@ -555,6 +555,7 @@ const PRESET_CATS={
   'Indicators: Sky Plot, S-Meter, Text Ticker':'Analysis & Measurement',
   'Indicators: Switches and Attitude':'Analysis & Measurement',
   'Indicators: Knobs, Faders, XY Pad and Tank':'Analysis & Measurement',
+  'Indicators: Radio Tuning Dial and Magic Eye (stream)':'Analysis & Measurement',
   'Panels: Radio Displays (Base and Mobile) and a Key Panel':'Analysis & Measurement',
   'Panels: Metal Detector from the Magnetometer and Other Detectors':'Analysis & Measurement',
   'Panels: Needle Meter, Speedometer, Counters, Nixie, D-pad and Spectrum Display':'Analysis & Measurement',
@@ -7281,6 +7282,29 @@ addEdge(kb.id,'out1',l1.id,'freq'); addEdge(kb.id,'out2',l2.id,'freq');
 addEdge(l1.id,'out',tk.id,'in'); addEdge(l1.id,'out',tr.id,'in');
 for(let k=1;k<=4;k++) addEdge(fd.id,'out'+k,lp.id,'in'+k);
 addEdge(xy.id,'x',cp.id,'az'); addEdge(xy.id,'y',gg.id,'in');
+markWiresDirty();
+});
+preset('Indicators: Radio Tuning Dial and Magic Eye (stream)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Tube-radio front panel. Tuning Dial: swipe / drag the scale sideways (it slides under the needle and keeps gliding after a flick), the wheel steps one channel, Shift — ten; in «fixed» mode the needle runs along the whole band. Its f output is in Hz and feeds the 7-Segment readout.\n'+
+  'Magic Eye (round 6E5 and the EM84 bar): the shadow wedge closes / the two bars meet as the level rises. Press ▶ Play in Audio Stream — its level (dB) drives both eyes. Where the server sends no CORS headers (or the phone app cannot open the stream directly) the stream is fetched and played through MediaSource instead.'});
+nt.size.w=960; nt.size.h=120; applySize(nt);
+const dl=addNode('dial',40,190,{unit:'MHz',min:87.5,max:108,span:3,step:.1,state:'99500000'});
+dl.size.w=520; dl.size.h=110; applySize(dl);
+const sd=addNode('segdisp',620,190,{digits:8,decimals:3,fmt:'frequency'});
+sd.size.w=300; sd.size.h=70; applySize(sd);
+const d2=addNode('dial',40,350,{unit:'MHz',min:87.5,max:108,step:.1,mode:'fixed',color:'teal',state:'101700000'});
+d2.size.w=520; d2.size.h=90; applySize(d2);
+const st=addNode('stream',40,500,{url:'https://ice1.somafm.com/groovesalad-128-mp3',auto:false});
+const dc=addNode('dac',320,500,{vol:.5});
+const mt=addNode('stats',320,640,{view:'bar'}); mt.size.h=26; applySize(mt);
+const e1=addNode('eye',620,340,{style:'eye',min:-48,max:-6});
+e1.size.w=240; e1.size.h=230; applySize(e1);
+const e2=addNode('eye',900,340,{style:'bar',min:-48,max:-6,color:'teal'});
+e2.size.w=320; e2.size.h=140; applySize(e2);
+addEdge(dl.id,'f',sd.id,'in');
+addEdge(st.id,'L',dc.id,'L'); addEdge(st.id,'R',dc.id,'R'); addEdge(st.id,'L',mt.id,'in');
+addEdge(mt.id,'db',e1.id,'in'); addEdge(mt.id,'db',e2.id,'in');
 markWiresDirty();
 });
 preset('Panels: Radio Displays (Base and Mobile) and a Key Panel', function(){

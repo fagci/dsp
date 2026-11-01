@@ -7108,8 +7108,46 @@ function streamTryLoad(audio, timeoutMs){
   });
 }
 
+// Запасной путь, когда <audio> не смог сам открыть адрес (нет CORS у сервера, а в приложении Android медиа-стек WebView
+// не берёт бесконечный ответ перехватчика): поток качаем обычным fetch (в приложении ответ приходит от CorsProxy
+// с нужными заголовками, в браузере — напрямую или через прокси из Settings) и скармливаем <audio> через MediaSource.
+// Источник у элемента тогда свой (blob:), и MediaElementSource читает его без CORS. Работает для mp3 и ADTS-AAC.
+function streamMseStop(n){
+  if(n.mseAbort){ try{ n.mseAbort.abort(); }catch(e){} n.mseAbort=null; }
+  if(n.mseUrl){ try{ URL.revokeObjectURL(n.mseUrl); }catch(e){} n.mseUrl=null; }
+}
+async function streamMse(n, audio, url){
+  if(typeof MediaSource==='undefined') throw new Error('MediaSource unavailable');
+  const ac=new AbortController(); n.mseAbort=ac;
+  const resp=await fetch(Net.url(url),{signal:ac.signal,cache:'no-store'});
+  if(!resp.ok || !resp.body) throw new Error('HTTP '+resp.status);
+  const ct=(resp.headers.get('content-type')||'').split(';')[0].trim().toLowerCase();
+  const mime=[ct, ...(/aac/.test(ct) ? ['audio/aac','audio/mpeg'] : ['audio/mpeg','audio/aac'])].find(m=>m && MediaSource.isTypeSupported(m));
+  if(!mime) throw new Error('format '+(ct||'unknown')+' is not supported');
+  const ms=new MediaSource(); n.mseUrl=URL.createObjectURL(ms); audio.src=n.mseUrl;
+  await new Promise((ok,bad)=>{ ms.addEventListener('sourceopen',ok,{once:true}); setTimeout(()=>bad(new Error('MediaSource did not open')),5000); });
+  const sb=ms.addSourceBuffer(mime); try{ sb.mode='sequence'; }catch(e){}
+  const idle=()=>sb.updating ? new Promise(r=>sb.addEventListener('updateend',r,{once:true})) : null;
+  const reader=resp.body.getReader();
+  (async()=>{
+    for(;;){
+      const {value,done}=await reader.read(); if(done || ac.signal.aborted) break;
+      await idle();
+      try{ sb.appendBuffer(value); }
+      catch(e){                                                   // буфер полон — режем всё, что уже сыграно, и повторяем
+        if(e.name!=='QuotaExceededError') throw e;
+        try{ sb.remove(0,Math.max(0,audio.currentTime-5)); }catch(x){} await idle(); sb.appendBuffer(value); }
+      await idle();
+      const t=audio.currentTime;                                   // не копим в памяти часы эфира
+      if(t>40 && !sb.updating){ try{ sb.remove(0,t-20); }catch(x){} await idle(); }
+    }
+  })().catch(e=>{ if(ac.signal.aborted || n.audioEl!==audio) return; n.connected=false; n.status='stream ended: '+e.message; });
+  await streamTryLoad(audio,10000);
+}
+
 function streamTeardown(n){
   n.connected=false; n.connecting=false;
+  streamMseStop(n);
   if(n.audioEl){ try{ n.audioEl.pause(); n.audioEl.src=''; n.audioEl.load(); }catch(e){} n.audioEl=null; }
   if(n.tapNode){ try{ n.tapNode.port.onmessage=null; n.tapNode.disconnect(); }catch(e){} n.tapNode=null; }
   if(n.srcNode){ try{ n.srcNode.disconnect(); }catch(e){} n.srcNode=null; }
@@ -7120,7 +7158,7 @@ function streamTeardown(n){
 
 // Захват в граф (MediaElementSource) требует crossOrigin='anonymous' И правильных CORS-заголовков
 // от сервера потока — без них браузер либо отдаёт тишину, либо (чаще) вовсе отказывается
-// грузить источник. Без обхода: раз сервер не отвечает нужными заголовками — просто ошибка.
+// грузить источник. Тогда включается запасной путь через fetch + MediaSource (streamMse).
 async function streamPlay(n){
   if(n.connecting) return;
   streamTeardown(n);
@@ -7132,15 +7170,22 @@ async function streamPlay(n){
     else if(Eng.paused) await Eng.ctx.resume();
     const ctx = Eng.ctx;
 
-    const audio=new Audio();
+    let audio=new Audio();
     audio.crossOrigin='anonymous';        // обязательно ДО src
     audio.preload='auto'; audio.src=url;
     try{ await streamTryLoad(audio); }
     catch(e){
+      const why=e.message;
       try{ audio.removeAttribute('src'); audio.load(); }catch(e2){}
-      n.connecting=false; n.connected=false;
-      n.status='blocked (server does not send CORS headers)';
-      return;
+      n.status='connecting (fetch)…';
+      audio=new Audio(); audio.preload='auto';        // свой blob: — crossOrigin не нужен
+      try{ await streamMse(n,audio,url); }
+      catch(e3){
+        streamMseStop(n); try{ audio.removeAttribute('src'); audio.load(); }catch(e2){}
+        n.connecting=false; n.connected=false;
+        n.status='cannot play: '+why+' / '+e3.message+' (server sends no CORS headers, or is unreachable)';
+        return;
+      }
     }
 
     await streamRegisterWorklet(ctx);
@@ -7245,7 +7290,7 @@ def({ id:'stream', title:'Audio Stream (URL)', cat:'Sources',
     {n:'meta',t:'check',d:true,label:'track info (ICY, opens a second connection)',adv:true},
   ],
   init:n=>{
-    n.audioEl=null; n.srcNode=null; n.tapNode=null; n.sink=null; n.ctxRef=null;
+    n.audioEl=null; n.srcNode=null; n.tapNode=null; n.sink=null; n.ctxRef=null; n.mseAbort=null; n.mseUrl=null;
     n.connected=false; n.connecting=false; n.status='not connected';
     n.icyAbort=null; n.icyReading=false; n.icyRaw=null;
     n.icyArtist=''; n.icyTitle=''; n.icyStatus=''; n.trackPulse=0;
