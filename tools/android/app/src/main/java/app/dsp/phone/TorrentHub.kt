@@ -67,6 +67,22 @@ object TorrentArgs {
         return intArrayOf(a.toInt(), b.toInt())
     }
 
+    /** Открытые трекеры, добавляемые к magnet, где их мало (у многих ссылок только DHT, а он в первые секунды пуст). */
+    val TRACKERS = listOf(
+        "udp://tracker.opentrackr.org:1337/announce", "udp://open.demonii.com:1337/announce", "udp://tracker.openbittorrent.com:6969/announce",
+        "udp://explodie.org:6969/announce", "udp://tracker.torrent.eu.org:451/announce", "udp://open.stealth.si:80/announce",
+        "udp://exodus.desync.com:6969/announce", "udp://tracker.tiny-vps.com:6969/announce",
+    )
+
+    /** magnet с трекерами: если в ссылке меньше трёх tr=, дописываются открытые (уже указанные не повторяются). */
+    fun withTrackers(src: String): String {
+        val have = Regex("[?&]tr=([^&]+)", RegexOption.IGNORE_CASE).findAll(src).map { java.net.URLDecoder.decode(it.groupValues[1], "UTF-8").lowercase() }.toSet()
+        if (have.size >= 3) return src
+        val sb = StringBuilder(src)
+        for (t in TRACKERS) if (t.lowercase() !in have) sb.append("&tr=").append(URLEncoder.encode(t, "UTF-8"))
+        return sb.toString()
+    }
+
     /** Хэш из magnet (hex 40 или base32 32 символа → hex 40), "" — нет. */
     fun magnetHash(src: String): String {
         val m = Regex("xt=urn:btih:([0-9A-Za-z]{32,40})", RegexOption.IGNORE_CASE).find(src) ?: return ""
@@ -258,8 +274,12 @@ class TorrentHub(private val ctx: Context) {
                         TorrentArgs.kind(src) == "magnet" -> {
                             val have = core.get(TorrentArgs.magnetHash(src))
                             if (have != null) have.ti
-                            else TorrentInfo.bdecode(sm!!.fetchMagnet(src, j.optInt("timeout", 40).coerceIn(5, 180), File(core.root, "tmp").also { it.mkdirs() })
-                                ?: return Reply.done(c, id, cmd, "no metadata from peers (no seeds, or the network has no DHT / trackers) — try again", "timeout"))
+                            else {
+                                val m = TorrentArgs.withTrackers(src)
+                                val data = sm!!.fetchMagnet(m, j.optInt("timeout", 90).coerceIn(5, 300), File(core.root, "tmp").also { it.mkdirs() })
+                                    ?: return Reply.done(c, id, cmd, "no metadata: nobody answered in time (DHT nodes: ${sm?.dhtNodes() ?: 0}) — a torrent without seeds, a network that blocks UDP, or DHT is still starting; try again", "timeout")
+                                TorrentInfo.bdecode(data)
+                            }
                         }
                         TorrentArgs.kind(src) == "url" -> {
                             val bytes = URL(src).openStream().use { it.readNBytes(8 * 1024 * 1024) }
@@ -281,7 +301,15 @@ class TorrentHub(private val ctx: Context) {
                     Reply.done(c, id, cmd, null, extra = arrayOf("url" to Json.str(http!!.url(it.id, idx, fs.fileName(idx))), "size" to fs.fileSize(idx).toString(), "name" to Json.str(fs.fileName(idx))))
                 }
                 "torrent.status" -> {
-                    val core = up(); val it = core.get(j.optString("tid")) ?: return Reply.done(c, id, cmd, "no such torrent", "args")
+                    val core = up()
+                    val it = core.get(j.optString("tid")) ?: run {
+                        // метаданные ещё ищутся (torrent.add ждёт в другом потоке): состояние сессии и поиска — чтобы страница показывала ход дела
+                        val hash = TorrentArgs.magnetHash("magnet:?xt=urn:btih:" + j.optString("hash"))
+                        val h = if (hash.length == 40) sm?.find(org.libtorrent4j.Sha1Hash.parseHex(hash)) else null
+                        val st = if (h != null && h.isValid) h.status() else null
+                        return Reply.done(c, id, cmd, null, extra = arrayOf("state" to Json.str(st?.state()?.name?.lowercase() ?: "starting"), "peers" to (st?.numPeers() ?: 0).toString(),
+                            "seeds" to (st?.numSeeds() ?: 0).toString(), "dht" to (sm?.dhtNodes() ?: 0L).toString(), "progress" to "0", "down" to "0"))
+                    }
                     val st = core.status(it) ?: return Reply.done(c, id, cmd, null, extra = arrayOf("state" to Json.str("starting")))
                     val idx = it.file
                     val fdone = if (idx >= 0) (it.th?.fileProgress()?.getOrNull(idx) ?: 0L) else 0L

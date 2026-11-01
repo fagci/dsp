@@ -47,7 +47,7 @@ async function vpOpen(n,url,name,start,meta){
   if(vpIsIaPage(url)){ vpOpenItem(n,vpIaId(url)); return; }          // страница archive.org/details/… — не видео: берём файлы предмета
   vpDestroy(n);
   const g=n.gen;
-  n.tainted=false; n.retry=0; n.started=false; n.native=false; n.engineClosed=false;
+  n.tainted=false; n.retry=0; n.started=false; n.native=false; n.engineClosed=false; n.torrentTried=false;
   n.alts=String(meta && meta.alt || '').split(/\s+/).filter(Boolean); n.altI=-1;
   n.url=url; n.playUrl=url; n.torrent=null; n.tline=''; n.name=name || url; n.meta=meta||null; n.savedPos=-9; n.ended=false; n.pend=0;
   n.warn= typeof netInsecure==='function' && /^http:/i.test(url) && netInsecure(url) ? NET_INSECURE_MSG : '';
@@ -103,18 +103,32 @@ function vpBridge(n){                                            // → Promise<
   });
 }
 function vpBridgeDrop(n){ const ws=n.bgWs; n.bgP=null; n.bgWs=null; if(ws){ ws.onopen=ws.onclose=ws.onerror=ws.onmessage=null; try{ ws.close(); }catch(e){} } }
-async function vpOpenTorrent(n,url,from,g){
+// probe — адрес http(s) не оканчивался на .torrent, но плеер не смог его проиграть: пробуем как торрент; если и это нет — говорим о обоих
+async function vpOpenTorrent(n,url,from,g,probe){
   const ref=vpTorrentRef(url);
   vpStatus(n,'torrent: connecting to the app…');
+  let wait=0;
   try{
     const ns=await vpBridge(n); if(g!==n.gen) return;
     let r=n.tinfo && n.tinfo[ref.base];
     if(!r){
-      vpStatus(n,'torrent: looking for the metadata (peers, DHT)… up to a minute');
-      r=await ns.call('torrent.add',{src:ref.base,timeout:45},75000); if(g!==n.gen) return;
+      const t0=performance.now(), hash=vpMagnetHash(ref.base);
+      vpStatus(n,'torrent: looking for the metadata (peers, DHT)…');
+      // метаданные могут искаться минуту и больше: пока torrent.add ждёт, раз в 2 с спрашиваем, что видит сессия (узлы DHT, пиры)
+      if(hash) wait=setInterval(()=>{ ns.call('torrent.status',{hash},6000).then(st=>{ if(g===n.gen && !n.torrent) vpStatus(n,vpTorrentSearchLine(st,(performance.now()-t0)/1000)); }).catch(()=>{}); },2000);
+      r=await ns.call('torrent.add',{src:ref.base,timeout:90},130000); clearInterval(wait); wait=0; if(g!==n.gen) return;
       if(typeof r.files==='string') r.files=JSON.parse(r.files);
       (n.tinfo || (n.tinfo={}))[ref.base]=r;
     }
+    vpTorrentGo(n,url,ref,r,from,g,ns);
+  }catch(e){
+    if(wait) clearInterval(wait);
+    if(g===n.gen) vpStatus(n,probe ? 'error: '+probe+'\nit is not a torrent either: '+e.message : 'torrent: '+e.message);
+  }
+}
+// метаданные есть (r — ответ torrent.add): список файлов или один файл → адрес стрима → играть
+async function vpTorrentGo(n,url,ref,r,from,g,ns){
+  try{
     const rows=vpTorrentRows(url,r);
     if(!rows.length){ vpStatus(n,'torrent «'+(r.name||ref.base.slice(0,40))+'»: no video files in it'); return; }
     let idx=ref.file;
@@ -128,6 +142,23 @@ async function vpOpenTorrent(n,url,from,g){
     n.torrent={tid:r.tid,file:idx}; n.playUrl=sr.url; n.tline='torrent: starting…'; n.tpoll=0;
     vpStatus(n,'torrent: waiting for the first pieces…');
     vpStart(n,sr.url,from,g);
+  }catch(e){ if(g===n.gen) vpStatus(n,'torrent: '+e.message); }
+}
+// файл .torrent с телефона / компьютера (трекеры с входом, как rutracker, не отдают его по ссылке): байты → мост → тот же путь, что у magnet
+async function vpOpenTorrentFile(n,f){
+  vpDestroy(n); const g=n.gen; n.url=''; n.torrent=null; n.tline='';
+  vpStatus(n,'torrent: reading '+f.name+'…');
+  try{
+    const buf=new Uint8Array(await f.arrayBuffer());
+    let bin=''; for(let i=0;i<buf.length;i+=0x8000) bin+=String.fromCharCode.apply(null,buf.subarray(i,i+0x8000));
+    const ns=await vpBridge(n); if(g!==n.gen) return;
+    vpStatus(n,'torrent: adding '+f.name+'…');
+    const r=await ns.call('torrent.add',{b64:btoa(bin)},60000); if(g!==n.gen) return;
+    if(typeof r.files==='string') r.files=JSON.parse(r.files);
+    const url='magnet:?xt=urn:btih:'+r.tid+'&dn='+encodeURIComponent(r.name||f.name);        // ключ источника для позиций и истории
+    (n.tinfo || (n.tinfo={}))[url]=r;
+    n.name=r.name||f.name; n.url=url; n.playUrl=url; n.meta=null; n.savedPos=-9; n.ended=false;
+    vpTorrentGo(n,url,vpTorrentRef(url),r,vpResume(vpLoadMap()[url]),g,ns);
   }catch(e){ if(g===n.gen) vpStatus(n,'torrent: '+e.message); }
 }
 // состояние раздачи — раз в 2 с, пока играет торрент
@@ -173,6 +204,11 @@ function vpOnError(n){
     vpSetSrc(n,v.currentSrc||n.url,pos); return;
   }
   if(vpAlt(n,pos)) return;
+  // адрес вида https://трекер/dl.php?t=123 не похож на .torrent, но может им быть: пробуем один раз (приложение само скачает и разберёт)
+  if(!n.torrentTried && !n.started && !n.torrent && /^https?:/i.test(n.url) && vpNativeCan()){
+    n.torrentTried=true; const msg=vpMediaErr(code)+(code ? '' : '');
+    vpStatus(n,'the browser cannot play this ('+vpMediaErr(code)+') — trying it as a torrent…');
+    vpOpenTorrent(n,n.url,pos,n.gen,'the address does not give a video ('+vpMediaErr(code)+')'); return; }
   if(vpNativeCan() && String(n.p.engine||'auto')!=='browser'){ vpStatus(n,'the browser cannot play this ('+vpMediaErr(code)+') — opening the native player of the app…'); vpOpenNative(n,n.playUrl||n.url,pos); return; }
   vpStatus(n,'error'+at+': '+vpMediaErr(code)+(v.error && v.error.message ? ' — '+v.error.message : '')+'\n'+n.url); }
 
@@ -373,13 +409,14 @@ def({ id:'vplayer', title:'Video Player', cat:'Sources', vidEl:true, resize:true
     {n:'speed',t:'range',min:.25,max:3,step:.25,d:1,label:'speed'},
     {n:'engine',t:'select',opts:['auto','browser','native (app)'],d:'auto',label:'who plays: auto — the browser, and in the DSP app the native player for udp:// rtp:// rtsp:// and mkv / ts / avi (also when the browser cannot play a file); native — always the native player of the app (hardware decoders, AC3 / DTS)'},
     {n:'bridge',t:'text',d:VP_BRIDGE,label:'torrents (magnet: links, .torrent files): bridge of the DSP app — ws://127.0.0.1:8765 or a device name (@phone); the app downloads the file as you watch'},
+    {n:'tfile',t:'file',accept:'.torrent,application/x-bittorrent',label:'open a .torrent file (trackers with a login do not give it by a link)',fn:(n,f)=>vpOpenTorrentFile(n,f)},
     {n:'capture',t:'check',d:false,label:'allow picture capture for the floating window / PiP of the app (the server must send CORS headers — otherwise the video will not play); without it the window shows a note instead of the picture'},
     {n:'autoplay',t:'check',d:true,label:'start playing at once (the browser may require a click first)'},
     {n:'advance',t:'check',d:true,label:'at the end go on to the next source of the list'},
     {n:'contb',t:'button',label:'Continue watching',fn:n=>vpResumeList(n)},
     {n:'forget',t:'button',label:'Forget saved positions',fn:n=>{ LS.set(VP_KEY,'{}'); n.bump++; vpStatus(n,'saved positions cleared'); }}],
   init(n){ n.v=document.createElement('video'); n.list=[]; n.idx=-1; n.url=''; n.name=''; n.status=''; n.warn=''; n.levels=null; n.hls=null; n.gen=0;
-    n.recQ=[]; n.playUrl=''; n.torrent=null; n.tline=''; n.tpoll=0; n.tbusy=false; n.tinfo=null; n.bgP=null; n.bgWs=null; n.lastPos=0; n.started=false; n.retry=0; n.tainted=false; n.native=false; n.nat=null; n.natSave=0; n.engineClosed=false; n.msAt=0; n.alts=[]; n.altI=-1; n.from=0; n.fcv=null; n.bump=0; n.meta=null; n.savedPos=-9; n.saveAt=0; n.ended=false; n.endPulse=0; n.inUrl=''; n.inCh=''; n.inSeek=null; n.nxPrev=false; n.rowsKey=''; n.ui=null; n.dirty=true; },
+    n.recQ=[]; n.torrentTried=false; n.playUrl=''; n.torrent=null; n.tline=''; n.tpoll=0; n.tbusy=false; n.tinfo=null; n.bgP=null; n.bgWs=null; n.lastPos=0; n.started=false; n.retry=0; n.tainted=false; n.native=false; n.nat=null; n.natSave=0; n.engineClosed=false; n.msAt=0; n.alts=[]; n.altI=-1; n.from=0; n.fcv=null; n.bump=0; n.meta=null; n.savedPos=-9; n.saveAt=0; n.ended=false; n.endPulse=0; n.inUrl=''; n.inCh=''; n.inSeek=null; n.nxPrev=false; n.rowsKey=''; n.ui=null; n.dirty=true; },
   dispose(n){ if(n.hidePage) window.removeEventListener('pagehide',n.hidePage); vpDestroy(n); vpBridgeDrop(n); },
   process(n,I){
     if(Array.isArray(I.rows)){
