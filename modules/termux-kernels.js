@@ -16,6 +16,7 @@ function termuxSubMsg(p){
   if(+p.micHz>0 && p.mic) m.micHz=+p.micHz;
   if(p.mic && p.micSrc && p.micSrc!=='auto') m.micSrc=String(p.micSrc);          // источник: unprocessed / mic / camcorder / … (voice_call, downlink, uplink, submix — с root)
   if(p.mic && p.micDev && p.micDev!=='auto') m.micDev=String(p.micDev);
+  if(p.mic && p.micCh==='stereo') m.micCh='stereo';                                 // два микрофона одним AudioRecord: L и R из одного кадра, без сдвига
   if(p.mic && p.micLow) m.micLow=true;                                              // порции по 10 мс и немедленная отправка моста          // устройство: usb / wired / bluetooth / builtin
   if(p.pkt){ m.iface=String(p.iface||'any').trim(); m.filter=String(p.filter||'').trim(); m.snap=+p.snap||256; }
   return m;
@@ -89,6 +90,9 @@ function termuxPoint(r,id){
 }
 
 // запись mic: PCM 16 бит little-endian в base64 → Float32Array [-1,1)
+// число каналов выхода микрофона узла: 1 (mono) или 2 (stereo → выходы mic и micB)
+function termuxMicK(p){ return p && p.micCh==='stereo' ? 2 : 1; }
+
 function termuxPcm(r){
   if(!r || typeof r.pcm!=='string') return null;
   let bin; try{ bin=atob(r.pcm); }catch(e){ return null; }
