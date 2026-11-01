@@ -1,0 +1,45 @@
+// VLC Out (ядро): node tools/test-vlcout.mjs
+import vm from 'node:vm';
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
+const ctx=vm.createContext({Math,Int16Array,Uint8Array,Float32Array,Array,String});
+vm.runInContext(fs.readFileSync(path.join(root,'modules/vlcout-kernels.js'),'utf8')+';this.T={vloNew,vloPack,vloArgs,vloCodecOk,vloDevices,VLO_MODES,VLO_MODE_ID};',ctx);
+const T=ctx.T; let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
+const dec=h=>{ const b=new Uint8Array(h.length/2); for(let i=0;i<b.length;i++) b[i]=parseInt(h.substr(2*i,2),16); return new Int16Array(b.buffer); };
+
+let st=T.vloNew(2,48000);
+let out=T.vloPack(st,new Float32Array(2000).fill(.5),null);
+ok('20 ms chunks: 2000 frames → 2 datagrams of 960 frames',out.length===2 && out[0].length===960*4*2 && st.n===80*2,out.length+' '+out[0]?.length);
+let s=dec(out[0]);
+ok('s16le stereo, L only is duplicated to R',s[0]===16384 && s[1]===16384 && s.length===1920,s[0]+' '+s[1]);
+st=T.vloNew(2,48000); const L=new Float32Array(960), R=new Float32Array(960); L.fill(1); R.fill(-1);
+s=dec(T.vloPack(st,L,R)[0]);
+ok('stereo interleaved and clipped',s[0]===32767 && s[1]===-32767 && s.length===1920);
+L.fill(2); R.fill(-2); s=dec(T.vloPack(T.vloNew(2,48000),L,R)[0]);
+ok('overload is clipped',s[0]===32767 && s[1]===-32768);
+st=T.vloNew(1,48000); L.fill(.5); R.fill(-.5); out=T.vloPack(st,L,R);
+ok('mono mixes L and R',out.length===1 && dec(out[0]).length===960 && dec(out[0])[0]===0);
+ok('no input → nothing',T.vloPack(T.vloNew(2,48000),null,null).length===0);
+st=T.vloNew(2,48000); let total=0; for(let k=0;k<10;k++) total+=T.vloPack(st,new Float32Array(128),null).length;
+ok('the tail carries over between blocks',total===1 && st.n===(1280-960)*2,total+' '+st.n);
+ok('chunk follows the rate',T.vloNew(2,44100).chunk===882 && T.vloNew(2,0).chunk===960);
+
+ok('codec vs mode',T.vloCodecOk('mp3','icecast') && !T.vloCodecOk('aac','icecast') && !T.vloCodecOk('opus','rtp') && T.vloCodecOk('flac','file') && !T.vloCodecOk('wav','file'));
+const P={mode:'http server',codec:'mp3',bitrate:128,outrate:'48000',channels:'stereo',port:8080,path:'dsp',caching:300,ttl:4};
+let a=T.vloArgs(P,'',48000);
+ok('http args',a.mode==='http' && a.port===8080 && a.mount==='dsp' && a.channels===2 && a.rate===48000 && a.outrate===48000,JSON.stringify(a));
+ok('http port range',typeof T.vloArgs({...P,port:80},'',48000)==='string');
+ok('mono',T.vloArgs({...P,channels:'mono'},'',44100).channels===1 && T.vloArgs({...P,channels:'mono'},'',44100).rate===44100);
+ok('rtp needs host',typeof T.vloArgs({...P,mode:'rtp / multicast',port:5004},'',48000)==='string' && T.vloArgs({...P,mode:'rtp / multicast',port:5004,host:'239.1.1.1'},'',48000).host==='239.1.1.1');
+ok('rtp refuses opus',/does not fit/.test(T.vloArgs({...P,mode:'rtp / multicast',codec:'opus',port:5004,host:'h'},'',48000)));
+const I={...P,mode:'icecast',host:'ice.h',port:8000,user:'',path:'live'};
+ok('icecast needs the password from the pin',/pass/.test(T.vloArgs(I,'',48000)));
+a=T.vloArgs(I,'secret',48000);
+ok('icecast args: default login, password passed on',a.user==='source' && a.pass==='secret' && a.host==='ice.h' && a.mount==='live');
+ok('icecast: the password is not a parameter',!('pass' in P) && !JSON.stringify(P).includes('secret'));
+ok('file name',T.vloArgs({...P,mode:'file',path:'rec1'},'',48000).name==='rec1');
+ok('renderer needs a device',typeof T.vloArgs({...P,mode:'chromecast / upnp'},'',48000)==='string' && T.vloArgs({...P,mode:'chromecast / upnp',device:' Living '},'',48000).renderer==='Living');
+ok('devices text',T.vloDevices(['A (chromecast)','B'])==='A (chromecast) · B' && /none found/.test(T.vloDevices([])));
+console.log(bad ? bad+' FAILED' : 'all ok'); if(bad) process.exit(1);
