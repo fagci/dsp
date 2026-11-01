@@ -260,7 +260,7 @@ class MicHub(private val ctx: Context, private val cfg: Config, private val emit
         if (mics.isEmpty() && android.os.Build.VERSION.SDK_INT >= 28) try { mics = am.microphones } catch (e: Exception) { }
         val ms = mics.map { m ->
             val p = m.position; val o = m.orientation
-            Json.obj("id" to Json.str(m.id), "desc" to Json.str(m.description), "addr" to Json.str(m.address), "loc" to m.location.toString(), "grp" to m.group.toString(), "idx" to m.indexInGroup.toString(),
+            Json.obj("id" to Json.str(m.id.toString()), "desc" to Json.str(m.description), "addr" to Json.str(m.address), "loc" to m.location.toString(), "grp" to m.group.toString(), "idx" to m.indexInTheGroup.toString(),
                 "pos" to "[${Json.num(p.x.toDouble(), 1e4)},${Json.num(p.y.toDouble(), 1e4)},${Json.num(p.z.toDouble(), 1e4)}]", "dir" to "[${Json.num(o.x.toDouble(), 1e3)},${Json.num(o.y.toDouble(), 1e3)},${Json.num(o.z.toDouble(), 1e3)}]",
                 "ch" to m.channelMapping.joinToString(",", "[", "]") { "[${it.first},${it.second}]" })
         }
