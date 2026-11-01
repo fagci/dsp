@@ -42,14 +42,17 @@ async function vpOpen(n,url,name,start,meta){
   url=String(url||'').trim();
   if(!url){ return; }
   if(!/^(https?:|blob:)/i.test(url)){ vpStatus(n,'URL must start with http:// or https://'); return; }
+  if(vpIsIaPage(url)){ vpOpenItem(n,vpIaId(url)); return; }          // страница archive.org/details/… — не видео: берём файлы предмета
   vpDestroy(n);
   const g=n.gen;
+  n.alts=String(meta && meta.alt || '').split(/\s+/).filter(Boolean); n.altI=-1;
   n.url=url; n.name=name || url; n.meta=meta||null; n.savedPos=-9; n.ended=false; n.pend=0;
   n.warn= typeof netInsecure==='function' && /^http:/i.test(url) && netInsecure(url) ? NET_INSECURE_MSG : '';
   const from= start!=null ? +start : vpResume(vpLoadMap()[url]);
   const v=n.v, kind=vpKind(url);
   v.playbackRate=+n.p.speed||1;
   vpStatus(n,'loading…');
+  n.from=from;
   const seekStart=()=>{ if(g===n.gen && from>0){ try{ v.currentTime=from; }catch(e){} } };
   v.addEventListener('loadedmetadata',seekStart,{once:true});
   try{
@@ -62,10 +65,59 @@ async function vpOpen(n,url,name,start,meta){
       h.loadSource(url); h.attachMedia(v);
     }else if(kind==='dash') throw new Error('DASH (.mpd) is not supported — use HLS or a file');
     else{ n.levels=null; v.src=url; }
+    vpMedia(n);
     if(n.p.autoplay) await v.play();
   }catch(e){
-    if(g===n.gen) vpStatus(n,e.name==='NotAllowedError' ? 'press ▶ to play (the browser blocks autoplay)' : 'error: '+e.message);
+    if(g===n.gen && e.name!=='NotSupportedError' && e.name!=='AbortError') vpStatus(n,e.name==='NotAllowedError' ? 'press ▶ to play (the browser blocks autoplay)' : 'error: '+e.message);
   }
+}
+// страница предмета Internet Archive → список файлов (серии) в плеере; продолжить с места или первый
+async function vpOpenItem(n,id){
+  if(!id){ vpStatus(n,'not an Internet Archive link'); return; }
+  vpDestroy(n); const g=n.gen; n.url=''; vpStatus(n,'loading '+id+'…');
+  try{
+    const r=await fetch('https://archive.org/metadata/'+encodeURIComponent(id)); if(!r.ok) throw new Error('HTTP '+r.status);
+    const files=vpIaFiles(await r.json(),id); if(g!==n.gen) return;
+    if(!files.length){ vpStatus(n,id+': no video files (mp4 / webm / ogv) — the item may be restricted or hold other formats'); return; }
+    n.list=vpSources(files); n.rowsKey='ia:'+id; n.idx=-1; n.dirty=true; n.bump++;
+    vpStatus(n,id+': '+n.list.length+' video'+(n.list.length>1 ? 's' : ''));
+    vpResumeList(n);
+  }catch(e){ if(g===n.gen) vpStatus(n,'error: '+e.message+(e instanceof TypeError ? ' (no network, or archive.org blocked the request)' : '')); }
+}
+// запасной формат того же видео, если этот не играется
+function vpAlt(n){
+  if(n.altI+1>=n.alts.length) return false;
+  const u=n.alts[++n.altI], v=n.v, g=n.gen;
+  vpStatus(n,'this format does not play — trying another ('+(n.altI+1)+'/'+n.alts.length+')…');
+  const from=n.from;
+  v.addEventListener('loadedmetadata',()=>{ if(g===n.gen && from>0){ try{ v.currentTime=from; }catch(e){} } },{once:true});
+  n.levels=null; v.src=u; v.play().catch(()=>{});
+  return true;
+}
+// Media Session: кнопки перемотки / дорожек в системном окне PiP, на экране блокировки и в наушниках
+function vpMedia(n){
+  if(!('mediaSession' in navigator)) return;
+  try{
+    const ms=navigator.mediaSession;
+    ms.metadata=new MediaMetadata({title:n.name||'',artist:n.meta && n.meta.series || '',album:n.meta && n.meta.series ? vpGroup(n.meta) : ''});
+    const h=(a,f)=>{ try{ ms.setActionHandler(a,f); }catch(e){} };
+    h('play',()=>n.v.play()); h('pause',()=>n.v.pause());
+    h('seekbackward',d=>vpSeekBy(n,-((d && d.seekOffset)||10))); h('seekforward',d=>vpSeekBy(n,(d && d.seekOffset)||10));
+    h('seekto',d=>{ if(d && d.seekTime!=null) n.v.currentTime=d.seekTime; });
+    h('previoustrack',n.list.length>1 ? ()=>vpStep(n,-1) : null); h('nexttrack',n.list.length>1 ? ()=>vpStep(n,1) : null);
+  }catch(e){}
+}
+function vpMediaPos(n){
+  try{ const v=n.v; if('mediaSession' in navigator && isFinite(v.duration) && v.duration>0) navigator.mediaSession.setPositionState({duration:v.duration,position:Math.min(v.currentTime,v.duration),playbackRate:v.playbackRate||1}); }catch(e){}
+}
+// текущий кадр на холсте — для плавающего окна и PiP приложения Android (там нет окна PiP у <video>); чужой сервер без CORS холст «пачкает» — тогда кадра нет
+function vpFrame(n){
+  const v=n.v; if(!v || !v.videoWidth) return null;
+  const k=Math.min(1,960/Math.max(v.videoWidth,v.videoHeight)), w=Math.max(1,Math.round(v.videoWidth*k)), h=Math.max(1,Math.round(v.videoHeight*k));
+  const c=n.fcv || (n.fcv=document.createElement('canvas'));
+  if(c.width!==w || c.height!==h){ c.width=w; c.height=h; }
+  c.getContext('2d').drawImage(v,0,0,w,h);
+  return c;
 }
 function vpStep(n,d){
   const L=n.list; if(!L.length) return;
@@ -82,11 +134,7 @@ function vpResumeList(n){
   if(r) vpPick(n,r.i,r.pos); else if(n.list.length) vpPick(n,0); }
 function vpToggle(n){ const v=n.v; if(v.paused || v.ended) v.play().catch(()=>{}); else v.pause(); }
 function vpSeekBy(n,d){ const v=n.v; if(!v.src && !n.hls) return; v.currentTime=vpSeek(v.currentTime||0,d,isFinite(v.duration) ? v.duration : 0); }
-function vpFull(n){
-  const r=n.ui?.stage; if(!r) return;
-  if(document.fullscreenElement) document.exitFullscreen().catch(()=>{});
-  else (r.requestFullscreen||r.webkitRequestFullscreen)?.call(r);
-}
+function vpFull(n){ nodeFullscreen(n); }                     // общий для узлов: Fullscreen API на весь блок плеера с панелью управления
 
 function vpMount(n){
   const root=vpEl('div','vp'); root.tabIndex=0;
@@ -127,12 +175,16 @@ function vpMount(n){
     else if(k==='PageUp') vpStep(n,-1); else if(k==='PageDown') vpStep(n,1); });
   v.addEventListener('timeupdate',()=>{
     const now=performance.now();
-    if(now-n.saveAt>VP_SAVE_MS && !v.paused){ n.saveAt=now; vpSave(n,false); } });
+    if(now-n.saveAt>VP_SAVE_MS && !v.paused){ n.saveAt=now; vpSave(n,false); }
+    if(now-n.msAt>1000){ n.msAt=now; vpMediaPos(n); } });
   v.addEventListener('pause',()=>vpSave(n,true));
   v.addEventListener('seeked',()=>{ if(!drag) vpSave(n,true); });
   v.addEventListener('ended',()=>{ vpSave(n,true); n.ended=true; n.endPulse=1; if(n.p.advance && n.idx>=0 && n.idx+1<n.list.length) vpPick(n,n.idx+1,0); });
-  v.addEventListener('error',()=>{ if(v.getAttribute('src') && !n.hls) vpStatus(n,'error: '+(v.error?.message||'the file cannot be played (format, CORS or address)')); });
-  v.addEventListener('playing',()=>{ vpStatus(n,''); });
+  v.addEventListener('error',()=>{
+    if(!v.getAttribute('src') || n.hls) return;
+    if(vpAlt(n)) return;
+    vpStatus(n,'error: '+vpMediaErr(v.error && v.error.code)+(v.error && v.error.message ? ' — '+v.error.message : '')+'\n'+n.url); });
+  v.addEventListener('playing',()=>{ vpStatus(n,''); vpMedia(n); });
   v.addEventListener('waiting',()=>{ n.dirty=true; });
   n.hidePage=()=>vpSave(n,true);
   window.addEventListener('pagehide',n.hidePage);
@@ -169,10 +221,10 @@ function vpDraw(n){
   u.msg.hidden=!m;
 }
 
-def({ id:'vplayer', title:'Video Player', cat:'Sources', resize:true, w:420, h:340, readout:false, always:true,
+def({ id:'vplayer', title:'Video Player', cat:'Sources', vidEl:true, resize:true, w:420, h:340, readout:false, always:true,
   kw:'video player movie film hls m3u8 mp4 webm sources list table seek rewind resume position continue watching history stream online',
   ins:[{n:'url',t:'txt'},{n:'rows',t:'bands'},{n:'channel',t:'val'},{n:'seek',t:'val'},{n:'next',t:'num'}],
-  outs:[{n:'rec',t:'rec'},{n:'name',t:'txt'},{n:'time',t:'num'},{n:'dur',t:'num'},{n:'pct',t:'num'},{n:'playing',t:'num'},{n:'end',t:'num'}],
+  outs:[{n:'vid',t:'vid'},{n:'rec',t:'rec'},{n:'name',t:'txt'},{n:'time',t:'num'},{n:'dur',t:'num'},{n:'pct',t:'num'},{n:'playing',t:'num'},{n:'end',t:'num'}],
   params:[
     {n:'url',t:'text',d:'',label:'URL: a video file (mp4 / webm) or an HLS playlist (.m3u8); a list of sources comes on «rows»'},
     {n:'playb',t:'button',label:'Play',fn:n=>{ if(n.p.url) vpOpen(n,n.p.url,''); }},
@@ -182,7 +234,7 @@ def({ id:'vplayer', title:'Video Player', cat:'Sources', resize:true, w:420, h:3
     {n:'contb',t:'button',label:'Continue watching',fn:n=>vpResumeList(n)},
     {n:'forget',t:'button',label:'Forget saved positions',fn:n=>{ LS.set(VP_KEY,'{}'); n.bump++; vpStatus(n,'saved positions cleared'); }}],
   init(n){ n.v=document.createElement('video'); n.list=[]; n.idx=-1; n.url=''; n.name=''; n.status=''; n.warn=''; n.levels=null; n.hls=null; n.gen=0;
-    n.recQ=[]; n.bump=0; n.meta=null; n.savedPos=-9; n.saveAt=0; n.ended=false; n.endPulse=0; n.inUrl=''; n.inCh=''; n.inSeek=null; n.nxPrev=false; n.rowsKey=''; n.ui=null; n.dirty=true; },
+    n.recQ=[]; n.msAt=0; n.alts=[]; n.altI=-1; n.from=0; n.fcv=null; n.bump=0; n.meta=null; n.savedPos=-9; n.saveAt=0; n.ended=false; n.endPulse=0; n.inUrl=''; n.inCh=''; n.inSeek=null; n.nxPrev=false; n.rowsKey=''; n.ui=null; n.dirty=true; },
   dispose(n){ if(n.hidePage) window.removeEventListener('pagehide',n.hidePage); vpDestroy(n); },
   process(n,I){
     if(Array.isArray(I.rows)){
@@ -199,7 +251,7 @@ def({ id:'vplayer', title:'Video Player', cat:'Sources', resize:true, w:420, h:3
     const nx=(I.next||0)>.5; if(nx && !n.nxPrev) vpStep(n,1); n.nxPrev=nx;
     const v=n.v, d=isFinite(v.duration) ? v.duration : 0, t=v.currentTime||0;
     const rec=n.recQ.length ? n.recQ.splice(0) : null, end=n.endPulse; n.endPulse=0;
-    return {rec, name:n.name, time:t, dur:d, pct:d>0 ? t/d*100 : 0, playing:n.url && !v.paused && !v.ended ? 1 : 0, end}; },
+    return {vid:v.videoWidth ? v : null, rec, name:n.name, time:t, dur:d, pct:d>0 ? t/d*100 : 0, playing:n.url && !v.paused && !v.ended ? 1 : 0, end}; },
   draw(n){
     if(!n.ui || !n.ui.root.isConnected){ if(n.ui) n.ui.root.remove(); vpMount(n); }
     vpDraw(n); }

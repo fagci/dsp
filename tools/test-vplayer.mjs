@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
-const ctx=vm.createContext({String,Math,Array,Object,isFinite});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/vplayer-kernels.js'),'utf8')+';this.T={vpKind,vpSources,vpFind,vpResume,vpPut,vpFmt,vpSeek,vpRec,vpEpisode,vpLabel,vpGroup,vpContinue,vpMark,vpIaSearchUrl,vpIaItems,vpIaId,vpIaFiles,vpFilter,VP_IPTV_URL,VP_SAMPLES};',ctx);
+const ctx=vm.createContext({String,Math,Array,Object,isFinite,URL,encodeURIComponent,decodeURIComponent});
+vm.runInContext(fs.readFileSync(path.join(root,'modules/vplayer-kernels.js'),'utf8')+';this.T={vpKind,vpSources,vpFind,vpResume,vpPut,vpFmt,vpSeek,vpRec,vpEpisode,vpLabel,vpGroup,vpContinue,vpMark,vpIaSearchUrl,vpIaItems,vpIaId,vpIaFiles,vpFilter,VP_IPTV_URL,VP_SAMPLES,vpIsIaPage,vpMediaErr,vpWmSearchUrl,vpWmItems,vpPtSearchUrl,vpPtItems,vpPtId,vpPtFiles,vpIptvUrl};',ctx);
 const T=ctx.T;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 
@@ -73,5 +73,33 @@ ok('filter',T.vpFilter(R,'').length===3 && T.vpFilter(R,'news').length===2 && T.
 ok('iptv url',T.VP_IPTV_URL('RU')==='https://raw.githubusercontent.com/iptv-org/iptv/master/streams/ru.m3u' && T.VP_IPTV_URL('../x')==='https://raw.githubusercontent.com/iptv-org/iptv/master/streams/x.m3u');
 const SM=T.vpSources(T.VP_SAMPLES);
 ok('samples valid',SM.length===T.VP_SAMPLES.length && SM.some(c=>c.series) && SM.filter(c=>c.series).map(c=>c.episode).join()==='1,2,3,4,5' && SM.every(c=>/^https:/.test(c.url)));
+// запасные форматы: производный h.264 важнее оригинала (DivX / MPEG-4 Part 2 браузер не играет)
+const m2={metadata:{title:'PP'},files:[
+  {name:'PP 1.avi',format:'MPEG4',source:'original'},{name:'PP 1.mp4',format:'h.264',source:'derivative'},{name:'PP 1.ogv',format:'Ogg Video'},{name:'PP 1_512kb.mp4',format:'512Kb MPEG4'},
+  {name:'PP 2.mp4',format:'MPEG4',source:'original'},{name:'PP 2.ia.mp4',format:'h.264 IA',source:'derivative'}]};
+const F2=T.vpIaFiles(m2,'pp');
+ok('ia: h.264 first, others as alt',F2.length===2 && F2[0].url.endsWith('/PP%201.mp4') && F2[0].alt.split(' ').length===2 && F2[0].alt.includes('PP%201_512kb.mp4') && F2[0].alt.includes('PP%201.ogv'),JSON.stringify(F2.map(f=>f.file+'|'+f.alt)));
+ok('ia: .ia.mp4 derivative beats original mp4',F2[1].file==='PP 2.ia.mp4' && F2[1].alt.endsWith('PP%202.mp4'),F2[1].file);
+const S2=T.vpSources(F2);
+ok('alt survives vpSources',S2[0].alt===F2[0].alt);
+ok('ia page url',T.vpIsIaPage('https://archive.org/details/ThePinkPanther-cartoons') && T.vpIsIaPage('http://www.archive.org/details/x/?a=1') && !T.vpIsIaPage('https://archive.org/download/x/a.mp4') && !T.vpIsIaPage('https://example.com/details/x'));
+ok('media err',/not supported/.test(T.vpMediaErr(4)) && /network/.test(T.vpMediaErr(2)) && T.vpMediaErr(0)==='cannot be played');
+// Wikimedia Commons
+const wu=T.vpWmSearchUrl('moon landing',10);
+ok('wm url',wu.startsWith('https://commons.wikimedia.org/w/api.php?') && decodeURIComponent(wu).includes('filetype:video moon landing') && wu.includes('gsrlimit=10') && wu.endsWith('origin=*'));
+const wm=T.vpWmItems({query:{pages:{'2':{index:2,title:'File:B_clip.webm',imageinfo:[{url:'https://upload.wikimedia.org/b.webm',mime:'video/webm',size:5,extmetadata:{LicenseShortName:{value:'CC BY 4.0'}}}]},'1':{index:1,title:'File:A clip.ogv',imageinfo:[{url:'https://upload.wikimedia.org/a.ogv',mime:'application/ogg'}]},'3':{index:3,title:'File:x.pdf',imageinfo:[{url:'u',mime:'application/pdf'}]}}}});
+ok('wm items',wm.length===2 && wm[0].name==='A clip' && wm[1].name==='B clip' && wm[1].license==='CC BY 4.0' && wm[0].url.endsWith('a.ogv') && T.vpWmItems(null).length===0);
+// PeerTube
+const pu=T.vpPtSearchUrl('cats',5);
+ok('pt url',pu==='https://sepiasearch.org/api/v1/search/videos?search=cats&count=5&sort=-match');
+const pi=T.vpPtItems({data:[{uuid:'u1',name:'V',duration:60,url:'https://tube.example/w/abc',account:{host:'tube.example'},channel:{displayName:'Ch'}},{uuid:'u2',name:'W',url:'https://other.org/w/x'},{name:'no uuid'}]});
+ok('pt items',pi.length===2 && pi[0].id==='tube.example/u1' && pi[0].channel==='Ch' && pi[1].id==='other.org/u2',JSON.stringify(pi));
+ok('pt id',T.vpPtId('tube.example/u1').host==='tube.example' && T.vpPtId('peertube:a.b.org/xyz-1').uuid==='xyz-1' && T.vpPtId('abc')===null && T.vpPtId('ThePinkPanther-cartoons')===null);
+const pf=T.vpPtFiles({name:'V',streamingPlaylists:[{playlistUrl:'https://t/h.m3u8'}],files:[{fileUrl:'https://t/360.mp4',resolution:{id:360}},{fileUrl:'https://t/720.mp4',resolution:{id:720}}]},'t','u');
+ok('pt files: hls first, mp4 alt',pf.length===1 && pf[0].url.endsWith('.m3u8') && pf[0].alt.startsWith('https://t/720.mp4'));
+const pf2=T.vpPtFiles({name:'V',files:[{fileUrl:'https://t/1080.mp4',resolution:{id:1080}},{fileUrl:'https://t/720.mp4',resolution:{id:720}}]},'t','u');
+ok('pt files: mp4 only',pf2[0].url==='https://t/720.mp4' && T.vpPtFiles(null,'t','u').length===0);
+// iptv-org: категория / язык / страна
+ok('iptv scope',T.vpIptvUrl('Movies')==='https://iptv-org.github.io/iptv/categories/movies.m3u' && T.vpIptvUrl('rus')==='https://iptv-org.github.io/iptv/languages/rus.m3u' && T.vpIptvUrl('ru')===T.VP_IPTV_URL('ru'));
 if(bad){ console.log(bad+' failed'); process.exit(1); }
 console.log('all ok');

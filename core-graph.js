@@ -331,7 +331,7 @@ const d=MOD[n.type];
 const el=document.createElement('div'); el.className='node panzoom-exclude'+(n.type==='note'?' note':''); el.dataset.type=n.type; el.dataset.id=n.id;
 const title=nodeTitle(n);
 el.style.setProperty('--cat',catColor(d.cat)); el.dataset.title=title;
-el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span>${d.view||d.bare?'<span class="xpd" title="Expand canvas (hide parameters)">'+ico('expand')+'</span>':''}${d.fs?'<span class="fsb" title="Fullscreen (double-click the picture)">'+ico('full')+'</span>':''}${(d.view||d.fs)&&pipSupported()?'<span class="pipb" title="Picture in picture (floating window)">'+ico('pip')+'</span>':''}${(d.view||d.fs)&&wallpaperSupported()?'<span class="wpb" title="Set as live wallpaper (phone app)">'+ico('wall')+'</span>':''}${(d.view||d.fs)&&floatSupported()?'<span class="flb" title="Float over other apps (phone app)">'+ico('float')+'</span>':''}<span class="hlp" title="Help for this module (F1)">${ico('help')}</span><span class="rst" title="Reset all parameters">${ico('reset')}</span><span class="ren" title="Rename">${ico('edit')}</span><span class="x">${ico('close')}</span></div> <div class="nbody"></div>`;
+el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span>${d.view||d.bare||d.vidEl?'<span class="xpd" title="Expand canvas (hide parameters)">'+ico('expand')+'</span>':''}${d.fs||d.vidEl?'<span class="fsb" title="Fullscreen (double-click the picture)">'+ico('full')+'</span>':''}${(d.view||d.fs||d.vidEl)&&pipSupported()?'<span class="pipb" title="Picture in picture (floating window)">'+ico('pip')+'</span>':''}${(d.view||d.fs)&&wallpaperSupported()?'<span class="wpb" title="Set as live wallpaper (phone app)">'+ico('wall')+'</span>':''}${(d.view||d.fs||d.vidEl)&&floatSupported()?'<span class="flb" title="Float over other apps (phone app)">'+ico('float')+'</span>':''}<span class="hlp" title="Help for this module (F1)">${ico('help')}</span><span class="rst" title="Reset all parameters">${ico('reset')}</span><span class="ren" title="Rename">${ico('edit')}</span><span class="x">${ico('close')}</span></div> <div class="nbody"></div>`;
 el.querySelector('.ttl').textContent=title;
 el.querySelector('.ren').addEventListener('click',e=>{ e.stopPropagation(); renameNode(n); });
 el.querySelector('.hlp').addEventListener('click',e=>{ e.stopPropagation(); hpForNode(n); });
@@ -454,7 +454,7 @@ function cvArm(n){
 }
 // Развернуть картинку модуля (fs:true в def) на весь экран; где нет Fullscreen API для canvas (iOS) — фиксированный слой поверх страницы
 function nodeFullscreen(n){
-const c=n.cv; if(!c) return;
+const c=n.cv||(MOD[n.type].vidEl && n.ui && n.ui.root); if(!c) return;      // vidEl: <video> с панелью управления (Video Player) — весь блок, а не один холст
 const on=document.fullscreenElement===c || c.classList.contains('fs-fb');
 const done=()=>{ n._dirty=true; n._drawGen=-1; };
 if(on){ if(document.fullscreenElement===c) document.exitFullscreen?.(); c.classList.remove('fs-fb'); done(); return; }
@@ -463,7 +463,7 @@ c.requestFullscreen().then(done,()=>{ c.classList.add('fs-fb'); done(); });
 if(!c._fsl){ c._fsl=1; document.addEventListener('fullscreenchange',done); }
 }else{ c.classList.add('fs-fb'); done(); }
 }
-document.addEventListener('keydown',e=>{ if(e.key==='Escape') for(const c of document.querySelectorAll('canvas.fs-fb')) c.classList.remove('fs-fb'); });
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') for(const c of document.querySelectorAll('.fs-fb')) c.classList.remove('fs-fb'); });
 // ⛶ в заголовке: параметры спрятаны, основная канва (или список) занимает весь модуль; размер модуля не меняется, порты остаются
 function xpandApply(n){                                 // (пере)применить к текущему n.el: высота фиксируется до скрытия параметров
 n.el.style.height=(n._xh||n.el.offsetHeight)+'px';
@@ -1838,10 +1838,10 @@ function dashRenderLeaf(t){
     pane.classList.toggle('compact',!!tab.compact);
   }
   if(n) acts.append(dashBtn2('@edit','Rename module',()=>renameNode(n)));
-  if(n?.cv && MOD[n.type].fs) tools.append(dashBtn2('@full','Fullscreen (double-click the picture)',()=>nodeFullscreen(n)));
-  if(n?.cv && pipSupported()) tools.append(dashBtn2('@pip','Picture in picture',()=>nodePip(n)));
+  if((n?.cv && MOD[n.type].fs) || MOD[n?.type]?.vidEl) tools.append(dashBtn2('@full','Fullscreen (double-click the picture)',()=>nodeFullscreen(n)));
+  if((n?.cv || MOD[n?.type]?.vidEl) && pipSupported()) tools.append(dashBtn2('@pip','Picture in picture',()=>nodePip(n)));
   if(n?.cv && wallpaperSupported()) tools.append(dashBtn2('@wall','Set as live wallpaper (phone app)',()=>wallpaperToggle(n)));
-  if(n?.cv && floatSupported()) tools.append(dashBtn2('@float','Float over other apps (phone app)',()=>floatToggle(n)));
+  if((n?.cv || MOD[n?.type]?.vidEl) && floatSupported()) tools.append(dashBtn2('@float','Float over other apps (phone app)',()=>floatToggle(n)));
   if(isGraph){
     acts.append(dashBtn2('@plus','Add module (or double-click the canvas)',e=>dashGraphAdd(e.currentTarget)),
       dashBtn2('@fit','Fit patch',dashGraphFit));

@@ -7,7 +7,7 @@
 
 const pipToast=m=>{ try{ if(typeof showToast==='function') showToast(m); }catch(e){} };
 // что зеркалить: у узлов-картинок (камера, кадр) — сам кадр, а не холст узла со всеми полями и подписями вокруг него
-const PIP_SRC={ipcam:n=>n.img && n.capCv, camarch:n=>n.capCv, imgview:n=>n.tmp};
+const PIP_SRC={ipcam:n=>n.img && n.capCv, camarch:n=>n.capCv, imgview:n=>n.tmp, vplayer:n=>typeof vpFrame==='function' && vpFrame(n)};
 function pipSource(n){
   try{ const f=PIP_SRC[n.type], s=f && f(n); if(s && s.width && s.height) return s; }catch(e){}
   return n.cv;
@@ -24,6 +24,17 @@ function pipSupported(){
 function pipStop(){ const s=pipSt; pipSt=null; if(s){ if(s.n) s.n._pip=false; try{ s.stop(); }catch(e){} } }
 
 async function nodePip(n){
+  // <video> узла (Video Player): системное окно PiP самого элемента — со звуком и кнопками Media Session (перемотка, дорожки);
+  // в приложении Android и где у элемента нет PiP — кадры через холст, как у остальных
+  if(n && MOD[n.type].vidEl && n.v && n.v.requestPictureInPicture && !(window.DspApp && typeof DspApp.pip==='function')){
+    if(document.pictureInPictureElement===n.v){ try{ await document.exitPictureInPicture(); }catch(e){} return; }
+    pipStop();
+    try{ await n.v.requestPictureInPicture(); }
+    catch(e){ if(typeof vpStatus==='function') vpStatus(n,'picture in picture: '+(e.message||e.name)+(n.v.readyState<1 ? ' (start the video first)' : '')); return; }
+    pipSt={n,stop:()=>{ try{ if(document.pictureInPictureElement) document.exitPictureInPicture(); }catch(e){} }};
+    n.v.addEventListener('leavepictureinpicture',()=>{ if(pipSt && pipSt.n===n) pipSt=null; },{once:true});
+    return;
+  }
   const c=n && pipSource(n); if(!c) return;
   if(pipSt && pipSt.n===n){ pipStop(); return; }                // повторное нажатие — закрыть
   pipStop();
