@@ -2,13 +2,19 @@
 /* ============================ Video Player: ядро (без DOM) ============================
    Список источников (строки Table: name, url), тип адреса, сохранённая позиция просмотра по адресу, время в тексте. */
 
-// тип источника по адресу: HLS (.m3u8) / DASH (.mpd) / обычный файл
+// тип источника по адресу: HLS (.m3u8) / DASH (.mpd) / «native» — то, чего нет у <video> браузера и что играет нативный плеер приложения
+// (udp:// и rtp:// multicast, rtsp://, контейнеры mkv / avi / ts / mpg / flv / wmv) / обычный файл
 function vpKind(url){
-  const u=String(url||'').split(/[?#]/)[0].toLowerCase();
+  const s=String(url||'');
+  if(/^(udp|rtp|rtsp):/i.test(s)) return 'native';
+  const u=s.split(/[?#]/)[0].toLowerCase();
   if(/\.m3u8?$/.test(u)) return 'hls';
   if(/\.mpd$/.test(u)) return 'dash';
+  if(/\.(mkv|avi|ts|m2ts|mts|mpg|mpeg|vob|flv|wmv|rmvb)$/.test(u)) return 'native';
   return 'file';
 }
+// адреса, которые страница принимает: сеть (http / https), blob и multicast / rtsp (играет только нативный плеер приложения)
+const VP_URL_RE=/^(https?:|blob:|udp:|rtp:|rtsp:)/i;
 // серия и номер: колонки season / episode (s / e / ep) или разбор названия: S01E02, 1x02, «Episode 3», «3 серия», «Сезон 2»
 function vpEpisode(name,row){
   const num=v=>{ const x=parseInt(v,10); return x>=0 ? x : null; };
@@ -29,7 +35,7 @@ function vpSources(rows){
   for(const r of Array.isArray(rows) ? rows : []){
     if(!r || typeof r!=='object') continue;
     const url=String(r.url ?? r.link ?? r.src ?? '').trim();
-    if(!/^(https?:|blob:)/i.test(url)) continue;
+    if(!VP_URL_RE.test(url)) continue;
     const name=String(r.name ?? r.title ?? '').trim() || url.replace(/^https?:\/\//,'').slice(0,60);
     const ep=vpEpisode(name,r);
     out.push({...r,url,name,series:String(r.series ?? r.show ?? '').trim(),season:ep.s,episode:ep.e});

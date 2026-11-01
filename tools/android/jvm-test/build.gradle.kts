@@ -4,7 +4,8 @@
 plugins { kotlin("jvm") version "2.0.21"; application }
 repositories { mavenCentral() }
 dependencies { compileOnly("org.robolectric:android-all:14-robolectric-10818077"); runtimeOnly("org.robolectric:android-all:14-robolectric-10818077") }
-sourceSets { main { kotlin.srcDir("src"); kotlin.srcDir("../app/src/main/java") } }
+// NativePlayer.kt (ExoPlayer, media3) собирается только в приложении; MainActivity находит его по имени (PlayerApi.kt — общий интерфейс)
+sourceSets { main { kotlin.srcDir("src"); kotlin.srcDir("../app/src/main/java"); kotlin.exclude("**/NativePlayer.kt") } }
 application { mainClass.set("app.dsp.phone.ServerTestKt") }
 tasks.register<JavaExec>("runServerTest") {
     classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.ServerTestKt")
@@ -58,4 +59,7 @@ tasks.register<JavaExec>("runShortcutTest") {
 tasks.register<JavaExec>("runScanDiagTest") {
     classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.scandiagtest.ScanDiagTestKt")
 }
-tasks.register("runTests") { dependsOn("runScanDiagTest", "runShortcutTest", "runScreenTest", "runDialTest", "runFsTest", "runCallTest", "runMicTest", "runServerTest", "runRecordsTest", "runAlarmTest", "runBootTest", "runCalTest", "runRecTest", "runProxyTest", "runVpnEngineTest", "runTlsTest", "runTlsStoreTest") }
+tasks.register<JavaExec>("runRtpTest") {
+    classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.rtptest.RtpTestKt")
+}
+tasks.register("runTests") { dependsOn("runRtpTest", "runScanDiagTest", "runShortcutTest", "runScreenTest", "runDialTest", "runFsTest", "runCallTest", "runMicTest", "runServerTest", "runRecordsTest", "runAlarmTest", "runBootTest", "runCalTest", "runRecTest", "runProxyTest", "runVpnEngineTest", "runTlsTest", "runTlsStoreTest") }

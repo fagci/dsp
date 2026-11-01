@@ -456,14 +456,17 @@ function cvArm(n){
 function nodeFullscreen(n){
 const c=n.cv||(MOD[n.type].vidEl && n.ui && n.ui.root); if(!c) return;      // vidEl: <video> с панелью управления (Video Player) — весь блок, а не один холст
 const on=document.fullscreenElement===c || c.classList.contains('fs-fb');
-const done=()=>{ n._dirty=true; n._drawGen=-1; };
-if(on){ if(document.fullscreenElement===c) document.exitFullscreen?.(); c.classList.remove('fs-fb'); done(); return; }
+const done=()=>{ n._dirty=true; n._drawGen=-1; if(c._hold && !document.fullscreenElement && !c.classList.contains('fs-fb')){ c._hold.el.style.minHeight=''; c._hold=null; } };
+if(on){ if(document.fullscreenElement===c) document.exitFullscreen?.(); fsFbOff(c); done(); return; }
+if(c.tagName!=='CANVAS'){ n.el.style.minHeight=n.el.offsetHeight+'px'; c._hold=n; }      // блок вышел из потока — узел на холсте не должен схлопнуться, пока он на весь экран
+const fb=()=>{ c.classList.add('fs-fb'); if(c.tagName!=='CANVAS' && c.parentNode){ c._ph=document.createComment('fs'); c.parentNode.insertBefore(c._ph,c); document.body.append(c); } done(); };   // блок (не холст) в запасном режиме — в body: холст узла масштабируется (transform), fixed внутри него сжимался
 if(c.requestFullscreen){
-c.requestFullscreen().then(done,()=>{ c.classList.add('fs-fb'); done(); });
+c.requestFullscreen().then(done,fb);
 if(!c._fsl){ c._fsl=1; document.addEventListener('fullscreenchange',done); }
-}else{ c.classList.add('fs-fb'); done(); }
+}else fb();
 }
-document.addEventListener('keydown',e=>{ if(e.key==='Escape') for(const c of document.querySelectorAll('.fs-fb')) c.classList.remove('fs-fb'); });
+function fsFbOff(c){ c.classList.remove('fs-fb'); if(c._hold){ c._hold.el.style.minHeight=''; c._hold=null; } if(c._ph && c._ph.parentNode){ c._ph.parentNode.insertBefore(c,c._ph); c._ph.remove(); } c._ph=null; }
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') for(const c of document.querySelectorAll('.fs-fb')) fsFbOff(c); });
 // ⛶ в заголовке: параметры спрятаны, основная канва (или список) занимает весь модуль; размер модуля не меняется, порты остаются
 function xpandApply(n){                                 // (пере)применить к текущему n.el: высота фиксируется до скрытия параметров
 n.el.style.height=(n._xh||n.el.offsetHeight)+'px';
