@@ -15,7 +15,7 @@ function termuxSubMsg(p){
   if(p.ble && typeof plScanOpts==='function'){ const bo=plScanOpts(p); if(bo) m.ble=bo; }
   if(+p.micHz>0 && p.mic) m.micHz=+p.micHz;
   if(p.mic && p.micSrc && p.micSrc!=='auto') m.micSrc=String(p.micSrc);          // источник: unprocessed / mic / camcorder / … (voice_call, downlink, uplink, submix — с root)
-  if(p.mic){ const dv=p.micDev && p.micDev!=='auto' ? String(p.micDev) : '', ad=String(p.micAddr||'').trim().replace(/:/g,'');
+  if(p.mic){ const dv=p.micDev && p.micDev!=='auto' ? String(p.micDev) : '', ad=p.micAddr==='auto' ? '' : String(p.micAddr||'').trim().replace(/:/g,'');
     if(dv || ad) m.micDev=ad ? (dv||'any')+':'+ad : dv; }                            // тип[:адрес] — адрес устройства из списка входов (builtin:bottom)
   if(p.mic && p.micCh==='stereo') m.micCh='stereo';                                 // два микрофона одним AudioRecord: L и R из одного кадра, без сдвига
   if(p.mic && p.micLow) m.micLow=true;                                              // порции по 10 мс и немедленная отправка моста          // устройство: usb / wired / bluetooth / builtin
@@ -103,6 +103,14 @@ function termuxMicInfo(info){
     out.push((info.active ? 'mic ' : 'phone mic ')+(i+1)+': '+(m.desc||m.id||'?')+(m.addr ? ' «'+m.addr+'»' : '')+' · '+(L[m.loc]||'?')
       +(Array.isArray(m.pos) ? ' · at '+m.pos.map(f).join(' ') : '')+ch); });
   return out;
+}
+
+// Список для выбора входа: 'auto' + адреса (а где адреса нет — имена) устройств ввода из info телефона + уже выбранное (чтобы не терялось, пока микрофон выключен).
+function termuxMicAddrs(info,cur){
+  const o=['auto'];
+  if(info && Array.isArray(info.devs)) for(const d of info.devs){ const a=String(d.addr||d.name||'').trim().replace(/:/g,''); if(a && !o.includes(a)) o.push(a); }
+  if(cur && !o.includes(cur)) o.push(cur);
+  return o;
 }
 
 // число каналов выхода микрофона узла: 1 (mono) или 2 (stereo → выходы mic и micB)

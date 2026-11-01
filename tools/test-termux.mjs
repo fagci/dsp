@@ -75,7 +75,7 @@ br.close(); fs.rmSync(dir,{recursive:true,force:true});
 const kf=path.join(root,'modules/termux-kernels.js');
 if(fs.existsSync(kf)){
   const ctx=vm.createContext({atob,Float32Array,Math,Number,String,Object,Array,isFinite,Date,JSON,URL,URLSearchParams});
-  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxDev,termuxThin,termuxPoint,termuxPcm,termuxEuler,termuxApply,termuxSub,termuxLine,termuxSubMsg,termuxMicLag,termuxMicK,termuxMicInfo,termuxTaDist};',ctx);
+  vm.runInContext(fs.readFileSync(kf,'utf8')+';this.K={termuxDev,termuxThin,termuxPoint,termuxPcm,termuxEuler,termuxApply,termuxSub,termuxLine,termuxSubMsg,termuxMicLag,termuxMicK,termuxMicInfo,termuxMicAddrs,termuxTaDist};',ctx);
   const K=ctx.K, o={};
   K.termuxApply(o,{src:'gps',lat:1,lon:2,alt:3,acc:4,speed:5,bearing:6});
   ok('apply gps',o.lat===1 && o.lon===2 && o.alt===3 && o.acc===4 && o.speed===5 && o.hdg===6);
@@ -93,6 +93,7 @@ if(fs.existsSync(kf)){
   ok('stereo pcm: interleaved L,R decode',pst.length===4 && pst[0]===.5 && pst[1]===-.5 && pst[2]===.25 && pst[3]===-.25);
   ok('mic channels: mono by default, stereo → 2 and sent to the app',K.termuxMicK({})===1 && K.termuxMicK({micCh:'mono'})===1 && K.termuxMicK({micCh:'stereo'})===2 && K.termuxMicK(null)===1
     && K.termuxSubMsg({mic:true,micCh:'stereo'}).micCh==='stereo' && !('micCh' in K.termuxSubMsg({mic:true,micCh:'mono'})) && !('micCh' in K.termuxSubMsg({gps:true,micCh:'stereo'})));
+  ok('mic address list: auto, device addresses (name when none), the chosen one kept',K.termuxMicAddrs({devs:[{addr:'bottom',name:'B'},{addr:'',name:'USB audio'},{addr:'bottom',name:'B2'}]},'old').join()==='auto,bottom,USB audio,old' && K.termuxMicAddrs(null,'').join()==='auto' && K.termuxSubMsg({mic:true,micDev:'usb',micAddr:'auto'}).micDev==='usb');
   ok('mic input address: type:addr, any:addr, plain type',K.termuxSubMsg({mic:true,micDev:'builtin',micAddr:' bottom '}).micDev==='builtin:bottom' && K.termuxSubMsg({mic:true,micDev:'auto',micAddr:'back'}).micDev==='any:back'
     && K.termuxSubMsg({mic:true,micDev:'usb',micAddr:''}).micDev==='usb' && !('micDev' in K.termuxSubMsg({mic:true,micDev:'auto'})) && !('micDev' in K.termuxSubMsg({gps:true,micAddr:'x'})));
   const mi=K.termuxMicInfo({active:true,devs:[{id:1,type:15,addr:'bottom',name:'Built-in'},{id:2,type:11,addr:'',name:'USB'}],mics:[{id:'mic0',desc:'bottom',addr:'bottom',loc:1,pos:[0.01,-0.07,0],ch:[[0,1]]},{id:'mic1',desc:'top',addr:'top',loc:1,pos:[0.01,0.07,0],ch:[[1,1]]}]});
