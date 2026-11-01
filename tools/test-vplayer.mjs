@@ -5,7 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({String,Math,Array,Object,isFinite,URL,encodeURIComponent,decodeURIComponent});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/vplayer-kernels.js'),'utf8')+';this.T={vpKind,vpSources,vpFind,vpResume,vpPut,vpFmt,vpSeek,vpRec,vpEpisode,vpLabel,vpGroup,vpContinue,vpMark,vpIaSearchUrl,vpIaItems,vpIaId,vpIaFiles,vpFilter,VP_IPTV_URL,VP_SAMPLES,vpIsIaPage,vpMediaErr,vpWmSearchUrl,vpWmItems,vpPtSearchUrl,vpPtItems,vpPtId,vpPtFiles,vpIptvUrl,VP_URL_RE,vpTorrentRef,vpMagnetName,vpTorrentRows,vpTorrentLine,vpIaTorrentUrl};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/vplayer-kernels.js'),'utf8')+';this.T={vpKind,vpSources,vpFind,vpResume,vpPut,vpFmt,vpSeek,vpRec,vpEpisode,vpLabel,vpGroup,vpContinue,vpMark,vpIaSearchUrl,vpIaItems,vpIaId,vpIaFiles,vpFilter,VP_IPTV_URL,VP_SAMPLES,vpIsIaPage,vpMediaErr,vpWmSearchUrl,vpWmItems,vpPtSearchUrl,vpPtItems,vpPtId,vpPtFiles,vpIptvUrl,VP_URL_RE,vpTorrentRef,vpMagnetName,vpTorrentRows,vpTorrentLine,vpIaTorrentUrl,vpMagnetHash,vpTorrentSearchLine};',ctx);
 const T=ctx.T;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 
@@ -123,5 +123,7 @@ ok('single video: no series, base without #file',one1.length===1 && !one1[0].ser
 ok('torrent line',T.vpTorrentLine({state:'downloading',progress:.372,down:1258291,peers:14,seeds:3})==='torrent: 37 % of the torrent · ↓ 1.2 MB/s · 14 peers (3 seeds)' && /no peers/.test(T.vpTorrentLine({state:'downloading',progress:0,down:0,peers:0})) && /metadata/.test(T.vpTorrentLine({state:'downloading_metadata'})) && T.vpTorrentLine(null)==='');
 ok('ia torrent url',T.vpIaTorrentUrl('ThePinkPanther-cartoons')==='https://archive.org/download/ThePinkPanther-cartoons/ThePinkPanther-cartoons_archive.torrent');
 ok('samples: magnets valid',T.VP_SAMPLES.filter(c=>c.url.startsWith('magnet:')).length===4 && T.VP_SAMPLES.filter(c=>c.url.startsWith('magnet:')).every(c=>/xt=urn:btih:[0-9a-f]{40}/.test(c.url)));
+ok('magnet hash',T.vpMagnetHash(MG)==='0123456789abcdef0123456789abcdef01234567' && T.vpMagnetHash('magnet:?dn=x&xt=urn:btih:0123456789ABCDEF0123456789ABCDEF01234567')==='0123456789abcdef0123456789abcdef01234567' && T.vpMagnetHash('magnet:?xt=urn:btih:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')==='0'.repeat(40) && T.vpMagnetHash('https://h')==='');
+ok('search line',/DHT nodes: 87 · peers: 2/.test(T.vpTorrentSearchLine({dht:87,peers:2},12)) && /DHT is silent/.test(T.vpTorrentSearchLine({dht:0,peers:0},25)) && /no peers yet/.test(T.vpTorrentSearchLine({dht:50,peers:0},45)));
 if(bad){ console.log(bad+' failed'); process.exit(1); }
 console.log('all ok');

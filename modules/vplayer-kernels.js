@@ -284,3 +284,17 @@ function vpTorrentLine(st){
 }
 // торрент предмета Internet Archive (peers вместо сервера Архива); файлы раскроются в плеере
 const vpIaTorrentUrl=id=>'https://archive.org/download/'+encodeURIComponent(id)+'/'+encodeURIComponent(id)+'_archive.torrent';
+
+// btih из magnet (hex 40 или base32 32 → hex 40, нижний регистр); '' — нет
+function vpMagnetHash(url){
+  const m=/[?&]xt=urn:btih:([0-9A-Za-z]{32,40})/i.exec(String(url||'')); if(!m) return '';
+  const h=m[1]; if(h.length===40) return h.toLowerCase(); if(h.length!==32) return '';
+  const al='ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; let bits=0, acc=0, out='';
+  for(const ch of h.toUpperCase()){ const v=al.indexOf(ch); if(v<0) return ''; acc=((acc<<5)|v)&0xFFFFFF; bits+=5; if(bits>=8){ bits-=8; out+=((acc>>bits)&255).toString(16).padStart(2,'0'); } }
+  return out;
+}
+// строка состояния поиска метаданных: «DHT: 87 узлов · пиров: 2»
+function vpTorrentSearchLine(st,secs){
+  const dht=+(st&&st.dht)||0, peers=+(st&&st.peers)||0;
+  return 'torrent: looking for the metadata — '+Math.round(secs)+' s · DHT nodes: '+dht+' · peers: '+peers+(secs>20 && dht===0 ? ' (DHT is silent: UDP blocked or no network?)' : secs>40 && peers===0 ? ' (no peers yet — a rare torrent, wait or try another)' : '');
+}

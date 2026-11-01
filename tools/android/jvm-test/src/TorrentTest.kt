@@ -41,6 +41,12 @@ fun main() {
     ok("magnet hash hex", TorrentArgs.magnetHash("magnet:?xt=urn:btih:0123456789ABCDEF0123456789ABCDEF01234567") == "0123456789abcdef0123456789abcdef01234567")
     ok("magnet hash base32", TorrentArgs.magnetHash("magnet:?xt=urn:btih:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") == "0".repeat(40) && TorrentArgs.magnetHash("magnet:?xt=urn:btih:BAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").startsWith("08"))
     ok("video / mime", TorrentArgs.isVideo("a.MKV") && !TorrentArgs.isVideo("a.srt") && TorrentArgs.mime("a.mp4") == "video/mp4" && TorrentArgs.mime("x.bin") == "application/octet-stream")
+    val wt = TorrentArgs.withTrackers("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=x")
+    ok("trackers added to a bare magnet", wt.contains("tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce") && wt.split("tr=").size - 1 == TorrentArgs.TRACKERS.size)
+    val own = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&tr=udp%3A%2F%2Fa%3A1&tr=udp%3A%2F%2Fb%3A1&tr=udp%3A%2F%2Fc%3A1"
+    ok("magnet with 3+ trackers is left alone", TorrentArgs.withTrackers(own) == own)
+    val dup = TorrentArgs.withTrackers("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce")
+    ok("a given tracker is not repeated", dup.split("tracker.opentrackr.org").size - 1 == 1)
     ok("range: none → whole", TorrentArgs.range(null, 100)!!.toList() == listOf(0L, 99L))
     ok("range: a-b", TorrentArgs.range("bytes=10-19", 100)!!.toList() == listOf(10L, 19L))
     ok("range: a-", TorrentArgs.range("bytes=90-", 100)!!.toList() == listOf(90L, 99L))
