@@ -43,7 +43,7 @@ function termuxMic(n,r){
   const K=termuxMicK(n.p), rc=+r.ch===2 ? 2 : 1, fr=a.length/rc|0;   // pcm чередует L,R: отсчёты обоих каналов — один кадр с одной меткой, сдвига между ними нет
   const wall=performance.now()/1000, dur=fr/sr;
   if(!n.micT || Math.abs(n.micT-(wall-dur))>.5){ n.micT=wall-dur; if(n.micT0) ssInit(n,K); n.micT0=1; n.sExact=true; n.sLag=termuxMicLag(n.p); }
-  n.micCh=rc; if(r.info) n.micInfo=termuxMicInfo(r.info);
+  n.micCh=rc; if(r.info){ n.micInfo=termuxMicInfo(r.info); n.micInfoRaw=r.info; }
   for(let i=0;i<fr;i++){ const l=a[i*rc]; ssPush(n,n.micT+i/sr,K===2 ? [l,rc===2 ? a[i*rc+1] : l] : [l]); }
   n.micT+=dur;
 }
@@ -120,7 +120,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'mic',g:'Cell & microphone',t:'check',d:false,label:'microphone → output «mic» (signal), level in «micdb» (DSP app, also with the screen locked)'},
     {n:'micHz',g:'Cell & microphone',t:'select',opts:['8000','16000','22050','44100','48000','96000','192000'],d:'16000',label:'microphone: sample rate, Hz (the DSP app tries the nearest standard one if the phone cannot open it; the real one is in the record, sr). Above 8 kHz of signal needs 22050 and more'},
     {n:'micSrc',g:'Cell & microphone',t:'select',opts:['auto','unprocessed','mic','camcorder','voice_recognition','voice_comm','performance','voice_call','downlink','uplink','submix'],d:'auto',label:'microphone: source in the DSP app — auto = unprocessed (no noise suppression / AGC) if the phone has it, else mic; voice_call / downlink (the other side) / uplink (your voice) / submix (what the phone plays) need root («Allow root features» in the app Settings) and the phone\'s audio HAL to give them'},
-    {n:'micAddr',g:'Cell & microphone',t:'text',d:'',label:'microphone: input address / name (DSP app) — chooses one of the phone\'s inputs when it lists several («bottom», «back»…; the node shows the list of inputs and microphones while the microphone runs). Empty — by «preferred input» only'},
+    {n:'micAddr',g:'Cell & microphone',t:'select',opts:n=>termuxMicAddrs(n.micInfoRaw,n.p.micAddr),d:'auto',label:'microphone: input of the phone (DSP app) — the list is filled from what the phone reports while the microphone runs (open it after connecting; «bottom», «back»…). auto — by «preferred input» only'},
     {n:'micCh',g:'Cell & microphone',t:'select',opts:['mono','stereo'],d:'mono',label:'microphone: channels (DSP app) — stereo = two microphones of the phone in one recording: «mic» is the left, «micB» the right channel, samples of both from the same ADC frame, so there is no time shift between them (the phase difference is real). Use source unprocessed or camcorder; the order of the microphones depends on the phone; if it has no stereo input the app falls back to mono (see the status)',fn:n=>{ n.micT=0; }},
     {n:'micLow',g:'Cell & microphone',t:'check',d:false,label:'microphone: low latency (DSP app) — pieces of 10 ms, the bridge sends them at once, a small buffer on the phone and a short smoothing reserve here (below). Costs more CPU and risks gaps on a busy phone; for the least delay also set Block size 128 in the toolbar'},
     {n:'micLag',g:'Cell & microphone',t:'range',min:20,max:300,step:5,d:60,label:'microphone: smoothing reserve in low latency, ms (less — shorter delay, but gaps if the pieces come unevenly)',if:n=>n.p.micLow},
