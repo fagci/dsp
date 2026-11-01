@@ -1666,7 +1666,7 @@ function dashRenderRoot(){
 }
 // основная канва (или список bandplan/bookmarks) узла в панели — до низа панели: контролы над ней
 // переносятся по ширине, поэтому её верх плавает и чистым CSS высоту не задать
-const DASH_FILL='canvas.view.main, .bp-ui, .bm-ui, .tbl-ui, .trk-tile, .stu-tile, .chat, .wa, .pl, .ml, .eq10, .rds-ui, .ng, .graphview, .readout.tall';
+const DASH_FILL='canvas.view.main, .bp-ui, .bm-ui, .tbl-ui, .trk-tile, .stu-tile, .chat, .wa, .pl, .ml, .eq10, .rds-ui, .ng, .graphview, .readout.tall, .vp';
 function dashFit(){
   if(!dashMode) return;
   for(const body of dashGridEl.querySelectorAll('.dash-body')){
@@ -1825,7 +1825,7 @@ function dashRenderLeaf(t){
   // действия панели; в узкой панели прячутся под «⋯» (см. @container в styles.css)
   const acts=document.createElement('div'); acts.className='dash-acts';
   let bareBtn=null;
-  if(n && (n.cv || MOD[n.type].bare)){                  // только канва: контролы и заголовок узла спрятаны
+  if(n && (n.cv || MOD[n.type].bare || MOD[n.type].vidEl)){   // только канва: контролы и заголовок узла спрятаны (vidEl — плеер: останется картинка и его панель перемотки)
     bareBtn=dashBtn2('@expand','Canvas only (hide controls)',()=>{
       let back=BARE_BACK.get(tab); if(!back) BARE_BACK.set(tab,back=()=>{ tab.bare=false; dashRenderRoot(); });   // жест «назад» возвращает органы управления
       tab.bare=!tab.bare; if(tab.bare) Back.push(back); else Back.drop(back);

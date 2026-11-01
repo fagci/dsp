@@ -262,8 +262,7 @@ body.noedit #bar .ed{display:none}
 .dash-pane.bare.scroll>.dash-body{padding-right:0}
 .dash-pane.bare .node .io3>.mid{padding:0}
 .dash-pane.bare .node .io3>.mid>:not(canvas.view.main):not(.tbl-ui):not(.chat):not(.sa-ov):not(.geo-ov):not(.vp){display:none!important}
-.dash-pane.bare .node .io3>.mid>.vp{height:100%}
-.dash-pane.bare .vp-stage{flex:1 1 0;aspect-ratio:auto;min-height:0}
+.dash-body .vp-stage{flex:1 1 0;aspect-ratio:auto;min-height:0}
 .dash-pane.bare .vp-src{display:none}
 .dash-pane.bare .tbl-ui>:not(.tbl-list){display:none!important}
 .dash-pane.bare .dash-body{overflow:hidden}
