@@ -364,6 +364,7 @@ const PRESET_CATS={
   'AR: ADS-B Aircraft in the Sky (Phone + Generator)':'Aircraft, Satellites & Telemetry',
   'Radio Reach: ADS-B Coverage over Terrain (Generator)':'Aircraft, Satellites & Telemetry',
   'Field Survey: Mark Points with Photos → Table, Locator, Map':'Maps & Locating',
+  'Map: Vector Base Map (OpenFreeMap) — Sharp at Any Zoom, Light and Dark':'Maps & Locating',
   'Map Points: Mark My Position → Table → Map':'Maps & Locating',
   'Map Editor: Points, Shapes, Rings, Checklists ↔ Table':'Maps & Locating',
   'Signal Paths: Links in 3D (Free Fly)':'Maps & Locating',
@@ -959,6 +960,23 @@ const pl=playRows(sq,40,860,{advance:'distance',speed:40,rate:4,interp:true,loop
 const lg=addNode('recLog',340,200,{}); lg.size.w=210; applySize(lg);
 const map=addNode('geoMap',580,40,{mz:11,mlat:55.04,mlon:82.95});
 map.size.w=620; map.size.h=520; applySize(map);
+addEdge(pl.id,'rec',lg.id,'rec');
+addEdge(lg.id,'rec',map.id,'rec');
+markWiresDirty();
+});
+preset('Map: Vector Base Map (OpenFreeMap) — Sharp at Any Zoom, Light and Dark', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The Map node can draw a VECTOR base map: «tiles» = OpenFreeMap (vector) or OpenFreeMap Dark (vector). The server (OpenFreeMap, free, no key) sends the map as data — roads, water, buildings, land use, place names — and the node paints it itself, so lines and text stay sharp, a tile is several times smaller than a picture, and a refusal of the raster servers (OSM answers 403 sometimes) does not matter. Data © OpenStreetMap contributors, OpenMapTiles.\n'+
+  'What you look at is cached for offline work (the same cache as the raster tiles; nothing is downloaded in bulk). The address of the tiles is taken from the server\'s TileJSON (it holds the build date); the last good answer is kept, so a cached area opens with no network. Above zoom 14 the server has no more detail — the picture just grows. If a vector or raster server refuses (403 / 429 / unreachable) the node takes a spare map for 5 minutes and says so on the map (checkbox «tiles: if the server refuses…»).\n'+
+  'Here the bus route from the Row Player is drawn over the vector map; switch «tiles» to the Dark variant for the night look.'});
+nt.size.w=760; nt.size.h=200; applySize(nt);
+const sq=addNode('table',40,260,{list:'@patch',
+  data:'id,lat,lon,icon,label\nbus1,55.0302,82.9204,bus,Bus 1\nbus1,55.0350,82.9350,bus,Bus 1\nbus1,55.0410,82.9450,bus,Bus 1\nbus1,55.0450,82.9600,bus,Bus 1\nbus1,55.0420,82.9750,bus,Bus 1'});
+sq.size.w=270; sq.size.h=300; applySize(sq);
+const pl=playRows(sq,40,920,{advance:'distance',speed:40,rate:4,interp:true,loop:true});
+const lg=addNode('recLog',340,260,{}); lg.size.w=210; applySize(lg);
+const map=addNode('geoMap',580,260,{mz:13,mlat:55.04,mlon:82.95,tiles:'OpenFreeMap (vector)'});
+map.size.w=640; map.size.h=520; applySize(map);
 addEdge(pl.id,'rec',lg.id,'rec');
 addEdge(lg.id,'rec',map.id,'rec');
 markWiresDirty();

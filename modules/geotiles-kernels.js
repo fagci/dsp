@@ -12,6 +12,8 @@ const GEO_TILE_FB={
   'CyclOSM':['OSM Humanitarian','CARTO Light'],
   'CARTO Light':['OSM Humanitarian','OSM'],
   'CARTO Dark':['CARTO Light','OSM Humanitarian'],
+  'OpenFreeMap (vector)':['CARTO Light','OSM Humanitarian'],
+  'OpenFreeMap Dark (vector)':['CARTO Dark','CARTO Light'],
   'Esri Topo':['OpenTopoMap','OSM Humanitarian'],
   'Esri Streets':['CARTO Light','OSM Humanitarian'],
 };
