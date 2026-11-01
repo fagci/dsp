@@ -1280,7 +1280,10 @@ select.aed-b{padding:0 6px}
 #canvas #content .node.xp .nbody{flex:1 1 0;min-height:0;display:flex;flex-direction:column}
 #canvas #content .node.xp .io3{flex:1 1 0;min-height:0}
 #canvas #content .node.xp .io3>.mid{flex:1 1 0;min-height:0;min-width:0;display:flex!important;flex-direction:column;padding:0;margin:0}
-#canvas #content .node.xp .io3>.mid>:not(canvas.view.main):not(.tbl-ui):not(.chat):not(.sa-ov){display:none!important}
+#canvas #content .node.xp .io3>.mid>:not(canvas.view.main):not(.tbl-ui):not(.chat):not(.sa-ov):not(.vp){display:none!important}
+#canvas #content .node.xp .io3>.mid>.vp{flex:1 1 0;min-height:0}
+.node.xp .vp-stage{flex:1 1 0;aspect-ratio:auto;min-height:0}
+.node.xp .vp-src{display:none}
 #canvas #content .node.xp canvas.view.main{flex:1 1 0;min-height:0;width:100%!important;height:auto!important;aspect-ratio:auto;margin:0;border-radius:0}
 .node.xp .tbl-ui{flex:1 1 0;min-height:0;height:auto!important;padding:4px}
 .node.xp .tbl-ui>:not(.tbl-list){display:none!important}
@@ -1674,3 +1677,7 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 .vp-time{font:11px/1 var(--mono);color:var(--dim);white-space:nowrap}
 .vp-speed,.vp-q{flex:none}
 .vp-src{flex:none;width:100%}
+/* Video Player: на весь экран — картинка и панель управления (в т.ч. в запасном режиме без Fullscreen API) */
+.vp.fs-fb{position:fixed!important;inset:0;width:100vw!important;height:100vh!important;z-index:300;background:#000;margin:0;padding:6px;box-sizing:border-box}
+.vp:fullscreen{background:#000;padding:6px;box-sizing:border-box}
+.vp:fullscreen .vp-stage,.vp.fs-fb .vp-stage{flex:1 1 0;aspect-ratio:auto;min-height:0}

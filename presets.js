@@ -7042,7 +7042,7 @@ markWiresDirty();
 preset('Video: Table of Sources → Player with Seek and Saved Position', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'A list of video sources lives in the Table (name, url; series, season, episode make a series): a file (mp4 / webm) or an HLS playlist (.m3u8). Video Sources («Load») fills it with samples — a few films, HLS streams and a 5-episode series; add your own rows in the Table. '+
-  'Pick a source in the player\'s list (episodes are grouped by series and season; ✓ watched, ▸N % started) or with ⏮ ⏭; ↻ continues where you stopped (the next episode after a finished one); at the end of an episode the next one starts. '+
+  'The player\'s header has ⛶ expand, ⤢ fullscreen (with the seek bar) and ⧉ picture in picture (its window has ±10 s too); «vid» is the picture for other modules. Pick a source in the player\'s list (episodes are grouped by series and season; ✓ watched, ▸N % started) or with ⏮ ⏭; ↻ continues where you stopped (the next episode after a finished one); at the end of an episode the next one starts. '+
   'Seek: the slider, −10 / +10 (arrows ← → on a focused player, Shift = 30 s), the «seek» input, speed. The position is remembered per address (the last 300), also after a reload; every save also goes to «rec» → the right Table (key url) — the watch history. '+
   'HLS needs CORS on the server; an http:// link on an https:// page is blocked by the browser.'});
 nt.size.w=1000; nt.size.h=130; applySize(nt);
@@ -7059,7 +7059,7 @@ markWiresDirty();
 });
 preset('Video: Internet Archive Search → Episodes → Player', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'Open films, cartoons and old TV from the Internet Archive (archive.org). In Video Sources type words into «query» (empty — the most watched), pick a collection and press Load: the results go to the left Table. Select a row — its «id» goes to «item» and the item\'s video files come out on «list»: an item with several files is a series, the episodes are numbered from S01E02 / «Episode 3» in the file names. '+
+const nt=addNode('note',40,40,{text:'Open films, cartoons and old TV from the Internet Archive (archive.org). In Video Sources type words into «query» (empty — the most watched), pick a collection and press Load (the provider can be switched to Wikimedia Commons or PeerTube; an archive.org/details/… link pasted into the player works too): the results go to the left Table. Select a row — its «id» goes to «item» and the item\'s video files come out on «list»: an item with several files is a series, the episodes are numbered from S01E02 / «Episode 3» in the file names. '+
   'The player plays them one after another, remembers the position of every episode (↻ continues) and writes the history to the right Table. The «list» can also be kept in a Table (key url) — that is your own list of sources. Needs the Internet Archive to be reachable (CORS is allowed there); the last answer is shown as «stale» when the network is gone.'});
 nt.size.w=1000; nt.size.h=120; applySize(nt);
 const ct=addNode('vcatalog',40,190,{provider:'Internet Archive',query:'cartoon',kind:'cartoons'});

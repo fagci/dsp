@@ -109,7 +109,7 @@ function vpRec(url,name,e,meta){
 
 /* ---------- каталоги ---------- */
 // Internet Archive: поиск → строки {id,name,year,downloads,url}; url — страница (не видеофайл)
-const VP_IA_KINDS={'any video':'mediatype:movies','feature films':'collection:feature_films','cartoons':'collection:animationandcartoons','classic TV':'collection:classic_tv','TV series (shows)':'collection:television','sci-fi & horror':'collection:SciFi_Horror','short films':'collection:short_films'};
+const VP_IA_KINDS={'any video':'mediatype:movies','movies & films':'collection:moviesandfilms','open source movies':'collection:opensource_movies','film noir':'collection:film_noir','silent films':'collection:silent_films','news & public affairs':'collection:newsandpublicaffairs','Prelinger archives':'collection:prelinger','feature films':'collection:feature_films','cartoons':'collection:animationandcartoons','classic TV':'collection:classic_tv','TV series (shows)':'collection:television','sci-fi & horror':'collection:SciFi_Horror','short films':'collection:short_films'};
 function vpIaSearchUrl(q,kind,rows){
   const f=VP_IA_KINDS[kind]||VP_IA_KINDS['any video'];
   const text=String(q||'').trim().replace(/["\\]/g,' ').replace(/\s+/g,' ').trim();
@@ -127,27 +127,31 @@ function vpIaId(v){
   if(m) return decodeURIComponent(m[1]);
   return /^[\w.\-]+$/.test(s) ? s : '';
 }
-// метаданные предмета (archive.org/metadata/ID) → проигрываемые файлы; по одному на имя без расширения (лучший формат)
-const VP_IA_RANK=[/h\.?264|mpeg4|\.mp4$|\.m4v$/i,/webm/i,/ogg video|\.ogv$/i];
+// метаданные предмета (archive.org/metadata/ID) → проигрываемые файлы. Файлы одной серии (то же имя без расширения и суффиксов
+// _512kb / .ia) — разные форматы одного видео: основной — самый «безопасный» для браузера (h.264 — производный файл Архива,
+// оригинал может быть DivX / MPEG-4 Part 2, который браузер не играет), остальные идут в alt (адреса через пробел) — запасные
+const VP_IA_RANK=[/h\.?264/i,/512kb\s*mpeg4|_512kb\.mp4$/i,/mpeg-?4|\.mp4$|\.m4v$/i,/webm/i,/ogg video|\.ogv$/i];
 function vpIaFiles(meta,id){
   const files=meta && Array.isArray(meta.files) ? meta.files : [];
-  const best=new Map();
+  const groups=new Map();
   for(const f of files){
     const nm=String(f.name||''); if(!/\.(mp4|m4v|webm|ogv)$/i.test(nm)) continue;
-    if(/\.(thumbs?|gif)$/i.test(nm) || /^__ia_thumb/.test(nm)) continue;
-    const key=nm.replace(/\.[^.]+$/,'').replace(/\.(ia|512kb)$/i,'');
-    let r=VP_IA_RANK.findIndex(x=>x.test(nm+' '+(f.format||'')));
+    if(/^__ia_thumb/.test(nm) || /\.thumbs\//.test(nm)) continue;
+    const key=nm.replace(/\.[^.]+$/,'').replace(/(\.ia|_512kb|_h264|_hd)$/i,'');
+    let r=VP_IA_RANK.findIndex(x=>x.test((f.format||'')+' '+nm));
     if(r<0) r=9;
-    if(f.source==='original') r-=.5;
-    const cur=best.get(key);
-    if(!cur || r<cur.r) best.set(key,{f,r,key});
+    if(!groups.has(key)) groups.set(key,[]);
+    groups.get(key).push({f,r});
   }
   const md=meta && meta.metadata || {};
   const title=String(Array.isArray(md.title) ? md.title[0] : md.title||id);
-  const list=[...best.values()].map(({f,key})=>{
-    const base=key.split('/').pop().replace(/[_]+/g,' ').trim();
-    return {name:String(f.title||base||f.name),file:f.name,url:'https://archive.org/download/'+encodeURIComponent(id)+'/'+String(f.name).split('/').map(encodeURIComponent).join('/'),
-      size:+f.size||0,length:+f.length||0};
+  const dl=f=>'https://archive.org/download/'+encodeURIComponent(id)+'/'+String(f.name).split('/').map(encodeURIComponent).join('/');
+  const list=[...groups.entries()].map(([key,c])=>{
+    c.sort((x,y)=>x.r-y.r || (x.f.name<y.f.name ? -1 : 1));
+    const f=c[0].f, base=key.split('/').pop().replace(/_+/g,' ').trim();
+    const row={name:String(f.title||base||f.name),file:f.name,url:dl(f),size:+f.size||0,length:+f.length||0};
+    if(c.length>1) row.alt=c.slice(1).map(x=>dl(x.f)).join(' ');
+    return row;
   });
   const rows=list.length>1 ? list.map(c=>({...c,series:title})) : list;
   rows.sort((a,b)=>{ const x=vpEpisode(a.name,null), y=vpEpisode(b.name,null);
@@ -170,6 +174,11 @@ const VP_SAMPLES=(()=>{
     {name:'Elephants Dream',url:g('ElephantsDream'),group:'Blender open movies'},
     {name:'Sintel',url:g('Sintel'),group:'Blender open movies'},
     {name:'Tears of Steel',url:g('TearsOfSteel'),group:'Blender open movies'},
+    {name:'Subaru Outback On Street And Dirt',url:g('SubaruOutbackOnStreetAndDirt'),group:'Car reviews'},
+    {name:'Volkswagen GTI Review',url:g('VolkswagenGTIReview'),group:'Car reviews'},
+    {name:'We Are Going On Bullrun',url:g('WeAreGoingOnBullrun'),group:'Car reviews'},
+    {name:'What car can you get for a grand?',url:g('WhatCarCanYouGetForAGrand'),group:'Car reviews'},
+    {name:'The Pink Panther cartoons (Internet Archive)',url:'https://archive.org/details/ThePinkPanther-cartoons',group:'Internet Archive'},
     {name:'Big Buck Bunny (HLS)',url:'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',group:'HLS test'},
     {name:'Sintel (HLS, bitdash)',url:'https://bitdash-a.akamaihd.net/content/sintel/hls/playlist.m3u8',group:'HLS test'},
     {name:'Apple bip-bop (HLS)',url:'https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8',group:'HLS test'},
@@ -179,3 +188,54 @@ const VP_SAMPLES=(()=>{
     {name:'Joyrides',url:g('ForBiggerJoyrides'),series:ser,season:1,episode:4,group:'Sample series'},
     {name:'Meltdowns',url:g('ForBiggerMeltdowns'),series:ser,season:1,episode:5,group:'Sample series'}];
 })();
+
+// ссылка на страницу предмета Архива (не на файл): archive.org/details/ID
+const vpIsIaPage=u=>/^https?:\/\/(www\.)?archive\.org\/details\/[^\/?#]+\/?(\?|#|$)/i.test(String(u||'').trim());
+// причина ошибки <video> по коду MediaError
+function vpMediaErr(code){ return ({1:'aborted',2:'network error (the address is unreachable or the server refused)',3:'the video is damaged or uses a codec the browser cannot decode',4:'the format is not supported or the address does not give a video file'})[code] || 'cannot be played'; }
+
+/* ---------- ещё каталоги ---------- */
+// Wikimedia Commons: видео (webm / ogv / mp4), прямые адреса файлов
+const VP_WM_MIME=/^(video\/(webm|ogg|mp4)|application\/ogg)$/i;
+function vpWmSearchUrl(q,rows){
+  const text=String(q||'').trim().replace(/\s+/g,' ')||'film';
+  return 'https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrnamespace=6&gsrlimit='+(rows>0 ? Math.min(rows,50) : 30)+'&gsrsearch='+encodeURIComponent('filetype:video '+text)+'&prop=imageinfo&iiprop='+encodeURIComponent('url|mime|size|extmetadata')+'&format=json&origin=*';
+}
+function vpWmItems(json){
+  const pages=json && json.query && json.query.pages; if(!pages) return [];
+  return Object.values(pages).sort((a,b)=>(a.index||0)-(b.index||0)).map(pg=>{
+    const ii=pg.imageinfo && pg.imageinfo[0]; if(!ii || !ii.url || !VP_WM_MIME.test(ii.mime||'')) return null;
+    const em=ii.extmetadata||{}, nm=String(pg.title||'').replace(/^File:/i,'').replace(/\.[^.]+$/,'').replace(/_/g,' ');
+    return {name:nm,url:ii.url,mime:ii.mime,size:ii.size||0,page:'https://commons.wikimedia.org/wiki/'+encodeURIComponent(String(pg.title||'').replace(/ /g,'_')),group:'Wikimedia Commons',license:String(em.LicenseShortName&&em.LicenseShortName.value||'')};
+  }).filter(Boolean);
+}
+// PeerTube (поиск SepiaSearch по всем открытым серверам): результаты → строки с id «сервер/uuid»; файлы — со страницы видео сервера
+function vpPtSearchUrl(q,rows){
+  return 'https://sepiasearch.org/api/v1/search/videos?search='+encodeURIComponent(String(q||'').trim()||'film')+'&count='+(rows>0 ? Math.min(rows,100) : 30)+'&sort=-match';
+}
+function vpPtItems(json){
+  const d=json && Array.isArray(json.data) ? json.data : [];
+  return d.map(v=>{
+    let host=v.account && v.account.host || ''; if(!host){ try{ host=new URL(v.url).host; }catch(e){} }
+    if(!host || !v.uuid) return null;
+    return {id:host+'/'+v.uuid,name:String(v.name||v.uuid),duration:v.duration||0,channel:String(v.channel && (v.channel.displayName||v.channel.name)||''),url:v.url||'',group:host};
+  }).filter(Boolean);
+}
+const vpPtId=v=>{ const m=/^(?:peertube:)?([a-z0-9.\-]+\.[a-z]{2,})\/([\w\-]+)$/i.exec(String(v||'').trim()); return m ? {host:m[1],uuid:m[2]} : null; };
+function vpPtFiles(json,host,uuid){
+  if(!json) return [];
+  const name=String(json.name||uuid), out=[];
+  const pl=json.streamingPlaylists && json.streamingPlaylists[0];
+  if(pl && pl.playlistUrl) out.push({name,url:pl.playlistUrl});
+  const fl=(json.files||[]).filter(f=>f.fileUrl).sort((a,b)=>Math.abs((a.resolution&&a.resolution.id||0)-720)-Math.abs((b.resolution&&b.resolution.id||0)-720));
+  if(fl.length){ if(out.length) out[0].alt=fl.map(f=>f.fileUrl).join(' '); else out.push({name,url:fl[0].fileUrl,alt:fl.slice(1).map(f=>f.fileUrl).join(' ')}); }
+  return out.map(o=>o.alt ? o : {name:o.name,url:o.url});
+}
+// iptv-org: страна (две буквы), язык (три) или категория; списки на iptv-org.github.io
+const VP_IPTV_CATS=['animation','classic','comedy','cooking','culture','documentary','education','entertainment','family','general','kids','legislative','lifestyle','movies','music','news','outdoor','relax','religious','science','series','shop','sports','travel','weather'];
+function vpIptvUrl(v){
+  const s=String(v||'').trim().toLowerCase().replace(/[^a-z]/g,'');
+  if(VP_IPTV_CATS.includes(s)) return 'https://iptv-org.github.io/iptv/categories/'+s+'.m3u';
+  if(s.length===3) return 'https://iptv-org.github.io/iptv/languages/'+s+'.m3u';
+  return VP_IPTV_URL(s);
+}
