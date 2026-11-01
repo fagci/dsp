@@ -21,7 +21,8 @@ import org.json.JSONObject
 
 /**
  * Окна поверх других приложений («Показ поверх других окон»): каждое показывает последний кадр холста узла страницы
- * (modules/floatwin.js шлёт кадры через DspApp.floatFrame). Окно двигается пальцем, ◢ в углу меняет ширину, × закрывает;
+ * (modules/floatwin.js шлёт кадры через DspApp.floatFrame). Окно двигается пальцем, ◢ в углу меняет ширину, × закрывает; в режиме touch
+ * (кнопки, шкалы, клавиатуры узла) касания идут на узел, а окно двигается за ✥ в левом углу;
  * положение и ширина запоминаются по id узла. Нужно особое разрешение SYSTEM_ALERT_WINDOW (Settings.canDrawOverlays).
  */
 object FloatWin {
@@ -30,6 +31,8 @@ object FloatWin {
     private val wins = HashMap<String, W>()
     private val ui = Handler(Looper.getMainLooper())
     @Volatile var onClosed: ((String) -> Unit)? = null
+    /** Касание внутри окна с opts.touch: (id, 0 — вниз / 1 — движение / 2 — вверх, x и y в долях окна 0…1). Страница превращает его в pointer-события узла. */
+    @Volatile var onTouch: ((String, Int, Float, Float) -> Unit)? = null
     /** Вызывается из основного потока каждые ~150 мс, пока есть окна: MainActivity просит страницу снять кадр (floatTick). */
     @Volatile var pump: (() -> Unit)? = null
     private var pumping = false
@@ -75,6 +78,7 @@ object FloatWin {
         fun dp(v: Int) = (v * dm.density).toInt()
         val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val through = opts.optBoolean("through", false)
+        val touch = opts.optBoolean("touch", false) && !through   // окно-пульт: касания уходят на узел, двигается за ✥
         val alpha = opts.optDouble("opacity", 0.85).toFloat().coerceIn(0.1f, 1f)
         val old = wins[id]
         if (old != null) {                                      // уже открыто — только новые параметры
@@ -104,6 +108,7 @@ object FloatWin {
         }
         corner("×", Gravity.TOP or Gravity.END)
         corner("◢", Gravity.BOTTOM or Gravity.END)
+        if (touch) corner("✥", Gravity.TOP or Gravity.START)
         root.alpha = alpha
         var mode = 0; var dx = 0f; var dy = 0f; var sx = 0; var sy = 0; var sw = 0; var moved = false
         root.setOnTouchListener { v, e ->
@@ -113,11 +118,15 @@ object FloatWin {
                     mode = when {
                         e.x > v.width - hs && e.y < hs -> 3
                         e.x > v.width - hs && e.y > v.height - hs -> 2
+                        touch && e.x < hs && e.y < hs -> 1
+                        touch -> 5
                         else -> 1
                     }
+                    if (mode == 5) onTouch?.invoke(id, 0, (e.x / v.width).coerceIn(0f, 1f), (e.y / v.height).coerceIn(0f, 1f))
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    if (mode == 5) { onTouch?.invoke(id, 1, (e.x / v.width).coerceIn(0f, 1f), (e.y / v.height).coerceIn(0f, 1f)); return@setOnTouchListener true }
                     val ox = (e.rawX - dx).toInt(); val oy = (e.rawY - dy).toInt()
                     if (Math.abs(ox) > dp(4) || Math.abs(oy) > dp(4)) moved = true
                     if (mode == 1) { lp.x = sx + ox; lp.y = sy + oy; try { wm.updateViewLayout(root, lp) } catch (ex: Exception) { } }
@@ -125,6 +134,7 @@ object FloatWin {
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (mode == 5) { onTouch?.invoke(id, 2, (e.x / v.width).coerceIn(0f, 1f), (e.y / v.height).coerceIn(0f, 1f)); mode = 0; return@setOnTouchListener true }
                     if (mode == 3 && !moved) { remove(id); onClosed?.invoke(id) }
                     else prefs.edit().putInt("$id.x", lp.x).putInt("$id.y", lp.y).putInt("$id.w", lp.width).apply()
                     mode = 0; true

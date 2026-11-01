@@ -392,7 +392,7 @@ function dialPut(n,f,snap){
   if(snap && p.snap && st>0) f=Math.round(f/st)*st;
   n.f=clamp(f,lo,hi); n.p.state=String(Math.round(n.f));
 }
-def({ id:'dial', lazy:'proc', title:'Tuning Dial', cat:'Indicators', kw:'tuning scale frequency dial radio swipe drag slider vfo knob analog',
+def({ id:'dial', lazy:'proc', touch:true, title:'Tuning Dial', cat:'Indicators', kw:'tuning scale frequency dial radio swipe drag slider vfo knob analog',
   ins:[{n:'in',t:'num'}], outs:[{n:'f',t:'num'},{n:'touch',t:'num'}], view:{h:96}, resize:true,
   params:[{n:'unit',t:'select',opts:Object.keys(DIAL_UNITS),d:'MHz',label:'unit (the f output is always in Hz)'},
           {n:'min',t:'num',d:87.5,label:'band start'},{n:'max',t:'num',d:108,label:'band end'},
@@ -590,7 +590,7 @@ function swGrid(n,W,H){
   return {...best, cw:W/best.c, ch:H/best.r};
 }
 const swSave=n=>{ n.p.state=Array.from({length:+n.p.count||4},(_,k)=>n.on[k]?1:0).join(''); };
-def({ id:'switch', lazy:'proc', title:'Switch', cat:'Indicators', kw:'toggle button tumbler lever rocker push latch',
+def({ id:'switch', lazy:'proc', touch:true, title:'Switch', cat:'Indicators', kw:'toggle button tumbler lever rocker push latch',
   outs:n=>Array.from({length:+n.p.count||4},(_,k)=>({n:'out'+(k+1),t:'num'})),
   view:{h:80}, resize:true,
   params:[{n:'count',t:'select',opts:IND_LAMP_COUNTS,d:'4',label:'switches',fn:swResize},
@@ -964,7 +964,7 @@ function ctlWire(n,cv,cellAt,fader){
 const ctlProc=n=>{ const o={}; for(let k=0;k<(+n.p.count||4);k++) o['out'+(k+1)]=n.val[k]!==undefined ? n.val[k] : 0; return o; };
 const ctlInit=n=>{ n.val=ctlParse(n.p.state,+n.p.count||4,+n.p.init||0); n.drag=null; n.lastK=-1; n.lastT=0; };
 
-def({ id:'knob', lazy:'proc', title:'Knob', cat:'Indicators', kw:'dial rotary potentiometer control encoder knobs',
+def({ id:'knob', lazy:'proc', touch:true, title:'Knob', cat:'Indicators', kw:'dial rotary potentiometer control encoder knobs',
   outs:ctlOuts, view:{h:110}, resize:true,
   params:[{n:'count',t:'select',opts:CTL_COUNTS,d:'4',label:'knobs',fn:ctlResize},...CTL_PARAMS],
   init:ctlInit, process:ctlProc,
@@ -992,7 +992,7 @@ def({ id:'knob', lazy:'proc', title:'Knob', cat:'Indicators', kw:'dial rotary po
     cx.lineCap='butt'; cx.textAlign='start'; cx.textBaseline='alphabetic'; }
 });
 
-def({ id:'fader', lazy:'proc', title:'Fader', cat:'Indicators', kw:'slider mixer channel strip level control',
+def({ id:'fader', lazy:'proc', touch:true, title:'Fader', cat:'Indicators', kw:'slider mixer channel strip level control',
   outs:ctlOuts, view:{h:150}, resize:true,
   params:[{n:'count',t:'select',opts:CTL_COUNTS,d:'4',label:'faders',fn:ctlResize},...CTL_PARAMS],
   init:ctlInit, process:ctlProc,
@@ -1022,7 +1022,7 @@ def({ id:'fader', lazy:'proc', title:'Fader', cat:'Indicators', kw:'slider mixer
 });
 
 /* ---------- XY Pad (двумерная панель) ---------- */
-def({ id:'xypad', lazy:'proc', title:'XY Pad', cat:'Indicators', kw:'touchpad joystick 2d control pan tilt trackpad',
+def({ id:'xypad', lazy:'proc', touch:true, title:'XY Pad', cat:'Indicators', kw:'touchpad joystick 2d control pan tilt trackpad',
   outs:[{n:'x',t:'num'},{n:'y',t:'num'},{n:'touch',t:'num'}], view:{h:150}, resize:true,
   params:[{n:'xmin',t:'num',d:0},{n:'xmax',t:'num',d:1},{n:'ymin',t:'num',d:0},{n:'ymax',t:'num',d:1},
           {n:'spring',t:'check',d:false,label:'spring back to centre on release'},
@@ -1061,7 +1061,7 @@ def({ id:'xypad', lazy:'proc', title:'XY Pad', cat:'Indicators', kw:'touchpad jo
 });
 
 /* ---------- Tank (бак / термометр с порогами) ---------- */
-def({ id:'tank', lazy:'proc', title:'Tank', cat:'Indicators', kw:'level thermometer fill vessel bar progress battery fuel alarm',
+def({ id:'tank', lazy:'proc', touch:true, title:'Tank', cat:'Indicators', kw:'level thermometer fill vessel bar progress battery fuel alarm',
   ins:[{n:'in',t:'num'}], outs:[{n:'low',t:'num'},{n:'high',t:'num'}],
   view:{h:150}, resize:true,
   params:[{n:'min',t:'num',d:0},{n:'max',t:'num',d:100},

@@ -726,7 +726,7 @@ function kpGrid(n,W,H){
   }
   return {...best, cw:W/best.c, ch:H/best.r};
 }
-def({ id:'keypanel', lazy:'proc', title:'Key Panel', cat:'Indicators', kw:'buttons keys keypad ptt radio scanner numeric transport rubber mechanical push latch hardware controls',
+def({ id:'keypanel', lazy:'proc', touch:true, title:'Key Panel', cat:'Indicators', kw:'buttons keys keypad ptt radio scanner numeric transport rubber mechanical push latch hardware controls',
   outs:n=>[...kpKeys(n).map((k,i)=>({n:'k'+(i+1),t:'num'})),{n:'last',t:'num'},{n:'key',t:'txt'},{n:'hit',t:'num'},{n:'rec',t:'rec'},{n:'cmd',t:'rec'}],
   view:{h:130}, w:300, resize:true,
   params:[{n:'layout',t:'select',opts:[...Object.keys(KP_LAYOUTS),'custom'],d:'radio',fn:pnPortsFix,label:'layout (custom — the list below)'},
@@ -786,7 +786,7 @@ function dpHit(x,y,W,H){
   if(Math.hypot(u,v)>.38) return '';
   return Math.abs(u)>Math.abs(v) ? (u<0 ? 'left' : 'right') : (v<0 ? 'up' : 'down');
 }
-def({ id:'dpad', lazy:'proc', title:'D-pad', cat:'Indicators', kw:'joystick directional pad arrows up down left right ok enter back menu home cross buttons navigation',
+def({ id:'dpad', lazy:'proc', touch:true, title:'D-pad', cat:'Indicators', kw:'joystick directional pad arrows up down left right ok enter back menu home cross buttons navigation',
   outs:[{n:'up',t:'num'},{n:'down',t:'num'},{n:'left',t:'num'},{n:'right',t:'num'},{n:'ok',t:'num'},
         {n:'a',t:'num'},{n:'b',t:'num'},{n:'c',t:'num'},{n:'d',t:'num'},{n:'x',t:'num'},{n:'y',t:'num'},{n:'key',t:'txt'},{n:'hit',t:'num'},{n:'rec',t:'rec'}],
   view:{h:180}, w:200, resize:true,
@@ -845,7 +845,7 @@ const pnList=(s,max)=>String(s||'').split(',').map(x=>x.trim()).filter(x=>x!==''
 
 /* ---------- Rotary Selector (галетный переключатель на N положений) ---------- */
 const rsLabels=n=>{ const l=pnList(n.p.labels,12); return l.length>=2 ? l : ['0','1']; };
-def({ id:'rotsel', lazy:'proc', title:'Rotary Selector', cat:'Indicators', kw:'rotary switch selector band mode positions detent bakelite wafer knob',
+def({ id:'rotsel', lazy:'proc', touch:true, title:'Rotary Selector', cat:'Indicators', kw:'rotary switch selector band mode positions detent bakelite wafer knob',
   outs:[{n:'pos',t:'num'},{n:'val',t:'num'},{n:'label',t:'txt'}], view:{h:160}, w:220, resize:true,
   params:[{n:'labels',t:'text',d:'OFF,LSB,USB,CW,AM,FM',label:'positions (comma separated, 2…12)'},
           {n:'values',t:'text',d:'',label:'values on «val» (comma separated; empty — 0, 1, 2…)'},
@@ -892,7 +892,7 @@ def({ id:'rotsel', lazy:'proc', title:'Rotary Selector', cat:'Indicators', kw:'r
 });
 
 /* ---------- Jog Wheel (бесконечный энкодер с кнопкой) ---------- */
-def({ id:'jog', lazy:'proc', title:'Jog Wheel', cat:'Indicators', kw:'encoder jog shuttle wheel rotary endless detent tuning dial spinner scroll',
+def({ id:'jog', lazy:'proc', touch:true, title:'Jog Wheel', cat:'Indicators', kw:'encoder jog shuttle wheel rotary endless detent tuning dial spinner scroll',
   outs:[{n:'delta',t:'num'},{n:'pos',t:'num'},{n:'dir',t:'num'},{n:'push',t:'num'},{n:'rec',t:'rec'}], view:{h:170}, w:200, resize:true,
   params:[{n:'detents',t:'range',min:4,max:60,step:1,d:24,label:'detents per turn'},
           {n:'step',t:'num',d:1,label:'value per detent on «pos»'},
@@ -935,7 +935,7 @@ def({ id:'jog', lazy:'proc', title:'Jog Wheel', cat:'Indicators', kw:'encoder jo
 
 /* ---------- DIP Switch ---------- */
 const dsBits=n=>{ const N=+n.p.count||8, o=[]; for(let i=0;i<N;i++) o.push(String(n.p.state||'')[i]==='1'); return o; };
-def({ id:'dipsw', lazy:'proc', title:'DIP Switch', cat:'Indicators', kw:'dip switch bank binary address bits config jumper slide',
+def({ id:'dipsw', lazy:'proc', touch:true, title:'DIP Switch', cat:'Indicators', kw:'dip switch bank binary address bits config jumper slide',
   outs:n=>[...Array.from({length:+n.p.count||8},(_,i)=>({n:'b'+(i+1),t:'num'})),{n:'value',t:'num'},{n:'bits',t:'txt'}],
   view:{h:100}, w:300, resize:true,
   params:[{n:'count',t:'select',opts:['4','6','8','10','12','16'],d:'8',fn:pnPortsFix},
