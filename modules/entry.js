@@ -95,11 +95,12 @@ const CALC_SCI=deg=>{ const k=(t,r,c,kind)=>({k:t,t,r,c,kind});
   return [k('(',0,0,'fn'),k(')',0,1,'fn'),k('√',0,2,'fn'),k('x²',0,3,'fn'),k('sin',1,0,'fn'),k('cos',1,1,'fn'),k('tan',1,2,'fn'),k('^',1,3,'op'),
           k('ln',2,0,'fn'),k('log',2,1,'fn'),k('π',2,2,'fn'),k('ANS',2,3,'fn'),k('A',3,0,'fn'),k('B',3,1,'fn'),k('M+',3,2,'fn'),k('M−',3,3,'fn'),
           k('MR',4,0,'fn'),k('MC',4,1,'fn'),k('e',4,2,'fn'),{k:'DEG',t:deg ? 'deg' : 'rad',r:4,c:3,kind:'fn'}]; };
+const calcSci=p=>p.layout==='scientific' || p.sci===true;          // sci — прежнее имя параметра в старых патчах
 const calcKeys=(sci,deg)=>{ const b=CALC_BASIC().map(q=>({...q,r:q.r+(sci ? 5 : 0)})); return sci ? CALC_SCI(deg).concat(b) : b; };
 def({ id:'keycalc', lazy:'proc', touch:true, title:'Pocket Calculator', cat:'Indicators',
   kw:'calculator calc maths arithmetic compute scientific sin cos sqrt memory ans result number feed port float',
   ins:[{n:'a',t:'num'},{n:'b',t:'num'}], outs:[{n:'out',t:'num'},{n:'text',t:'txt'}], view:{h:300}, w:240, resize:true,
-  params:[{n:'sci',t:'check',d:false,label:'scientific keys (sin cos ln √ ^ memory, A / B inputs)'},
+  params:[{n:'layout',t:'select',opts:['simple','scientific'],d:'simple',label:'simple — big keys for a floating window; scientific — sin cos ln √ ^ memory, A / B inputs (a tap on the display switches)'},
           {n:'live',t:'check',d:false,label:'send the running result to «out» before pressing ='},
           {n:'digits',t:'range',min:4,max:15,step:1,d:12,label:'significant digits'},
           {n:'color',t:'text',d:'amber',label:'accent: '+IND_COLORS.join(', ')+' or #rrggbb'},
@@ -113,10 +114,13 @@ def({ id:'keycalc', lazy:'proc', touch:true, title:'Pocket Calculator', cat:'Ind
     const val=pv!==null ? pv : cs.res;
     return {out:val, text:cs.fresh ? ceFmt(cs.res,+n.p.digits) : cs.expr}; },
   draw(n,cv,cx){
-    const W=cv.width, H=cv.height, p=n.p, cs=n.cs, col=indColor(p.color), sci=!!p.sci, rows=sci ? 10 : 5;
-    const top=Math.max(48,H*.2), L=enLayout(W,H,top,rows,4,calcKeys(sci,cs.deg));
-    enWire(n,cv,(x,y)=>{ const r=enHit(enLayout(cv.width,cv.height,Math.max(48,cv.height*.2),n.p.sci ? 10 : 5,4,calcKeys(!!n.p.sci,n.cs.deg)),x,y); return r ? r.q.k : null; },
-      k=>{ calcPress(n.cs,k,n.ext,+n.p.digits);
+    const W=cv.width, H=cv.height, p=n.p, cs=n.cs, col=indColor(p.color), sci=calcSci(p), rows=sci ? 10 : 5;
+    const topK=cv2=>Math.max(48,cv2.height*(calcSci(n.p) ? .2 : .24)), top=topK(cv), L=enLayout(W,H,top,rows,4,calcKeys(sci,cs.deg));
+    enWire(n,cv,(x,y)=>{ const sc=calcSci(n.p), t=Math.max(48,cv.height*(sc ? .2 : .24));
+        if(y<t) return 'VIEW';                                           // тап по дисплею — простой / инженерный вид
+        const r=enHit(enLayout(cv.width,cv.height,t,sc ? 10 : 5,4,calcKeys(sc,n.cs.deg)),x,y); return r ? r.q.k : null; },
+      k=>{ if(k==='VIEW'){ n.p.layout=calcSci(n.p) ? 'simple' : 'scientific'; n.p.sci=false; if(n.set&&n.set.layout) n.set.layout(n.p.layout); return; }
+        calcPress(n.cs,k,n.ext,+n.p.digits);
         n.p.state=(n.cs.res===null ? '' : n.cs.res)+','+n.cs.mem+','+(n.cs.deg ? 'deg' : 'rad'); },
       ev=>keyName(ev));
     cx.clearRect(0,0,W,H);

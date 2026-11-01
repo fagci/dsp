@@ -7328,7 +7328,7 @@ const r2=addNode('numread',800,350,{format:'groups',style:'led',label:'Hz'});
 r2.size.w=300; r2.size.h=90; applySize(r2);
 const r3=addNode('numread',800,490,{format:'si',style:'lcd',unit:'V',digits:4,label:'calculator'});
 r3.size.w=300; r3.size.h=90; applySize(r3);
-const ca=addNode('keycalc',1140,210,{sci:true});
+const ca=addNode('keycalc',1140,210,{layout:'scientific'});
 ca.size.w=260; ca.size.h=500; applySize(ca);
 addEdge(np.id,'out',fd.id,'in'); addEdge(fd.id,'f',dl.id,'in'); addEdge(fd.id,'f',r1.id,'in'); addEdge(dl.id,'f',r2.id,'in');
 addEdge(ca.id,'out',r3.id,'in');
