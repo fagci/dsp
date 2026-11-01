@@ -446,6 +446,7 @@ const PRESET_CATS={
   'Video: Internet Archive Search → Episodes → Player':'Images & TV',
   'Video: IPTV Channels by Country (iptv-org) → Player':'Images & TV',
   'Video: Torrents (magnet / .torrent) → Player (DSP app)':'Images & TV',
+  'Video: Network Folders (SMB / FTP / UPnP) and Any Format → libVLC (DSP app)':'Images & TV',
   'Digital TV: DVB-T2 → record video to Files (trigger, path)':'Images & TV',
   'Analog TV: FPV Multiband Scanner (HackRF)':'Images & TV',
   'Analog TV: FPV Mosaic (one HackRF)':'Images & TV',
@@ -7085,6 +7086,20 @@ const pl=addNode('vplayer',450,220,{});
 pl.size.w=520; pl.size.h=440; applySize(pl);
 const hs=addNode('table',1000,220,{list:'video/history',key:'url',rev:true});
 hs.size.w=380; hs.size.h=380; applySize(hs);
+addEdge(tb.id,'all',pl.id,'rows'); addEdge(pl.id,'rec',hs.id,'rec');
+markWiresDirty();
+});
+preset('Video: Network Folders (SMB / FTP / UPnP) and Any Format → libVLC (DSP app)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'In the DSP app for Android the player has a second native engine, libVLC (LGPL 2.1): it plays almost anything — mkv / avi / DivX, AC3 / DTS, rtmp, multicast — and reads network sources itself: smb://server/share/file.mkv (login: smb://user:password@server/…), ftp:// and sftp://, nfs://, upnp:// (a UPnP / DLNA server). Put such addresses into the Table (name, url) and pick a row; «who plays» = auto sends them to libVLC (and goes to it when ExoPlayer cannot play a file), vlc forces it. '+
+  'The picture is full screen (✕ closes, Back too) or in a window over other apps (🗔), PiP of the app (⧉) works too; the bar has −10 / +10, pause, seek and ⟲ audio tracks (🔊) and subtitles (CC) — also driven from here. The position of every source is saved as usual. The addresses below are examples: replace them with yours. A browser alone cannot open them.'});
+nt.size.w=1000; nt.size.h=130; applySize(nt);
+const tb=addNode('table',40,200,{list:'@patch',key:'url',initial:false,cols:['name','url'],data:'name,url\nNAS: film (SMB),smb://192.168.1.10/video/film.mkv\nProvider FTP: series S01E01,ftp://ftp.example.net/tv/show.S01E01.avi\nHome server (NFS),nfs://192.168.1.10/export/video/clip.mp4\nDLNA server (UPnP),upnp://uuid:00000000-0000-0000-0000-000000000000/1\nStream (RTMP),rtmp://live.example.net/app/stream'});
+tb.size.w=420; tb.size.h=360; applySize(tb);
+const pl=addNode('vplayer',490,200,{engine:'auto'});
+pl.size.w=520; pl.size.h=440; applySize(pl);
+const hs=addNode('table',1040,200,{list:'video/history',key:'url',rev:true});
+hs.size.w=380; hs.size.h=360; applySize(hs);
 addEdge(tb.id,'all',pl.id,'rows'); addEdge(pl.id,'rec',hs.id,'rec');
 markWiresDirty();
 });
