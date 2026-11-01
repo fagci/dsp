@@ -1481,7 +1481,7 @@ const GEO_OVERLAYS={
   'Hiking trails':{url:'https://tile.waymarkedtrails.org/hiking/{z}/{x}/{y}.png', max:18, attr:'© waymarkedtrails.org'},
   'Cycling routes':{url:'https://tile.waymarkedtrails.org/cycling/{z}/{x}/{y}.png', max:18, attr:'© waymarkedtrails.org'},
 };
-const GeoTiles={mem:new Map(), pending:new Set(), gen:0, cache:null};
+const GeoTiles={mem:new Map(), pending:new Set(), gen:0, cache:null, stat:{}};   // stat — здоровье источников (geotiles-kernels.js)
 // источник слоя узла: which — 'tiles' (основа) или 'overlay'; 'custom' — адрес из параметров tileUrl / tileUrl2 ({z}/{x}/{y}, {s} — a)
 function geoSrc(n,which){
   const name=n.p[which];
@@ -1490,8 +1490,11 @@ function geoSrc(n,which){
     const u=String(n.p[which==='tiles' ? 'tileUrl' : 'tileUrl2']||'').trim();
     return /\{z\}/.test(u) && /\{x\}/.test(u) && /\{y\}/.test(u) ? {id:'custom:'+u, url:u, max:19, attr:'custom tiles'} : null;
   }
-  const t=(which==='tiles' ? GEO_TILES : GEO_OVERLAYS)[name];
-  return t ? {...t, id:t.dem ? 'dem:'+t.dem : name} : null;
+  let nm=name, from=null, code=0;
+  if(which==='tiles' && n.p.tileFallback!==false && GEO_TILES[name] && !GEO_TILES[name].dem){          // основа лежит (403 / 429 / сеть) — временно берём запасную
+    const c=geoTileChoose(name,Object.keys(GEO_TILES),GeoTiles.stat,Date.now()); nm=c.name; from=c.from; code=c.code; }
+  const t=(which==='tiles' ? GEO_TILES : GEO_OVERLAYS)[nm];
+  return t ? {...t, id:t.dem ? 'dem:'+t.dem : nm, from, code, want:name} : null;
 }
 function geoTileGet(src,z,x,y,net){
   const key=src.id+'/'+z+'/'+x+'/'+y;
@@ -1513,7 +1516,10 @@ function geoTileGet(src,z,x,y,net){
       let r=await cache.match(url);
       if(!r){
         if(!net) throw new Error('offline');
-        r=await fetch(url,{mode:'cors'}); if(!r.ok) throw new Error('HTTP '+r.status);
+        const live=navigator.onLine!==false;               // без сети неудача — не вина сервера и источник не «ложится»
+        try{ r=await fetch(url,{mode:'cors'}); }catch(e){ if(live) geoTileMark(GeoTiles.stat,src.id,false,0,Date.now()); throw e; }
+        if(!r.ok){ if(live) geoTileMark(GeoTiles.stat,src.id,false,r.status,Date.now()); throw new Error('HTTP '+r.status); }
+        geoTileMark(GeoTiles.stat,src.id,true,0,Date.now());
         await cache.put(url,r.clone());
       }
       bmp=await createImageBitmap(await r.blob());
@@ -1533,6 +1539,7 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
   w:480, view:{h:360}, resize:true,
   params:[{n:'ttl',t:'range',min:0,max:1440,step:1,d:0,label:'keep, min (0 — forever)'},
           {n:'tiles',t:'select',opts:GEO_TILE_OPTS,d:'none',label:'tiles'},
+          {n:'tileFallback',t:'check',d:true,label:'tiles: if the server refuses (403 / 429 / unreachable), take a spare map for 5 minutes (the note is on the map)'},
           {n:'overlay',t:'select',opts:GEO_OV_OPTS,d:'none',label:'overlay layer (relief shading, railways, trails…)'},
           {n:'ovAlpha',t:'range',min:.1,max:1,step:.05,d:.7,label:'overlay opacity'},
           {n:'grid',t:'select',opts:['none','lat/lon','maidenhead'],d:'none',label:'grid'},
@@ -2889,6 +2896,7 @@ function geoDrawOverlay(n,cx,v){
   if(GeoBase.state!=='ready') st.push('base map: '+GeoBase.state+(GeoBase.err?' — '+GeoBase.err:''));
   if(GeoBase.placesState && !/^\d+ places$/.test(GeoBase.placesState)) st.push('places: '+GeoBase.placesState);
   if(n.vmsg) st.push(n.vmsg);
+  { const ts0=geoSrc(n,'tiles'); if(ts0 && ts0.from) st.push(geoTileNote(ts0.from,ts0.id,ts0.code)); }
   st.push('z '+z.toFixed(1)+' · objects '+n.ents.size);
   cx.fillStyle='rgba(200,210,214,.7)'; st.forEach((l,i)=>cx.fillText(l,6,13+i*12));
   // атрибуция
@@ -2914,7 +2922,7 @@ function geoDrawOverlay(n,cx,v){
 }
 defGroups('geoMap',[
   {n:'Edit', p:'mode tools addName addIcon drawColor'},
-  {n:'Display', p:'ttl tiles overlay ovAlpha iconScale grid labels circles cluster follow net'},
+  {n:'Display', p:'ttl tiles tileFallback overlay ovAlpha iconScale grid labels circles cluster follow net'},
   {n:'Data layers', p:'vfile vclr osmKind osmGo'},
   {n:'Tracks', p:'trail maxEnt arrows rayKm', open:false},
   {n:'Export', p:'store csv geojson kml gpx', open:false},
