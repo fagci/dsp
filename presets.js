@@ -556,6 +556,7 @@ const PRESET_CATS={
   'Indicators: Switches and Attitude':'Analysis & Measurement',
   'Indicators: Knobs, Faders, XY Pad and Tank':'Analysis & Measurement',
   'Indicators: Radio Tuning Dial and Magic Eye (stream)':'Analysis & Measurement',
+  'Indicators: Analog Radio Meters (S-Meter, SWR, Tuning)':'Analysis & Measurement',
   'Panels: Radio Displays (Base and Mobile) and a Key Panel':'Analysis & Measurement',
   'Panels: Metal Detector from the Magnetometer and Other Detectors':'Analysis & Measurement',
   'Panels: Needle Meter, Speedometer, Counters, Nixie, D-pad and Spectrum Display':'Analysis & Measurement',
@@ -7305,6 +7306,29 @@ e2.size.w=320; e2.size.h=140; applySize(e2);
 addEdge(dl.id,'f',sd.id,'in');
 addEdge(st.id,'L',dc.id,'L'); addEdge(st.id,'R',dc.id,'R'); addEdge(st.id,'L',mt.id,'in');
 addEdge(mt.id,'db',e1.id,'in'); addEdge(mt.id,'db',e2.id,'in');
+markWiresDirty();
+});
+preset('Indicators: Analog Radio Meters (S-Meter, SWR, Tuning)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Needle instruments of a ham shack, fed by LFOs so they move on their own — wire your own numbers instead.\n'+
+  'S-Meter (needle): input in dBm, S1…S9 then +20 / +40 / +60 in red, S9 level is a parameter (−73 HF, −93 VHF), fast attack / slow fall and a peak marker.\n'+
+  'SWR / Power Meter: two crossing needles — forward (left) and reflected (right) power; SWR is computed from them and also comes out of the `swr` pin. '+
+  'Tuning Meter: a centre-zero needle for the offset (AFC / discriminator), the green band is «in tune». Needle Meter (VU) is the general one. Dial colour: cream, amber, white, green, blue, dark or #rrggbb.'});
+nt.size.w=900; nt.size.h=120; applySize(nt);
+const l1=addNode('lfo',40,190,{freq:.15,min:-110,max:-30});
+const sm=addNode('smeterneedle',300,190,{s9:-73,face:'cream'});
+sm.size.w=320; sm.size.h=160; applySize(sm);
+const l2=addNode('lfo',40,420,{freq:.12,min:5,max:100,wave:'tri'});
+const l3=addNode('lfo',40,570,{freq:.12,min:.2,max:12,wave:'tri'});
+const sw=addNode('swrmeter',300,420,{max:100,refmax:20,face:'amber'});
+sw.size.w=340; sw.size.h=190; applySize(sw);
+const l4=addNode('lfo',40,720,{freq:.2,min:-4500,max:4500});
+const tm=addNode('tunemeter',300,720,{range:5000,tol:500,face:'green'});
+tm.size.w=300; tm.size.h=150; applySize(tm);
+const vu=addNode('vumeter',680,190,{min:-60,max:0,red:-6,unit:'dB',face:'dark'});
+vu.size.w=300; vu.size.h=150; applySize(vu);
+addEdge(l1.id,'out',sm.id,'in'); addEdge(l1.id,'out',vu.id,'in');
+addEdge(l2.id,'out',sw.id,'fwd'); addEdge(l3.id,'out',sw.id,'ref'); addEdge(l4.id,'out',tm.id,'in');
 markWiresDirty();
 });
 preset('Panels: Radio Displays (Base and Mobile) and a Key Panel', function(){
