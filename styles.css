@@ -1648,3 +1648,13 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 #helpPanel .hp-more{margin-top:6px;padding-left:10px;border-left:2px solid var(--line)}
 #helpPanel .hp-sum{font-size:14px}
 #helpPanel .hp-btn{margin:4px 0}
+
+/* рисованные иконки в шапке узла и панелях дашборда (ico() в core-graph.js) */
+.nhead :is(.x,.ren,.rst,.xpd,.hlp,.fsb,.pipb,.wpb,.flb){display:inline-flex;align-items:center}
+.nhead :is(.x,.ren,.rst,.xpd,.hlp,.fsb,.pipb,.wpb,.flb) .i{width:12px;height:12px}
+.dash-tools button{display:inline-flex;align-items:center}
+.dash-tools button .i{width:14px;height:14px}
+@media (pointer:coarse){
+  .nhead :is(.x,.ren,.rst,.xpd,.hlp,.fsb,.pipb,.wpb,.flb) .i{width:18px;height:18px}
+  .dash-tools button .i{width:18px;height:18px}
+}

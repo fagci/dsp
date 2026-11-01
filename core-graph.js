@@ -331,7 +331,7 @@ const d=MOD[n.type];
 const el=document.createElement('div'); el.className='node panzoom-exclude'+(n.type==='note'?' note':''); el.dataset.type=n.type; el.dataset.id=n.id;
 const title=nodeTitle(n);
 el.style.setProperty('--cat',catColor(d.cat)); el.dataset.title=title;
-el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span>${d.view||d.bare?'<span class="xpd" title="Expand canvas (hide parameters)">⛶</span>':''}${d.fs?'<span class="fsb" title="Fullscreen (double-click the picture)">⤢</span>':''}${(d.view||d.fs)&&pipSupported()?'<span class="pipb" title="Picture in picture (floating window)">⧉</span>':''}${(d.view||d.fs)&&wallpaperSupported()?'<span class="wpb" title="Set as live wallpaper (phone app)">🖼</span>':''}${(d.view||d.fs)&&floatSupported()?'<span class="flb" title="Float over other apps (phone app)">🗔</span>':''}<span class="hlp" title="Help for this module (F1)">?</span><span class="rst" title="Reset all parameters">↺</span><span class="ren" title="Rename">✎</span><span class="x">✕</span></div> <div class="nbody"></div>`;
+el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span>${d.view||d.bare?'<span class="xpd" title="Expand canvas (hide parameters)">'+ico('expand')+'</span>':''}${d.fs?'<span class="fsb" title="Fullscreen (double-click the picture)">'+ico('full')+'</span>':''}${(d.view||d.fs)&&pipSupported()?'<span class="pipb" title="Picture in picture (floating window)">'+ico('pip')+'</span>':''}${(d.view||d.fs)&&wallpaperSupported()?'<span class="wpb" title="Set as live wallpaper (phone app)">'+ico('wall')+'</span>':''}${(d.view||d.fs)&&floatSupported()?'<span class="flb" title="Float over other apps (phone app)">'+ico('float')+'</span>':''}<span class="hlp" title="Help for this module (F1)">${ico('help')}</span><span class="rst" title="Reset all parameters">${ico('reset')}</span><span class="ren" title="Rename">${ico('edit')}</span><span class="x">${ico('close')}</span></div> <div class="nbody"></div>`;
 el.querySelector('.ttl').textContent=title;
 el.querySelector('.ren').addEventListener('click',e=>{ e.stopPropagation(); renameNode(n); });
 el.querySelector('.hlp').addEventListener('click',e=>{ e.stopPropagation(); hpForNode(n); });
@@ -1752,8 +1752,29 @@ function dashShort(n){
   if(Graph.nodes.some(x=>x!==n && x.type===n.type)) s+=' #'+n.id;
   return s;
 }
+
+// Рисованные иконки (контур 1.8, currentColor) вместо символов шрифта: одинаково выглядят на любом телефоне и не превращаются в эмодзи
+const ICO_P={
+  expand:'M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7',                         // развернуть канву: стрелки по диагонали
+  full:'M4 9V5a1 1 0 011-1h4M15 4h4a1 1 0 011 1v4M20 15v4a1 1 0 01-1 1h-4M9 20H5a1 1 0 01-1-1v-4',   // во весь экран: уголки
+  fit:'M3 6a1 1 0 011-1h16a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1zM8 10a1.6 1.6 0 100 .01M16 14a1.6 1.6 0 100 .01M9.4 11l5.2 2',   // вписать патч: окно с графом внутри
+  pip:'M3 5h18v14H3zM12 12h7v5h-7z',
+  wall:'M4 4h16a1 1 0 011 1v14a1 1 0 01-1 1H4a1 1 0 01-1-1V5a1 1 0 011-1zM3 17l5-5 4 4 3-3 6 6M15.5 8.5a1.2 1.2 0 100 .01',
+  float:'M12 3l9 5-9 5-9-5zM3 13l9 5 9-5M3 17.5l9 5 9-5',
+  help:'M12 3a9 9 0 100 18 9 9 0 000-18zM9.5 9.5a2.5 2.5 0 114 2c-.9.6-1.5 1-1.5 2.2M12 17v.01',
+  reset:'M5 12a7 7 0 112.1 5M5 6v6h6',
+  edit:'M4 20l1-4L16 5l3 3L8 19zM14 7l3 3',
+  close:'M6 6l12 12M18 6L6 18',
+  compact:'M4 6h16M4 12h10M4 18h16',
+  plus:'M12 5v14M5 12h14',
+  max:'M4 4h16v16H4zM4 9h16',
+  splitr:'M4 5h16v14H4zM12 5v14',
+  splitd:'M4 5h16v14H4zM4 12h16',
+  more:'M5 12h.01M12 12h.01M19 12h.01',
+};
+const ico=(k,cls)=>'<svg class="i'+(cls?' '+cls:'')+'" viewBox="0 0 24 24" aria-hidden="true"><path d="'+ICO_P[k]+'"/></svg>';
 function dashBtn2(txt,title,fn,cls){
-  const b=document.createElement('button'); b.textContent=txt; b.title=title; b.onclick=fn;
+  const b=document.createElement('button'); if(txt[0]==='@') b.innerHTML=ico(txt.slice(1)); else b.textContent=txt; b.title=title; b.onclick=fn;
   if(cls) b.className=cls; return b;
 }
 const BARE_BACK=new WeakMap();
@@ -1792,7 +1813,7 @@ function dashRenderLeaf(t){
       if(x.view==='graph') dashGraphFit(); },'dash-tab');
     strip.append(b);
   });
-  strip.append(dashBtn2('+','New tab in this pane',()=>{
+  strip.append(dashBtn2('@plus','New tab in this pane',()=>{
     t.tabs.push({node:null}); t.cur=t.tabs.length-1; dashRenderRoot(); Undo.push(); },'dash-tadd'));
   tools.append(strip);
   if(t.tabs.length>1) requestAnimationFrame(()=>{           // активная вкладка в зоне видимости
@@ -1802,7 +1823,7 @@ function dashRenderLeaf(t){
   const acts=document.createElement('div'); acts.className='dash-acts';
   let bareBtn=null;
   if(n && (n.cv || MOD[n.type].bare)){                  // только канва: контролы и заголовок узла спрятаны
-    bareBtn=dashBtn2('⛶','Canvas only (hide controls)',()=>{
+    bareBtn=dashBtn2('@expand','Canvas only (hide controls)',()=>{
       let back=BARE_BACK.get(tab); if(!back) BARE_BACK.set(tab,back=()=>{ tab.bare=false; dashRenderRoot(); });   // жест «назад» возвращает органы управления
       tab.bare=!tab.bare; if(tab.bare) Back.push(back); else Back.drop(back);
       dashRenderRoot(); Undo.push(); },'dash-bare');
@@ -1811,33 +1832,33 @@ function dashRenderLeaf(t){
   }
   let compactBtn=null;
   if(n && MOD[n.type].params?.some(p=>p.pri)){          // только главные параметры: остальное прячется, место — дисплею
-    compactBtn=dashBtn2('▤','Main controls only',()=>{
+    compactBtn=dashBtn2('@compact','Main controls only',()=>{
       tab.compact=!tab.compact; dashRenderRoot(); Undo.push(); },'dash-compact');
     compactBtn.classList.toggle('on',!!tab.compact);
     pane.classList.toggle('compact',!!tab.compact);
   }
-  if(n) acts.append(dashBtn2('✎','Rename module',()=>renameNode(n)));
-  if(n?.cv && MOD[n.type].fs) tools.append(dashBtn2('⤢','Fullscreen (double-click the picture)',()=>nodeFullscreen(n)));
-  if(n?.cv && pipSupported()) tools.append(dashBtn2('⧉','Picture in picture',()=>nodePip(n)));
-  if(n?.cv && wallpaperSupported()) tools.append(dashBtn2('🖼','Set as live wallpaper (phone app)',()=>wallpaperToggle(n)));
-  if(n?.cv && floatSupported()) tools.append(dashBtn2('🗔','Float over other apps (phone app)',()=>floatToggle(n)));
+  if(n) acts.append(dashBtn2('@edit','Rename module',()=>renameNode(n)));
+  if(n?.cv && MOD[n.type].fs) tools.append(dashBtn2('@full','Fullscreen (double-click the picture)',()=>nodeFullscreen(n)));
+  if(n?.cv && pipSupported()) tools.append(dashBtn2('@pip','Picture in picture',()=>nodePip(n)));
+  if(n?.cv && wallpaperSupported()) tools.append(dashBtn2('@wall','Set as live wallpaper (phone app)',()=>wallpaperToggle(n)));
+  if(n?.cv && floatSupported()) tools.append(dashBtn2('@float','Float over other apps (phone app)',()=>floatToggle(n)));
   if(isGraph){
-    acts.append(dashBtn2('⊕','Add module (or double-click the canvas)',e=>dashGraphAdd(e.currentTarget)),
-      dashBtn2('⤢','Fit patch',dashGraphFit));
+    acts.append(dashBtn2('@plus','Add module (or double-click the canvas)',e=>dashGraphAdd(e.currentTarget)),
+      dashBtn2('@fit','Fit patch',dashGraphFit));
     pane.classList.add('graph');
   }
   const many=t.tabs.length>1, isMax=dashMax===t.id;
-  const bm=dashBtn2('⊡',isMax?'Restore layout (double-click header)':'Maximize pane (double-click header)',()=>dashToggleMax(t.id));
+  const bm=dashBtn2('@max',isMax?'Restore layout (double-click header)':'Maximize pane (double-click header)',()=>dashToggleMax(t.id));
   bm.classList.toggle('on',isMax); pane.classList.toggle('max',isMax);
   if(!isMax) acts.append(bm);                            // развёрнута — кнопка возврата всегда на виду, не под «⋯»
-  acts.append(dashBtn2('⬌','Split right',()=>dashSplit(t.id,'row')),
-    dashBtn2('⬍','Split down',()=>dashSplit(t.id,'col')),
-    dashBtn2(many?'⨯':'✕',many?'Close tab':'Remove pane',()=>{
+  acts.append(dashBtn2('@splitr','Split right',()=>dashSplit(t.id,'row')),
+    dashBtn2('@splitd','Split down',()=>dashSplit(t.id,'col')),
+    dashBtn2('@close',many?'Close tab':'Remove pane',()=>{
       if(n) dashDetach(n);
       if(!many){ dashRemoveLeaf(t.id); return; }
       t.tabs.splice(t.cur,1); t.cur=Math.min(t.cur,t.tabs.length-1);
       dashRenderRoot(); Undo.push(); }));
-  const more=dashBtn2('⋯','Pane actions',()=>tools.classList.toggle('acts'),'dash-more');
+  const more=dashBtn2('@more','Pane actions',()=>tools.classList.toggle('acts'),'dash-more');
   tools.append(...(compactBtn?[compactBtn]:[]),...(bareBtn?[bareBtn]:[]),...(isMax?[bm]:[]),more,acts);   // ⛶ и возврат из максимума — всегда на виду, не под «⋯»
   // двойной клик/тап по пустому месту шапки — развернуть/вернуть
   tools.addEventListener('dblclick',e=>{ if(e.target===tools || e.target===strip) dashToggleMax(t.id); });
