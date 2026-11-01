@@ -5,7 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({String,Math,Array,Object,isFinite,URL,encodeURIComponent,decodeURIComponent});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/vplayer-kernels.js'),'utf8')+';this.T={vpKind,vpSources,vpFind,vpResume,vpPut,vpFmt,vpSeek,vpRec,vpEpisode,vpLabel,vpGroup,vpContinue,vpMark,vpIaSearchUrl,vpIaItems,vpIaId,vpIaFiles,vpFilter,VP_IPTV_URL,VP_SAMPLES,vpIsIaPage,vpMediaErr,vpWmSearchUrl,vpWmItems,vpPtSearchUrl,vpPtItems,vpPtId,vpPtFiles,vpIptvUrl};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/vplayer-kernels.js'),'utf8')+';this.T={vpKind,vpSources,vpFind,vpResume,vpPut,vpFmt,vpSeek,vpRec,vpEpisode,vpLabel,vpGroup,vpContinue,vpMark,vpIaSearchUrl,vpIaItems,vpIaId,vpIaFiles,vpFilter,VP_IPTV_URL,VP_SAMPLES,vpIsIaPage,vpMediaErr,vpWmSearchUrl,vpWmItems,vpPtSearchUrl,vpPtItems,vpPtId,vpPtFiles,vpIptvUrl,VP_URL_RE};',ctx);
 const T=ctx.T;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 
@@ -101,5 +101,10 @@ const pf2=T.vpPtFiles({name:'V',files:[{fileUrl:'https://t/1080.mp4',resolution:
 ok('pt files: mp4 only',pf2[0].url==='https://t/720.mp4' && T.vpPtFiles(null,'t','u').length===0);
 // iptv-org: категория / язык / страна
 ok('iptv scope',T.vpIptvUrl('Movies')==='https://iptv-org.github.io/iptv/categories/movies.m3u' && T.vpIptvUrl('rus')==='https://iptv-org.github.io/iptv/languages/rus.m3u' && T.vpIptvUrl('ru')===T.VP_IPTV_URL('ru'));
+// нативный плеер приложения: multicast, rtsp, контейнеры, которых нет у <video>
+ok('kind native: schemes',T.vpKind('udp://@239.1.1.1:1234')==='native' && T.vpKind('rtp://@239.1.1.1:5004')==='native' && T.vpKind('RTSP://cam/stream')==='native');
+ok('kind native: containers',T.vpKind('http://h/a.mkv')==='native' && T.vpKind('http://h/a.TS?x=1')==='native' && T.vpKind('http://h/a.avi')==='native' && T.vpKind('http://h/a.mp4')==='file' && T.vpKind('http://h/a.m3u8')==='hls');
+const NS=T.vpSources([{name:'Первый',url:'udp://@239.10.0.1:1234'},{name:'RTP',url:'rtp://@239.10.0.2:5004'},{name:'Cam',url:'rtsp://10.0.0.9/live'},{name:'bad',url:'ftp://x'},{name:'web',url:'http://h/a.mp4'}]);
+ok('sources accept udp / rtp / rtsp',NS.length===4 && NS[0].url==='udp://@239.10.0.1:1234' && NS.every(c=>T.VP_URL_RE.test(c.url)));
 if(bad){ console.log(bad+' failed'); process.exit(1); }
 console.log('all ok');

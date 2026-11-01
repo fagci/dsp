@@ -29,6 +29,9 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import android.widget.Toast
 import org.json.JSONObject
 import java.io.File
@@ -42,6 +45,27 @@ open class MainActivity : Activity() {
     private lateinit var web: WebView
     private var chooser: ValueCallback<Array<Uri>>? = null
     private var pendingWeb: PermissionRequest? = null
+    private var customView: View? = null
+    private var customCb: WebChromeClient.CustomViewCallback? = null
+    private var customUi = 0
+    private var player: PlayerApi? = null
+
+    private fun hideCustomView() {
+        val v = customView ?: return
+        customView = null
+        (v.parent as? ViewGroup)?.removeView(v)
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility = customUi
+        customCb?.onCustomViewHidden(); customCb = null
+    }
+
+    /** Нативный плеер (NativePlayer.kt, ExoPlayer) — по имени: так сборка JVM-тестов моста обходится без media3. */
+    private fun playerImpl(): PlayerApi? {
+        player?.let { return it }
+        return try {
+            (Class.forName("app.dsp.phone.NativePlayer").getConstructor(Activity::class.java, WebView::class.java).newInstance(this, web) as PlayerApi).also { player = it }
+        } catch (e: Throwable) { null }
+    }
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -89,6 +113,21 @@ open class MainActivity : Activity() {
                     else { pendingWeb?.deny(); pendingWeb = r; requestPermissions(miss.toTypedArray(), REQ_WEB) }
                 }
             }
+            // Fullscreen API страницы (⤢ у Video Player и картиночных модулей, двойной клик): без этого WebView отказывает, а запасной режим
+            // страницы остаётся внутри холста. Элемент показывается на весь экран устройства поверх окна, системные панели скрыты
+            override fun onShowCustomView(view: View, cb: CustomViewCallback) {
+                if (customView != null) { cb.onCustomViewHidden(); return }
+                customView = view; customCb = cb
+                val deco = window.decorView as ViewGroup
+                deco.addView(view, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                @Suppress("DEPRECATION")
+                run {
+                    customUi = deco.systemUiVisibility
+                    deco.systemUiVisibility = View.SYSTEM_UI_FLAG_FULLSCREEN or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+                        View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                }
+            }
+            override fun onHideCustomView() { hideCustomView() }
             override fun onGeolocationPermissionsShowPrompt(origin: String, cb: GeolocationPermissions.Callback) {
                 cb.invoke(origin, hasLocation(), false)
             }
@@ -161,10 +200,13 @@ open class MainActivity : Activity() {
 
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
+        if (customView != null) { hideCustomView(); web.evaluateJavascript("document.fullscreenElement&&document.exitFullscreen()", null); return }
+        if (player?.isOpen() == true) { player?.cmd("{\"a\":\"close\"}"); return }
         if (web.canGoBack()) web.goBack() else moveTaskToBack(true)     // мост остаётся работать
     }
 
     override fun onDestroy() {
+        player?.release()
         web.destroy()
         super.onDestroy()
     }
@@ -181,6 +223,18 @@ open class MainActivity : Activity() {
             "DspApp.chunk(id,${JSONObject.quote(name)},${JSONObject.quote(mime)},s,o+N>=b.size);if(b.size===0)break;}})()"
 
     inner class Downloads {
+        /** Есть ли в сборке нативный плеер (ExoPlayer): тогда Video Player отдаёт ему mkv / ts / avi, udp:// и rtp:// multicast, rtsp://. */
+        @JavascriptInterface
+        fun playerCan(): Boolean = playerImpl() != null
+
+        /** json: {url, pos (мс), autoplay, speed, title} — нативный плеер на весь экран; состояние приходит в window.dspPlayer({...}). */
+        @JavascriptInterface
+        fun playerOpen(json: String): Boolean = playerImpl()?.open(json) ?: false
+
+        /** json: {a: play | pause | toggle | seek | seekBy | speed | close, v} */
+        @JavascriptInterface
+        fun playerCmd(json: String) { playerImpl()?.cmd(json) }
+
         /** Адрес USB-API моста для этой страницы (с ключом, который другие сайты не знают); веб-часть строит из него navigator.usb. */
         /** Окно приложения в PiP с отношением сторон w:h (Android принимает 1:2.39 … 2.39:1). false — на телефоне PiP нет. */
         @JavascriptInterface
