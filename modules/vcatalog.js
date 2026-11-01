@@ -81,8 +81,10 @@ async function vcatItem(n,v){
   const ac=n.abort=new AbortController(), g=n.gen=(n.gen||0)+1;
   n.itemId=id; vcatStatus(n,'loading '+id+'…'); n.busy=1; n.stale=false;
   try{
-    const list=await vcatLoad(n,'item|'+id,async()=> pt
+    const viaT=!pt && !!n.p.torrent;                                // предмет Архива одной строкой-торрентом: плеер раскроет его в файлы (приложение качает у пиров)
+    const list=await vcatLoad(n,'item|'+id+(viaT ? '|t' : ''),async()=> pt
       ? vpPtFiles(await vcatGet(n,'https://'+pt.host+'/api/v1/videos/'+encodeURIComponent(pt.uuid),'json'),pt.host,pt.uuid)
+      : viaT ? [{name:id,url:vpIaTorrentUrl(id),group:'Internet Archive torrent'}]
       : vpIaFiles(await vcatGet(n,'https://archive.org/metadata/'+encodeURIComponent(id),'json'),id));
     if(g!==n.gen) return;
     n.list=list; n.listOut=vpFilter(list,n.p.filter); n.dirty=true;
@@ -101,6 +103,7 @@ def({ id:'vcatalog', title:'Video Sources', cat:'Sources', readout:true, always:
     {n:'kind',t:'select',opts:Object.keys(VP_IA_KINDS),d:'any video',label:'Internet Archive: collection'},
     {n:'max',t:'range',min:10,max:200,step:10,d:50,label:'how many results'},
     {n:'item',t:'text',d:'',label:'one item: Internet Archive id or archive.org link, or PeerTube host/uuid — its files (episodes) go to «list»'},
+    {n:'torrent',t:'check',d:false,label:'Internet Archive item: give it as a torrent (the player opens it through the DSP app: peers instead of the Archive server, all episodes of the item)'},
     {n:'country',t:'text',d:'ru',label:'iptv-org: country (ru, us, de …), language (rus, eng …) or category (movies, kids, animation, series, news …)'},
     {n:'url',t:'text',d:'',label:'M3U list: address'},
     {n:'filter',t:'text',d:'',label:'filter: words in the name or group, «-word» drops a source'},

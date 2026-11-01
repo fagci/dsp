@@ -445,6 +445,7 @@ const PRESET_CATS={
   'Video: Table of Sources → Player with Seek and Saved Position':'Images & TV',
   'Video: Internet Archive Search → Episodes → Player':'Images & TV',
   'Video: IPTV Channels by Country (iptv-org) → Player':'Images & TV',
+  'Video: Torrents (magnet / .torrent) → Player (DSP app)':'Images & TV',
   'Digital TV: DVB-T2 → record video to Files (trigger, path)':'Images & TV',
   'Analog TV: FPV Multiband Scanner (HackRF)':'Images & TV',
   'Analog TV: FPV Mosaic (one HackRF)':'Images & TV',
@@ -7071,6 +7072,20 @@ pl.size.w=520; pl.size.h=420; applySize(pl);
 const hs=addNode('table',1390,190,{list:'video/history',key:'url',rev:true});
 hs.size.w=380; hs.size.h=400; applySize(hs);
 addEdge(ct.id,'rows',rs.id,'rows'); addEdge(rs.id,'id',ct.id,'item'); addEdge(ct.id,'list',pl.id,'rows'); addEdge(pl.id,'rec',hs.id,'rec');
+markWiresDirty();
+});
+preset('Video: Torrents (magnet / .torrent) → Player (DSP app)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Torrents through the DSP app for Android (the bridge, commands torrent.*): put magnet: links or addresses of .torrent files into the Table (name, url) and pick a row in the player. The app (libtorrent) finds the peers, downloads the file as you watch (the pieces you seek to come first) and serves it to the player on 127.0.0.1; the file is a normal source then: seek, saved position, history. A torrent with several videos is a series: the files become episodes (S01E02 in the names), the player continues where you stopped; mkv / avi / ts go to the native player. '+
+  'The samples are the open Blender films (Big Buck Bunny, Sintel, Tears of Steel, Cosmos Laundromat). Add your own legal torrents; an Internet Archive item has one too — in Video Sources tick «torrent» and give the item (an archive.org link or id). The downloaded files are deleted when the app\'s service stops; the status line shows the progress and the peers. A browser alone cannot do it (no TCP / UDP) — the bridge address of the player (@device) can also point to another phone with the app.'});
+nt.size.w=1000; nt.size.h=150; applySize(nt);
+const tb=addNode('table',40,220,{list:'@patch',key:'url',initial:false,cols:['name','url'],data:'name,url\nBig Buck Bunny,magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=udp%3A%2F%2Fexplodie.org%3A6969\nSintel,magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Sintel&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=udp%3A%2F%2Fexplodie.org%3A6969\nTears of Steel,magnet:?xt=urn:btih:209c8226b299b308beaf2b9cd3fb49212dbd13ec&dn=Tears+of+Steel&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=udp%3A%2F%2Fexplodie.org%3A6969\nCosmos Laundromat,magnet:?xt=urn:btih:c9e15763f722f23e98a29decdfae341b98d53056&dn=Cosmos+Laundromat&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=udp%3A%2F%2Fexplodie.org%3A6969'});
+tb.size.w=380; tb.size.h=380; applySize(tb);
+const pl=addNode('vplayer',450,220,{});
+pl.size.w=520; pl.size.h=440; applySize(pl);
+const hs=addNode('table',1000,220,{list:'video/history',key:'url',rev:true});
+hs.size.w=380; hs.size.h=380; applySize(hs);
+addEdge(tb.id,'all',pl.id,'rows'); addEdge(pl.id,'rec',hs.id,'rec');
 markWiresDirty();
 });
 preset('Video: IPTV Channels by Country (iptv-org) → Player', function(){

@@ -5,7 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({String,Math,Array,Object,isFinite,URL,encodeURIComponent,decodeURIComponent});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/vplayer-kernels.js'),'utf8')+';this.T={vpKind,vpSources,vpFind,vpResume,vpPut,vpFmt,vpSeek,vpRec,vpEpisode,vpLabel,vpGroup,vpContinue,vpMark,vpIaSearchUrl,vpIaItems,vpIaId,vpIaFiles,vpFilter,VP_IPTV_URL,VP_SAMPLES,vpIsIaPage,vpMediaErr,vpWmSearchUrl,vpWmItems,vpPtSearchUrl,vpPtItems,vpPtId,vpPtFiles,vpIptvUrl,VP_URL_RE};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/vplayer-kernels.js'),'utf8')+';this.T={vpKind,vpSources,vpFind,vpResume,vpPut,vpFmt,vpSeek,vpRec,vpEpisode,vpLabel,vpGroup,vpContinue,vpMark,vpIaSearchUrl,vpIaItems,vpIaId,vpIaFiles,vpFilter,VP_IPTV_URL,VP_SAMPLES,vpIsIaPage,vpMediaErr,vpWmSearchUrl,vpWmItems,vpPtSearchUrl,vpPtItems,vpPtId,vpPtFiles,vpIptvUrl,VP_URL_RE,vpTorrentRef,vpMagnetName,vpTorrentRows,vpTorrentLine,vpIaTorrentUrl};',ctx);
 const T=ctx.T;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 
@@ -72,7 +72,7 @@ const R=[{name:'News One',group:'News'},{name:'Cartoons',group:'Kids'},{name:'Ne
 ok('filter',T.vpFilter(R,'').length===3 && T.vpFilter(R,'news').length===2 && T.vpFilter(R,'news -kids').length===1 && T.vpFilter(R,'kids news').length===1 && T.vpFilter(R,'-').length===3);
 ok('iptv url',T.VP_IPTV_URL('RU')==='https://raw.githubusercontent.com/iptv-org/iptv/master/streams/ru.m3u' && T.VP_IPTV_URL('../x')==='https://raw.githubusercontent.com/iptv-org/iptv/master/streams/x.m3u');
 const SM=T.vpSources(T.VP_SAMPLES);
-ok('samples valid',SM.length===T.VP_SAMPLES.length && SM.some(c=>c.series) && SM.filter(c=>c.series).map(c=>c.episode).join()==='1,2,3,4,5' && SM.every(c=>/^https:/.test(c.url)));
+ok('samples valid',SM.length===T.VP_SAMPLES.length && SM.some(c=>c.series) && SM.filter(c=>c.series).map(c=>c.episode).join()==='1,2,3,4,5' && SM.every(c=>/^(https:|magnet:)/.test(c.url)));
 // запасные форматы: производный h.264 важнее оригинала (DivX / MPEG-4 Part 2 браузер не играет)
 const m2={metadata:{title:'PP'},files:[
   {name:'PP 1.avi',format:'MPEG4',source:'original'},{name:'PP 1.mp4',format:'h.264',source:'derivative'},{name:'PP 1.ogv',format:'Ogg Video'},{name:'PP 1_512kb.mp4',format:'512Kb MPEG4'},
@@ -106,5 +106,22 @@ ok('kind native: schemes',T.vpKind('udp://@239.1.1.1:1234')==='native' && T.vpKi
 ok('kind native: containers',T.vpKind('http://h/a.mkv')==='native' && T.vpKind('http://h/a.TS?x=1')==='native' && T.vpKind('http://h/a.avi')==='native' && T.vpKind('http://h/a.mp4')==='file' && T.vpKind('http://h/a.m3u8')==='hls');
 const NS=T.vpSources([{name:'Первый',url:'udp://@239.10.0.1:1234'},{name:'RTP',url:'rtp://@239.10.0.2:5004'},{name:'Cam',url:'rtsp://10.0.0.9/live'},{name:'bad',url:'ftp://x'},{name:'web',url:'http://h/a.mp4'}]);
 ok('sources accept udp / rtp / rtsp',NS.length===4 && NS[0].url==='udp://@239.10.0.1:1234' && NS.every(c=>T.VP_URL_RE.test(c.url)));
+// торренты
+const MG='magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=My+Show%20S01&tr=udp%3A%2F%2Ft%3A1';
+ok('kind torrent',T.vpKind(MG)==='torrent' && T.vpKind('https://h/a.torrent')==='torrent' && T.vpKind('https://h/a.torrent?x=1')==='torrent' && T.vpKind('https://h/a.mp4')==='file');
+ok('torrent ref',JSON.stringify(T.vpTorrentRef(MG+'#file=3'))===JSON.stringify({base:MG,file:3}) && T.vpTorrentRef(MG).file===null);
+ok('magnet name',T.vpMagnetName(MG)==='My Show S01' && T.vpMagnetName('magnet:?xt=urn:btih:abc')==='' && T.vpMagnetName('https://h/a')==='');
+const TS=T.vpSources([{url:MG},{name:'x',url:'https://h/a.torrent'}]);
+ok('sources accept magnet / .torrent, name from dn',TS.length===2 && TS[0].name==='My Show S01' && TS[1].name==='x');
+const rep1={name:'Pack',files:[{i:0,name:'Show.S01E02.mkv',size:5,video:true},{i:1,name:'Show.S01E01.mkv',size:6,video:true},{i:2,name:'readme.txt',size:1,video:false},{i:3,name:'Show.S01E01.srt',size:1,video:false}]};
+const tr=T.vpTorrentRows(MG,rep1);
+ok('torrent rows: video only, #file, series',tr.length===2 && tr[0].url===MG+'#file=0' && tr[0].series==='Pack' && tr[0].name==='Show S01E02',JSON.stringify(tr));
+const trs=T.vpSources(tr);
+ok('torrent rows → episodes in order',trs.map(c=>c.episode).join()==='1,2' && trs[0].url.endsWith('#file=1'),trs.map(c=>c.episode+c.url.slice(-7)).join());
+const one1=T.vpTorrentRows(MG+'#file=9',{name:'Film',files:[{i:0,name:'Film.2010.mkv',size:1,video:true}]});
+ok('single video: no series, base without #file',one1.length===1 && !one1[0].series && one1[0].url===MG+'#file=0' && T.vpTorrentRows(MG,null).length===0);
+ok('torrent line',T.vpTorrentLine({state:'downloading',progress:.372,down:1258291,peers:14,seeds:3})==='torrent: 37 % of the torrent · ↓ 1.2 MB/s · 14 peers (3 seeds)' && /no peers/.test(T.vpTorrentLine({state:'downloading',progress:0,down:0,peers:0})) && /metadata/.test(T.vpTorrentLine({state:'downloading_metadata'})) && T.vpTorrentLine(null)==='');
+ok('ia torrent url',T.vpIaTorrentUrl('ThePinkPanther-cartoons')==='https://archive.org/download/ThePinkPanther-cartoons/ThePinkPanther-cartoons_archive.torrent');
+ok('samples: magnets valid',T.VP_SAMPLES.filter(c=>c.url.startsWith('magnet:')).length===4 && T.VP_SAMPLES.filter(c=>c.url.startsWith('magnet:')).every(c=>/xt=urn:btih:[0-9a-f]{40}/.test(c.url)));
 if(bad){ console.log(bad+' failed'); process.exit(1); }
 console.log('all ok');

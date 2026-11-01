@@ -6,15 +6,17 @@
 // (udp:// и rtp:// multicast, rtsp://, контейнеры mkv / avi / ts / mpg / flv / wmv) / обычный файл
 function vpKind(url){
   const s=String(url||'');
+  if(/^magnet:/i.test(s)) return 'torrent';
   if(/^(udp|rtp|rtsp):/i.test(s)) return 'native';
   const u=s.split(/[?#]/)[0].toLowerCase();
+  if(/\.torrent$/.test(u)) return 'torrent';
   if(/\.m3u8?$/.test(u)) return 'hls';
   if(/\.mpd$/.test(u)) return 'dash';
   if(/\.(mkv|avi|ts|m2ts|mts|mpg|mpeg|vob|flv|wmv|rmvb)$/.test(u)) return 'native';
   return 'file';
 }
-// адреса, которые страница принимает: сеть (http / https), blob и multicast / rtsp (играет только нативный плеер приложения)
-const VP_URL_RE=/^(https?:|blob:|udp:|rtp:|rtsp:)/i;
+// адреса, которые страница принимает: сеть (http / https), blob, multicast / rtsp (играет нативный плеер приложения) и торренты (magnet: / .torrent — через приложение)
+const VP_URL_RE=/^(https?:|blob:|udp:|rtp:|rtsp:|magnet:)/i;
 // серия и номер: колонки season / episode (s / e / ep) или разбор названия: S01E02, 1x02, «Episode 3», «3 серия», «Сезон 2»
 function vpEpisode(name,row){
   const num=v=>{ const x=parseInt(v,10); return x>=0 ? x : null; };
@@ -36,7 +38,7 @@ function vpSources(rows){
     if(!r || typeof r!=='object') continue;
     const url=String(r.url ?? r.link ?? r.src ?? '').trim();
     if(!VP_URL_RE.test(url)) continue;
-    const name=String(r.name ?? r.title ?? '').trim() || url.replace(/^https?:\/\//,'').slice(0,60);
+    const name=String(r.name ?? r.title ?? '').trim() || vpMagnetName(url) || url.replace(/^https?:\/\//,'').slice(0,60);
     const ep=vpEpisode(name,r);
     out.push({...r,url,name,series:String(r.series ?? r.show ?? '').trim(),season:ep.s,episode:ep.e});
   }
@@ -185,6 +187,10 @@ const VP_SAMPLES=(()=>{
     {name:'We Are Going On Bullrun',url:g('WeAreGoingOnBullrun'),group:'Car reviews'},
     {name:'What car can you get for a grand?',url:g('WhatCarCanYouGetForAGrand'),group:'Car reviews'},
     {name:'The Pink Panther cartoons (Internet Archive)',url:'https://archive.org/details/ThePinkPanther-cartoons',group:'Internet Archive'},
+    {name:'Big Buck Bunny (torrent)',url:'magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=udp%3A%2F%2Fexplodie.org%3A6969&tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A6969',group:'Torrent (app)'},
+    {name:'Sintel (torrent)',url:'magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Sintel&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=udp%3A%2F%2Fexplodie.org%3A6969&tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A6969',group:'Torrent (app)'},
+    {name:'Tears of Steel (torrent)',url:'magnet:?xt=urn:btih:209c8226b299b308beaf2b9cd3fb49212dbd13ec&dn=Tears+of+Steel&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=udp%3A%2F%2Fexplodie.org%3A6969&tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A6969',group:'Torrent (app)'},
+    {name:'Cosmos Laundromat (torrent)',url:'magnet:?xt=urn:btih:c9e15763f722f23e98a29decdfae341b98d53056&dn=Cosmos+Laundromat&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=udp%3A%2F%2Fexplodie.org%3A6969&tr=udp%3A%2F%2Ftracker.openbittorrent.com%3A6969',group:'Torrent (app)'},
     {name:'Big Buck Bunny (HLS)',url:'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',group:'HLS test'},
     {name:'Sintel (HLS, bitdash)',url:'https://bitdash-a.akamaihd.net/content/sintel/hls/playlist.m3u8',group:'HLS test'},
     {name:'Apple bip-bop (HLS)',url:'https://devstreaming-cdn.apple.com/videos/streaming/examples/img_bipbop_adv_example_fmp4/master.m3u8',group:'HLS test'},
@@ -245,3 +251,36 @@ function vpIptvUrl(v){
   if(s.length===3) return 'https://iptv-org.github.io/iptv/languages/'+s+'.m3u';
   return VP_IPTV_URL(s);
 }
+
+/* ---------- торренты (через приложение Android: команды torrent.* моста, TorrentHub.kt) ---------- */
+// «magnet:…#file=2» → {base:'magnet:…', file:2}; без #file — file:null (в торренте одно видео или нужен выбор)
+function vpTorrentRef(url){
+  const m=/^(.*?)#file=(\d+)$/.exec(String(url||'').trim());
+  return m ? {base:m[1],file:+m[2]} : {base:String(url||'').trim(),file:null};
+}
+// название из magnet (dn=…)
+function vpMagnetName(url){
+  const m=/^magnet:\?.*?[?&]dn=([^&#]*)/i.exec(String(url||'')) || /^magnet:\?dn=([^&#]*)/i.exec(String(url||''));
+  if(!m) return '';
+  try{ return decodeURIComponent(m[1].replace(/\+/g,' ')); }catch(e){ return m[1]; }
+}
+// ответ torrent.add {name, files:[{i,name,size,video}]} → строки для плеера: по одному на видеофайл, серии (S01E02, «3 серия») разбираются из имён;
+// адрес строки — адрес торрента + #file=номер: по нему хранится позиция просмотра, и он не зависит от порта локального сервера
+function vpTorrentRows(url,reply){
+  const base=vpTorrentRef(url).base, files=Array.isArray(reply && reply.files) ? reply.files : [];
+  const vids=files.filter(f=>f && f.video);
+  const many=vids.length>1;
+  return vids.map(f=>({name:String(f.name||('file '+f.i)).replace(/\.[^.]+$/,'').replace(/[._]+/g,' ').trim(),url:base+'#file='+f.i,size:f.size||0,...(many ? {series:String(reply.name||'')} : {})}));
+}
+// строка состояния раздачи: «37 % · ↓ 1.2 MB/s · 14 peers»
+function vpTorrentLine(st){
+  if(!st) return '';
+  const f=n=>n>=1048576 ? (n/1048576).toFixed(1)+' MB/s' : Math.round(n/1024)+' kB/s';
+  const stl=String(st.state||'');
+  if(stl==='starting' || stl==='checking_files' || stl==='checking_resume_data') return 'torrent: starting…';
+  if(stl==='downloading_metadata') return 'torrent: looking for the metadata…';
+  const peers=+st.peers||0;
+  return 'torrent: '+Math.round((+st.progress||0)*100)+' % of the torrent · ↓ '+f(+st.down||0)+' · '+peers+' peer'+(peers===1 ? '' : 's')+(+st.seeds ? ' ('+st.seeds+' seeds)' : '')+(peers===0 ? ' — no peers yet' : '');
+}
+// торрент предмета Internet Archive (peers вместо сервера Архива); файлы раскроются в плеере
+const vpIaTorrentUrl=id=>'https://archive.org/download/'+encodeURIComponent(id)+'/'+encodeURIComponent(id)+'_archive.torrent';
