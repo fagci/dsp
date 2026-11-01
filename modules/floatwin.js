@@ -62,8 +62,32 @@ function floatToggle(n){
   const id=String(n.id);
   if(flSt.has(id)){ floatOff(id); return; }
   let ok=false;
-  try{ ok=DspApp.floatCan() && DspApp.floatShow(id,JSON.stringify({opacity:.92})); }catch(e){}
+  try{ ok=DspApp.floatCan() && DspApp.floatShow(id,JSON.stringify({opacity:.92,touch:!!(MOD[n.type] && MOD[n.type].touch)})); }catch(e){}
   if(!ok){ try{ DspApp.floatPerm(); }catch(e){} return; }                // разрешения нет — системный экран; после него нажать ещё раз
   const scratch={cv:document.createElement('canvas'),cx:null,busy:false}; scratch.cx=scratch.cv.getContext('2d');
   n._float=true; flSt.set(id,{n,scratch,lastDraw:0}); floatLoop();
+}
+
+// Касания окна (FloatWin.kt, режим touch у узлов с def.touch: кнопки, шкалы, клавиатуры) → pointer-события на canvas узла.
+// act: 0 вниз, 1 движение, 2 вверх; x, y — доли размера окна. Настоящего pointerId у такого события нет, поэтому захват указателя
+// (setPointerCapture / hasPointerCapture) на время касания подменён заглушкой — обработчики узлов (indWire…) считают указатель захваченным.
+// Системная клавиатура поверх чужих приложений недоступна (окно не берёт фокус), для ввода есть экранные Number Pad / Calculator.
+function floatTouch(id,act,x,y){
+  const s=flSt.get(String(id)); if(!s) return;
+  const n=s.n, cv=n.cv; if(!cv) return;
+  const r=cv.getBoundingClientRect(); if(!r.width || !r.height) return;
+  const cX=r.left+x*r.width, cY=r.top+y*r.height, down=act!==2;
+  const ev=type=>new PointerEvent(type,{pointerId:4242,pointerType:'touch',isPrimary:true,bubbles:true,cancelable:true,clientX:cX,clientY:cY,button:0,buttons:down ? 1 : 0,pressure:down ? .5 : 0});
+  if(act===0){
+    cv.setPointerCapture=()=>{}; cv.hasPointerCapture=()=>true; cv.releasePointerCapture=()=>{};
+    s.t0=[x,y]; s.moved=false; cv.dispatchEvent(ev('pointerdown'));
+  } else if(s.t0){
+    if(act===1){ if(Math.hypot((x-s.t0[0])*r.width,(y-s.t0[1])*r.height)>6) s.moved=true; cv.dispatchEvent(ev('pointermove')); }
+    else {
+      cv.dispatchEvent(ev('pointerup'));
+      if(!s.moved) cv.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:cX,clientY:cY}));
+      delete cv.setPointerCapture; delete cv.hasPointerCapture; delete cv.releasePointerCapture; s.t0=null;
+    }
+  }
+  s.lastDraw=0;                                     // кадр с результатом нажатия — без ожидания
 }

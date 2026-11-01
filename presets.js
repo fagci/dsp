@@ -556,6 +556,7 @@ const PRESET_CATS={
   'Indicators: Switches and Attitude':'Analysis & Measurement',
   'Indicators: Knobs, Faders, XY Pad and Tank':'Analysis & Measurement',
   'Indicators: Radio Tuning Dial and Magic Eye (stream)':'Analysis & Measurement',
+  'Indicators: Number Pad, Frequency Digits, Calculator and Readouts':'Analysis & Measurement',
   'Indicators: Analog Radio Meters (S-Meter, SWR, Tuning)':'Analysis & Measurement',
   'Panels: Radio Displays (Base and Mobile) and a Key Panel':'Analysis & Measurement',
   'Panels: Metal Detector from the Magnetometer and Other Detectors':'Analysis & Measurement',
@@ -7306,6 +7307,31 @@ e2.size.w=320; e2.size.h=140; applySize(e2);
 addEdge(dl.id,'f',sd.id,'in');
 addEdge(st.id,'L',dc.id,'L'); addEdge(st.id,'R',dc.id,'R'); addEdge(st.id,'L',mt.id,'in');
 addEdge(mt.id,'db',e1.id,'in'); addEdge(mt.id,'db',e2.id,'in');
+markWiresDirty();
+});
+preset('Indicators: Number Pad, Frequency Digits, Calculator and Readouts', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Entering numbers and frequencies on the screen. Number Pad: type digits and finish with a unit key (GHz / MHz / kHz / Hz) or ENT (uses the unit set in the node); its out is in Hz and goes to Frequency Digits, where a tap on the upper / lower half of a digit (or a vertical swipe, or the wheel) steps that decade. '+
+  'The Tuning Dial follows it, and you can swipe the dial too. Number Readout shows the same value as a frequency, in groups of three, or as SI (LCD / VFD / LED / paper styles).\n'+
+  'Pocket Calculator: type an expression (sin, ln, √, ^, %, ANS, memory, A / B from its pins; deg / rad); «=» sends the result to out — wire it to any number pin. Tick «live» to send the running result before «=». The computer keyboard works too: click the node and type.\n'+
+  'In the phone app press the floating-window button of a node: Number Pad, Calculator, Dial and Frequency Digits take taps and swipes there (move the window by the ✥ corner) — no system keyboard is needed.'});
+nt.size.w=1000; nt.size.h=150; applySize(nt);
+const np=addNode('numpad',40,210,{mode:'frequency',unit:'MHz',state:'14200000'});
+np.size.w=240; np.size.h=300; applySize(np);
+const fd=addNode('freqdigits',340,210,{digits:9});
+fd.size.w=400; fd.size.h=100; applySize(fd);
+const dl=addNode('dial',340,370,{unit:'MHz',min:0,max:30,span:2,step:.001,snap:false});
+dl.size.w=400; dl.size.h=100; applySize(dl);
+const r1=addNode('numread',800,210,{format:'frequency',style:'vfd',digits:7,label:'frequency'});
+r1.size.w=300; r1.size.h=90; applySize(r1);
+const r2=addNode('numread',800,350,{format:'groups',style:'led',label:'Hz'});
+r2.size.w=300; r2.size.h=90; applySize(r2);
+const r3=addNode('numread',800,490,{format:'si',style:'lcd',unit:'V',digits:4,label:'calculator'});
+r3.size.w=300; r3.size.h=90; applySize(r3);
+const ca=addNode('keycalc',1140,210,{sci:true});
+ca.size.w=260; ca.size.h=500; applySize(ca);
+addEdge(np.id,'out',fd.id,'in'); addEdge(fd.id,'f',dl.id,'in'); addEdge(fd.id,'f',r1.id,'in'); addEdge(dl.id,'f',r2.id,'in');
+addEdge(ca.id,'out',r3.id,'in');
 markWiresDirty();
 });
 preset('Indicators: Analog Radio Meters (S-Meter, SWR, Tuning)', function(){

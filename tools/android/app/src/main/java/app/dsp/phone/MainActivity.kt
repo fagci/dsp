@@ -229,7 +229,7 @@ open class MainActivity : Activity() {
             return try { startActivity(FloatWin.permissionIntent(this@MainActivity)); true } catch (e: Exception) { false }
         }
 
-        /** Окно поверх приложений для узла id (modules/floatwin.js); opts — JSON {opacity, through, w}. false — разрешения нет. */
+        /** Окно поверх приложений для узла id (modules/floatwin.js); opts — JSON {opacity, through, w, touch}. false — разрешения нет. */
         @JavascriptInterface
         fun floatShow(id: String, opts: String): Boolean {
             if (!FloatWin.can(this@MainActivity)) return false
@@ -237,6 +237,9 @@ open class MainActivity : Activity() {
             FloatWin.pump = { web.evaluateJavascript("window.floatTick&&floatTick()", null) }
             FloatWin.onClosed = { cid ->
                 runOnUiThread { web.evaluateJavascript("window.floatClosed&&floatClosed(" + JSONObject.quote(cid) + ")", null) }
+            }
+            FloatWin.onTouch = { cid, act, x, y ->
+                web.evaluateJavascript("window.floatTouch&&floatTouch(" + JSONObject.quote(cid) + "," + act + "," + x + "," + y + ")", null)
             }
             val o = try { JSONObject(opts) } catch (e: Exception) { JSONObject() }
             FloatWin.show(this@MainActivity, id, o)
