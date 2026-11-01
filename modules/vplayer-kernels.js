@@ -283,7 +283,7 @@ function vpTorrentLine(st){
   if(stl==='starting' || stl==='checking_files' || stl==='checking_resume_data') return 'torrent: starting…';
   if(stl==='downloading_metadata') return 'torrent: looking for the metadata…';
   const peers=+st.peers||0;
-  return 'torrent: '+Math.round((+st.progress||0)*100)+' % of the torrent · ↓ '+f(+st.down||0)+' · '+peers+' peer'+(peers===1 ? '' : 's')+(+st.seeds ? ' ('+st.seeds+' seeds)' : '')+(peers===0 ? ' — no peers yet'+(st.dht!=null ? ' (DHT nodes: '+(+st.dht||0)+')' : '')+(st.trk ? '\ntrackers: '+st.trk : '') : '');
+  return 'torrent: '+Math.round((+st.progress||0)*100)+' % of the torrent · ↓ '+f(+st.down||0)+' · '+peers+' peer'+(peers===1 ? '' : 's')+(+st.seeds ? ' ('+st.seeds+' seeds)' : '')+(peers===0 ? ' — no peers yet'+(st.dht!=null ? ' (DHT nodes: '+(+st.dht||0)+')' : '')+(st.trk ? '\ntrackers: '+st.trk : '')+(st.log ? '\nlog: '+st.log : '') : '');
 }
 // торрент предмета Internet Archive (peers вместо сервера Архива); файлы раскроются в плеере
 const vpIaTorrentUrl=id=>'https://archive.org/download/'+encodeURIComponent(id)+'/'+encodeURIComponent(id)+'_archive.torrent';
@@ -299,5 +299,5 @@ function vpMagnetHash(url){
 // строка состояния поиска метаданных: «DHT: 87 узлов · пиров: 2»
 function vpTorrentSearchLine(st,secs){
   const dht=+(st&&st.dht)||0, peers=+(st&&st.peers)||0;
-  return 'torrent: looking for the metadata — '+Math.round(secs)+' s · DHT nodes: '+dht+' · peers: '+peers+(secs>20 && dht===0 ? ' (DHT is silent: UDP blocked or no network?)' : secs>40 && peers===0 ? ' (no peers yet — a rare torrent, wait or try another)' : '');
+  return 'torrent: looking for the metadata — '+Math.round(secs)+' s · DHT nodes: '+dht+' · peers: '+peers+(secs>20 && dht===0 ? ' (DHT is silent: UDP blocked or no network?)' : secs>40 && peers===0 ? ' (no peers yet — a rare torrent, wait or try another)' : '')+(secs>10 && st && st.trk ? '\ntrackers: '+st.trk : '')+(secs>10 && st && st.log ? '\nlog: '+st.log : '');
 }

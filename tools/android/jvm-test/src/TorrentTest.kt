@@ -32,7 +32,8 @@ private fun session(): SessionManager {
     sp.listenInterfaces("127.0.0.1:0")
     sp.setEnableDht(false)
     sp.setEnableLsd(false)
-    val s = SessionManager(); s.start(SessionParams(sp)); return s
+    sp.setBoolean(org.libtorrent4j.swig.settings_pack.bool_types.allow_multiple_connections_per_ip.swigValue(), true)     // все сессии теста — с 127.0.0.1
+    return TorrentCore.newSession(sp)
 }
 
 fun main() {
@@ -77,6 +78,7 @@ fun main() {
     val core = TorrentCore(leech, File(tmp, "leech"))
     val item = core.add(TorrentInfo.bdecode(tbytes), listOf(TcpEndpoint("127.0.0.1", seedPort)))
     ok("leecher has a handle", item.th != null)
+    core.stallMs = 10_000
     val http = TorrentHttp(core, "tok123"); http.start()
     val url = http.url(item.id, 0, "clip.mp4")
     ok("url shape", url.startsWith("http://127.0.0.1:${http.port}/t/tok123/${item.id}/0/clip.mp4"))
@@ -102,16 +104,38 @@ fun main() {
     val item2 = core2.addMagnet(mag, 60)
     ok("magnet: metadata arrives from the peer", item2 != null && item2.ti.numFiles() == 1 && item2.ti.files().fileSize(0) == data.size.toLong())
     if (item2 != null) {
+        Thread.sleep(5000)                                   // пауза до выбора файла: пиры не должны отвалиться
         ok("magnet: the file is not downloaded until selected", core2.status(item2)?.totalDone() == 0L, "done=${core2.status(item2)?.totalDone()}")
         val http2 = TorrentHttp(core2, "t2"); http2.start()
         val m2 = get(http2.url(item2.id, 0, "clip.mp4"), "bytes=2000000-2000049")
-        ok("magnet: range read gives exact bytes", m2.first == 206 && m2.second.contentEquals(data.copyOfRange(2_000_000, 2_000_050)), "code=${m2.first}")
+        ok("magnet: range read gives exact bytes", m2.first == 206 && m2.second.contentEquals(data.copyOfRange(2_000_000, 2_000_050)), "code=${m2.first} n=${m2.second.size} first=${m2.second.take(6)} want=${data.copyOfRange(2_000_000, 2_000_006).toList()}")
         ok("trackers line is readable", core2.trackers(item2.th!!).isNotEmpty(), core2.trackers(item2.th!!))
         ok("second addMagnet returns the same item", core2.addMagnet(mag, 5) === item2)
         http2.stop()
     }
     ok("a hash that nobody serves: null after the timeout, no exception", run { val z = core2.addMagnet("magnet:?xt=urn:btih:" + "ab".repeat(20), 3); z == null })
     leech2.stop()
+
+    // окно: качается не файл целиком, а кусочки вокруг места чтения (+ начало и конец файла)
+    val leech3 = session()
+    val core3 = TorrentCore(leech3, File(tmp, "leech3"))
+    core3.windowBytes = 8L * 65536                       // 8 кусков по 64 КБ
+    core3.edgePieces = 2; core3.stallMs = 10_000
+    val item3 = core3.add(TorrentInfo.bdecode(tbytes), listOf(TcpEndpoint("127.0.0.1", seedPort)))
+    val http3 = TorrentHttp(core3, "t3"); http3.start()
+    val w1 = get(http3.url(item3.id, 0, "clip.mp4"), "bytes=1000000-1000099")
+    ok("window: the read in the middle is exact", w1.first == 206 && w1.second.contentEquals(data.copyOfRange(1_000_000, 1_000_100)))
+    Thread.sleep(2500)                                   // качалке есть время взять лишнее — если бы она качала всё
+    val done3 = core3.status(item3)?.totalDone() ?: -1L
+    Thread.sleep(3000)
+    val done3b = core3.status(item3)?.totalDone() ?: -1L
+    ok("window: the download stops by itself — the rest of the file is not fetched", done3b == done3 && done3b in 1L until data.size.toLong(), "done=$done3 then $done3b of ${data.size}")
+    val w2 = get(http3.url(item3.id, 0, "clip.mp4"), "bytes=2400000-2400099")
+    ok("window: a seek far ahead works and moves the window", w2.first == 206 && w2.second.contentEquals(data.copyOfRange(2_400_000, 2_400_100)))
+    val all3 = get(http3.url(item3.id, 0, "clip.mp4"), null)
+    ok("window: sequential playback of the whole file still arrives intact", all3.second.contentEquals(data))
+    ok("session log has the listen message", core3.recentLog(40).contains("listen_succeeded"), core3.recentLog(5))
+    http3.stop(); leech3.stop()
 
     core.remove(item.id, true)
     ok("remove deletes files", !item.dir.exists())

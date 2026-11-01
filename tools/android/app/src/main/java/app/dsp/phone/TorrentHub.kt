@@ -4,9 +4,15 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import org.libtorrent4j.AnnounceEntry
+import org.libtorrent4j.AlertListener
 import org.libtorrent4j.Priority
 import org.libtorrent4j.Sha1Hash
 import org.libtorrent4j.SessionManager
+import org.libtorrent4j.SessionParams
+import org.libtorrent4j.SettingsPack
+import org.libtorrent4j.alerts.Alert
+import org.libtorrent4j.alerts.AlertType
+import org.libtorrent4j.swig.settings_pack
 import org.libtorrent4j.TcpEndpoint
 import org.libtorrent4j.TorrentFlags
 import org.libtorrent4j.TorrentHandle
@@ -104,14 +110,53 @@ object TorrentArgs {
 
 /** Сессия libtorrent + файлы раздач: добавление, выбор файла, ожидание кусков. */
 class TorrentCore(private val sm: SessionManager, val root: File) {
+    companion object {
+        /**
+         * Настройки сессии для стриминга: соединения с пирами не закрываются, когда окно скачано и мы «ничем не интересуемся» (по умолчанию libtorrent
+         * рвёт такие «лишние» соединения, а при перемотке пир уже потерян и нужно искать заново).
+         */
+        fun tune(sp: SettingsPack): SettingsPack {
+            sp.setBoolean(settings_pack.bool_types.close_redundant_connections.swigValue(), false)
+            return sp
+        }
+        fun newSession(base: SettingsPack = SettingsPack()): SessionManager = SessionManager().also { it.start(SessionParams(tune(base))) }
+    }
+
     class Item(val id: String, val ti: TorrentInfo, val dir: File) {
         @Volatile var th: TorrentHandle? = null
         @Volatile var file = -1
         @Volatile var lastUse = System.currentTimeMillis()
+        @Volatile var winStart = -1               // первый кусок окна, которое сейчас качается
+        @Volatile var active = false              // качать разрешено (снят UPLOAD_MODE): пока файл не выбран, торрент только держит пиров, ничего не качая
     }
 
+    /** Сколько байт вперёд от места просмотра качать (дальше куски не нужны, пока плеер туда не дошёл). */
+    @Volatile var windowBytes: Long = 96L * 1024 * 1024
+    /** Сколько кусков в начале и в конце файла качать всегда: заголовок и индекс (moov / cues) нужны плееру до воспроизведения. */
+    @Volatile var edgePieces: Int = 4
+    /** Сколько ждать нового куска, прежде чем сдаться (нет пиров). */
+    @Volatile var stallMs: Long = 45_000
+
     private val items = ConcurrentHashMap<String, Item>()
-    fun get(id: String): Item? = items[id.lowercase()]
+
+    /** Последние важные сообщения libtorrent (порт, DHT, трекеры, ошибки) — чтобы в статусе плеера было видно, почему нет пиров. */
+    private val log = java.util.concurrent.ConcurrentLinkedDeque<String>()
+    private val interesting = setOf(AlertType.LISTEN_SUCCEEDED, AlertType.LISTEN_FAILED, AlertType.DHT_BOOTSTRAP, AlertType.DHT_ERROR, AlertType.TRACKER_ERROR,
+        AlertType.TRACKER_WARNING, AlertType.METADATA_FAILED, AlertType.TORRENT_ERROR, AlertType.SESSION_ERROR, AlertType.EXTERNAL_IP, AlertType.PORTMAP_ERROR, AlertType.FILE_ERROR)
+    init {
+        try {
+            sm.addListener(object : AlertListener {
+                override fun types(): IntArray? = null
+                override fun alert(a: Alert<*>) {
+                    if (a.type() !in interesting) return
+                    log.addLast(a.type().name.lowercase() + ": " + a.message().take(160))
+                    while (log.size > 40) log.pollFirst()
+                }
+            })
+        } catch (e: Exception) { }
+    }
+    /** Последние n сообщений одной строкой. */
+    fun recentLog(n: Int = 3): String = log.toList().takeLast(n).joinToString(" | ")    fun get(id: String): Item? = items[id.lowercase()]
     fun all(): List<Item> = items.values.toList()
 
     fun add(ti: TorrentInfo, peers: List<TcpEndpoint>? = null): Item {
@@ -121,7 +166,7 @@ class TorrentCore(private val sm: SessionManager, val root: File) {
         val it = Item(id, ti, dir)
         items[id] = it
         // ни один файл не качается, пока плеер не выбрал свой (stream); порядок — по дедлайнам кусков
-        sm.download(ti, dir, null, Priority.array(Priority.IGNORE, ti.numFiles()), peers, TorrentFlags.SEQUENTIAL_DOWNLOAD)
+        sm.download(ti, dir, null, Priority.array(Priority.IGNORE, ti.numFiles()), peers, TorrentFlags.SEQUENTIAL_DOWNLOAD.or_(TorrentFlags.UPLOAD_MODE))
         val end = System.currentTimeMillis() + 10_000
         while (it.th == null && System.currentTimeMillis() < end) {
             val h = sm.find(ti.infoHash())
@@ -130,6 +175,9 @@ class TorrentCore(private val sm: SessionManager, val root: File) {
         it.th?.let { h -> h.unsetFlags(TorrentFlags.AUTO_MANAGED); h.resume(); moreTrackers(h) }
         return it
     }
+
+    /** Спросить трекеры и DHT ещё раз (пиры могли отвалиться). */
+    fun kick(h: TorrentHandle) { try { h.forceReannounce(); h.forceDHTAnnounce() } catch (e: Exception) { } }
 
     /** У торрента мало трекеров — добавить открытые и сразу спросить трекеры и DHT. */
     private fun moreTrackers(h: TorrentHandle) {
@@ -166,7 +214,7 @@ class TorrentCore(private val sm: SessionManager, val root: File) {
         val it = items.computeIfAbsent(hash) { _ -> Item(hash, ti, File(root, hash)) }
         it.th = h
         h.prioritizeFiles(Priority.array(Priority.IGNORE, ti.numFiles()))     // ни один файл не качается, пока плеер не выбрал свой
-        h.unsetFlags(TorrentFlags.UPLOAD_MODE)
+        // UPLOAD_MODE остаётся, пока не выбран файл: торрент без нужных кусков иначе становится «завершённым», а завершённый рвёт соединения с пирами-сидами
         moreTrackers(h)
         return it
     }
@@ -180,11 +228,36 @@ class TorrentCore(private val sm: SessionManager, val root: File) {
         }
     } catch (e: Exception) { "" }
 
-    /** Файл номер idx — тот, что смотрят: он качается (остальные — нет). */
+    /** Файл номер idx — тот, что смотрят: остальные не качаются, а сам файл — только окно вокруг места просмотра (applyWindow). */
     fun select(it: Item, idx: Int) {
         val h = it.th ?: return
-        for (i in 0 until it.ti.numFiles()) h.filePriority(i, if (i == idx) Priority.TOP_PRIORITY else Priority.IGNORE)
-        it.file = idx
+        if (it.file == idx) return
+        // файл должен быть «нужным», иначе libtorrent пишет его куски не в сам файл, а в .parts; сразу после этого applyWindow оставляет только окно
+        for (i in 0 until it.ti.numFiles()) h.filePriority(i, if (i == idx) Priority.DEFAULT else Priority.IGNORE)
+        it.file = idx; it.winStart = -1
+    }
+
+    /**
+     * Качается не файл целиком, а окно: куски от места чтения на windowBytes вперёд (высокий приоритет), начало и конец файла (заголовок, индекс),
+     * остальные — не качаются, пока плеер не дойдёт или не перемотает. Раньше выбранный файл качался целиком на полной скорости.
+     */
+    fun applyWindow(it: Item, idx: Int, firstPiece: Int) {
+        val h = it.th ?: return
+        val pl = it.ti.pieceLength(); val np = it.ti.numPieces(); val fs = it.ti.files()
+        val w = maxOf(8, (windowBytes / pl).toInt())
+        if (it.winStart >= 0 && firstPiece >= it.winStart && firstPiece - it.winStart < maxOf(4, w / 8)) return     // окно почти там же
+        val fileFirst = (fs.fileOffset(idx) / pl).toInt(); val fileLast = ((fs.fileOffset(idx) + fs.fileSize(idx) - 1) / pl).toInt()
+        val pr = Array(np) { Priority.IGNORE }
+        for (p in fileFirst..minOf(fileLast, np - 1)) {
+            pr[p] = when {
+                p in firstPiece..(firstPiece + w) -> Priority.TOP_PRIORITY
+                p < fileFirst + edgePieces || p > fileLast - edgePieces -> Priority.DEFAULT
+                else -> Priority.IGNORE
+            }
+        }
+        h.prioritizePieces(pr)
+        it.winStart = firstPiece
+        if (!it.active) { it.active = true; h.unsetFlags(TorrentFlags.UPLOAD_MODE) }     // приоритеты расставлены — теперь можно качать
     }
 
     fun filePath(it: Item, idx: Int) = File(it.dir, it.ti.files().filePath(idx))
@@ -193,26 +266,33 @@ class TorrentCore(private val sm: SessionManager, val root: File) {
      * Ждёт, пока куски, покрывающие байты [pos, pos+len) файла idx, будут скачаны (просит их с дедлайнами и дальше на READAHEAD кусков).
      * false — за stallMs не пришло ни одного нового куска.
      */
-    fun await(it: Item, idx: Int, pos: Long, len: Long, stallMs: Long = 45_000): Boolean {
+    fun await(it: Item, idx: Int, pos: Long, len: Long, stallMs: Long = this.stallMs): Boolean {
         val h = it.th ?: return false
         it.lastUse = System.currentTimeMillis()
         val fs = it.ti.files()
         val pl = it.ti.pieceLength(); val np = it.ti.numPieces()
         val (a, b) = TorrentArgs.pieces(fs.fileOffset(idx), pos, len, pl).let { r -> r[0] to r[1] }
+        applyWindow(it, idx, a)
         var lastGood = System.currentTimeMillis()
+        var lastKick = lastGood
         var have = -1
         while (true) {
             var cnt = 0
             for (p in a..b) if (h.havePiece(p)) cnt++
             if (cnt == b - a + 1) break
             if (cnt != have) { have = cnt; lastGood = System.currentTimeMillis() }
-            if (System.currentTimeMillis() - lastGood > stallMs) return false
+            if (System.currentTimeMillis() - lastKick > 8_000 && System.currentTimeMillis() - lastGood > 4_000) { lastKick = System.currentTimeMillis(); kick(h) }   // нет пиров — спросить трекеры и DHT снова
+            if (System.currentTimeMillis() - lastGood > stallMs) {
+                if (System.getenv("DSP_TORRENT_DEBUG") != null) System.err.println("await stalled: pieces $a..$b have=" + (a..b).map { p -> if (h.havePiece(p)) 1 else 0 } + " prio=" + (a..b).map { p -> h.piecePriority(p).swig() } + " winStart=${it.winStart} peers=${h.status().numPeers()} peerInfo=${h.peerInfo().size} state=${h.status().state()} paused=${h.status().flags()}")
+                return false
+            }
             for (p in a..b) if (!h.havePiece(p)) h.setPieceDeadline(p, ((p - a) * 200).coerceAtMost(4000))
             Thread.sleep(80)
         }
         val fileEnd = (fs.fileOffset(idx) + fs.fileSize(idx) - 1) / pl
         var k = 0
-        for (p in (b + 1)..minOf(b + TorrentArgs.READAHEAD, minOf(np - 1L, fileEnd).toInt())) {
+        val ra = minOf(TorrentArgs.READAHEAD, maxOf(1, (windowBytes / pl).toInt()))          // упреждение не шире окна
+        for (p in (b + 1)..minOf(b + ra, minOf(np - 1L, fileEnd).toInt())) {
             if (!h.havePiece(p)) h.setPieceDeadline(p, 3000 + (k++) * 300)
         }
         return true
@@ -269,7 +349,7 @@ class TorrentHttp(private val core: TorrentCore, val token: String) {
                 val partial = range != null && !(r[0] == 0L && r[1] == size - 1 && !range!!.contains("bytes"))
                 val total = r[1] - r[0] + 1
                 // первые куски — до заголовков: нет пиров → честный 503 (плеер повторит), а не пустое «200» и ошибка формата
-                if (parts[0] == "GET" && !core.await(item, idx, r[0], minOf(128 * 1024L, total), 60_000)) return send(503, "Service Unavailable", "Retry-After: 3\r\n", "no pieces yet: no peers")
+                if (parts[0] == "GET" && !core.await(item, idx, r[0], minOf(128 * 1024L, total), core.stallMs * 4 / 3)) return send(503, "Service Unavailable", "Retry-After: 3\r\n", "no pieces yet: no peers")
                 val hdr = "HTTP/1.1 ${if (partial) "206 Partial Content" else "200 OK"}\r\nConnection: close\r\nAccept-Ranges: bytes\r\nContent-Type: ${TorrentArgs.mime(name)}\r\n" +
                     "Content-Length: $total\r\n" + (if (partial) "Content-Range: bytes ${r[0]}-${r[1]}/$size\r\n" else "") + "Access-Control-Allow-Origin: *\r\n\r\n"
                 out.write(hdr.toByteArray(Charsets.ISO_8859_1)); out.flush()
@@ -306,7 +386,7 @@ class TorrentHub(private val ctx: Context) {
 
     @Synchronized private fun up(): TorrentCore {
         core?.let { return it }
-        val s = SessionManager(); s.start()
+        val s = TorrentCore.newSession()
         val root = File(ctx.getExternalFilesDir(null) ?: ctx.filesDir, "torrents").also { it.mkdirs() }
         val c = TorrentCore(s, root); sm = s; core = c
         val tok = ByteArray(12).also { SecureRandom().nextBytes(it) }.joinToString("") { String.format("%02x", it) }
@@ -353,7 +433,7 @@ class TorrentHub(private val ctx: Context) {
                         val st = if (h != null && h.isValid) h.status() else null
                         return Reply.done(c, id, cmd, null, extra = arrayOf("state" to Json.str(st?.state()?.name?.lowercase() ?: "starting"), "peers" to (st?.numPeers() ?: 0).toString(),
                             "seeds" to (st?.numSeeds() ?: 0).toString(), "dht" to (sm?.dhtNodes() ?: 0L).toString(), "progress" to "0", "down" to "0",
-                            "trk" to Json.str(if (h != null && h.isValid) core.trackers(h) else "")))
+                            "trk" to Json.str(if (h != null && h.isValid) core.trackers(h) else ""), "log" to Json.str(core.recentLog())))
                     }
                     val st = core.status(it) ?: return Reply.done(c, id, cmd, null, extra = arrayOf("state" to Json.str("starting")))
                     val idx = it.file
@@ -361,7 +441,7 @@ class TorrentHub(private val ctx: Context) {
                     Reply.done(c, id, cmd, null, extra = arrayOf("state" to Json.str(st.state().name.lowercase()), "progress" to st.progress().toString(), "down" to st.downloadRate().toString(),
                         "up" to st.uploadRate().toString(), "peers" to st.numPeers().toString(), "seeds" to st.numSeeds().toString(), "done" to st.totalDone().toString(),
                         "total" to st.totalWanted().toString(), "file_done" to fdone.toString(), "dht" to (sm?.dhtNodes() ?: 0L).toString(),
-                        "trk" to Json.str(it.th?.let { h -> core.trackers(h) } ?: "")))
+                        "trk" to Json.str(it.th?.let { h -> core.trackers(h) } ?: ""), "log" to Json.str(core.recentLog())))
                 }
                 "torrent.list" -> {
                     val core = up(); val arr = JSONArray()
