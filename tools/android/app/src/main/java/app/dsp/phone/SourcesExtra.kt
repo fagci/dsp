@@ -120,6 +120,9 @@ class MicHub(private val ctx: Context, private val cfg: Config, private val emit
     @Volatile private var deadKey = ""
     private var proc: Process? = null
     private val fx = ArrayList<android.media.audiofx.AudioEffect>()
+    @Volatile private var recNow: AudioRecord? = null       // открытый AudioRecord — чтобы освободить его, даже если поток чтения завис
+    @Volatile private var infoJson: String? = null
+    private var infoSeq = 0
     @Volatile private var run = false
     @Volatile var lastError = ""
 
@@ -151,13 +154,13 @@ class MicHub(private val ctx: Context, private val cfg: Config, private val emit
         effectsOff(r)
         val types = MicArgs.deviceTypes(devName)
         var devNote = ""
-        if (types.isNotEmpty()) {
+        if (types.isNotEmpty() || MicArgs.deviceAddr(devName).isNotEmpty()) {
             val devs = am.getDevices(AudioManager.GET_DEVICES_INPUTS)
-            val d = types.firstNotNullOfOrNull { t -> devs.firstOrNull { it.type == t } }
+            val d = MicArgs.pickDevice(devs.map { Triple(it.type, addrOf(it), "${it.productName}") }, devName)?.let { devs[it] }
             if (d != null) r.setPreferredDevice(d) else devNote = "mic: no $devName input found — the default one is used"
         }
         lastError = (if (usedCh != wantCh) "mic: stereo is not available for ${MicArgs.sourceName(usedSrc)} on this phone, mono. " else "") + (if (usedSrc != first) "mic: ${MicArgs.sourceName(first)} is not available, using mic. " else "") + devNote
-        run = true
+        run = true; recNow = r; infoJson = null; infoSeq = 0
         thread = Thread({ loop(r, used, MicArgs.chunk(used, low), MicArgs.sourceName(usedSrc), usedCh) }, "dsp-mic").also { it.isDaemon = true; it.start() }
         return true
     }
@@ -193,13 +196,19 @@ class MicHub(private val ctx: Context, private val cfg: Config, private val emit
         return true
     }
 
+    /** AudioDeviceInfo.address — с Android 9; на 8 адреса нет. */
+    private fun addrOf(d: android.media.AudioDeviceInfo): String = if (android.os.Build.VERSION.SDK_INT >= 28) d.address ?: "" else ""
+
     private fun fail(k: String, msg: String) { lastError = msg; deadKey = k; run = false; onFail() }
 
     private fun stopLocked() {
         run = false
         proc?.let { p -> try { p.destroy() } catch (e: Exception) { }; Thread { RootSh.run("pkill -f app.dsp.phone.RootAudio", 3000) }.also { it.isDaemon = true; it.start() } }
         proc = null
-        thread?.join(500); thread = null; key = ""
+        thread?.join(500)
+        // поток не вышел (завис в read) — освобождаем вход сами: иначе микрофон и эффекты остаются занятыми до конца процесса
+        recNow?.let { r -> if (thread?.isAlive == true) { try { r.stop() } catch (e: Exception) { }; try { r.release() } catch (e: Exception) { } } }
+        recNow = null; infoJson = null; thread = null; key = ""
         for (e in fx) try { e.release() } catch (x: Exception) { }
         fx.clear()
     }
@@ -232,13 +241,37 @@ class MicHub(private val ctx: Context, private val cfg: Config, private val emit
             "src" to "\"mic\"", "t" to t.toString(), "sr" to sr.toString(), "ch" to ch.toString(), "ms" to Json.str(name), "dev" to Json.str(dev),
             "rms" to Json.num(Audio.dbfs(Math.sqrt(sum / n)), 100.0), "peak" to Json.num(Audio.dbfs(peak.toDouble()), 100.0),
             "pcm" to "\"" + Base64.encodeToString(b, Base64.NO_WRAP) + "\"",
+            "info" to infoJson?.takeIf { infoSeq++ % 100 == 0 },        // описание микрофонов — с первой порцией и раз в ~2 с (страница может подключиться позже)
         ))
     }
+
+    /**
+     * Что телефон говорит о своих микрофонах: {devs: устройства ввода (id, тип, адрес, имя), mics: [{id, desc, addr, loc, grp, idx, pos, dir, ch}]}.
+     * mics — активные микрофоны этой записи (Android 10+, ch — какой канал записи какому микрофону соответствует: [канал, 1 = прямой / 2 = обработанный]),
+     * а если их не вернули — все микрофоны телефона (Android 9+). pos / dir — координаты (м) и направление в системе телефона.
+     */
+    @android.annotation.TargetApi(28)
+    private fun micInfo(rec: AudioRecord): String? = try {
+        if (android.os.Build.VERSION.SDK_INT < 28) throw UnsupportedOperationException()
+        val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val devs = am.getDevices(AudioManager.GET_DEVICES_INPUTS).map { Json.obj("id" to it.id.toString(), "type" to it.type.toString(), "addr" to Json.str(addrOf(it)), "name" to Json.str("${it.productName}")) }
+        var mics: List<android.media.MicrophoneInfo> = emptyList(); var active = false
+        if (android.os.Build.VERSION.SDK_INT >= 29) try { mics = rec.activeMicrophones; active = mics.isNotEmpty() } catch (e: Exception) { }
+        if (mics.isEmpty() && android.os.Build.VERSION.SDK_INT >= 28) try { mics = am.microphones } catch (e: Exception) { }
+        val ms = mics.map { m ->
+            val p = m.position; val o = m.orientation
+            Json.obj("id" to Json.str(m.id), "desc" to Json.str(m.description), "addr" to Json.str(m.address), "loc" to m.location.toString(), "grp" to m.group.toString(), "idx" to m.indexInGroup.toString(),
+                "pos" to "[${Json.num(p.x.toDouble(), 1e4)},${Json.num(p.y.toDouble(), 1e4)},${Json.num(p.z.toDouble(), 1e4)}]", "dir" to "[${Json.num(o.x.toDouble(), 1e3)},${Json.num(o.y.toDouble(), 1e3)},${Json.num(o.z.toDouble(), 1e3)}]",
+                "ch" to m.channelMapping.joinToString(",", "[", "]") { "[${it.first},${it.second}]" })
+        }
+        Json.obj("devs" to Json.rows(devs), "mics" to Json.rows(ms), "active" to active.toString())
+    } catch (e: Exception) { null }
 
     private fun loop(rec: AudioRecord, sr: Int, chunk: Int, name: String, ch: Int) {
         val ns = chunk * ch; val s = ShortArray(ns); val b = ByteArray(ns * 2)
         try {
             rec.startRecording()
+            infoJson = micInfo(rec)
             val dev = rec.routedDevice?.let { "${it.productName}".ifEmpty { "type${it.type}" } } ?: ""
             while (run) {
                 var n = 0

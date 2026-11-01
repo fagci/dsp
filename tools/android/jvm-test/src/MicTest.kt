@@ -21,6 +21,11 @@ fun main() {
     ok("chunk: 10 ms in low latency", MicArgs.chunk(48000, true) == 480 && MicArgs.chunk(16000, true) == 160 && MicArgs.chunk(48000, false) == 960)
     ok("bufferBytes: 8 pieces normally, 2 in low latency, never below the minimum", MicArgs.bufferBytes(1000, 960, false) == 960 * 2 * 8 && MicArgs.bufferBytes(1000, 480, true) == 1920 && MicArgs.bufferBytes(5000, 480, true) == 5000)
     ok("channels: stereo / 2 → 2, everything else mono", MicArgs.channels("stereo") == 2 && MicArgs.channels(" STEREO ") == 2 && MicArgs.channels("2") == 2 && MicArgs.channels("mono") == 1 && MicArgs.channels("") == 1 && MicArgs.channels(null) == 1)
+    val devs = listOf(Triple(15, "bottom", "Built-in mic"), Triple(15, "back", "Built-in mic"), Triple(11, "", "USB audio"))
+    ok("pickDevice: type only → first of the type", MicArgs.pickDevice(devs, "builtin") == 0 && MicArgs.pickDevice(devs, "usb") == 2 && MicArgs.pickDevice(devs, "wired") == null)
+    ok("pickDevice: type:address", MicArgs.pickDevice(devs, "builtin:back") == 1 && MicArgs.pickDevice(devs, "builtin:BOTTOM") == 0 && MicArgs.pickDevice(devs, "builtin:front") == null)
+    ok("pickDevice: any:address and name part", MicArgs.pickDevice(devs, "any:back") == 1 && MicArgs.pickDevice(devs, "any:usb") == 2 && MicArgs.pickDevice(devs, "auto") == null && MicArgs.pickDevice(devs, null) == null)
+    ok("deviceAddr / deviceTypes with an address", MicArgs.deviceAddr("builtin:bottom") == "bottom" && MicArgs.deviceAddr("usb") == "" && MicArgs.deviceTypes("builtin:bottom") == listOf(15) && MicArgs.deviceTypes("any:back").isEmpty())
     println(if (bad == 0) "all ok" else "$bad FAILED")
     if (bad != 0) System.exit(1)
 }
