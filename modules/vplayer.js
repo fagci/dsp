@@ -2,7 +2,8 @@
 /* ============================ VIDEO PLAYER ============================
    Видеоплеер для списка источников (Table: name, url): файл (mp4 / webm / ogg) или HLS (.m3u8: в Safari сам, в остальных —
    vendor/hls.min.js, грузится при первом HLS). Перемотка (ползунок, ±10 с, клавиши ← →, вход seek), скорость, следующий /
-   предыдущий источник. Позиция запоминается по адресу (localStorage dsp-vpos, последние 300) и при открытии того же адреса
+   предыдущий источник. Серии: колонки series / season / episode (или S01E02, «3 серия» в названии) — список упорядочен и
+   сгруппирован по сезонам, в конце серии играет следующая, ↻ продолжает с места, где остановились; метки ✓ / ▸N %. Позиция запоминается по адресу (localStorage dsp-vpos, последние 300) и при открытии того же адреса
    плеер продолжает с неё; запись {url,name,pos,dur,pct,done,t} уходит на rec — в Table с ключом url получается «история».
    Ядро — modules/vplayer-kernels.js. */
 
@@ -27,7 +28,7 @@ function vpSave(n,force){
   const m=vpLoadMap(), e=vpPut(m,url,pos,dur,n.name,Date.now(),300);
   if(!e) return;
   try{ LS.set(VP_KEY,JSON.stringify(m)); }catch(x){}
-  n.savedPos=pos; n.recQ.push(vpRec(url,n.name,e));
+  n.savedPos=pos; n.bump++; n.recQ.push(vpRec(url,n.name,e,n.meta));
   if(n.recQ.length>200) n.recQ.splice(0,n.recQ.length-200);
 }
 function vpDestroy(n){
@@ -37,13 +38,13 @@ function vpDestroy(n){
   n.gen=(n.gen||0)+1;
 }
 // открыть адрес; start — секунда (undefined — взять сохранённую)
-async function vpOpen(n,url,name,start){
+async function vpOpen(n,url,name,start,meta){
   url=String(url||'').trim();
   if(!url){ return; }
   if(!/^(https?:|blob:)/i.test(url)){ vpStatus(n,'URL must start with http:// or https://'); return; }
   vpDestroy(n);
   const g=n.gen;
-  n.url=url; n.name=name || n.name || url; n.savedPos=-9; n.ended=false; n.pend=0;
+  n.url=url; n.name=name || url; n.meta=meta||null; n.savedPos=-9; n.ended=false; n.pend=0;
   n.warn= typeof netInsecure==='function' && /^http:/i.test(url) && netInsecure(url) ? NET_INSECURE_MSG : '';
   const from= start!=null ? +start : vpResume(vpLoadMap()[url]);
   const v=n.v, kind=vpKind(url);
@@ -71,10 +72,14 @@ function vpStep(n,d){
   const i=(((n.idx<0 ? 0 : n.idx)+d)%L.length+L.length)%L.length;
   vpPick(n,i);
 }
-function vpPick(n,i){
+function vpPick(n,i,start){
   const c=n.list[i]; if(!c) return;
-  n.idx=i; n.dirty=true; vpOpen(n,c.url,c.name);
+  n.idx=i; n.dirty=true; vpOpen(n,c.url,c.name,start,c);
 }
+// продолжить: последний начатый источник списка с его позиции; досмотренный — следующая серия
+function vpResumeList(n){
+  const r=vpContinue(n.list,vpLoadMap());
+  if(r) vpPick(n,r.i,r.pos); else if(n.list.length) vpPick(n,0); }
 function vpToggle(n){ const v=n.v; if(v.paused || v.ended) v.play().catch(()=>{}); else v.pause(); }
 function vpSeekBy(n,d){ const v=n.v; if(!v.src && !n.hls) return; v.currentTime=vpSeek(v.currentTime||0,d,isFinite(v.duration) ? v.duration : 0); }
 function vpFull(n){
@@ -92,6 +97,7 @@ function vpMount(n){
   const mk=(txt,title,fn)=>{ const b=vpEl('button','vp-b',txt); b.title=title; b.onclick=fn; return b; };
   const bPrev=mk('⏮','previous source',()=>vpStep(n,-1)), bBack=mk('−10','back 10 s',()=>vpSeekBy(n,-10));
   const bPlay=mk('▶','play / pause (Space)',()=>vpToggle(n));
+  const bCont=mk('↻','continue watching: the last started source from its position',()=>vpResumeList(n));
   const bFwd=mk('+10','forward 10 s',()=>vpSeekBy(n,10)), bNext=mk('⏭','next source',()=>vpStep(n,1)), bFull=mk('⤢','fullscreen (F)',()=>vpFull(n));
   const seek=vpEl('input','vp-seek'); seek.type='range'; seek.min=0; seek.max=1000; seek.value=0;
   const time=vpEl('span','vp-time','0:00 / 0:00');
@@ -100,7 +106,7 @@ function vpMount(n){
   speed.value=String(+n.p.speed||1);
   const src=vpEl('select','vp-src'); src.title='source';
   const q=vpEl('select','vp-q'); q.title='quality'; q.hidden=true;
-  bar.append(bPrev,bBack,bPlay,bFwd,bNext,seek,time,speed,q,bFull);
+  bar.append(bCont,bPrev,bBack,bPlay,bFwd,bNext,seek,time,speed,q,bFull);
   root.append(stage,bar,src);
   let drag=false;
   seek.addEventListener('input',()=>{ drag=true; const d=v.duration; if(isFinite(d)) time.textContent=vpFmt(seek.value/1000*d)+' / '+vpFmt(d); });
@@ -124,7 +130,7 @@ function vpMount(n){
     if(now-n.saveAt>VP_SAVE_MS && !v.paused){ n.saveAt=now; vpSave(n,false); } });
   v.addEventListener('pause',()=>vpSave(n,true));
   v.addEventListener('seeked',()=>{ if(!drag) vpSave(n,true); });
-  v.addEventListener('ended',()=>{ vpSave(n,true); n.ended=true; n.endPulse=1; if(n.p.advance && n.list.length>1) vpStep(n,1); });
+  v.addEventListener('ended',()=>{ vpSave(n,true); n.ended=true; n.endPulse=1; if(n.p.advance && n.idx>=0 && n.idx+1<n.list.length) vpPick(n,n.idx+1,0); });
   v.addEventListener('error',()=>{ if(v.getAttribute('src') && !n.hls) vpStatus(n,'error: '+(v.error?.message||'the file cannot be played (format, CORS or address)')); });
   v.addEventListener('playing',()=>{ vpStatus(n,''); });
   v.addEventListener('waiting',()=>{ n.dirty=true; });
@@ -136,10 +142,14 @@ function vpMount(n){
 }
 function vpDraw(n){
   const u=n.ui, v=n.v;
-  const key=n.list.map(c=>c.name).join('\n')+'|'+n.idx;
+  const key=n.list.map(c=>c.url+c.name).join('\n')+'|'+n.idx+'|'+n.bump;
   if(key!==u.listKey){
     u.listKey=key; u.src.textContent='';
-    n.list.forEach((c,i)=>{ const o=vpEl('option',null,(i+1)+'. '+c.name); o.value=i; u.src.append(o); });
+    const marks=vpLoadMap(); let grp=null, gname=null;
+    n.list.forEach((c,i)=>{
+      const g=vpGroup(c);
+      if(g!==gname){ gname=g; if(g){ grp=vpEl('optgroup'); grp.label=g; u.src.append(grp); } else grp=null; }
+      const o=vpEl('option',null,(g ? '' : (i+1)+'. ')+vpMark(marks[c.url])+vpLabel(c)); o.value=i; (grp||u.src).append(o); });
     if(!n.list.length){ const o=vpEl('option',null,'no sources — wire a Table (name, url) to «rows»'); o.value=-1; u.src.append(o); }
     u.src.value=n.idx<0 ? (n.list.length ? '0' : '-1') : String(n.idx);
     u.src.hidden=n.list.length<2 && !!n.list.length; }
@@ -169,15 +179,16 @@ def({ id:'vplayer', title:'Video Player', cat:'Sources', resize:true, w:420, h:3
     {n:'speed',t:'range',min:.25,max:3,step:.25,d:1,label:'speed'},
     {n:'autoplay',t:'check',d:true,label:'start playing at once (the browser may require a click first)'},
     {n:'advance',t:'check',d:true,label:'at the end go on to the next source of the list'},
-    {n:'forget',t:'button',label:'Forget saved positions',fn:n=>{ LS.set(VP_KEY,'{}'); vpStatus(n,'saved positions cleared'); }}],
+    {n:'contb',t:'button',label:'Continue watching',fn:n=>vpResumeList(n)},
+    {n:'forget',t:'button',label:'Forget saved positions',fn:n=>{ LS.set(VP_KEY,'{}'); n.bump++; vpStatus(n,'saved positions cleared'); }}],
   init(n){ n.v=document.createElement('video'); n.list=[]; n.idx=-1; n.url=''; n.name=''; n.status=''; n.warn=''; n.levels=null; n.hls=null; n.gen=0;
-    n.recQ=[]; n.savedPos=-9; n.saveAt=0; n.ended=false; n.endPulse=0; n.inUrl=''; n.inCh=''; n.inSeek=null; n.nxPrev=false; n.rowsKey=''; n.ui=null; n.dirty=true; },
+    n.recQ=[]; n.bump=0; n.meta=null; n.savedPos=-9; n.saveAt=0; n.ended=false; n.endPulse=0; n.inUrl=''; n.inCh=''; n.inSeek=null; n.nxPrev=false; n.rowsKey=''; n.ui=null; n.dirty=true; },
   dispose(n){ if(n.hidePage) window.removeEventListener('pagehide',n.hidePage); vpDestroy(n); },
   process(n,I){
     if(Array.isArray(I.rows)){
       const L=vpSources(I.rows), k=L.length+'|'+L.map(c=>c.url).join('\n');
       if(k!==n.rowsKey){ n.rowsKey=k; const cur=n.url ? L.findIndex(c=>c.url===n.url) : -1; n.list=L; n.idx=cur; n.dirty=true; } }
-    if(typeof I.url==='string' && I.url && I.url!==n.inUrl){ n.inUrl=I.url; setMod(n,'url',I.url); n.idx=n.list.findIndex(c=>c.url===I.url); vpOpen(n,I.url,n.idx>=0 ? n.list[n.idx].name : ''); }
+    if(typeof I.url==='string' && I.url && I.url!==n.inUrl){ n.inUrl=I.url; setMod(n,'url',I.url); n.idx=n.list.findIndex(c=>c.url===I.url); vpOpen(n,I.url,n.idx>=0 ? n.list[n.idx].name : '',undefined,n.idx>=0 ? n.list[n.idx] : null); }
     const cv=I.channel, ck= cv==null || cv==='' ? '' : String(cv);
     if(ck && ck!==n.inCh){
       n.inCh=ck;

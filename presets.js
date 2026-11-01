@@ -443,6 +443,8 @@ const PRESET_CATS={
   'Webcams: OpenStreetMap map → Picture':'Images & TV',
   'Cameras: Table of links → IP Camera → Frames + Archive':'Images & TV',
   'Video: Table of Sources → Player with Seek and Saved Position':'Images & TV',
+  'Video: Internet Archive Search → Episodes → Player':'Images & TV',
+  'Video: IPTV Channels by Country (iptv-org) → Player':'Images & TV',
   'Digital TV: DVB-T2 → record video to Files (trigger, path)':'Images & TV',
   'Analog TV: FPV Multiband Scanner (HackRF)':'Images & TV',
   'Analog TV: FPV Mosaic (one HackRF)':'Images & TV',
@@ -7039,17 +7041,50 @@ markWiresDirty();
 });
 preset('Video: Table of Sources → Player with Seek and Saved Position', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'A list of video sources lives in the left Table (name, url): a file (mp4 / webm) or an HLS playlist (.m3u8). Replace the examples with your own, add rows in the Table. Pick a source in the player\'s list (or ⏮ ⏭, PageUp / PageDown), or wire a Table row to «channel». '+
-  'Seek: the slider, −10 / +10 (arrows ← → on a focused player, Shift = 30 s), the «seek» input (seconds), speed in the list. The position is remembered for every address (the last 300) and the same source continues from it, also after a reload; '+
-  'every save also goes to «rec» → the right Table (key url) — your watch history with pos, dur, pct and done. A server must allow cross-origin reads for HLS (CORS); an http:// link on an https:// page is blocked by the browser.'});
+const nt=addNode('note',40,40,{text:'A list of video sources lives in the Table (name, url; series, season, episode make a series): a file (mp4 / webm) or an HLS playlist (.m3u8). Video Sources («Load») fills it with samples — a few films, HLS streams and a 5-episode series; add your own rows in the Table. '+
+  'Pick a source in the player\'s list (episodes are grouped by series and season; ✓ watched, ▸N % started) or with ⏮ ⏭; ↻ continues where you stopped (the next episode after a finished one); at the end of an episode the next one starts. '+
+  'Seek: the slider, −10 / +10 (arrows ← → on a focused player, Shift = 30 s), the «seek» input, speed. The position is remembered per address (the last 300), also after a reload; every save also goes to «rec» → the right Table (key url) — the watch history. '+
+  'HLS needs CORS on the server; an http:// link on an https:// page is blocked by the browser.'});
 nt.size.w=1000; nt.size.h=130; applySize(nt);
-const tb=addNode('table',40,200,{list:'video/sources',key:'url',initial:false,data:'name,url\nBig Buck Bunny (mp4),https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4\nSintel (HLS),https://bitdash-a.akamaihd.net/content/sintel/hls/playlist.m3u8\nTears of Steel (HLS),https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8'});
-tb.size.w=380; tb.size.h=360; applySize(tb);
-const pl=addNode('vplayer',450,200,{});
-pl.size.w=520; pl.size.h=400; applySize(pl);
-const hs=addNode('table',1000,200,{list:'video/history',key:'url',rev:true});
-hs.size.w=380; hs.size.h=360; applySize(hs);
-addEdge(tb.id,'all',pl.id,'rows'); addEdge(pl.id,'rec',hs.id,'rec');
+const ct=addNode('vcatalog',40,200,{provider:'Samples'});
+ct.size.w=300; ct.size.h=250; applySize(ct);
+const tb=addNode('table',370,200,{list:'video/sources',key:'url',initial:false});
+tb.size.w=380; tb.size.h=400; applySize(tb);
+const pl=addNode('vplayer',780,200,{});
+pl.size.w=520; pl.size.h=420; applySize(pl);
+const hs=addNode('table',1330,200,{list:'video/history',key:'url',rev:true});
+hs.size.w=380; hs.size.h=400; applySize(hs);
+addEdge(ct.id,'list',tb.id,'rows'); addEdge(tb.id,'all',pl.id,'rows'); addEdge(pl.id,'rec',hs.id,'rec');
+markWiresDirty();
+});
+preset('Video: Internet Archive Search → Episodes → Player', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Open films, cartoons and old TV from the Internet Archive (archive.org). In Video Sources type words into «query» (empty — the most watched), pick a collection and press Load: the results go to the left Table. Select a row — its «id» goes to «item» and the item\'s video files come out on «list»: an item with several files is a series, the episodes are numbered from S01E02 / «Episode 3» in the file names. '+
+  'The player plays them one after another, remembers the position of every episode (↻ continues) and writes the history to the right Table. The «list» can also be kept in a Table (key url) — that is your own list of sources. Needs the Internet Archive to be reachable (CORS is allowed there); the last answer is shown as «stale» when the network is gone.'});
+nt.size.w=1000; nt.size.h=120; applySize(nt);
+const ct=addNode('vcatalog',40,190,{provider:'Internet Archive',query:'cartoon',kind:'cartoons'});
+ct.size.w=320; ct.size.h=330; applySize(ct);
+const rs=addNode('table',390,190,{list:'@patch',key:'id',initial:false,cols:['id','name','year','downloads'],data:'id,name,year,downloads'});
+rs.size.w=420; rs.size.h=400; applySize(rs);
+const pl=addNode('vplayer',840,190,{});
+pl.size.w=520; pl.size.h=420; applySize(pl);
+const hs=addNode('table',1390,190,{list:'video/history',key:'url',rev:true});
+hs.size.w=380; hs.size.h=400; applySize(hs);
+addEdge(ct.id,'rows',rs.id,'rows'); addEdge(rs.id,'id',ct.id,'item'); addEdge(ct.id,'list',pl.id,'rows'); addEdge(pl.id,'rec',hs.id,'rec');
+markWiresDirty();
+});
+preset('Video: IPTV Channels by Country (iptv-org) → Player', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Free TV channels (HLS) from the iptv-org lists: set the country code in Video Sources (ru, us, de, …), press Load, narrow the list with «filter» (words in the name or group, «-word» drops). The channels go to the Table and to the player at once; pick one in the player\'s list or wire a Table row to «channel». '+
+  'Some channels are dead or geo-blocked — Stream Check (Data) can sort them out first. A channel needs CORS on its server for hls.js; an http:// channel is blocked on an https:// page.'});
+nt.size.w=1000; nt.size.h=100; applySize(nt);
+const ct=addNode('vcatalog',40,170,{provider:'IPTV channels (iptv-org)',country:'ru'});
+ct.size.w=320; ct.size.h=300; applySize(ct);
+const tb=addNode('table',390,170,{list:'@patch',key:'url',initial:false,cols:['n','name','url','group'],data:'n,name,url,group'});
+tb.size.w=420; tb.size.h=400; applySize(tb);
+const pl=addNode('vplayer',840,170,{autoplay:true,advance:false});
+pl.size.w=520; pl.size.h=420; applySize(pl);
+addEdge(ct.id,'list',tb.id,'rows'); addEdge(ct.id,'list',pl.id,'rows');
 markWiresDirty();
 });
 preset('Podcasts: Search → Episodes → Sound', function(){
