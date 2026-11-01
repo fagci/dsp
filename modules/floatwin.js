@@ -62,32 +62,56 @@ function floatToggle(n){
   const id=String(n.id);
   if(flSt.has(id)){ floatOff(id); return; }
   let ok=false;
-  try{ ok=DspApp.floatCan() && DspApp.floatShow(id,JSON.stringify({opacity:.92,touch:!!(MOD[n.type] && MOD[n.type].touch)})); }catch(e){}
+  try{ ok=DspApp.floatCan() && DspApp.floatShow(id,JSON.stringify({opacity:.92,touch:floatWantsTouch(n)})); }catch(e){}
   if(!ok){ try{ DspApp.floatPerm(); }catch(e){} return; }                // разрешения нет — системный экран; после него нажать ещё раз
   const scratch={cv:document.createElement('canvas'),cx:null,busy:false}; scratch.cx=scratch.cv.getContext('2d');
   n._float=true; flSt.set(id,{n,scratch,lastDraw:0}); floatLoop();
 }
 
-// Касания окна (FloatWin.kt, режим touch у узлов с def.touch: кнопки, шкалы, клавиатуры) → pointer-события на canvas узла.
-// act: 0 вниз, 1 движение, 2 вверх; x, y — доли размера окна. Настоящего pointerId у такого события нет, поэтому захват указателя
-// (setPointerCapture / hasPointerCapture) на время касания подменён заглушкой — обработчики узлов (indWire…) считают указатель захваченным.
-// Системная клавиатура поверх чужих приложений недоступна (окно не берёт фокус), для ввода есть экранные Number Pad / Calculator.
-function floatTouch(id,act,x,y){
+// Узел принимает касания в плавающем окне, если у его холста есть свои обработчики: indWire (ручки, кнопки, шкалы), ownpinch
+// (спектроанализатор, карта: свои щипок и сдвиг), touch-action:none, клавиатура — или модуль сам помечен touch:true.
+function floatWantsTouch(n){
+  const cv=n.cv, d=MOD[n.type]; if(!cv) return false;
+  return !!(d && d.touch) || n._wcv===cv || n._kbcv===cv || cv.classList.contains('ownpinch') || cv.style.touchAction==='none';
+}
+// Касания окна (FloatWin.kt, режим touch) → pointer-события на canvas узла, в том числе несколькими пальцами.
+// act: 0 вниз, 1 движение, 2 вверх; x, y — доли размера окна; pid — номер пальца. Настоящего pointerId у такого события нет, поэтому
+// захват указателя (setPointerCapture / hasPointerCapture) на время касания подменён заглушкой — обработчики узлов считают его захваченным.
+// Холсты со своим щипком (класс ownpinch: спектр, карта) получают пальцы как pointer-события; остальным два пальца превращаются в
+// колесо (колесо мыши у них — масштаб), второй палец им не отдаётся. Системная клавиатура поверх чужих приложений недоступна
+// (окно не берёт фокус), для ввода есть экранные Number Pad / Calculator.
+function floatTouch(id,act,x,y,pid){
   const s=flSt.get(String(id)); if(!s) return;
   const n=s.n, cv=n.cv; if(!cv) return;
   const r=cv.getBoundingClientRect(); if(!r.width || !r.height) return;
-  const cX=r.left+x*r.width, cY=r.top+y*r.height, down=act!==2;
-  const ev=type=>new PointerEvent(type,{pointerId:4242,pointerType:'touch',isPrimary:true,bubbles:true,cancelable:true,clientX:cX,clientY:cY,button:0,buttons:down ? 1 : 0,pressure:down ? .5 : 0});
+  pid=pid|0; const tp=s.tp || (s.tp=new Map());
+  const cX=r.left+x*r.width, cY=r.top+y*r.height, own=cv.classList.contains('ownpinch') || !!n._wcv || !!n._kbcv;
+  const ev=(type,p,down)=>new PointerEvent(type,{pointerId:4242+p,pointerType:'touch',isPrimary:p===s.prim,bubbles:true,cancelable:true,
+    clientX:cX,clientY:cY,button:0,buttons:down ? 1 : 0,pressure:down ? .5 : 0,width:1,height:1});
+  const pinch=()=>{ const [a,b]=[...tp.values()]; return {d:Math.hypot(a.x-b.x,a.y-b.y),mx:(a.x+b.x)/2,my:(a.y+b.y)/2}; };
   if(act===0){
-    cv.setPointerCapture=()=>{}; cv.hasPointerCapture=()=>true; cv.releasePointerCapture=()=>{};
-    s.t0=[x,y]; s.moved=false; cv.dispatchEvent(ev('pointerdown'));
-  } else if(s.t0){
-    if(act===1){ if(Math.hypot((x-s.t0[0])*r.width,(y-s.t0[1])*r.height)>6) s.moved=true; cv.dispatchEvent(ev('pointermove')); }
-    else {
-      cv.dispatchEvent(ev('pointerup'));
-      if(!s.moved) cv.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:cX,clientY:cY}));
-      delete cv.setPointerCapture; delete cv.hasPointerCapture; delete cv.releasePointerCapture; s.t0=null;
+    if(!tp.size){
+      cv.setPointerCapture=()=>{}; cv.hasPointerCapture=()=>true; cv.releasePointerCapture=()=>{}; s.prim=pid; s.moved=false; s.t0=[x,y];
+    }
+    tp.set(pid,{x:cX,y:cY});
+    if(tp.size===2 && !own) s.pz=pinch().d;
+    if(pid===s.prim || own) cv.dispatchEvent(ev('pointerdown',pid,true));
+  } else if(tp.has(pid)){
+    if(act===1){
+      tp.set(pid,{x:cX,y:cY});
+      if(s.t0 && Math.hypot((x-s.t0[0])*r.width,(y-s.t0[1])*r.height)>6) s.moved=true;
+      if(tp.size>=2 && !own){
+        const q=pinch(); if(s.pz && Math.abs(q.d-s.pz)>1){
+          cv.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,clientX:q.mx,clientY:q.my,deltaY:(s.pz-q.d)*1.5,deltaMode:0})); s.pz=q.d; s.moved=true; }
+      } else if(pid===s.prim || own) cv.dispatchEvent(ev('pointermove',pid,true));
+    } else {
+      if(pid===s.prim || own) cv.dispatchEvent(ev('pointerup',pid,false));
+      const wasMoved=s.moved; tp.delete(pid);
+      if(!tp.size){
+        if(!wasMoved) cv.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,clientX:cX,clientY:cY}));
+        delete cv.setPointerCapture; delete cv.hasPointerCapture; delete cv.releasePointerCapture; s.t0=null; s.pz=0;
+      } else if(pid===s.prim && !own){ s.prim=[...tp.keys()][0]; }
     }
   }
-  s.lastDraw=0;                                     // кадр с результатом нажатия — без ожидания
+  s.lastDraw=0;                                     // кадр с результатом жеста — без ожидания
 }

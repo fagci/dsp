@@ -238,8 +238,8 @@ open class MainActivity : Activity() {
             FloatWin.onClosed = { cid ->
                 runOnUiThread { web.evaluateJavascript("window.floatClosed&&floatClosed(" + JSONObject.quote(cid) + ")", null) }
             }
-            FloatWin.onTouch = { cid, act, x, y ->
-                web.evaluateJavascript("window.floatTouch&&floatTouch(" + JSONObject.quote(cid) + "," + act + "," + x + "," + y + ")", null)
+            FloatWin.onTouch = { cid, act, x, y, pid ->
+                web.evaluateJavascript("window.floatTouch&&floatTouch(" + JSONObject.quote(cid) + "," + act + "," + x + "," + y + "," + pid + ")", null)
             }
             val o = try { JSONObject(opts) } catch (e: Exception) { JSONObject() }
             FloatWin.show(this@MainActivity, id, o)

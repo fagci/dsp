@@ -31,8 +31,8 @@ object FloatWin {
     private val wins = HashMap<String, W>()
     private val ui = Handler(Looper.getMainLooper())
     @Volatile var onClosed: ((String) -> Unit)? = null
-    /** Касание внутри окна с opts.touch: (id, 0 — вниз / 1 — движение / 2 — вверх, x и y в долях окна 0…1). Страница превращает его в pointer-события узла. */
-    @Volatile var onTouch: ((String, Int, Float, Float) -> Unit)? = null
+    /** Касание внутри окна с opts.touch: (id, 0 — вниз / 1 — движение / 2 — вверх, x и y в долях окна 0…1, номер пальца — для щипка и других жестов в несколько пальцев). Страница превращает его в pointer-события узла. */
+    @Volatile var onTouch: ((String, Int, Float, Float, Int) -> Unit)? = null
     /** Вызывается из основного потока каждые ~150 мс, пока есть окна: MainActivity просит страницу снять кадр (floatTick). */
     @Volatile var pump: (() -> Unit)? = null
     private var pumping = false
@@ -111,6 +111,8 @@ object FloatWin {
         if (touch) corner("✥", Gravity.TOP or Gravity.START)
         root.alpha = alpha
         var mode = 0; var dx = 0f; var dy = 0f; var sx = 0; var sy = 0; var sw = 0; var moved = false
+        fun touchOf(v: View, e: MotionEvent, act: Int, i: Int) =
+            onTouch?.invoke(id, act, (e.getX(i) / v.width).coerceIn(0f, 1f), (e.getY(i) / v.height).coerceIn(0f, 1f), e.getPointerId(i))
         root.setOnTouchListener { v, e ->
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
@@ -122,11 +124,13 @@ object FloatWin {
                         touch -> 5
                         else -> 1
                     }
-                    if (mode == 5) onTouch?.invoke(id, 0, (e.x / v.width).coerceIn(0f, 1f), (e.y / v.height).coerceIn(0f, 1f))
+                    if (mode == 5) touchOf(v, e, 0, 0)
                     true
                 }
+                MotionEvent.ACTION_POINTER_DOWN -> { if (mode == 5) touchOf(v, e, 0, e.actionIndex); true }
+                MotionEvent.ACTION_POINTER_UP -> { if (mode == 5) touchOf(v, e, 2, e.actionIndex); true }
                 MotionEvent.ACTION_MOVE -> {
-                    if (mode == 5) { onTouch?.invoke(id, 1, (e.x / v.width).coerceIn(0f, 1f), (e.y / v.height).coerceIn(0f, 1f)); return@setOnTouchListener true }
+                    if (mode == 5) { for (i in 0 until e.pointerCount) touchOf(v, e, 1, i); return@setOnTouchListener true }
                     val ox = (e.rawX - dx).toInt(); val oy = (e.rawY - dy).toInt()
                     if (Math.abs(ox) > dp(4) || Math.abs(oy) > dp(4)) moved = true
                     if (mode == 1) { lp.x = sx + ox; lp.y = sy + oy; try { wm.updateViewLayout(root, lp) } catch (ex: Exception) { } }
@@ -134,7 +138,10 @@ object FloatWin {
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (mode == 5) { onTouch?.invoke(id, 2, (e.x / v.width).coerceIn(0f, 1f), (e.y / v.height).coerceIn(0f, 1f)); mode = 0; return@setOnTouchListener true }
+                    if (mode == 5) {                                    // UP — последний палец, CANCEL — отпускаем все
+                        if (e.actionMasked == MotionEvent.ACTION_CANCEL) for (i in 0 until e.pointerCount) touchOf(v, e, 2, i) else touchOf(v, e, 2, e.actionIndex)
+                        mode = 0; return@setOnTouchListener true
+                    }
                     if (mode == 3 && !moved) { remove(id); onClosed?.invoke(id) }
                     else prefs.edit().putInt("$id.x", lp.x).putInt("$id.y", lp.y).putInt("$id.w", lp.width).apply()
                     mode = 0; true
