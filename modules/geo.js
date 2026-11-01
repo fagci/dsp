@@ -1467,6 +1467,8 @@ const GEO_TILES={
   'CyclOSM':{url:'https://a.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', max:20, attr:'© OpenStreetMap contributors, © CyclOSM'},
   'CARTO Dark':{url:'https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png', max:20, attr:'© OpenStreetMap contributors © CARTO'},
   'CARTO Light':{url:'https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', max:20, attr:'© OpenStreetMap contributors © CARTO'},
+  'OpenFreeMap (vector)':{vec:'light', tilejson:'https://tiles.openfreemap.org/planet', max:14, attr:'© OpenMapTiles, © OpenStreetMap contributors — OpenFreeMap'},
+  'OpenFreeMap Dark (vector)':{vec:'dark', tilejson:'https://tiles.openfreemap.org/planet', max:14, attr:'© OpenMapTiles, © OpenStreetMap contributors — OpenFreeMap'},
   'Esri Satellite':{url:ESRI+'World_Imagery/MapServer/tile/{z}/{y}/{x}', max:19, attr:'Tiles © Esri — Maxar, Earthstar Geographics, USDA, USGS'},
   'Esri Topo':{url:ESRI+'World_Topo_Map/MapServer/tile/{z}/{y}/{x}', max:19, attr:'Tiles © Esri — USGS, NOAA, Esri'},
   'Esri Streets':{url:ESRI+'World_Street_Map/MapServer/tile/{z}/{y}/{x}', max:19, attr:'Tiles © Esri — HERE, Garmin, OpenStreetMap contributors'},
@@ -1481,7 +1483,7 @@ const GEO_OVERLAYS={
   'Hiking trails':{url:'https://tile.waymarkedtrails.org/hiking/{z}/{x}/{y}.png', max:18, attr:'© waymarkedtrails.org'},
   'Cycling routes':{url:'https://tile.waymarkedtrails.org/cycling/{z}/{x}/{y}.png', max:18, attr:'© waymarkedtrails.org'},
 };
-const GeoTiles={mem:new Map(), pending:new Set(), gen:0, cache:null, stat:{}};   // stat — здоровье источников (geotiles-kernels.js)
+const GeoTiles={mem:new Map(), pending:new Set(), gen:0, cache:null, stat:{}, tpl:{}};   // stat — здоровье источников (geotiles-kernels.js)
 // источник слоя узла: which — 'tiles' (основа) или 'overlay'; 'custom' — адрес из параметров tileUrl / tileUrl2 ({z}/{x}/{y}, {s} — a)
 function geoSrc(n,which){
   const name=n.p[which];
@@ -1496,6 +1498,46 @@ function geoSrc(n,which){
   const t=(which==='tiles' ? GEO_TILES : GEO_OVERLAYS)[nm];
   return t ? {...t, id:t.dem ? 'dem:'+t.dem : nm, from, code, want:name} : null;
 }
+// Сеть → Cache API 'dsp-tiles' (дальше офлайн). Итог сетевой загрузки учитывается в здоровье источника (запасная основа при 403 / 429).
+async function geoFetchCached(url,src,net){
+  const cache=GeoTiles.cache || (GeoTiles.cache=await caches.open('dsp-tiles'));
+  let r=await cache.match(url);
+  if(r) return r;
+  if(!net) throw new Error('offline');
+  const live=navigator.onLine!==false;               // без сети неудача — не вина сервера и источник не «ложится»
+  try{ r=await fetch(url,{mode:'cors'}); }catch(e){ if(live) geoTileMark(GeoTiles.stat,src.id,false,0,Date.now()); throw e; }
+  if(!r.ok){ if(live) geoTileMark(GeoTiles.stat,src.id,false,r.status,Date.now()); throw new Error('HTTP '+r.status); }
+  geoTileMark(GeoTiles.stat,src.id,true,0,Date.now());
+  await cache.put(url,r.clone());
+  return r;
+}
+// Адрес тайлов векторного источника берётся из TileJSON (в нём дата сборки, она меняется): сеть первой, последний удачный ответ — в кэше (офлайн или сервер недоступен)
+function geoVecTpl(src,net){
+  const hit=GeoTiles.tpl[src.tilejson];
+  if(hit && Date.now()-hit.t<6*3600e3) return hit.p;                 // запрос один на всех тайлов, что ждут адрес
+  const p=(async()=>{
+    const cache=GeoTiles.cache || (GeoTiles.cache=await caches.open('dsp-tiles'));
+    let j=null, code=0;
+    if(net){ try{ const r=await fetch(src.tilejson,{mode:'cors'}); code=r.status; if(r.ok){ await cache.put(src.tilejson,r.clone()); j=await r.json(); } }catch(e){} }
+    if(!j){ const m=await cache.match(src.tilejson); if(m) try{ j=await m.json(); }catch(e){} }
+    const url=j && Array.isArray(j.tiles) && /\{z\}/.test(j.tiles[0]||'') ? j.tiles[0] : null;
+    if(!url){ if(net && navigator.onLine!==false) geoTileMark(GeoTiles.stat,src.id,false,code,Date.now()); throw new Error('no tilejson'); }
+    return url;
+  })();
+  GeoTiles.tpl[src.tilejson]={p,t:Date.now()};
+  p.catch(()=>{ if(GeoTiles.tpl[src.tilejson]?.p===p) delete GeoTiles.tpl[src.tilejson]; });
+  return p;
+}
+// векторный тайл → картинка 512×512 (чёткая и на экранах с высокой плотностью); дальше как растровый
+async function geoVecTile(src,z,x,y,net){
+  const tpl=await geoVecTpl(src,net);
+  const r=await geoFetchCached(tpl.replace('{z}',z).replace('{x}',x).replace('{y}',y),src,net);
+  const tile=mvtDecode(await mvtBytes(await r.arrayBuffer()));
+  const S=512, cv=typeof OffscreenCanvas!=='undefined' ? new OffscreenCanvas(S,S) : Object.assign(document.createElement('canvas'),{width:S,height:S});
+  mvtRender(cv.getContext('2d'),tile,z,S,MVT_PAL[src.vec]||MVT_PAL.light);
+  return createImageBitmap(cv);
+}
+
 function geoTileGet(src,z,x,y,net){
   const key=src.id+'/'+z+'/'+x+'/'+y;
   const m=GeoTiles.mem.get(key);
@@ -1510,19 +1552,11 @@ function geoTileGet(src,z,x,y,net){
     if(src.dem){                                     // рельеф: тайл высот → картинка (из базы или сети, как Horizon)
       const h=await gdDemTile(z,x,y,net), mpp=156543.03392*Math.cos(unmercY((y+.5)/2**z)*D2R)/2**z;
       bmp=await createImageBitmap(new ImageData(gdDemShade(h,mpp,src.dem),256,256));
+    } else if(src.vec){
+      bmp=await geoVecTile(src,z,x,y,net);
     } else {
       const url=src.url.replace('{z}',z).replace('{x}',x).replace('{y}',y).replace('{s}','a');
-      const cache=GeoTiles.cache || (GeoTiles.cache=await caches.open('dsp-tiles'));
-      let r=await cache.match(url);
-      if(!r){
-        if(!net) throw new Error('offline');
-        const live=navigator.onLine!==false;               // без сети неудача — не вина сервера и источник не «ложится»
-        try{ r=await fetch(url,{mode:'cors'}); }catch(e){ if(live) geoTileMark(GeoTiles.stat,src.id,false,0,Date.now()); throw e; }
-        if(!r.ok){ if(live) geoTileMark(GeoTiles.stat,src.id,false,r.status,Date.now()); throw new Error('HTTP '+r.status); }
-        geoTileMark(GeoTiles.stat,src.id,true,0,Date.now());
-        await cache.put(url,r.clone());
-      }
-      bmp=await createImageBitmap(await r.blob());
+      bmp=await createImageBitmap(await (await geoFetchCached(url,src,net)).blob());
     }
     GeoTiles.mem.set(key,{bmp});
     while(GeoTiles.mem.size>300){ const k=GeoTiles.mem.keys().next().value; GeoTiles.mem.get(k).bmp?.close(); GeoTiles.mem.delete(k); }

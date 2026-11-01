@@ -7,7 +7,7 @@ const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n); };
 const ctx=vm.createContext({}); 
 vm.runInContext(fs.readFileSync(path.join(root,'modules/geotiles-kernels.js'),'utf8')+';this.K={geoTileMark,geoTileDown,geoTileChoose,geoTileNote,GEO_TILE_FB};',ctx);
-const K=ctx.K, have=['OSM','OpenTopoMap','OSM Humanitarian','CyclOSM','CARTO Dark','CARTO Light','Esri Satellite','Esri Topo','Esri Streets'];
+const K=ctx.K, have=['OSM','OpenTopoMap','OSM Humanitarian','CyclOSM','CARTO Dark','CARTO Light','Esri Satellite','Esri Topo','Esri Streets','OpenFreeMap (vector)','OpenFreeMap Dark (vector)'];
 const st={}, T0=1e6;
 ok('healthy source is used as is',K.geoTileChoose('OSM',have,st,T0).name==='OSM' && K.geoTileChoose('OSM',have,st,T0).from===null);
 for(let i=0;i<3;i++) K.geoTileMark(st,'OSM',false,403,T0+i);
