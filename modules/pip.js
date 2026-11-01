@@ -24,6 +24,8 @@ function pipSupported(){
 function pipStop(){ const s=pipSt; pipSt=null; if(s){ if(s.n) s.n._pip=false; try{ s.stop(); }catch(e){} } }
 
 async function nodePip(n){
+  // приложение Android: PiP окна приложения с нативным плеером (ExoPlayer) — показывает любой поток, в том числе без CORS, где кадры через холст не снять
+  if(n && MOD[n.type].vidEl && window.DspApp && typeof DspApp.playerOpen==='function' && typeof vpPip==='function'){ vpPip(n); return; }
   // <video> узла (Video Player): системное окно PiP самого элемента — со звуком и кнопками Media Session (перемотка, дорожки);
   // в приложении Android и где у элемента нет PiP — кадры через холст, как у остальных
   if(n && MOD[n.type].vidEl && n.v && n.v.requestPictureInPicture && !(window.DspApp && typeof DspApp.pip==='function')){

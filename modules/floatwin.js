@@ -58,6 +58,8 @@ function floatLoop(){
 }
 
 function floatToggle(n){
+  // Video Player в приложении: окно поверх с нативным плеером (ExoPlayer), а не кадры холста — так играет и поток без CORS
+  if(n && MOD[n.type].vidEl && typeof vpFloat==='function' && typeof vpNativeCan==='function' && vpNativeCan()){ vpFloat(n); return; }
   if(!n || !pipSource(n)) return;
   const id=String(n.id);
   if(flSt.has(id)){ floatOff(id); return; }
