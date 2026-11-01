@@ -446,6 +446,7 @@ const PRESET_CATS={
   'Video: Internet Archive Search → Episodes → Player':'Images & TV',
   'Video: IPTV Channels by Country (iptv-org) → Player':'Images & TV',
   'VLC Source: Any Sound (Network Folder, Stream, Multicast) → Spectrum and Speaker (DSP app)':'Music: Player',
+  'VLC Out: Your Phone as a Radio Station (HTTP, Icecast, Chromecast) from the Graph (DSP app)':'Music: Player',
   'Video: Torrents (magnet / .torrent) → Player (DSP app)':'Images & TV',
   'Video: Network Folders (SMB / FTP / UPnP) and Any Format → libVLC (DSP app)':'Images & TV',
   'Digital TV: DVB-T2 → record video to Files (trigger, path)':'Images & TV',
@@ -7119,6 +7120,20 @@ const dc=addNode('dac',1220,200,{vol:.5});
 addEdge(vs.id,'l',ff.id,'in'); addEdge(ff.id,'spec',wf.id,'spec');
 addEdge(vs.id,'l',sc.id,'in1');
 addEdge(vs.id,'l',dc.id,'L'); addEdge(vs.id,'r',dc.id,'R');
+markWiresDirty();
+});
+preset('VLC Out: Your Phone as a Radio Station (HTTP, Icecast, Chromecast) from the Graph (DSP app)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'VLC Out sends the sound of the graph OUT through libVLC of the DSP app for Android: «http server» — the phone itself becomes a radio station (open http://phone-address:8080/dsp in any player, VLC, a browser, a smart TV), «rtp / multicast» — to a group or a host of the home network, «icecast» — to a radio server (the password goes to the «pass» pin, it is never saved in the patch), «file» — a recording into the app folder, «chromecast / upnp» — straight to a speaker or a TV (press Find devices, then Start). Codec: mp3 / aac / opus / flac.\n'+
+  'Here the left channel is a tone and the right one is the microphone: press Start, then open the address shown in the node status. Any signal of the graph can go there — a radio demodulator, a decoder, a player, a mixer. Not a browser feature: without the app the node says so.'});
+nt.size.w=1000; nt.size.h=130; applySize(nt);
+const os=addNode('osc',40,200,{freq:440,amp:.2});
+const mc=addNode('mic',40,360);
+const vo=addNode('vlcout',560,200,{mode:'http server',codec:'mp3',bitrate:128,port:8080,path:'dsp'});
+vo.size.w=340; vo.size.h=360; applySize(vo);
+const dc=addNode('dac',560,600,{vol:.3});
+addEdge(os.id,'out',vo.id,'L'); addEdge(mc.id,'a',vo.id,'R');
+addEdge(os.id,'out',dc.id,'L'); addEdge(mc.id,'a',dc.id,'R');
 markWiresDirty();
 });
 preset('Video: IPTV Channels by Country (iptv-org) → Player', function(){

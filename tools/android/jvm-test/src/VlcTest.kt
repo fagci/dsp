@@ -1,6 +1,7 @@
 package app.dsp.phone.vlctest
 
 import app.dsp.phone.VlcArgs
+import app.dsp.phone.VlcOutArgs
 
 var bad = 0
 fun ok(name: String, cond: Boolean, x: String = "") { if (!cond) { bad++; println("FAIL $name $x") } else println("ok   $name $x") }
@@ -16,6 +17,21 @@ fun main() {
     for (u in listOf("file:///sdcard/a.mp3", "fd://3", "content://media/1", "javascript:alert(1)", "a.mp3", "", "http://h/\n:sout=#x", "gopher://x", "://x", "http://" + "x".repeat(2100)))
         ok("url refused: ${u.take(30).replace("\n", " ")}", !VlcArgs.urlOk(u))
     ok("port", VlcArgs.portOk(1024) && VlcArgs.portOk(65535) && !VlcArgs.portOk(80) && !VlcArgs.portOk(0) && !VlcArgs.portOk(70000))
+    // VLC Out
+    val tc = "transcode{acodec=mp3,ab=128,channels=2,samplerate=48000}"
+    ok("out http mp3", VlcOutArgs.sout("http", "mp3", 128, 48000, 2, "", 8080, "/live", "", "", "", 4) == ":sout=#$tc:std{access=http,mux=mp3,dst=:8080/live}")
+    ok("out rtp multicast", VlcOutArgs.sout("rtp", "aac", 96, 44100, 1, "239.1.1.1", 5004, "", "", "", "", 99) == ":sout=#transcode{acodec=mp4a,ab=96,channels=1,samplerate=44100}:rtp{dst=239.1.1.1,port=5004,mux=ts,ttl=32}")
+    ok("out icecast", VlcOutArgs.sout("icecast", "mp3", 128, 48000, 2, "ice.h", 8000, "stream", "source", "pw", "", 4) == ":sout=#$tc:std{access=shout,mux=mp3,dst='//source:pw@ice.h:8000/stream'}")
+    ok("out opus rate fixed, bitrate clamped", VlcOutArgs.sout("icecast", "opus", 5, 44100, 2, "h", 1, "m", "s", "p", "", 4)!!.contains("samplerate=48000") && VlcOutArgs.sout("icecast", "opus", 5000, 44100, 2, "h", 1, "m", "s", "p", "", 4)!!.contains("ab=320") && VlcOutArgs.sout("http", "opus", 5, 44100, 2, "", 8080, "m", "", "", "", 4)!!.contains("ab=32,"))
+    ok("out file", VlcOutArgs.sout("file", "flac", 128, 48000, 2, "", 0, "", "", "", "/d/a.flac", 4)!!.endsWith("std{access=file,mux=raw,dst='/d/a.flac'}"))
+    ok("out refused combos", VlcOutArgs.sout("rtp", "opus", 128, 48000, 2, "h", 1, "", "", "", "", 4) == null && VlcOutArgs.sout("icecast", "aac", 128, 48000, 2, "h", 1, "m", "s", "p", "", 4) == null
+        && VlcOutArgs.sout("renderer", "mp3", 128, 48000, 2, "", 0, "", "", "", "", 4) == null && VlcOutArgs.sout("http", "wav", 128, 48000, 2, "", 8080, "m", "", "", "", 4) == null)
+    ok("out fields", VlcOutArgs.hostOk("239.1.1.1") && VlcOutArgs.hostOk("ice.example.org") && VlcOutArgs.hostOk("[fe80::1]") && !VlcOutArgs.hostOk("a b") && !VlcOutArgs.hostOk("h'}:sout=#x") && !VlcOutArgs.hostOk(""))
+    ok("out path/file/cred", VlcOutArgs.mountOk("a/b-c.mp3") && !VlcOutArgs.mountOk("../x") && !VlcOutArgs.mountOk("a b") && VlcOutArgs.fileOk("my-rec_1.mp3") && !VlcOutArgs.fileOk("../a") && !VlcOutArgs.fileOk(".hid") && !VlcOutArgs.fileOk("a/b")
+        && VlcOutArgs.credOk("hackme") && !VlcOutArgs.credOk("p@ss") && !VlcOutArgs.credOk("a'b") && !VlcOutArgs.credOk("a b") && !VlcOutArgs.credOk("a,b") && !VlcOutArgs.credOk("x".repeat(101)))
+    val oi = VlcOutArgs.input(40000, 48000, 2, 300, true)
+    ok("out input: raw s16le from loopback", oi.first == "udp://@127.0.0.1:40000" && oi.second.containsAll(listOf(":demux=rawaud", ":rawaud-fourcc=s16l", ":rawaud-channels=2", ":rawaud-samplerate=48000", ":network-caching=300")) && VlcOutArgs.input(10, 1, 9, 1, false).first == "udp://@127.0.0.1:1024")
+    ok("out pick device", VlcOutArgs.pick(listOf("Living Room TV", "Kitchen speaker"), "kitchen") == 1 && VlcOutArgs.pick(listOf("A", "AB"), "a") == 0 && VlcOutArgs.pick(listOf("A"), "") == -1 && VlcOutArgs.pick(listOf("A"), "z") == -1)
     println(if (bad == 0) "all ok" else "$bad FAILED")
     if (bad != 0) System.exit(1)
 }
