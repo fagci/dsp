@@ -5,12 +5,12 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({String,Math,Array,Object,isFinite,URL,encodeURIComponent,decodeURIComponent});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/vplayer-kernels.js'),'utf8')+';this.T={vpKind,vpSources,vpFind,vpResume,vpPut,vpFmt,vpSeek,vpRec,vpEpisode,vpLabel,vpGroup,vpContinue,vpMark,vpIaSearchUrl,vpIaItems,vpIaId,vpIaFiles,vpFilter,VP_IPTV_URL,VP_SAMPLES,vpIsIaPage,vpMediaErr,vpWmSearchUrl,vpWmItems,vpPtSearchUrl,vpPtItems,vpPtId,vpPtFiles,vpIptvUrl,VP_URL_RE,vpTorrentRef,vpMagnetName,vpTorrentRows,vpTorrentLine,vpIaTorrentUrl,vpMagnetHash,vpTorrentSearchLine};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/vplayer-kernels.js'),'utf8')+';this.T={vpKind,vpSources,vpFind,vpResume,vpPut,vpFmt,vpSeek,vpRec,vpEpisode,vpLabel,vpGroup,vpContinue,vpMark,vpIaSearchUrl,vpIaItems,vpIaId,vpIaFiles,vpFilter,VP_IPTV_URL,VP_SAMPLES,vpIsIaPage,vpMediaErr,vpWmSearchUrl,vpWmItems,vpPtSearchUrl,vpPtItems,vpPtId,vpPtFiles,vpIptvUrl,VP_URL_RE,vpTorrentRef,vpMagnetName,vpTorrentRows,vpTorrentLine,vpIaTorrentUrl,vpMagnetHash,vpTorrentSearchLine,VP_VLC_RE};',ctx);
 const T=ctx.T;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 
 ok('kind',T.vpKind('http://h/a.m3u8?t=1')==='hls' && T.vpKind('http://h/a.mpd')==='dash' && T.vpKind('http://h/a.mp4')==='file' && T.vpKind('')==='file');
-const L=T.vpSources([{name:'A',url:'http://h/a.mp4'},{title:'B',link:' https://h/b.m3u8 '},{name:'bad',url:'ftp://x'},{url:'http://h/c.webm'},null,{name:'no'}]);
+const L=T.vpSources([{name:'A',url:'http://h/a.mp4'},{title:'B',link:' https://h/b.m3u8 '},{name:'bad',url:'gopher://x'},{url:'http://h/c.webm'},null,{name:'no'}]);
 ok('sources',L.length===3 && L[1].name==='B' && L[1].url==='https://h/b.m3u8' && L[2].name==='h/c.webm',JSON.stringify(L.map(x=>x.name)));
 ok('sources not array',T.vpSources(null).length===0);
 ok('find number/name/url',T.vpFind(L,2)===1 && T.vpFind(L,'2')===1 && T.vpFind(L,'b')===1 && T.vpFind(L,'http://h/a.mp4')===0 && T.vpFind(L,9)===-1 && T.vpFind(L,'')===-1 && T.vpFind(L,'zzz')===-1);
@@ -104,7 +104,7 @@ ok('iptv scope',T.vpIptvUrl('Movies')==='https://iptv-org.github.io/iptv/categor
 // нативный плеер приложения: multicast, rtsp, контейнеры, которых нет у <video>
 ok('kind native: schemes',T.vpKind('udp://@239.1.1.1:1234')==='native' && T.vpKind('rtp://@239.1.1.1:5004')==='native' && T.vpKind('RTSP://cam/stream')==='native');
 ok('kind native: containers',T.vpKind('http://h/a.mkv')==='native' && T.vpKind('http://h/a.TS?x=1')==='native' && T.vpKind('http://h/a.avi')==='native' && T.vpKind('http://h/a.mp4')==='file' && T.vpKind('http://h/a.m3u8')==='hls');
-const NS=T.vpSources([{name:'Первый',url:'udp://@239.10.0.1:1234'},{name:'RTP',url:'rtp://@239.10.0.2:5004'},{name:'Cam',url:'rtsp://10.0.0.9/live'},{name:'bad',url:'ftp://x'},{name:'web',url:'http://h/a.mp4'}]);
+const NS=T.vpSources([{name:'Первый',url:'udp://@239.10.0.1:1234'},{name:'RTP',url:'rtp://@239.10.0.2:5004'},{name:'Cam',url:'rtsp://10.0.0.9/live'},{name:'bad',url:'gopher://x'},{name:'web',url:'http://h/a.mp4'}]);
 ok('sources accept udp / rtp / rtsp',NS.length===4 && NS[0].url==='udp://@239.10.0.1:1234' && NS.every(c=>T.VP_URL_RE.test(c.url)));
 // торренты
 const MG='magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=My+Show%20S01&tr=udp%3A%2F%2Ft%3A1';
@@ -126,5 +126,8 @@ ok('ia torrent url',T.vpIaTorrentUrl('ThePinkPanther-cartoons')==='https://archi
 ok('samples: magnets valid',T.VP_SAMPLES.filter(c=>c.url.startsWith('magnet:')).length===4 && T.VP_SAMPLES.filter(c=>c.url.startsWith('magnet:')).every(c=>/xt=urn:btih:[0-9a-f]{40}/.test(c.url)));
 ok('magnet hash',T.vpMagnetHash(MG)==='0123456789abcdef0123456789abcdef01234567' && T.vpMagnetHash('magnet:?dn=x&xt=urn:btih:0123456789ABCDEF0123456789ABCDEF01234567')==='0123456789abcdef0123456789abcdef01234567' && T.vpMagnetHash('magnet:?xt=urn:btih:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA')==='0'.repeat(40) && T.vpMagnetHash('https://h')==='');
 ok('search line',/DHT nodes: 87 · peers: 2/.test(T.vpTorrentSearchLine({dht:87,peers:2},12)) && /DHT is silent/.test(T.vpTorrentSearchLine({dht:0,peers:0},25)) && /no peers yet/.test(T.vpTorrentSearchLine({dht:50,peers:0},45)));
+ok('kind vlc: network folders and servers',['smb://nas/video/a.mkv','ftp://h/a.avi','SFTP://h/a','nfs://h/x','upnp://uuid/1','rtmp://h/live/s','mms://h/s'].every(u=>T.vpKind(u)==='vlc') && T.vpKind('udp://@239.1.1.1:1234')==='native' && T.vpKind('http://h/a.mkv')==='native' && T.vpKind('https://h/smb.mp4')==='file');
+const VS=T.vpSources([{name:'NAS',url:'smb://nas/v/a.mkv'},{name:'FTP',url:'ftp://prov/film.avi'},{name:'x',url:'gopher://x'}]);
+ok('sources accept smb / ftp / upnp',VS.length===2 && VS[0].url==='smb://nas/v/a.mkv');
 if(bad){ console.log(bad+' failed'); process.exit(1); }
 console.log('all ok');

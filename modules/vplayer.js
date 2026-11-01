@@ -47,7 +47,7 @@ async function vpOpen(n,url,name,start,meta){
   if(vpIsIaPage(url)){ vpOpenItem(n,vpIaId(url)); return; }          // страница archive.org/details/… — не видео: берём файлы предмета
   vpDestroy(n);
   const g=n.gen;
-  n.tainted=false; n.retry=0; n.tretry=0; n.started=false; n.native=false; n.engineClosed=false; n.torrentTried=false;
+  n.tainted=false; n.vlcTried=false; n.retry=0; n.tretry=0; n.started=false; n.native=false; n.engineClosed=false; n.torrentTried=false;
   n.alts=String(meta && meta.alt || '').split(/\s+/).filter(Boolean); n.altI=-1;
   n.url=url; n.playUrl=url; n.torrent=null; n.tline=''; n.name=name || url; n.meta=meta||null; n.savedPos=-9; n.ended=false; n.pend=0;
   n.warn= typeof netInsecure==='function' && /^http:/i.test(url) && netInsecure(url) ? NET_INSECURE_MSG : '';
@@ -60,10 +60,10 @@ async function vpStart(n,playUrl,from,g){
   const v=n.v, kind=vpKind(playUrl);
   // нативный плеер: по выбору «engine», или сам для того, что браузер не играет (udp / rtp / rtsp, mkv / ts / avi)
   const eng=String(n.p.engine||'auto');
-  if(eng.startsWith('native') || (eng==='auto' && kind==='native')){
-    if(vpNativeCan()){ vpOpenNative(n,playUrl,from); return; }
-    if(/^(udp|rtp|rtsp):/i.test(playUrl)){ vpStatus(n,'udp:// rtp:// rtsp:// addresses (multicast IPTV) are played by the DSP app for Android — a browser cannot open them'); return; }
-  }
+  const want=vpWantEngine(eng,kind);
+  if(want){ vpOpenNative(n,playUrl,from,{engine:want}); return; }
+  if(kind==='vlc' || /^(udp|rtp|rtsp):/i.test(playUrl)){
+    vpStatus(n,(kind==='vlc' ? 'smb:// ftp:// sftp:// nfs:// upnp:// rtmp:// addresses are played by libVLC of the DSP app for Android' : 'udp:// rtp:// rtsp:// addresses (multicast IPTV) are played by the DSP app for Android')+' — a browser cannot open them'); return; }
   v.playbackRate=+n.p.speed||1;
   if(n.p.capture) v.crossOrigin='anonymous'; else v.removeAttribute('crossorigin');
   vpStatus(n,'loading…');
@@ -221,7 +221,7 @@ function vpOnError(n){
     n.torrentTried=true; const msg=vpMediaErr(code)+(code ? '' : '');
     vpStatus(n,'the browser cannot play this ('+vpMediaErr(code)+') — trying it as a torrent…');
     vpOpenTorrent(n,n.url,pos,n.gen,'the address does not give a video ('+vpMediaErr(code)+')'); return; }
-  if(vpNativeCan() && String(n.p.engine||'auto')!=='browser'){ vpStatus(n,'the browser cannot play this ('+vpMediaErr(code)+') — opening the native player of the app…'); vpOpenNative(n,n.playUrl||n.url,pos); return; }
+  if(vpNativeCan() && String(n.p.engine||'auto')!=='browser'){ vpStatus(n,'the browser cannot play this ('+vpMediaErr(code)+') — opening the native player of the app…'); vpOpenNative(n,n.playUrl||n.url,pos,{engine:vpAnyEngine()}); return; }
   vpStatus(n,'error'+at+': '+vpMediaErr(code)+(v.error && v.error.message ? ' — '+v.error.message : '')+'\n'+n.url); }
 
 /* ---------- нативный плеер приложения Android (DspApp.player*) ---------- */
@@ -229,12 +229,31 @@ let vpNativeNode=null, vpCan=null;
 function vpNativeCan(){
   if(vpCan==null){ try{ vpCan=!!(window.DspApp && typeof DspApp.playerCan==='function' && DspApp.playerCan()); }catch(e){ vpCan=false; } }
   return vpCan; }
+// какие нативные движки есть в сборке приложения: «exo» (ExoPlayer), «vlc» (libVLC)
+let vpEngs=null;
+function vpHas(e){
+  if(vpEngs==null){ try{ vpEngs=String(window.DspApp && typeof DspApp.playerEngines==='function' ? DspApp.playerEngines() : (vpNativeCan() ? 'exo' : '')).split(','); }catch(x){ vpEngs=[]; } }
+  return vpEngs.includes(e); }
+// кто играет: параметр engine (auto / browser / native (ExoPlayer) / vlc) и тип адреса → 'exo' | 'vlc' | null (браузер)
+function vpWantEngine(eng,kind){
+  let w=null;
+  if(eng==='vlc') w='vlc';
+  else if(eng.startsWith('native')) w='exo';
+  else if(eng==='auto') w= kind==='vlc' ? 'vlc' : kind==='native' ? (vpHas('exo') ? 'exo' : 'vlc') : null;
+  if(!w) return null;
+  if(vpHas(w)) return w;
+  const other=w==='vlc' ? 'exo' : 'vlc';                          // нужного движка в сборке нет — другой, если он умеет
+  return kind==='vlc' && other==='exo' ? null : (vpHas(other) ? other : null);
+}
+// движок для того, что браузер не смог: ExoPlayer, а где его нет — libVLC
+const vpAnyEngine=()=>vpHas('exo') ? 'exo' : vpHas('vlc') ? 'vlc' : null;
 function vpOpenNative(n,playUrl,from,opts){
+  const engine=(opts && opts.engine) || n.natEngine || vpAnyEngine() || 'exo';
   const key=n.url, tor=n.torrent, nm=n.name; vpDestroy(n); n.url=key; n.torrent=tor; n.name=nm; n.native=true; n.started=false; vpNativeNode=n;
   n.nat={pos:(from||0)*1000,dur:0,playing:false,live:false}; n.natSave=0;
-  let ok=false; try{ ok=DspApp.playerOpen(JSON.stringify({url:playUrl,pos:Math.round((from||0)*1000),autoplay:true,speed:+n.p.speed||1,title:n.name||'',float:!!(opts && opts.float)})); }catch(e){}
+  let ok=false; try{ ok=DspApp.playerOpen(JSON.stringify({url:playUrl,pos:Math.round((from||0)*1000),autoplay:true,speed:+n.p.speed||1,title:n.name||'',float:!!(opts && opts.float),engine})); }catch(e){}
   if(!ok){ n.native=false; vpStatus(n,'the native player did not start'); return; }
-  n.natFloat=!!(opts && opts.float);
+  n.natFloat=!!(opts && opts.float); n.natEngine=engine;
   vpStatus(n,n.natFloat ? 'playing in the floating window over other apps (the native player) — ✕ closes it; the controls here drive it too' : 'playing in the native player (full screen) — ✕ or Back closes it; the controls here drive it too');
 }
 // ⧉ в приложении: окно приложения уходит в PiP с нативным плеером на весь экран (ExoPlayer показывает любой поток)
@@ -263,7 +282,10 @@ window.dspPlayer=function(st){
     const m=vpLoadMap(), e=vpPut(m,n.url,nat.pos/1000,nat.dur/1000,n.name,Date.now(),300);
     if(e){ try{ LS.set(VP_KEY,JSON.stringify(m)); }catch(x){} n.bump++; n.recQ.push(vpRec(n.url,n.name,e,n.meta)); }
   }
-  if(st.err){ vpStatus(n,'native player: '+st.err); }
+  // ExoPlayer не смог (формат, сервер, учётные данные) — один раз пробуем libVLC, он всеядный
+  if(st.err && n.natEngine==='exo' && String(n.p.engine||'auto')==='auto' && vpHas('vlc') && !n.vlcTried){
+    n.vlcTried=true; vpStatus(n,'ExoPlayer could not play this ('+st.err+') — trying libVLC…'); vpOpenNative(n,n.playUrl||n.url,(nat.pos||0)/1000,{engine:'vlc'}); return; }
+  if(st.err){ vpStatus(n,(n.natEngine==='vlc' ? 'libVLC: ' : 'native player: ')+st.err); }
   if(st.ended){ n.endPulse=1; vpNativeCmd('close'); if(n.p.advance && n.idx>=0 && n.idx+1<n.list.length) vpPick(n,n.idx+1,0); return; }
   if(st.closed){ n.native=false; n.natFloat=false; n.engineClosed=true; try{ DspApp.pipOff(); }catch(e){} if(!st.err) vpStatus(n,'the native player is closed — ▶ opens it again from the saved position'); }
   n.dirty=true;
@@ -434,7 +456,7 @@ def({ id:'vplayer', title:'Video Player', cat:'Sources', vidEl:true, resize:true
     {n:'url',t:'text',d:'',label:'URL: a video file (mp4 / webm) or an HLS playlist (.m3u8); a list of sources comes on «rows»'},
     {n:'playb',t:'button',label:'Play',fn:n=>{ if(n.p.url) vpOpen(n,n.p.url,''); }},
     {n:'speed',t:'range',min:.25,max:3,step:.25,d:1,label:'speed'},
-    {n:'engine',t:'select',opts:['auto','browser','native (app)'],d:'auto',label:'who plays: auto — the browser, and in the DSP app the native player for udp:// rtp:// rtsp:// and mkv / ts / avi (also when the browser cannot play a file); native — always the native player of the app (hardware decoders, AC3 / DTS)'},
+    {n:'engine',t:'select',opts:['auto','browser','native (app)','vlc'],d:'auto',label:'who plays: auto — the browser, and in the DSP app ExoPlayer for udp:// rtp:// rtsp:// and mkv / ts / avi, libVLC for smb:// ftp:// sftp:// nfs:// upnp:// rtmp:// (and when ExoPlayer cannot play); native (app) — always ExoPlayer; vlc — always libVLC'},
     {n:'bridge',t:'text',d:VP_BRIDGE,label:'torrents (magnet: links, .torrent files): bridge of the DSP app — ws://127.0.0.1:8765 or a device name (@phone); the app downloads the file as you watch'},
     {n:'tfile',t:'file',accept:'.torrent,application/x-bittorrent',label:'open a .torrent file (trackers with a login do not give it by a link)',fn:(n,f)=>vpOpenTorrentFile(n,f)},
     {n:'capture',t:'check',d:false,label:'allow picture capture for the floating window / PiP of the app (the server must send CORS headers — otherwise the video will not play); without it the window shows a note instead of the picture'},
@@ -443,7 +465,7 @@ def({ id:'vplayer', title:'Video Player', cat:'Sources', vidEl:true, resize:true
     {n:'contb',t:'button',label:'Continue watching',fn:n=>vpResumeList(n)},
     {n:'forget',t:'button',label:'Forget saved positions',fn:n=>{ LS.set(VP_KEY,'{}'); n.bump++; vpStatus(n,'saved positions cleared'); }}],
   init(n){ n.v=document.createElement('video'); n.list=[]; n.idx=-1; n.url=''; n.name=''; n.status=''; n.warn=''; n.levels=null; n.hls=null; n.gen=0;
-    n.recQ=[]; n.tretry=0; n.natFloat=false; n.torrentTried=false; n.playUrl=''; n.torrent=null; n.tline=''; n.tpoll=0; n.tbusy=false; n.tinfo=null; n.bgP=null; n.bgWs=null; n.lastPos=0; n.started=false; n.retry=0; n.tainted=false; n.native=false; n.nat=null; n.natSave=0; n.engineClosed=false; n.msAt=0; n.alts=[]; n.altI=-1; n.from=0; n.fcv=null; n.bump=0; n.meta=null; n.savedPos=-9; n.saveAt=0; n.ended=false; n.endPulse=0; n.inUrl=''; n.inCh=''; n.inSeek=null; n.nxPrev=false; n.rowsKey=''; n.ui=null; n.dirty=true; },
+    n.recQ=[]; n.natEngine=''; n.vlcTried=false; n.tretry=0; n.natFloat=false; n.torrentTried=false; n.playUrl=''; n.torrent=null; n.tline=''; n.tpoll=0; n.tbusy=false; n.tinfo=null; n.bgP=null; n.bgWs=null; n.lastPos=0; n.started=false; n.retry=0; n.tainted=false; n.native=false; n.nat=null; n.natSave=0; n.engineClosed=false; n.msAt=0; n.alts=[]; n.altI=-1; n.from=0; n.fcv=null; n.bump=0; n.meta=null; n.savedPos=-9; n.saveAt=0; n.ended=false; n.endPulse=0; n.inUrl=''; n.inCh=''; n.inSeek=null; n.nxPrev=false; n.rowsKey=''; n.ui=null; n.dirty=true; },
   dispose(n){ if(n.hidePage) window.removeEventListener('pagehide',n.hidePage); vpDestroy(n); vpBridgeDrop(n); },
   process(n,I){
     if(Array.isArray(I.rows)){

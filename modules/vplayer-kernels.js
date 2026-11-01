@@ -3,10 +3,11 @@
    Список источников (строки Table: name, url), тип адреса, сохранённая позиция просмотра по адресу, время в тексте. */
 
 // тип источника по адресу: HLS (.m3u8) / DASH (.mpd) / «native» — то, чего нет у <video> браузера и что играет нативный плеер приложения
-// (udp:// и rtp:// multicast, rtsp://, контейнеры mkv / avi / ts / mpg / flv / wmv) / обычный файл
+// (udp:// и rtp:// multicast, rtsp://, контейнеры mkv / avi / ts / mpg / flv / wmv) / «vlc» — smb:// ftp:// sftp:// nfs:// upnp:// rtmp:// (только libVLC приложения) / обычный файл
 function vpKind(url){
   const s=String(url||'');
   if(/^magnet:/i.test(s)) return 'torrent';
+  if(VP_VLC_RE.test(s)) return 'vlc';
   if(/^(udp|rtp|rtsp):/i.test(s)) return 'native';
   const u=s.split(/[?#]/)[0].toLowerCase();
   if(/\.torrent$/.test(u)) return 'torrent';
@@ -16,7 +17,9 @@ function vpKind(url){
   return 'file';
 }
 // адреса, которые страница принимает: сеть (http / https), blob, multicast / rtsp (играет нативный плеер приложения) и торренты (magnet: / .torrent — через приложение)
-const VP_URL_RE=/^(https?:|blob:|udp:|rtp:|rtsp:|magnet:)/i;
+// схемы, которые знает только libVLC приложения (сетевые модули): сетевые папки и серверы, rtmp
+const VP_VLC_RE=/^(smb|ftp|ftps|sftp|nfs|upnp|rtmp|mms|mmsh):/i;
+const VP_URL_RE=/^(https?:|blob:|udp:|rtp:|rtsp:|magnet:|smb:|ftp:|ftps:|sftp:|nfs:|upnp:|rtmp:|mms:|mmsh:)/i;
 // серия и номер: колонки season / episode (s / e / ep) или разбор названия: S01E02, 1x02, «Episode 3», «3 серия», «Сезон 2»
 function vpEpisode(name,row){
   const num=v=>{ const x=parseInt(v,10); return x>=0 ? x : null; };

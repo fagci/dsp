@@ -7,7 +7,16 @@ dependencies {
     compileOnly("org.robolectric:android-all:14-robolectric-10818077"); runtimeOnly("org.robolectric:android-all:14-robolectric-10818077")
     // libtorrent для TorrentHub.kt: на JVM — настоящая нативная сборка под Linux (тест раздачи и стриминга по Range)
     implementation("org.libtorrent4j:libtorrent4j:2.1.0-39"); runtimeOnly("org.libtorrent4j:libtorrent4j-linux:2.1.0-39")
+    // libVLC для VlcPlayer.kt: из AAR берётся classes.jar — код плеера компилируется здесь, не только в сборке приложения
+    compileOnly(files(layout.buildDirectory.file("vlc/classes.jar")))
 }
+val vlcAar by configurations.creating
+dependencies { vlcAar("org.videolan.android:libvlc-all:3.6.0@aar") }
+val vlcJar = tasks.register<Copy>("vlcJar") {
+    from({ zipTree(vlcAar.singleFile) }) { include("classes.jar") }
+    into(layout.buildDirectory.dir("vlc"))
+}
+tasks.matching { it.name == "compileKotlin" }.configureEach { dependsOn(vlcJar) }
 // NativePlayer.kt (ExoPlayer, media3) собирается только в приложении; MainActivity находит его по имени (PlayerApi.kt — общий интерфейс)
 sourceSets { main { kotlin.srcDir("src"); kotlin.srcDir("../app/src/main/java"); kotlin.exclude("**/NativePlayer.kt") } }
 application { mainClass.set("app.dsp.phone.ServerTestKt") }

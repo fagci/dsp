@@ -12,6 +12,7 @@ android {
         targetSdk = 34
         versionCode = (findProperty("versionCode") as String?)?.toIntOrNull() ?: 1       // в Actions — номер запуска
         versionName = "1.$versionCode"
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }          // libVLC и libtorrent собраны для ARM; x86 в APK не нужен (+60 МБ)
     }
     // Один ключ на все сборки (лежит в репозитории): обновления ставятся поверх. Это не магазинный ключ — для своей установки.
     signingConfigs {
@@ -30,6 +31,7 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     androidResources { noCompress += listOf("wasm", "onnx", "bin", "img") }
+    packaging { jniLibs { useLegacyPackaging = true } }                    // библиотеки libVLC / libtorrent сжимаются в APK (иначе ~+80 МБ к загрузке)
     sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/web"))
 }
 
@@ -56,4 +58,6 @@ dependencies {
     implementation("org.libtorrent4j:libtorrent4j:$lt")
     implementation("org.libtorrent4j:libtorrent4j-android-arm64:$lt")
     implementation("org.libtorrent4j:libtorrent4j-android-arm:$lt")
+    // libVLC 3.6 (LGPL 2.1): второй нативный движок, VlcPlayer.kt — mkv / avi / DivX, AC3 / DTS, rtmp, smb:// ftp:// sftp:// nfs:// upnp://
+    implementation("org.videolan.android:libvlc-all:3.6.0")
 }

@@ -48,7 +48,6 @@ open class MainActivity : Activity() {
     private var customView: View? = null
     private var customCb: WebChromeClient.CustomViewCallback? = null
     private var customUi = 0
-    private var player: PlayerApi? = null
 
     private fun hideCustomView() {
         val v = customView ?: return
@@ -59,13 +58,17 @@ open class MainActivity : Activity() {
         customCb?.onCustomViewHidden(); customCb = null
     }
 
-    /** Нативный плеер (NativePlayer.kt, ExoPlayer) — по имени: так сборка JVM-тестов моста обходится без media3. */
-    private fun playerImpl(): PlayerApi? {
-        player?.let { return it }
-        return try {
-            (Class.forName("app.dsp.phone.NativePlayer").getConstructor(Activity::class.java, WebView::class.java).newInstance(this, web) as PlayerApi).also { player = it }
-        } catch (e: Throwable) { null }
+    /** Нативные плееры по имени класса: так сборка JVM-тестов моста обходится без media3 (ExoPlayer), а libVLC подключается тем же способом. */
+    private val players = HashMap<String, PlayerApi?>()
+    private var activeEngine = "exo"
+    private fun playerFor(engine: String): PlayerApi? {
+        if (players.containsKey(engine)) return players[engine]
+        val cls = if (engine == "vlc") "app.dsp.phone.VlcPlayer" else "app.dsp.phone.NativePlayer"
+        val p = try { Class.forName(cls).getConstructor(Activity::class.java, WebView::class.java).newInstance(this, web) as PlayerApi } catch (e: Throwable) { null }
+        players[engine] = p
+        return p
     }
+    private fun playerImpl(): PlayerApi? = playerFor(activeEngine) ?: playerFor("exo")
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -201,12 +204,12 @@ open class MainActivity : Activity() {
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         if (customView != null) { hideCustomView(); web.evaluateJavascript("document.fullscreenElement&&document.exitFullscreen()", null); return }
-        if (player?.isOpen() == true) { player?.cmd("{\"a\":\"close\"}"); return }
+        for (p in players.values) if (p?.isOpen() == true) { p.cmd("{\"a\":\"close\"}"); return }
         if (web.canGoBack()) web.goBack() else moveTaskToBack(true)     // мост остаётся работать
     }
 
     override fun onDestroy() {
-        player?.release()
+        for (p in players.values) p?.release()
         web.destroy()
         super.onDestroy()
     }
@@ -225,11 +228,21 @@ open class MainActivity : Activity() {
     inner class Downloads {
         /** Есть ли в сборке нативный плеер (ExoPlayer): тогда Video Player отдаёт ему mkv / ts / avi, udp:// и rtp:// multicast, rtsp://. */
         @JavascriptInterface
-        fun playerCan(): Boolean = playerImpl() != null
+        fun playerCan(): Boolean = playerFor("exo") != null || playerFor("vlc") != null
+
+        /** Какие нативные движки есть в сборке: «exo,vlc». */
+        @JavascriptInterface
+        fun playerEngines(): String = listOf("exo", "vlc").filter { e -> playerFor(e) != null }.joinToString(",")
 
         /** json: {url, pos (мс), autoplay, speed, title} — нативный плеер на весь экран; состояние приходит в window.dspPlayer({...}). */
         @JavascriptInterface
-        fun playerOpen(json: String): Boolean = playerImpl()?.open(json) ?: false
+        fun playerOpen(json: String): Boolean {
+            val eng = try { JSONObject(json).optString("engine", "exo") } catch (e: Exception) { "exo" }
+            val next = if (eng == "vlc") "vlc" else "exo"
+            if (next != activeEngine) players[activeEngine]?.release()        // один плеер за раз: прежний закрывается
+            activeEngine = next
+            return playerImpl()?.open(json) ?: false
+        }
 
         /** json: {a: play | pause | toggle | seek | seekBy | speed | close, v} */
         @JavascriptInterface
