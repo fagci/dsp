@@ -15,7 +15,8 @@ function termuxSubMsg(p){
   if(p.ble && typeof plScanOpts==='function'){ const bo=plScanOpts(p); if(bo) m.ble=bo; }
   if(+p.micHz>0 && p.mic) m.micHz=+p.micHz;
   if(p.mic && p.micSrc && p.micSrc!=='auto') m.micSrc=String(p.micSrc);          // источник: unprocessed / mic / camcorder / … (voice_call, downlink, uplink, submix — с root)
-  if(p.mic && p.micDev && p.micDev!=='auto') m.micDev=String(p.micDev);
+  if(p.mic){ const dv=p.micDev && p.micDev!=='auto' ? String(p.micDev) : '', ad=String(p.micAddr||'').trim().replace(/:/g,'');
+    if(dv || ad) m.micDev=ad ? (dv||'any')+':'+ad : dv; }                            // тип[:адрес] — адрес устройства из списка входов (builtin:bottom)
   if(p.mic && p.micCh==='stereo') m.micCh='stereo';                                 // два микрофона одним AudioRecord: L и R из одного кадра, без сдвига
   if(p.mic && p.micLow) m.micLow=true;                                              // порции по 10 мс и немедленная отправка моста          // устройство: usb / wired / bluetooth / builtin
   if(p.pkt){ m.iface=String(p.iface||'any').trim(); m.filter=String(p.filter||'').trim(); m.snap=+p.snap||256; }
@@ -90,6 +91,20 @@ function termuxPoint(r,id){
 }
 
 // запись mic: PCM 16 бит little-endian в base64 → Float32Array [-1,1)
+// Описание микрофонов телефона из записи mic (поле info приложения) → строки для узла: какие устройства ввода и какие физические микрофоны
+// у записи, где они на корпусе (м) и какому каналу записи соответствуют.
+function termuxMicInfo(info){
+  if(!info || typeof info!=='object') return [];
+  const T={15:'builtin',11:'usb',22:'usb headset',3:'wired',4:'wired phones',7:'bluetooth',26:'ble',18:'telephony',12:'hdmi',13:'dock',0:'unknown'}, L=['?','body','body, movable','peripheral'];
+  const out=[], f=v=>(+v).toFixed(3);
+  if(Array.isArray(info.devs) && info.devs.length) out.push('inputs: '+info.devs.map(d=>(T[d.type]||'type'+d.type)+(d.addr?' «'+d.addr+'»':'')).join(', '));
+  if(Array.isArray(info.mics)) info.mics.forEach((m,i)=>{
+    const ch=Array.isArray(m.ch) && m.ch.length ? ' · channel '+m.ch.map(c=>c[0]+(c[1]===1?' direct':' processed')).join(',') : '';
+    out.push((info.active ? 'mic ' : 'phone mic ')+(i+1)+': '+(m.desc||m.id||'?')+(m.addr ? ' «'+m.addr+'»' : '')+' · '+(L[m.loc]||'?')
+      +(Array.isArray(m.pos) ? ' · at '+m.pos.map(f).join(' ') : '')+ch); });
+  return out;
+}
+
 // число каналов выхода микрофона узла: 1 (mono) или 2 (stereo → выходы mic и micB)
 function termuxMicK(p){ return p && p.micCh==='stereo' ? 2 : 1; }
 

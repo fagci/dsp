@@ -428,7 +428,7 @@ class BridgeServer(
         c.cellEvery = j.optInt("cellEvery", 0)
         c.micHz = j.optInt("micHz", 0)
         c.micSrc = j.optString("micSrc", "").take(24)
-        c.micDev = j.optString("micDev", "").take(24)
+        c.micDev = j.optString("micDev", "").take(48)
         c.micLow = j.optBoolean("micLow", false)
         c.micCh = MicArgs.channels(j.optString("micCh", ""))
         c.iface = j.optString("iface", "")
