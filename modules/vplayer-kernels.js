@@ -306,10 +306,11 @@ function vpTorrentSearchLine(st,secs){
 function vpTapZone(x,w){ if(!(w>0)) return 'full'; const f=x/w; return f<1/3 ? 'back' : f>2/3 ? 'fwd' : 'full'; }
 
 /* ---------- libVLC → HLS → <video> (мост приложения: vlc.stream.open) ---------- */
-// играть ли адрес через поток libVLC: engine 'vlc stream' — любой адрес; auto — те, что браузер не знает (smb / ftp / sftp / nfs / upnp / rtmp / mms); только в приложении
+// играть ли адрес через поток libVLC (только в приложении): engine 'vlc stream' — любой адрес; auto — то, что браузер не знает (smb / ftp / sftp / nfs / upnp / rtmp / mms,
+// udp / rtp / rtsp, mkv / ts / avi); browser — никогда. Прежние значения 'vlc' и 'native (app)' (окна нативных плееров) теперь тоже означают поток
 function vpStreamWanted(eng,kind,inApp){
-  if(!inApp) return false;
-  return eng==='vlc stream' || (eng==='auto' && kind==='vlc');
+  if(!inApp || eng==='browser') return false;
+  return eng!=='auto' || kind==='vlc' || kind==='native';
 }
 // ответ моста: tracks может прийти строкой JSON → {audio:[{i,codec,lang,name}], sub:[…], video:[…]}
 function vpTracks(raw){
