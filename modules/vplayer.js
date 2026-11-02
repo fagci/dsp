@@ -106,7 +106,7 @@ async function vpOpenStream(n,srcUrl,from,g){
     vpStart(n,String(r.url),0,g,true);
   }catch(e){
     if(g!==n.gen) return;
-    vpStatus(n,'libVLC stream: '+e.message);
+    vpStatus(n,'libVLC stream: '+vpBridgeHint(e.message));
   }
 }
 // событие libVLC из моста: {src:'vlc', ev:'stream', sid, state, msg}
@@ -173,7 +173,7 @@ async function vpOpenTorrent(n,url,from,g,probe){
     vpTorrentGo(n,url,ref,r,from,g,ns);
   }catch(e){
     if(wait) clearInterval(wait);
-    if(g===n.gen) vpStatus(n,probe ? 'error: '+probe+'\nit is not a torrent either: '+e.message : 'torrent: '+e.message);
+    if(g===n.gen) vpStatus(n,probe ? 'error: '+probe+'\nit is not a torrent either: '+vpBridgeHint(e.message) : 'torrent: '+vpBridgeHint(e.message));
   }
 }
 // метаданные есть (r — ответ torrent.add): список файлов или один файл → адрес стрима → играть
@@ -275,7 +275,7 @@ function vpOnError(n){
   }
   if(vpAlt(n,pos)) return;
   // адрес вида https://трекер/dl.php?t=123 не похож на .torrent, но может им быть: пробуем один раз (приложение само скачает и разберёт)
-  if(!n.torrentTried && !n.started && !n.torrent && /^https?:/i.test(n.url) && vpInApp()){
+  if(!n.torrentTried && !n.started && !n.torrent && vpTorrentProbeOk(n.url) && vpInApp()){
     n.torrentTried=true; const msg=vpMediaErr(code)+(code ? '' : '');
     vpStatus(n,'the browser cannot play this ('+vpMediaErr(code)+') — trying it as a torrent…');
     vpOpenTorrent(n,n.url,pos,n.gen,'the address does not give a video ('+vpMediaErr(code)+')'); return; }

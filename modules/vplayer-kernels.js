@@ -258,6 +258,13 @@ function vpIptvUrl(v){
 }
 
 /* ---------- торренты (через приложение Android: команды torrent.* моста, TorrentHub.kt) ---------- */
+// адрес http(s), который стоит пробовать как торрент, когда его не сыграл браузер: не похож на видеофайл (…/dl.php?t=123); у .mp4 / .webm / HLS причина в другом
+const vpTorrentProbeOk=u=>/^https?:/i.test(String(u||'')) && vpKind(u)==='file' && !/\.(mp4|m4v|webm|ogv|ogg|mov|mp3|m4a|aac|wav|flac|opus)$/i.test(String(u).split(/[?#]/)[0]);
+// ответ моста «not allowed for this page» → что сделать (мост пускает команды только странице приложения по 127.0.0.1 или любой странице при включённых «открытых командах»)
+function vpBridgeHint(msg){
+  const m=String(msg||'');
+  return /not allowed for this page/i.test(m) ? m+'\n→ the bridge connection is not the app\'s own page: put ws://127.0.0.1:8765 into «bridge» (not a LAN address or a device name of this phone), or allow open commands in the app Settings' : m;
+}
 // «magnet:…#file=2» → {base:'magnet:…', file:2}; без #file — file:null (в торренте одно видео или нужен выбор)
 function vpTorrentRef(url){
   const m=/^(.*?)#file=(\d+)$/.exec(String(url||'').trim());
