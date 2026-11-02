@@ -451,6 +451,7 @@ const PRESET_CATS={
   'Video: Torrents (magnet / .torrent) → Player (DSP app)':'Images & TV',
   'Video: Network Folders (SMB / FTP / UPnP) and Any Format → libVLC (DSP app)':'Images & TV',
   'Video: libVLC Stream into the Player — Audio Tracks, Subtitles, Seek, Double Tap (DSP app)':'Images & TV',
+  'Video: PeerTube Page Link → Player':'Images & TV',
   'Digital TV: DVB-T2 → record video to Files (trigger, path)':'Images & TV',
   'Analog TV: FPV Multiband Scanner (HackRF)':'Images & TV',
   'Analog TV: FPV Mosaic (one HackRF)':'Images & TV',
@@ -7131,6 +7132,14 @@ pl.size.w=560; pl.size.h=460; applySize(pl);
 const hs=addNode('table',1080,220,{list:'video/history',key:'url',rev:true});
 hs.size.w=380; hs.size.h=360; applySize(hs);
 addEdge(tb.id,'all',pl.id,'rows'); addEdge(pl.id,'rec',hs.id,'rec');
+markWiresDirty();
+});
+preset('Video: PeerTube Page Link → Player', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Paste the address of a PeerTube video page (https://server/videos/watch/ID, /w/ID or /videos/embed/ID) into the player\'s URL. It is not a video file: the player asks the server\'s API (/api/v1/videos/ID) and plays the HLS playlist (the mp4 files of the other qualities are the fallback). The blob: address that the site\'s own player shows exists only inside that browser tab and cannot be played here — use the page link. A private video, or one still being transcoded, has no files. In the DSP app, a source the browser cannot play is opened through libVLC.'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const pl=addNode('vplayer',40,200,{url:'https://peertube.uno/videos/watch/bdfc5910-03bd-4484-ba3c-6929271e5cc9'});
+pl.size.w=560; pl.size.h=420; applySize(pl);
 markWiresDirty();
 });
 preset('VLC Source: Any Sound (Network Folder, Stream, Multicast) → Spectrum and Speaker (DSP app)', function(){

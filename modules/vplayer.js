@@ -48,7 +48,8 @@ async function vpOpen(n,url,name,start,meta){
   url=String(url||'').trim();
   if(!url){ return; }
   if(!VP_URL_RE.test(url)){ vpStatus(n,'URL must start with http:// or https:// (udp:// rtp:// rtsp:// magnet: — in the DSP app)'); return; }
-  if(vpIsIaPage(url)){ vpOpenItem(n,vpIaId(url)); return; }          // страница archive.org/details/… — не видео: берём файлы предмета
+  if(vpIsIaPage(url)){ vpOpenItem(n,vpIaId(url)); return; }
+  const pt=vpPtPage(url); if(pt){ vpOpenPt(n,pt); return; }          // страница видео PeerTube — не видео: берём HLS-плейлист или файлы через API сервера          // страница archive.org/details/… — не видео: берём файлы предмета
   vpDestroy(n);
   const g=n.gen;
   n.tainted=false; n.retry=0; n.tretry=0; n.started=false; n.torrentTried=false; n.sAudio=-1; n.sSub=-1; n.sTried=false; n.stracks=null;
@@ -228,6 +229,18 @@ async function vpOpenItem(n,id){
     vpStatus(n,id+': '+n.list.length+' video'+(n.list.length>1 ? 's' : ''));
     vpResumeList(n);
   }catch(e){ if(g===n.gen) vpStatus(n,'error: '+e.message+(e instanceof TypeError ? ' (no network, or archive.org blocked the request)' : '')); }
+}
+// PeerTube: страница видео → API сервера (/api/v1/videos/ID) → HLS-плейлист и mp4 разных качеств (запасные адреса идут в alt)
+async function vpOpenPt(n,pt){
+  vpDestroy(n); const g=n.gen; n.url=''; vpStatus(n,'loading '+pt.host+'/'+pt.uuid+'…');
+  try{
+    const r=await fetch('https://'+pt.host+'/api/v1/videos/'+encodeURIComponent(pt.uuid)); if(!r.ok) throw new Error('HTTP '+r.status);
+    const files=vpPtFiles(await r.json(),pt.host,pt.uuid); if(g!==n.gen) return;
+    if(!files.length){ vpStatus(n,pt.host+'/'+pt.uuid+': no playable files (a private or removed video, or one that is still being transcoded)'); return; }
+    n.list=vpSources(files); n.rowsKey='pt:'+pt.host+'/'+pt.uuid; n.idx=-1; n.dirty=true; n.bump++;
+    vpStatus(n,pt.host+': '+n.list[0].name);
+    vpResumeList(n);
+  }catch(e){ if(g===n.gen) vpStatus(n,'error: '+e.message+(e instanceof TypeError ? ' (no network, or the server does not allow the request)' : '')); }
 }
 // новый src того же видео с позиции from (запасной формат или повтор после сбоя)
 function vpSetSrc(n,src,from){
@@ -462,7 +475,7 @@ def({ id:'vplayer', title:'Video Player', cat:'Sources', vidEl:true, resize:true
     {n:'sburn',t:'check',d:true,label:'libVLC stream: burn the chosen subtitles into the picture (re-encodes the video)'},
     {n:'sadelay',t:'range',min:-2000,max:2000,step:50,d:0,label:'libVLC stream: audio delay, ms (applies on the next open / seek / track change)'},
     {n:'scaching',t:'range',min:100,max:5000,step:100,d:1000,label:'libVLC stream: network cache, ms'},
-    {n:'bridge',t:'text',d:VP_BRIDGE,label:'bridge of the DSP app, for torrents (magnet: links, .torrent files) and for the libVLC stream: ws://127.0.0.1:8765 inside the app; from another computer — the phone’s address (ws://192.168.1.50:8765) or a device name (@phone); the phone needs «share on LAN», the token and «open commands» on, and a page on http:// (an https:// page blocks http:// streams of a LAN address)'},
+    {n:'bridge',t:'text',d:VP_BRIDGE,dev:true,label:'bridge of the DSP app, for torrents (magnet: links, .torrent files) and for the libVLC stream: an address, or @name from Settings → Devices (the token stays there); from another computer — the phone (needs «share on LAN», the token and «open commands» on, and a page on http://: an https:// page blocks http:// streams of a LAN address)'},
     {n:'tfile',t:'file',accept:'.torrent,application/x-bittorrent',label:'open a .torrent file (trackers with a login do not give it by a link)',fn:(n,f)=>vpOpenTorrentFile(n,f)},
     {n:'capture',t:'check',d:false,label:'allow picture capture for the floating window / PiP of the app (the server must send CORS headers — otherwise the video will not play); without it the window shows a note instead of the picture'},
     {n:'autoplay',t:'check',d:true,label:'start playing at once (the browser may require a click first)'},
