@@ -5,7 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({String,Math,Array,Object,isFinite,URL,encodeURIComponent,decodeURIComponent});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/vplayer-kernels.js'),'utf8')+';this.T={vpKind,vpSources,vpFind,vpResume,vpPut,vpFmt,vpSeek,vpRec,vpEpisode,vpLabel,vpGroup,vpContinue,vpMark,vpIaSearchUrl,vpIaItems,vpIaId,vpIaFiles,vpFilter,VP_IPTV_URL,VP_SAMPLES,vpIsIaPage,vpMediaErr,vpWmSearchUrl,vpWmItems,vpPtSearchUrl,vpPtItems,vpPtId,vpPtFiles,vpIptvUrl,VP_URL_RE,vpTorrentRef,vpMagnetName,vpTorrentRows,vpTorrentLine,vpIaTorrentUrl,vpMagnetHash,vpTorrentSearchLine,VP_VLC_RE};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/vplayer-kernels.js'),'utf8')+';this.T={vpKind,vpSources,vpFind,vpResume,vpPut,vpFmt,vpSeek,vpRec,vpEpisode,vpLabel,vpGroup,vpContinue,vpMark,vpIaSearchUrl,vpIaItems,vpIaId,vpIaFiles,vpFilter,VP_IPTV_URL,VP_SAMPLES,vpIsIaPage,vpMediaErr,vpWmSearchUrl,vpWmItems,vpPtSearchUrl,vpPtItems,vpPtId,vpPtFiles,vpIptvUrl,VP_URL_RE,vpTorrentRef,vpMagnetName,vpTorrentRows,vpTorrentLine,vpIaTorrentUrl,vpMagnetHash,vpTorrentSearchLine,VP_VLC_RE,vpTapZone};',ctx);
 const T=ctx.T;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 
@@ -22,6 +22,7 @@ ok('put done',T.vpPut(m,'u1',97,100,'A',1001,3).done===true);
 ok('put bad',T.vpPut(m,'',5,100,'A',1,3)===null && T.vpPut(m,'u',-1,100,'A',1,3)===null && T.vpPut(m,'u',NaN,100,'A',1,3)===null);
 T.vpPut(m,'u2',1,0,'',1002,3); T.vpPut(m,'u3',1,0,'',1003,3); T.vpPut(m,'u4',1,0,'',1004,3);
 ok('cap drops oldest',Object.keys(m).length===3 && !m.u1 && m.u4,JSON.stringify(Object.keys(m)));
+ok('double tap zones',T.vpTapZone(10,300)==='back' && T.vpTapZone(150,300)==='full' && T.vpTapZone(290,300)==='fwd' && T.vpTapZone(100,300)==='full' && T.vpTapZone(5,0)==='full');
 ok('fmt',T.vpFmt(65)==='1:05' && T.vpFmt(3725)==='1:02:05' && T.vpFmt(0)==='0:00' && T.vpFmt(NaN)==='0:00' && T.vpFmt(Infinity)==='0:00');
 ok('seek',T.vpSeek(50,10,100)===60 && T.vpSeek(5,-10,100)===0 && T.vpSeek(95,10,100)===100 && T.vpSeek(95,10,0)===105);
 const r=T.vpRec('u','N',{pos:50,dur:200,done:false,t:5});

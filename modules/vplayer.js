@@ -364,13 +364,13 @@ function vpMount(n){
   const root=vpEl('div','vp'); root.tabIndex=0;
   const stage=vpEl('div','vp-stage'), v=n.v;
   v.playsInline=true; v.preload='metadata'; v.controls=false;
-  const msg=vpEl('div','vp-msg'); stage.append(v,msg);
+  const msg=vpEl('div','vp-msg'), tap=vpEl('div','vp-tap'); stage.append(v,msg,tap);
   const bar=vpEl('div','vp-bar');
   const mk=(txt,title,fn)=>{ const b=vpEl('button','vp-b',txt); b.title=title; b.onclick=fn; return b; };
-  const bPrev=mk('⏮','previous source',()=>vpStep(n,-1)), bBack=mk('−10','back 10 s',()=>vpSeekBy(n,-10));
+  const bPrev=mk('⏮','previous source',()=>vpStep(n,-1));
   const bPlay=mk('▶','play / pause (Space)',()=>vpToggle(n));
   const bCont=mk('↻','continue watching: the last started source from its position',()=>vpResumeList(n));
-  const bFwd=mk('+10','forward 10 s',()=>vpSeekBy(n,10)), bNext=mk('⏭','next source',()=>vpStep(n,1)), bFull=mk('⤢','fullscreen (F, double-click the picture)',()=>vpFull(n));
+  const bNext=mk('⏭','next source',()=>vpStep(n,1)), bFull=mk('⤢','fullscreen (F, double tap the middle of the picture)',()=>vpFull(n));
   const bNat=mk('📺','open this source in the native player of the app (mkv / ts / avi, AC3, hardware decoding)',()=>{ if(n.url) vpOpenNative(n,n.playUrl||n.url,n.native ? (n.nat.pos/1000) : (n.v.currentTime||vpResume(vpLoadMap()[n.url]))); });
   bNat.hidden=!vpNativeCan();
   const seek=vpEl('input','vp-seek'); seek.type='range'; seek.min=0; seek.max=1000; seek.value=0;
@@ -380,7 +380,7 @@ function vpMount(n){
   speed.value=String(+n.p.speed||1);
   const src=vpEl('select','vp-src'); src.title='source';
   const q=vpEl('select','vp-q'); q.title='quality'; q.hidden=true;
-  bar.append(bCont,bPrev,bBack,bPlay,bFwd,bNext,seek,time,speed,q,bNat,bFull);
+  bar.append(bCont,bPrev,bPlay,bNext,seek,time,speed,q,bNat,bFull);
   root.append(stage,bar,src);
   let drag=false;
   seek.addEventListener('input',()=>{ drag=true; const d=n.native ? n.nat.dur/1000 : v.duration; if(isFinite(d) && d>0) time.textContent=vpFmt(seek.value/1000*d)+' / '+vpFmt(d); });
@@ -391,7 +391,16 @@ function vpMount(n){
   // клик — пауза (с задержкой: двойной клик — на весь экран, а не два переключения); события дальше узла не идут, иначе двойной клик сворачивает модуль
   let clickT=0;
   stage.addEventListener('click',e=>{ e.stopPropagation(); clearTimeout(clickT); clickT=setTimeout(()=>vpToggle(n),260); });
-  stage.addEventListener('dblclick',e=>{ e.stopPropagation(); e.preventDefault(); clearTimeout(clickT); vpFull(n); });
+  // двойной тап: по левой трети −10 с, по правой +10 с (повторные тапы складываются), по середине — на весь экран
+  let tapT=0, tapSum=0, tapSide='';
+  stage.addEventListener('dblclick',e=>{
+    e.stopPropagation(); e.preventDefault(); clearTimeout(clickT);
+    const r=stage.getBoundingClientRect(), z=vpTapZone(e.clientX-r.left,r.width);
+    if(z==='full'){ vpFull(n); return; }
+    vpSeekBy(n,z==='back' ? -10 : 10);
+    tapSum= tapSide===z ? tapSum+10 : 10; tapSide=z;
+    tap.textContent=(z==='back' ? '⏪ −' : '+')+tapSum+' s'+(z==='back' ? '' : ' ⏩'); tap.className='vp-tap on '+z;
+    clearTimeout(tapT); tapT=setTimeout(()=>{ tap.className='vp-tap'; tapSum=0; tapSide=''; },700); });
   for(const ev of ['pointerdown','wheel','keydown','dblclick']) root.addEventListener(ev,e=>e.stopPropagation());
   root.addEventListener('keydown',e=>{
     if(e.target.tagName==='SELECT') return;
