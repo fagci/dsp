@@ -462,7 +462,7 @@ def({ id:'vplayer', title:'Video Player', cat:'Sources', vidEl:true, resize:true
     {n:'sburn',t:'check',d:true,label:'libVLC stream: burn the chosen subtitles into the picture (re-encodes the video)'},
     {n:'sadelay',t:'range',min:-2000,max:2000,step:50,d:0,label:'libVLC stream: audio delay, ms (applies on the next open / seek / track change)'},
     {n:'scaching',t:'range',min:100,max:5000,step:100,d:1000,label:'libVLC stream: network cache, ms'},
-    {n:'bridge',t:'text',d:VP_BRIDGE,label:'torrents (magnet: links, .torrent files): bridge of the DSP app — ws://127.0.0.1:8765 or a device name (@phone); the app downloads the file as you watch'},
+    {n:'bridge',t:'text',d:VP_BRIDGE,label:'bridge of the DSP app, for torrents (magnet: links, .torrent files) and for the libVLC stream: ws://127.0.0.1:8765 inside the app; from another computer — the phone’s address (ws://192.168.1.50:8765) or a device name (@phone); the phone needs «share on LAN», the token and «open commands» on, and a page on http:// (an https:// page blocks http:// streams of a LAN address)'},
     {n:'tfile',t:'file',accept:'.torrent,application/x-bittorrent',label:'open a .torrent file (trackers with a login do not give it by a link)',fn:(n,f)=>vpOpenTorrentFile(n,f)},
     {n:'capture',t:'check',d:false,label:'allow picture capture for the floating window / PiP of the app (the server must send CORS headers — otherwise the video will not play); without it the window shows a note instead of the picture'},
     {n:'autoplay',t:'check',d:true,label:'start playing at once (the browser may require a click first)'},
