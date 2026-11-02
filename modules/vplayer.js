@@ -98,7 +98,7 @@ async function vpOpenStream(n,srcUrl,from,g){
   try{
     const ns=await vpBridge(n); if(g!==n.gen) return;
     vpStreamDrop(n);
-    const r=await ns.call('vlc.stream.open',vpStreamReq(srcUrl,n.p,{start:from,audio:n.sAudio,sub:n.sSub}),45000);
+    const r=await ns.call('vlc.stream.open',vpStreamReq(srcUrl,n.p,{start:from,audio:n.sAudio,sub:n.sSub,hevc:vpHevcOk()}),45000);
     if(g!==n.gen){ vpStreamClose(n,+r.sid); return; }
     n.sid=+r.sid; n.sbase=from>0 ? from : 0; n.sdur=(+r.dur||0)/1000; n.stracks=vpTracks(r.tracks); n.splan=String(r.plan||''); n.ui && (n.ui.trKey='x'); n.dirty=true;
     vpStatus(n,'libVLC stream · '+n.splan);
@@ -269,6 +269,11 @@ function vpOnError(n){
   if(vpInApp() && !n.sid && !n.sTried && String(n.p.engine||'auto')!=='browser'){ n.sTried=true; vpStatus(n,'the browser cannot play this ('+vpMediaErr(code)+') — trying libVLC of the app…'); vpOpenStream(n,n.playUrl||n.url,pos,n.gen); return; }
   vpStatus(n,'error'+at+': '+vpMediaErr(code)+(v.error && v.error.message ? ' — '+v.error.message : '')+'\n'+n.url); }
 
+// декодирует ли <video> HEVC (в WebView — обычно MediaCodec, на железе): тогда libVLC не перекодирует его, а только переупаковывает
+let vpHevc=null;
+function vpHevcOk(){
+  if(vpHevc==null){ try{ const t='video/mp4; codecs="hvc1.1.6.L93.B0"'; vpHevc=!!((window.MediaSource && MediaSource.isTypeSupported && MediaSource.isTypeSupported(t)) || document.createElement('video').canPlayType(t)==='probably'); }catch(e){ vpHevc=false; } }
+  return vpHevc; }
 // страница в приложении Android (мост и libVLC есть)
 const vpInApp=()=>{ try{ return !!(window.DspApp && typeof DspApp.appKey==='function'); }catch(e){ return false; } };
 // Media Session: кнопки перемотки / дорожек в системном окне PiP, на экране блокировки и в наушниках

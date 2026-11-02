@@ -18,16 +18,19 @@ object VlcStreamArgs {
     private val NAME = Regex("[A-Za-z0-9_.-]{1,64}")
     private val DIR = Regex("[A-Za-z0-9_./-]{1,300}")
 
-    /** Видео, которое браузер играет из mpegts без перекодирования (fourcc libVLC). */
-    fun copyV(codec: String) = codec.lowercase().trim() in setOf("h264", "avc1")
+    /** Видео, которое браузер играет из mpegts без перекодирования (fourcc libVLC); HEVC — только если страница сказала, что её <video> его декодирует (обычно аппаратно). */
+    fun copyV(codec: String, hevc: Boolean = false): Boolean {
+        val c = codec.lowercase().trim()
+        return c in setOf("h264", "avc1") || (hevc && c in setOf("hevc", "hvc1", "hev1", "h265"))
+    }
     /** Звук, который браузер играет из mpegts без перекодирования: AAC (mp4a), MPEG audio (mpga), MP3. */
     fun copyA(codec: String) = codec.lowercase().trim() in setOf("mp4a", "mpga", "mp3")
 
     /** Что перекодировать: mode — auto (по кодекам) | remux (ничего) | transcode (всё); пустой кодек — неизвестно (auto: перекодировать). */
     class Plan(val video: Boolean, val audio: Boolean, val hasVideo: Boolean, val hasAudio: Boolean)
-    fun plan(mode: String, vcodec: String, acodec: String, burnSubs: Boolean, deint: Boolean): Plan {
+    fun plan(mode: String, vcodec: String, acodec: String, burnSubs: Boolean, deint: Boolean, hevc: Boolean = false): Plan {
         val hasV = vcodec != "-"; val hasA = acodec != "-"
-        val v = hasV && when (mode) { "remux" -> false; "transcode" -> true; else -> !copyV(vcodec) || burnSubs || deint }
+        val v = hasV && when (mode) { "remux" -> false; "transcode" -> true; else -> !copyV(vcodec, hevc) || burnSubs || deint }
         val a = hasA && when (mode) { "remux" -> false; "transcode" -> true; else -> !copyA(acodec) }
         return Plan(v, a, hasV, hasA)
     }
