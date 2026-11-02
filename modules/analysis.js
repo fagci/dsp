@@ -3880,30 +3880,41 @@ def({ id:'numview', title:'Number', cat:'Indicators', ins:[{n:'in',t:'num'},{n:'
 
 def({ id:'trend', lazy:'proc', title:'Trend Chart', cat:'Analysis', ins:[{n:'in',t:'num'},{n:'span',t:'num'}],
   view:{h:100}, resize:true, readout:true,
-  params:[{n:'span',t:'range',min:1,max:120,step:1,d:20,log:true,label:'window, s'},
+  params:[{n:'span',t:'range',min:1,max:86400,step:1,d:20,log:true,label:'window, s (до 24 ч)'},
           {n:'auto',t:'check',d:true,label:'auto range'},
           {n:'lo',t:'range',min:-1e6,max:1e6,step:.01,d:0,label:'range: min'},
           {n:'hi',t:'range',min:-1e6,max:1e6,step:.01,d:1,label:'range: max'},
           {n:'grid',t:'check',d:true}],
-  init:n=>{ n.L=0; n.ring=null; n.w=0; n.last=null; },
+  init:n=>{ n.L=0; n.ring=null; n.w=0; n.last=null; n.cmn=null; n.cmx=null; n.cw=0; n.cn=0; n.ca=0; n.amn=Infinity; n.amx=-Infinity; },
   process(n,I){
     if(typeof I.span==='number') setMod(n,'span',I.span);
     // буфер держит MAXSEC секунд при текущей частоте тиков (Eng.sr/BLOCK) — пересчитываем
     // только при смене sr/BLOCK, как в 'scope'; span лишь выбирает видимый хвост буфера
     const MAXSEC=600, rate=(Eng.sr||48000)/BLOCK, need=Math.max(64,Math.ceil(rate*MAXSEC));
     if(need!==n.L){ n.L=need; n.ring=new Float32Array(need); n.w=0; }
-    if(typeof I.in==='number'){ n.ring[n.w]=I.in; n.w=(n.w+1)%n.L; n.last=I.in; }
+    // грубое кольцо на 24 ч: корзина = 1 с (min/max) — для окон длиннее MAXSEC
+    const CN=86400;
+    if(!n.cmn){ n.cmn=new Float32Array(CN); n.cmx=new Float32Array(CN); n.cw=0; n.cn=0; n.ca=0; n.amn=Infinity; n.amx=-Infinity; }
+    if(typeof I.in==='number'){ n.ring[n.w]=I.in; n.w=(n.w+1)%n.L; n.last=I.in;
+      if(I.in<n.amn) n.amn=I.in; if(I.in>n.amx) n.amx=I.in; }
+    if(++n.ca>=rate){
+      if(n.amn<=n.amx){ n.cmn[n.cw]=n.amn; n.cmx[n.cw]=n.amx; n.cw=(n.cw+1)%CN; if(n.cn<CN) n.cn++; }
+      n.ca-=rate; n.amn=Infinity; n.amx=-Infinity; }
     return {}; },
   draw(n,cv,cx){
     const W=cv.width,H=cv.height;
     cx.clearRect(0,0,W,H);
     if(!n.ring) return;
     const rate=(Eng.sr||48000)/BLOCK, L=n.L;
-    const span=clamp(Math.round(n.p.span*rate),2,L), start=(n.w-span+L)%L;
+    const coarse=n.p.span>L/rate-1 && !!n.cmn;       // окно длиннее тонкого буфера → корзины по 1 с
+    const CN=86400, cspan=coarse? clamp(Math.round(n.p.span),2,CN) : 0;
+    const span=coarse? cspan : clamp(Math.round(n.p.span*rate),2,L), start=coarse? (n.cw-span+CN)%CN : (n.w-span+L)%L;
+    const skip=coarse? Math.max(0,span-n.cn) : 0;     // ещё не набранная левая часть окна
     let lo,hi;
     if(n.p.auto){
       lo=Infinity; hi=-Infinity;
-      for(let k=0;k<span;k++){ const v=n.ring[(start+k)%L]; if(v<lo)lo=v; if(v>hi)hi=v; }
+      if(coarse){ for(let k=skip;k<span;k++){ const j=(start+k)%CN; if(n.cmn[j]<lo)lo=n.cmn[j]; if(n.cmx[j]>hi)hi=n.cmx[j]; } }
+      else for(let k=0;k<span;k++){ const v=n.ring[(start+k)%L]; if(v<lo)lo=v; if(v>hi)hi=v; }
       if(!isFinite(lo)){ lo=0; hi=1; }
       const pad=(hi-lo)*.08||.5; lo-=pad; hi+=pad;
     } else { lo=n.p.lo; hi=n.p.hi; if(hi<=lo) hi=lo+1e-6; }
@@ -3914,14 +3925,25 @@ def({ id:'trend', lazy:'proc', title:'Trend Chart', cat:'Analysis', ins:[{n:'in'
         const y=Math.round(i*H/4)+.5, v=hi-(hi-lo)*i/4;
         cx.beginPath(); cx.moveTo(0,y); cx.lineTo(W,y); cx.stroke();
         cx.fillText(v.toFixed(2), 2, clamp(y-2,8,H-2)); }
-      const totalS=span/rate;
+      const totalS=coarse? span : span/rate;
+      const fmtT=t=>t<10? t.toFixed(1)+'s' : t<120? Math.round(t)+'s' : t<7200? (t/60).toFixed(t<600?1:0)+'m' : (t/3600).toFixed(t<36000?1:0)+'h';
       for(let i=0;i<=4;i++){
         const x=Math.round(i*W/4)+.5;
         cx.beginPath(); cx.moveTo(x,0); cx.lineTo(x,H); cx.stroke();
-        cx.fillText('-'+(totalS*(1-i/4)).toFixed(totalS<10?1:0)+'s', clamp(x-12,2,W-24), H-2); } }
+        cx.fillText('-'+fmtT(totalS*(1-i/4)), clamp(x-12,2,W-24), H-2); } }
     cx.strokeStyle=themeColor('--t-num'); cx.lineWidth=1; cx.beginPath();
     const spp=span/W;
-    if(spp<=1){
+    if(coarse){
+      let pen=false;
+      for(let x=0;x<W;x++){
+        const i0=(x*spp)|0, i1=Math.max(i0+1,((x+1)*spp)|0);
+        let mn=Infinity,mx=-Infinity;
+        for(let i=Math.max(i0,skip);i<i1&&i<span;i++){ const j=(start+i)%CN; if(n.cmn[j]<mn)mn=n.cmn[j]; if(n.cmx[j]>mx)mx=n.cmx[j]; }
+        if(mn>mx){ pen=false; continue; }
+        const y1=H-clamp((mn-lo)/rng,0,1)*H, y2=H-clamp((mx-lo)/rng,0,1)*H;
+        pen? cx.lineTo(x,y1) : cx.moveTo(x,y1); pen=true;
+        cx.lineTo(x,y2); }
+    } else if(spp<=1){
       for(let k=0;k<=span;k++){
         const v=n.ring[(start+Math.min(k,span-1))%L];
         const x=k/spp, y=H-clamp((v-lo)/rng,0,1)*H;
