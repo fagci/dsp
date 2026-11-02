@@ -75,13 +75,22 @@ async function vpStart(n,playUrl,from,g,viaStream){
   const seekStart=()=>{ if(g===n.gen){ n.started=true; if(from>0){ try{ v.currentTime=from; }catch(e){} } } };
   v.addEventListener('loadedmetadata',seekStart,{once:true});
   try{
-    if(kind==='hls' && !v.canPlayType('application/vnd.apple.mpegurl')){
-      const Hls=await vpLoadHls(); if(g!==n.gen) return;
-      if(!Hls.isSupported()) throw new Error('HLS is not supported by this browser');
-      const h=n.hls=new Hls({startPosition:viaStream ? 0 : from>0 ? from : -1});
-      h.on(Hls.Events.ERROR,(ev,d)=>{ if(g===n.gen && d.fatal) vpStatus(n,'HLS error: '+d.type+(d.details ? ' / '+d.details : '')+(d.type==='networkError' ? ' (CORS or the address is unreachable)' : '')); });
-      h.on(Hls.Events.MANIFEST_PARSED,(ev,d)=>{ n.levels=d.levels.map(l=>l.height ? l.height+'p' : Math.round(l.bitrate/1000)+'k'); n.dirty=true; });
-      h.loadSource(playUrl); h.attachMedia(v);
+    if(kind==='hls'){
+      // hls.js первым (MSE: fMP4 с byte-range у PeerTube, переключение качества); нативный HLS браузера — когда hls.js нет или он упал (iPhone, Safari)
+      const native=!!v.canPlayType('application/vnd.apple.mpegurl');
+      let Hls=null; try{ Hls=await vpLoadHls(); }catch(e){ if(!native) throw e; }
+      if(g!==n.gen) return;
+      if(Hls && Hls.isSupported()){
+        const h=n.hls=new Hls({startPosition:viaStream ? 0 : from>0 ? from : -1});
+        let fell=false;
+        h.on(Hls.Events.ERROR,(ev,d)=>{
+          if(g!==n.gen || !d.fatal) return;
+          if(native && !fell){ fell=true; try{ h.destroy(); }catch(x){} if(n.hls===h) n.hls=null; n.levels=null; v.src=playUrl; vpStatus(n,'hls.js failed ('+d.details+') — trying the browser\'s own HLS…'); return; }
+          vpStatus(n,'HLS error: '+d.type+(d.details ? ' / '+d.details : '')+(d.type==='networkError' ? ' (CORS or the address is unreachable)' : '')); });
+        h.on(Hls.Events.MANIFEST_PARSED,(ev,d)=>{ n.levels=d.levels.map(l=>l.height ? l.height+'p' : Math.round(l.bitrate/1000)+'k'); n.dirty=true; });
+        h.loadSource(playUrl); h.attachMedia(v);
+      }else if(native){ n.levels=null; v.src=playUrl; }
+      else throw new Error('HLS is not supported by this browser');
     }else if(kind==='dash') throw new Error('DASH (.mpd) is not supported — use HLS or a file');
     else{ n.levels=null; v.src=playUrl; }
     vpMedia(n);
