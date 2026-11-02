@@ -1404,6 +1404,18 @@ addEdge(tx.id,'az',t1.id,'in'); addEdge(tx.id,'gz',t2.id,'in');
 addEdge(tx.id,'rec',map.id,'rec'); addEdge(tx.id,'rec',log.id,'rec');
 markWiresDirty();
 });
+preset('Trend Chart: 24 h History', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Trend Chart keeps up to 24 hours: window, s goes up to 86400. Up to 10 minutes it draws the raw samples, longer windows use 1-second min/max buckets (peaks are not lost). Slow LFO here stands in for a sensor, temperature, RSSI etc. — wire any number to in.'});
+nt.size.w=620; nt.size.h=110; applySize(nt);
+const lf=addNode('lfo',40,190,{freq:.001,min:0,max:1});
+const t1=addNode('trend',300,190,{span:3600,auto:true});
+t1.size.w=420; t1.size.h=170; applySize(t1);
+const t2=addNode('trend',300,380,{span:86400,auto:true});
+t2.size.w=420; t2.size.h=170; applySize(t2);
+addEdge(lf.id,'out',t1.id,'in'); addEdge(lf.id,'out',t2.id,'in');
+markWiresDirty();
+});
 preset('Phone App: Satellites, Bluetooth and Wi-Fi Scan', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Android app (tools/android): everything the phone hears around it, also with the screen locked.\n'+
