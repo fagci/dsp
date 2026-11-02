@@ -28,7 +28,8 @@ ok('stream: who goes through libVLC',T.vpStreamWanted('auto','vlc',true) && T.vp
   ok('stream tracks',tr.audio.length===2 && tr.sub.length===1 && tr.video.length===1 && T.vpTracks('junk').audio.length===0 && T.vpTracks(null).sub.length===0);
   ok('track label',T.vpTrackLabel(tr.audio[0],0)==='1 · rus · Russian · A52' && T.vpTrackLabel(tr.audio[1],1)==='2 · eng · eng'.replace(' · eng · eng',' · eng · MP4A') && T.vpTrackLabel({i:0,codec:'',lang:'',name:''},4)==='5'); }
 { const r=T.vpStreamReq('smb://n/a.mkv',{smode:'x',sburn:true,sdeint:1,sadelay:'-200.4',skbps:'4000',swidth:'1280',scaching:'500'},{start:90.26,audio:1,sub:-1});
-  ok('stream request',r.url==='smb://n/a.mkv' && r.start===90260 && r.mode==='auto' && r.audio===1 && r.sub===-1 && r.burn===false && r.deint===true && r.adelay===-200 && r.vkbps===4000 && r.width===1280 && r.caching===500);
+  ok('stream request: hevc flag',T.vpStreamReq('u',{},{start:0,audio:-1,sub:-1,hevc:true}).hevc===true);
+  ok('stream request',r.url==='smb://n/a.mkv' && r.start===90260 && r.mode==='auto' && r.audio===1 && r.sub===-1 && r.burn===false && r.deint===true && r.adelay===-200 && r.vkbps===4000 && r.hevc===false && r.width===1280 && r.caching===500);
   const r2=T.vpStreamReq('u',{sburn:true},{start:-5,audio:-1,sub:2}); ok('stream request defaults',r2.start===0 && r2.burn===true && r2.vkbps===2500 && r2.width===0 && r2.caching===1000 && r2.mode==='auto'); }
 ok('stream seek plan',T.vpStreamSeekPlan(100,90,30).reopen===false && T.vpStreamSeekPlan(100,90,30).rel===10 && T.vpStreamSeekPlan(50,90,30).reopen && T.vpStreamSeekPlan(200,90,30).reopen && T.vpStreamSeekPlan(90,90,0).reopen);
 ok('fmt',T.vpFmt(65)==='1:05' && T.vpFmt(3725)==='1:02:05' && T.vpFmt(0)==='0:00' && T.vpFmt(NaN)==='0:00' && T.vpFmt(Infinity)==='0:00');

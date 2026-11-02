@@ -377,11 +377,12 @@ class VlcHub(private val ctx: Context) {
                 probe.release()
                 val burn = j.optBoolean("burn", false) && j.optInt("sub", -1) >= 0
                 val deint = j.optBoolean("deint", false)
-                val plan = VlcStreamArgs.plan(j.optString("mode", "auto"), if (tracks.length() == 0) "" else codecs.first, if (tracks.length() == 0) "" else codecs.second, burn, deint)
+                val plan = VlcStreamArgs.plan(j.optString("mode", "auto"), if (tracks.length() == 0) "" else codecs.first, if (tracks.length() == 0) "" else codecs.second, burn, deint, j.optBoolean("hevc", false))
                 val sout = VlcStreamArgs.sout(dir.absolutePath, plan, j.optInt("vkbps", 2500), j.optInt("width", 0), j.optInt("abr", 128), burn, deint, j.optInt("seg", 2), 40)
                     ?: return@execute Reply.done(c, id, cmd, "cache path not usable", "args")
                 val media = Media(lib, android.net.Uri.parse(url))
                 media.addOption(sout)
+                media.addOption(":avcodec-hw=any")                  // если видео всё же перекодируется, декодирует его MediaCodec (кодирует x264: аппаратного кодировщика в libVLC 3.x нет)
                 for (o in VlcStreamArgs.options(j.optLong("start", 0), j.optInt("audio", -1), j.optInt("sub", -1), j.optInt("adelay", 0), j.optInt("caching", 1000), j.optDouble("rate", 1.0).toFloat())) media.addOption(o)
                 val mp = MediaPlayer(lib); mp.media = media; media.release()
                 relay = HlsRelay(dir, pool).also { it.start() }

@@ -328,7 +328,7 @@ function vpTrackLabel(t,k){
 function vpStreamReq(url,p,st){
   const mode=['auto','remux','transcode'].includes(p.smode) ? p.smode : 'auto';
   return {url,start:Math.max(0,Math.round((st.start||0)*1000)),mode,audio:st.audio>=0 ? st.audio : -1,sub:st.sub>=0 ? st.sub : -1,burn:!!p.sburn && st.sub>=0,
-    deint:!!p.sdeint,adelay:Math.round(+p.sadelay||0),vkbps:Math.round(+p.skbps||2500),width:+p.swidth>0 ? +p.swidth : 0,caching:Math.round(+p.scaching||1000)};
+    hevc:!!st.hevc,deint:!!p.sdeint,adelay:Math.round(+p.sadelay||0),vkbps:Math.round(+p.skbps||2500),width:+p.swidth>0 ? +p.swidth : 0,caching:Math.round(+p.scaching||1000)};
 }
 // перемотка в потоке: внутри уже записанного окна — обычный seek <video>, иначе поток открывается заново с нужной секунды
 function vpStreamSeekPlan(t,base,seekEnd){ const rel=t-base; return rel>=0 && rel<=seekEnd-1 ? {reopen:false,rel} : {reopen:true,rel:0}; }

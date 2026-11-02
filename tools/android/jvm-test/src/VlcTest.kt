@@ -79,6 +79,8 @@ fun main() {
     ok("plan auto: DivX video is transcoded", VlcStreamArgs.plan("auto", "DIV3", "mpga", false, false).let { it.video && !it.audio })
     ok("plan: burnt subtitles and deinterlace force video", VlcStreamArgs.plan("auto", "h264", "mp4a", true, false).video && VlcStreamArgs.plan("auto", "h264", "mp4a", false, true).video)
     ok("plan: remux never transcodes, transcode always", VlcStreamArgs.plan("remux", "DIV3", "dts ", true, true).let { !it.video && !it.audio } && VlcStreamArgs.plan("transcode", "h264", "mp4a", false, false).let { it.video && it.audio })
+    ok("hevc is copied only when the page can decode it", !VlcStreamArgs.plan("auto", "hevc", "mp4a", false, false).let { !it.video } && VlcStreamArgs.plan("auto", "hevc", "mp4a", false, false, true).let { !it.video && !it.audio }
+        && VlcStreamArgs.plan("auto", "HVC1", "mp4a", false, false, true).let { !it.video } && VlcStreamArgs.plan("auto", "hevc", "mp4a", false, true, true).video && VlcStreamArgs.plan("auto", "mp2v", "mp4a", false, false, true).video)
     ok("plan: audio-only source has no video", VlcStreamArgs.plan("auto", "-", "flac", false, true).let { !it.hasVideo && !it.video && it.audio })
     ok("plan: unknown codecs are transcoded", VlcStreamArgs.plan("auto", "", "", false, false).let { it.video && it.audio })
     val d = "/data/cache/vlcstream/1"
