@@ -446,6 +446,7 @@ const PRESET_CATS={
   'Video: Internet Archive Search → Episodes → Player':'Images & TV',
   'Video: IPTV Channels by Country (iptv-org) → Player':'Images & TV',
   'VLC Source: Any Sound (Network Folder, Stream, Multicast) → Spectrum and Speaker (DSP app)':'Music: Player',
+  'VLC Source: Picture and Sound of Any Address (Camera, Multicast, Network Folder) → IP Camera Frame and Speaker (DSP app)':'Music: Player',
   'VLC Out: Your Phone as a Radio Station (HTTP, Icecast, Chromecast) from the Graph (DSP app)':'Music: Player',
   'Video: Torrents (magnet / .torrent) → Player (DSP app)':'Images & TV',
   'Video: Network Folders (SMB / FTP / UPnP) and Any Format → libVLC (DSP app)':'Images & TV',
@@ -7134,6 +7135,22 @@ vo.size.w=340; vo.size.h=360; applySize(vo);
 const dc=addNode('dac',560,600,{vol:.3});
 addEdge(os.id,'out',vo.id,'L'); addEdge(mc.id,'a',vo.id,'R');
 addEdge(os.id,'out',dc.id,'L'); addEdge(mc.id,'a',dc.id,'R');
+markWiresDirty();
+});
+preset('VLC Source: Picture and Sound of Any Address (Camera, Multicast, Network Folder) → IP Camera Frame and Speaker (DSP app)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'With «picture» switched on VLC Source also takes the PICTURE of the address: libVLC of the DSP app for Android opens it a second time (rtsp:// of a camera, a multicast channel udp://@239.1.1.1:1234, smb:// ftp:// upnp://, a file of any format, a stream), encodes the frames to MJPEG on 127.0.0.1 and the node gives the address on the «video» pin — wired to IP Camera, which decodes it into an ordinary picture (Frame, Camera Archive, object detection, …). The sound goes to «l» / «r» as always.\n'+
+  'Type an address and press Play. The picture is a separate connection to the address (the sound and the picture are not locked together), so for a server that allows one viewer only use the sound or the picture. «picture» settings: frames per second, width, bitrate.'});
+nt.size.w=1000; nt.size.h=130; applySize(nt);
+const vs=addNode('vlcsrc',40,200,{url:'',rate:'graph',video:'MJPEG → pin «video»'});
+vs.size.w=340; vs.size.h=420; applySize(vs);
+const cm=addNode('ipcam',420,200,{mode:'mjpeg',maxw:'640'});
+cm.size.w=360; cm.size.h=260; applySize(cm);
+const fr=addNode('imgview',820,200);
+fr.size.w=420; fr.size.h=300; applySize(fr);
+const dc=addNode('dac',420,520,{vol:.5});
+addEdge(vs.id,'video',cm.id,'url'); addEdge(cm.id,'img',fr.id,'img');
+addEdge(vs.id,'l',dc.id,'L'); addEdge(vs.id,'r',dc.id,'R');
 markWiresDirty();
 });
 preset('Video: IPTV Channels by Country (iptv-org) → Player', function(){

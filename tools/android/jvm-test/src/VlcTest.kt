@@ -2,6 +2,13 @@ package app.dsp.phone.vlctest
 
 import app.dsp.phone.VlcArgs
 import app.dsp.phone.VlcOutArgs
+import app.dsp.phone.VlcVideoArgs
+import app.dsp.phone.MjpegRelay
+import java.net.HttpURLConnection
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.URL
+import java.util.concurrent.Executors
 
 var bad = 0
 fun ok(name: String, cond: Boolean, x: String = "") { if (!cond) { bad++; println("FAIL $name $x") } else println("ok   $name $x") }
@@ -32,6 +39,34 @@ fun main() {
     val oi = VlcOutArgs.input(40000, 48000, 2, 300, true)
     ok("out input: raw s16le from loopback", oi.first == "udp://@127.0.0.1:40000" && oi.second.containsAll(listOf(":demux=rawaud", ":rawaud-fourcc=s16l", ":rawaud-channels=2", ":rawaud-samplerate=48000", ":network-caching=300")) && VlcOutArgs.input(10, 1, 9, 1, false).first == "udp://@127.0.0.1:1024")
     ok("out pick device", VlcOutArgs.pick(listOf("Living Room TV", "Kitchen speaker"), "kitchen") == 1 && VlcOutArgs.pick(listOf("A", "AB"), "a") == 0 && VlcOutArgs.pick(listOf("A"), "") == -1 && VlcOutArgs.pick(listOf("A"), "z") == -1)
+    // видео: MJPEG на loopback + мост с CORS
+    ok("video sout", VlcVideoArgs.sout(45000, 10, 640, 1500) == ":sout=#transcode{vcodec=MJPG,vb=1500,fps=10,width=640,acodec=none}:std{access=http{mime=multipart/x-mixed-replace;boundary=--dspframe},mux=mpjpeg,dst=127.0.0.1:45000/v.mjpg}")
+    ok("video sout clamps", VlcVideoArgs.sout(1, 99, 9999, 1).let { it.contains("fps=30") && it.contains("width=1920") && it.contains("vb=100,") && it.contains("127.0.0.1:1024/") })
+    ok("video options: no audio", VlcVideoArgs.options(45000, 10, 640, 1500, 1).let { ":no-audio" in it && ":network-caching=100" in it })
+    ok("request line", VlcVideoArgs.request("GET /a/v.mjpg?x=1 HTTP/1.1\r\nHost: h\r\n\r\n") == ("GET" to "/a/v.mjpg") && VlcVideoArgs.request("junk") == null && VlcVideoArgs.request("GET /x") == null)
+    ok("content type", VlcVideoArgs.contentType("HTTP/1.0 200 OK\r\ncontent-type:  multipart/x-mixed-replace;boundary=--b\r\n\r\n") == "multipart/x-mixed-replace;boundary=--b" && VlcVideoArgs.contentType("HTTP/1.0 200 OK\r\n\r\n") == null)
+    val pool = Executors.newCachedThreadPool()
+    val frames = ByteArray(40000) { i -> (i * 7).toByte() }
+    val fake = ServerSocket(0, 4, InetAddress.getByName("127.0.0.1"))
+    pool.execute {
+        try { while (true) { val c = fake.accept(); pool.execute { c.use { x ->
+            val b = StringBuilder(); val i = x.getInputStream()
+            while (!b.endsWith("\r\n\r\n")) { val r = i.read(); if (r < 0) break; b.append(r.toChar()) }
+            val o = x.getOutputStream()
+            if (b.startsWith("GET /v.mjpg ")) { o.write("HTTP/1.0 200 OK\r\nContent-Type: multipart/x-mixed-replace;boundary=--dspframe\r\n\r\n".toByteArray()); o.write(frames); o.flush() }
+        } } } } catch (e: Exception) { }
+    }
+    val relay = MjpegRelay(fake.localPort, pool); relay.start()
+    val rc = URL(relay.url).openConnection() as HttpURLConnection
+    val got = rc.inputStream.readBytes()
+    ok("relay: status, CORS and the type of libVLC passed on", rc.responseCode == 200 && rc.getHeaderField("Access-Control-Allow-Origin") == "*" && rc.contentType == "multipart/x-mixed-replace;boundary=--dspframe", rc.contentType ?: "")
+    ok("relay: the body arrives intact", got.contentEquals(frames), "${got.size}")
+    val rb = URL(relay.url.replace(Regex("/[0-9a-f]{24}/"), "/00/")).openConnection() as HttpURLConnection
+    ok("relay: a wrong token gets 404", rb.responseCode == 404)
+    val opt = URL(relay.url).openConnection() as HttpURLConnection; opt.requestMethod = "OPTIONS"
+    ok("relay: preflight", opt.responseCode == 204 && opt.getHeaderField("Access-Control-Allow-Origin") == "*")
+    ok("relay: only loopback, address has a token", relay.url.startsWith("http://127.0.0.1:") && Regex("/[0-9a-f]{24}/v\\.mjpg$").containsMatchIn(relay.url))
+    relay.close(); fake.close(); pool.shutdownNow()
     println(if (bad == 0) "all ok" else "$bad FAILED")
     if (bad != 0) System.exit(1)
 }
