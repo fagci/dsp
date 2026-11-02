@@ -308,22 +308,22 @@ class TorrentCore(private val sm: SessionManager, val root: File) {
 }
 
 /** Локальный HTTP-сервер (только 127.0.0.1, токен в пути): отдаёт файл раздачи по Range, ожидая куски, — его читает <video> страницы или ExoPlayer. */
-class TorrentHttp(private val core: TorrentCore, val token: String) {
+class TorrentHttp(private val core: TorrentCore, val token: String, private val lan: Boolean = false) {
     private var ss: ServerSocket? = null
     private val pool = Executors.newCachedThreadPool { r -> Thread(r, "torrent-http").also { t -> t.isDaemon = true } }
     val port: Int get() = ss?.localPort ?: 0
 
     @Synchronized fun start(): Int {
         ss?.let { return it.localPort }
-        val s = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1")); ss = s
+        val s = ServerSocket(0, 16, InetAddress.getByName(if (lan) "0.0.0.0" else "127.0.0.1")); ss = s
         pool.execute { try { while (true) { val c = s.accept(); pool.execute { serve(c) } } } catch (e: Exception) { } }
         return s.localPort
     }
 
     @Synchronized fun stop() { try { ss?.close() } catch (e: Exception) { }; ss = null }
 
-    fun url(id: String, file: Int, name: String): String =
-        "http://127.0.0.1:$port/t/$token/$id/$file/" + URLEncoder.encode(name, "UTF-8").replace("+", "%20")
+    fun url(id: String, file: Int, name: String, host: String = "127.0.0.1"): String =
+        "http://$host:$port/t/$token/$id/$file/" + URLEncoder.encode(name, "UTF-8").replace("+", "%20")
 
     private fun serve(s: Socket) {
         s.use {
@@ -377,7 +377,7 @@ class TorrentHttp(private val core: TorrentCore, val token: String) {
  * Торренты для страницы (мост приложения): torrent.add {src: magnet: | http(s) .torrent | b64, timeout} → {id, name, files:[{i,name,path,size,video}]},
  * torrent.stream {id, file} → {url, size, name} (адрес для <video> / ExoPlayer: файл докачивается по мере просмотра, перемотка по Range),
  * torrent.status {id} → {state, progress, down, up, peers, seeds, done, total, file_done}, torrent.list, torrent.remove {id, keep}.
- * Только страница приложения. Файлы — в личной папке приложения, удаляются командой remove и при остановке службы.
+ * Страница приложения и клиент моста по сети с токеном при включённых «открытых командах» (c.power); для сетевого клиента файл читается по LAN-адресу телефона (при «Делиться по LAN»). Файлы — в личной папке приложения, удаляются командой remove и при остановке службы.
  */
 class TorrentHub(private val ctx: Context) {
     private var sm: SessionManager? = null
@@ -390,13 +390,13 @@ class TorrentHub(private val ctx: Context) {
         val root = File(ctx.getExternalFilesDir(null) ?: ctx.filesDir, "torrents").also { it.mkdirs() }
         val c = TorrentCore(s, root); sm = s; core = c
         val tok = ByteArray(12).also { SecureRandom().nextBytes(it) }.joinToString("") { String.format("%02x", it) }
-        http = TorrentHttp(c, tok).also { it.start() }
+        http = TorrentHttp(c, tok, Config(ctx).shareLan).also { it.start() }      // «Делиться по LAN» — файл читает и клиент моста по сети (тот же токен в пути)
         return c
     }
 
     fun exec(c: BridgeServer.Client, j: JSONObject) {
         val cmd = j.optString("cmd"); val id = j.opt("id")
-        if (!c.trusted) return Reply.done(c, id, cmd, "only the page of the DSP app may use it", "forbidden")
+        if (!c.trusted && !c.power) return Reply.done(c, id, cmd, "only the page of the DSP app (or a bridge client with the token when open commands are allowed) may use it", "forbidden")
         try {
             when (cmd) {
                 "torrent.add" -> {
@@ -422,7 +422,7 @@ class TorrentHub(private val ctx: Context) {
                     if (idx !in 0 until it.ti.numFiles()) return Reply.done(c, id, cmd, "file: 0…${it.ti.numFiles() - 1}", "args")
                     core.select(it, idx)
                     val fs = it.ti.files()
-                    Reply.done(c, id, cmd, null, extra = arrayOf("url" to Json.str(http!!.url(it.id, idx, fs.fileName(idx))), "size" to fs.fileSize(idx).toString(), "name" to Json.str(fs.fileName(idx))))
+                    Reply.done(c, id, cmd, null, extra = arrayOf("url" to Json.str(http!!.url(it.id, idx, fs.fileName(idx), if (c.sock.inetAddress.isLoopbackAddress) "127.0.0.1" else (c.sock.localAddress.hostAddress ?: "127.0.0.1"))), "size" to fs.fileSize(idx).toString(), "name" to Json.str(fs.fileName(idx))))
                 }
                 "torrent.status" -> {
                     val core = up()
