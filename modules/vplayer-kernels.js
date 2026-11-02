@@ -236,6 +236,8 @@ function vpPtItems(json){
     return {id:host+'/'+v.uuid,name:String(v.name||v.uuid),duration:v.duration||0,channel:String(v.channel && (v.channel.displayName||v.channel.name)||''),url:v.url||'',group:host};
   }).filter(Boolean);
 }
+// страница видео PeerTube (https://сервер/videos/watch/ID, /w/ID, /videos/embed/ID; ID — uuid или короткий) → {host,uuid}; blob: со страницы не годится: он живёт только в её вкладке
+const vpPtPage=u=>{ const m=/^https?:\/\/([a-z0-9.\-]+\.[a-z]{2,})(?::\d+)?\/(?:videos\/watch|videos\/embed|w)\/([\w\-]{10,})\/?(?:[?#].*)?$/i.exec(String(u||'').trim()); return m ? {host:m[1],uuid:m[2]} : null; };
 const vpPtId=v=>{ const m=/^(?:peertube:)?([a-z0-9.\-]+\.[a-z]{2,})\/([\w\-]+)$/i.exec(String(v||'').trim()); return m ? {host:m[1],uuid:m[2]} : null; };
 function vpPtFiles(json,host,uuid){
   if(!json) return [];
