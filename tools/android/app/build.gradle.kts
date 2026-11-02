@@ -45,19 +45,12 @@ val copyWeb by tasks.registering(Sync::class) {
 }
 tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(copyWeb) }
 
-// Нативный плеер (ExoPlayer): mkv / ts / avi, AC3 / DTS, udp:// и rtp:// multicast, rtsp://, HLS / DASH системными декодерами
 dependencies {
-    val media3 = "1.4.1"
-    implementation("androidx.media3:media3-exoplayer:$media3")
-    implementation("androidx.media3:media3-exoplayer-hls:$media3")
-    implementation("androidx.media3:media3-exoplayer-dash:$media3")
-    implementation("androidx.media3:media3-exoplayer-rtsp:$media3")
-    implementation("androidx.media3:media3-ui:$media3")
     // Торренты (команды torrent.* моста, TorrentHub.kt): libtorrent; ARM — телефоны и приставки
     val lt = "2.1.0-39"
     implementation("org.libtorrent4j:libtorrent4j:$lt")
     implementation("org.libtorrent4j:libtorrent4j-android-arm64:$lt")
     implementation("org.libtorrent4j:libtorrent4j-android-arm:$lt")
-    // libVLC 3.6 (LGPL 2.1): второй нативный движок, VlcPlayer.kt — mkv / avi / DivX, AC3 / DTS, rtmp, smb:// ftp:// sftp:// nfs:// upnp://
+    // libVLC 3.6 (LGPL 2.1): открывает любой адрес (VlcHub.kt) — mkv / avi / DivX, AC3 / DTS, rtmp, rtsp, multicast, smb:// ftp:// sftp:// nfs:// upnp:// — и отдаёт странице звук, MJPEG или HLS; плеера в приложении нет, играет <video> страницы
     implementation("org.videolan.android:libvlc-all:3.6.0")
 }

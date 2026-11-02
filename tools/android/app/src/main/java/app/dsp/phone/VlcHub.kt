@@ -178,6 +178,23 @@ class VlcHub(private val ctx: Context) {
     private val strs = ConcurrentHashMap<Int, Str>()
     private val pool = java.util.concurrent.Executors.newCachedThreadPool()
     private val ids = AtomicInteger(0)
+    private var mlock: android.net.wifi.WifiManager.MulticastLock? = null
+
+    /** Для udp:// и rtp:// (multicast провайдера) Wi-Fi не пропускает групповые пакеты без multicast lock. */
+    private fun mcastFor(url: String) {
+        val sch = url.substringBefore(':').lowercase()
+        if (sch != "udp" && sch != "rtp") return
+        synchronized(this) {
+            if (mlock != null) return
+            try {
+                val wm = ctx.applicationContext.getSystemService(Context.WIFI_SERVICE) as android.net.wifi.WifiManager
+                mlock = wm.createMulticastLock("dsp-vlc").also { it.setReferenceCounted(false); it.acquire() }
+            } catch (e: Exception) { }
+        }
+    }
+    private fun mcastIdle() {
+        if (srcs.isEmpty() && vids.isEmpty() && strs.isEmpty()) synchronized(this) { try { mlock?.release() } catch (e: Exception) { }; mlock = null }
+    }
 
     fun exec(c: BridgeServer.Client, j: JSONObject) {
         val cmd = j.optString("cmd"); val id = j.opt("id")
@@ -190,6 +207,7 @@ class VlcHub(private val ctx: Context) {
                     val port = j.optInt("port", 0)
                     if (!VlcArgs.portOk(port)) return Reply.done(c, id, cmd, "port: 1024…65535 (the page's UDP port on 127.0.0.1)", "args")
                     if (srcs.size >= 4) return Reply.done(c, id, cmd, "4 sources at most", "limit")
+                    mcastFor(url)
                     val vid = ids.incrementAndGet()
                     val lib = LibVLC(ctx.applicationContext, arrayListOf("--no-video", "--http-reconnect"))
                     val mp = MediaPlayer(lib)
@@ -283,6 +301,7 @@ class VlcHub(private val ctx: Context) {
         val url = j.optString("url").trim()
         if (!VlcArgs.urlOk(url)) return Reply.done(c, id, cmd, "url: http(s) rtsp rtp udp rtmp smb ftp sftp nfs upnp … (not file:// or fd://)", "args")
         if (vids.size >= 2) return Reply.done(c, id, cmd, "2 video streams at most", "limit")
+        mcastFor(url)
         val vid = ids2.incrementAndGet()
         pool.execute {
             var lib: LibVLC? = null; var relay: MjpegRelay? = null
@@ -316,6 +335,7 @@ class VlcHub(private val ctx: Context) {
         try { v.mp.setEventListener(null); v.mp.stop(); v.mp.release() } catch (e: Throwable) { }
         try { v.lib.release() } catch (e: Throwable) { }
         v.relay.close()
+        mcastIdle()
     }
 
     /** Дорожки адреса для страницы: [{type: audio | video | sub, i (номер среди своего типа), codec, lang, name}] и (длительность мс, название). */
@@ -344,6 +364,7 @@ class VlcHub(private val ctx: Context) {
         val url = j.optString("url").trim()
         if (!VlcArgs.urlOk(url)) return Reply.done(c, id, cmd, "url: http(s) rtsp rtp udp rtmp smb ftp sftp nfs upnp … (not file:// or fd://)", "args")
         if (strs.size >= 2) return Reply.done(c, id, cmd, "2 streams at most", "limit")
+        mcastFor(url)
         val sid = ids2.incrementAndGet()
         pool.execute {
             var lib: LibVLC? = null; var relay: HlsRelay? = null; val dir = java.io.File(ctx.cacheDir, "vlcstream/$sid")
@@ -379,7 +400,7 @@ class VlcHub(private val ctx: Context) {
                 strs.remove(sid)
                 try { relay?.close() } catch (x: Throwable) { }
                 try { lib?.release() } catch (x: Throwable) { }
-                dir.deleteRecursively()
+                dir.deleteRecursively(); mcastIdle()
                 Reply.done(c, id, cmd, e.message ?: e.javaClass.simpleName)
             }
         }
@@ -389,6 +410,7 @@ class VlcHub(private val ctx: Context) {
         try { s.mp.setEventListener(null); s.mp.stop(); s.mp.release() } catch (e: Throwable) { }
         try { s.lib.release() } catch (e: Throwable) { }
         s.relay.close(); s.dir.deleteRecursively()
+        mcastIdle()
     }
 
     private fun localIps(): List<String> = try {
@@ -478,6 +500,7 @@ class VlcHub(private val ctx: Context) {
         val s = srcs.remove(vid) ?: return
         try { s.mp.setEventListener(null); s.mp.stop(); s.mp.release() } catch (e: Throwable) { }
         try { s.lib.release() } catch (e: Throwable) { }
+        mcastIdle()
     }
 
     /** Остановка службы. */
