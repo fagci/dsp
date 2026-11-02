@@ -8,6 +8,10 @@ import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.RendererDiscoverer
 import org.videolan.libvlc.RendererItem
 import java.net.DatagramSocket
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.Socket
+import java.security.SecureRandom
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.util.concurrent.CopyOnWriteArrayList
@@ -83,6 +87,78 @@ object VlcOutArgs {
     }
 }
 
+/** Чистая логика видео VLC Source: libVLC кодирует картинку в MJPEG и отдаёт на loopback, страница берёт её через MjpegRelay. */
+object VlcVideoArgs {
+    const val PATH = "v.mjpg"
+    fun sout(port: Int, fps: Int, width: Int, kbps: Int): String =
+        ":sout=#transcode{vcodec=MJPG,vb=${kbps.coerceIn(100, 8000)},fps=${fps.coerceIn(1, 30)},width=${width.coerceIn(80, 1920)},acodec=none}" +
+            ":std{access=http{mime=multipart/x-mixed-replace;boundary=--dspframe},mux=mpjpeg,dst=127.0.0.1:${port.coerceIn(1024, 65535)}/$PATH}"
+    fun options(port: Int, fps: Int, width: Int, kbps: Int, cachingMs: Int): List<String> =
+        listOf(sout(port, fps, width, kbps), ":no-audio", ":no-sout-all", ":sout-keep", ":network-caching=${cachingMs.coerceIn(100, 10_000)}")
+
+    /** Первая строка запроса «GET /путь HTTP/1.x» → метод и путь без строки запроса; null — не HTTP. */
+    fun request(head: String): Pair<String, String>? {
+        val l = head.lineSequence().firstOrNull()?.split(' ') ?: return null
+        if (l.size < 3 || !l[2].startsWith("HTTP/")) return null
+        return l[0] to l[1].substringBefore('?')
+    }
+    /** Content-Type из заголовков ответа libVLC. */
+    fun contentType(head: String): String? =
+        head.lineSequence().firstOrNull { it.startsWith("Content-Type:", ignoreCase = true) }?.substringAfter(':')?.trim()
+}
+
+/**
+ * Мост между libVLC и страницей: libVLC отдаёт MJPEG без заголовков CORS, а страница (fetch в узле IP Camera) без них не прочтёт. Сервер только на 127.0.0.1,
+ * путь с случайным токеном; на каждый запрос берёт поток у libVLC (порт upstream) и отдаёт тот же поток с `Access-Control-Allow-Origin`.
+ */
+class MjpegRelay(private val upstream: Int, private val pool: java.util.concurrent.ExecutorService) {
+    private val server = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
+    private val token = ByteArray(12).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
+    val port: Int get() = server.localPort
+    val url: String get() = "http://127.0.0.1:$port/$token/${VlcVideoArgs.PATH}"
+
+    fun start() {
+        pool.execute {
+            while (!server.isClosed) {
+                val c = try { server.accept() } catch (e: Exception) { break }
+                pool.execute { try { handle(c) } catch (e: Exception) { } finally { try { c.close() } catch (e: Exception) { } } }
+            }
+        }
+    }
+    fun close() { try { server.close() } catch (e: Exception) { } }
+
+    private fun head(s: Socket): String {
+        val i = s.getInputStream(); val b = StringBuilder()
+        while (b.length < 8192) { val x = i.read(); if (x < 0) break; b.append(x.toChar()); if (b.endsWith("\r\n\r\n")) break }
+        return b.toString()
+    }
+
+    private fun handle(c: Socket) {
+        c.soTimeout = 10_000
+        val o = c.getOutputStream()
+        val rq = VlcVideoArgs.request(head(c))
+        val cors = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: *\r\n"
+        if (rq == null) return
+        if (rq.first == "OPTIONS") { o.write("HTTP/1.1 204 No Content\r\n${cors}Content-Length: 0\r\n\r\n".toByteArray()); return }
+        if (rq.first != "GET" || rq.second != "/$token/${VlcVideoArgs.PATH}") { o.write("HTTP/1.1 404 Not Found\r\n${cors}Content-Length: 0\r\n\r\n".toByteArray()); return }
+        // libVLC начинает слушать порт только когда доберётся до картинки — ждём (до ~15 с)
+        var up: Socket? = null; val t0 = System.currentTimeMillis()
+        while (up == null && System.currentTimeMillis() - t0 < 15_000 && !server.isClosed) {
+            try { up = Socket(InetAddress.getByName("127.0.0.1"), upstream) } catch (e: Exception) { Thread.sleep(250) }
+        }
+        if (up == null) { o.write("HTTP/1.1 504 Gateway Timeout\r\n${cors}Content-Length: 0\r\n\r\n".toByteArray()); return }
+        up.use { u ->
+            u.soTimeout = 15_000
+            u.getOutputStream().write("GET /${VlcVideoArgs.PATH} HTTP/1.0\r\n\r\n".toByteArray())
+            val ct = VlcVideoArgs.contentType(head(u)) ?: "multipart/x-mixed-replace;boundary=--dspframe"
+            o.write("HTTP/1.1 200 OK\r\nContent-Type: $ct\r\n${cors}Cache-Control: no-store\r\nConnection: close\r\n\r\n".toByteArray()); o.flush()
+            c.soTimeout = 0
+            val buf = ByteArray(16384); val i = u.getInputStream()
+            while (true) { val n = i.read(buf); if (n < 0) break; o.write(buf, 0, n); o.flush() }
+        }
+    }
+}
+
 /**
  * VLC Source для графа DSP (мост приложения): vlc.open {url, port, rate, channels, caching} — libVLC открывает любой адрес (файл по сети, поток,
  * multicast, smb:// ftp:// upnp://, AC3 / DTS / FLAC / экзотические кодеки), декодирует звук и шлёт его сырым PCM s16le на 127.0.0.1:port —
@@ -95,6 +171,8 @@ class VlcHub(private val ctx: Context) {
     private val srcs = ConcurrentHashMap<Int, Src>()
     private class Out(val oid: Int, val lib: LibVLC, val mp: MediaPlayer, val client: BridgeServer.Client) { @Volatile var dead = false }
     private val outs = ConcurrentHashMap<Int, Out>()
+    private class Vid(val vid: Int, val lib: LibVLC, val mp: MediaPlayer, val relay: MjpegRelay, val client: BridgeServer.Client)
+    private val vids = ConcurrentHashMap<Int, Vid>()
     private val pool = java.util.concurrent.Executors.newCachedThreadPool()
     private val ids = AtomicInteger(0)
 
@@ -122,6 +200,8 @@ class VlcHub(private val ctx: Context) {
                     mp.play()
                     Reply.done(c, id, cmd, null, extra = arrayOf("vid" to vid.toString()))
                 }
+                "vlc.video.open" -> videoOpen(c, id, cmd, j)
+                "vlc.video.close" -> { videoClose(j.optInt("vid", -1)); Reply.done(c, id, cmd, null) }
                 "vlc.out.open" -> outOpen(c, id, cmd, j)
                 "vlc.out.close" -> { outClose(j.optInt("oid", -1)); Reply.done(c, id, cmd, null) }
                 "vlc.out.renderers" -> pool.execute {
@@ -191,6 +271,46 @@ class VlcHub(private val ctx: Context) {
         } finally {
             for (rd in rds) { try { rd.setEventListener(null); rd.stop(); rd.release() } catch (e: Throwable) { } }
         }
+    }
+
+    /** vlc.video.open {url, fps, width, kbps, caching} → {vid, url}: картинка адреса в MJPEG на loopback (через MjpegRelay с CORS) — адрес идёт в узел IP Camera. */
+    private fun videoOpen(c: BridgeServer.Client, id: Any?, cmd: String, j: JSONObject) {
+        val url = j.optString("url").trim()
+        if (!VlcArgs.urlOk(url)) return Reply.done(c, id, cmd, "url: http(s) rtsp rtp udp rtmp smb ftp sftp nfs upnp … (not file:// or fd://)", "args")
+        if (vids.size >= 2) return Reply.done(c, id, cmd, "2 video streams at most", "limit")
+        val vid = ids2.incrementAndGet()
+        pool.execute {
+            var lib: LibVLC? = null; var relay: MjpegRelay? = null
+            try {
+                val port = freePort()
+                lib = LibVLC(ctx.applicationContext, arrayListOf("--http-reconnect"))
+                val mp = MediaPlayer(lib)
+                val media = Media(lib, android.net.Uri.parse(url))
+                for (o in VlcVideoArgs.options(port, j.optInt("fps", 10), j.optInt("width", 640), j.optInt("kbps", 1500), j.optInt("caching", 1000))) media.addOption(o)
+                mp.media = media; media.release()
+                relay = MjpegRelay(port, pool).also { it.start() }
+                val v = Vid(vid, lib, mp, relay, c); vids[vid] = v
+                mp.setEventListener(MediaPlayer.EventListener { ev ->
+                    val st = when (ev.type) { MediaPlayer.Event.Playing -> "playing"; MediaPlayer.Event.Stopped -> "stopped"; MediaPlayer.Event.EndReached -> "ended"
+                        MediaPlayer.Event.EncounteredError -> "error"; else -> return@EventListener }
+                    val o = JSONObject().put("src", "vlc").put("ev", "video").put("vid", vid).put("state", st)
+                    if (st == "error") o.put("msg", "libVLC cannot show this address as a picture")
+                    try { c.send(o.toString()) } catch (e: Throwable) { }
+                })
+                mp.play()
+                Reply.done(c, id, cmd, null, extra = arrayOf("vid" to vid.toString(), "url" to Json.str(relay.url)))
+            } catch (e: Throwable) {
+                try { relay?.close() } catch (x: Throwable) { }
+                try { lib?.release() } catch (x: Throwable) { }
+                Reply.done(c, id, cmd, e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+    private fun videoClose(vid: Int) {
+        val v = vids.remove(vid) ?: return
+        try { v.mp.setEventListener(null); v.mp.stop(); v.mp.release() } catch (e: Throwable) { }
+        try { v.lib.release() } catch (e: Throwable) { }
+        v.relay.close()
     }
 
     private fun localIps(): List<String> = try {
@@ -283,5 +403,5 @@ class VlcHub(private val ctx: Context) {
     }
 
     /** Остановка службы. */
-    fun close() { for (k in srcs.keys.toList()) close(k); for (k in outs.keys.toList()) outClose(k) }
+    fun close() { for (k in srcs.keys.toList()) close(k); for (k in outs.keys.toList()) outClose(k); for (k in vids.keys.toList()) videoClose(k) }
 }

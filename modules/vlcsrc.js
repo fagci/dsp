@@ -18,7 +18,7 @@ function vlsLink(n){                                            // → Promise<N
     ns.hooks.add(r=>{ if(r.ev==='data' && r.proto==='udp' && r.conn===n.udpConn && r.hex) vlsPush(n,r.hex); });
     ws.onopen=()=>{ n.ws=ws; ws.send(JSON.stringify({sub:['net']})); res(ns); };
     ws.onerror=()=>{ if(!n.ws){ n.lnP=null; rej(new Error('no connection to the bridge ('+url.replace(/\?.*$/,'')+') — VLC Source works through the DSP app for Android (is it running?)')); } };
-    ws.onclose=()=>{ const was=n.ws===ws; n.lnP=null; n.ws=null; n.udpConn=null; n.vid=0; if(was){ vlsStatus(n,'bridge closed'); n.playing=0; } };
+    ws.onclose=()=>{ const was=n.ws===ws; n.lnP=null; n.ws=null; n.udpConn=null; n.vid=0; n.vvid=0; n.vurl=''; if(was){ vlsStatus(n,'bridge closed'); n.playing=0; } };
     ws.onmessage=e=>{
       if(typeof e.data!=='string') return;
       let j; try{ j=JSON.parse(e.data); }catch(x){ return; }
@@ -29,6 +29,7 @@ function vlsLink(n){                                            // → Promise<N
 function vlsDrop(n){ const ws=n.ws; n.lnP=null; n.ns=null; n.ws=null; if(ws){ ws.onopen=ws.onclose=ws.onerror=ws.onmessage=null; try{ ws.close(); }catch(e){} } }
 // событие libVLC: состояние, название, позиция
 function vlsEvent(n,r){
+  if(r.ev==='video'){ if(r.vid===n.vvid){ n.vstate=r.state; if(r.state==='error') n.vmsg=r.msg||'libVLC cannot show a picture'; else n.vmsg=''; } return; }
   if(r.ev!=='state' || r.vid!==n.vid) return;
   n.state=r.state; n.pos=vlsSec(r.pos); n.dur=vlsSec(r.dur); if(r.title) n.title=String(r.title);
   n.playing= r.state==='playing' ? 1 : 0;
@@ -45,8 +46,8 @@ function vlsPush(n,hex){
   n.vT+=dur; n.rx+=f.length*2;
 }
 async function vlsStop(n){
-  const vid=n.vid, ns=n.ns, conn=n.udpConn; n.vid=0; n.udpConn=null; n.playing=0; n.gen=(n.gen||0)+1;
-  if(ns){ try{ if(vid) await ns.call('vlc.close',{vid},4000); }catch(e){} try{ if(conn!=null) await ns.call('udp.close',{conn},4000); }catch(e){} }
+  const vid=n.vid, ns=n.ns, conn=n.udpConn, vv=n.vvid; n.vid=0; n.vvid=0; n.vurl=''; n.vstate=''; n.vmsg=''; n.udpConn=null; n.playing=0; n.gen=(n.gen||0)+1;
+  if(ns){ try{ if(vv) await ns.call('vlc.video.close',{vid:vv},4000); }catch(e){} try{ if(vid) await ns.call('vlc.close',{vid},4000); }catch(e){} try{ if(conn!=null) await ns.call('udp.close',{conn},4000); }catch(e){} }
 }
 async function vlsStart(n,url){
   url=String(url||'').trim();
@@ -67,13 +68,19 @@ async function vlsStart(n,url){
     const r=await ns.call('vlc.open',{url,port,rate:n.sr,channels:n.pcm.ch,caching:+n.p.caching||1000},25000);
     if(g!==n.gen){ try{ await ns.call('vlc.close',{vid:r.vid},3000); }catch(e){} return; }
     n.vid=r.vid; vlsStatus(n,'opening…');
+    if(n.p.video!=='off'){                                                   // картинка: второй libVLC → MJPEG на loopback → адрес на пин «video» (в IP Camera)
+      try{ const v=await ns.call('vlc.video.open',{url,fps:+n.p.vfps||10,width:+n.p.vwidth||640,kbps:+n.p.vkbps||1500,caching:+n.p.caching||1000},25000);
+        if(g!==n.gen){ try{ await ns.call('vlc.video.close',{vid:v.vid},3000); }catch(e){} return; }
+        n.vvid=v.vid; n.vurl=String(v.url||''); n.vstate='opening'; }
+      catch(e){ if(g===n.gen) n.vmsg='picture: '+e.message; }
+    }
   }catch(e){ if(g===n.gen) vlsStatus(n,'error: '+e.message); }
 }
 
 def({ id:'vlcsrc', title:'VLC Source', cat:'Sources', readout:true, always:true, resize:true, w:320,
   kw:'vlc libvlc audio source stream decode any codec ac3 dts flac multicast iptv radio smb ftp upnp rtmp file network sound input',
   ins:[{n:'url',t:'txt'},{n:'go',t:'num'},{n:'pause',t:'num'}],
-  outs:[{n:'l',t:'sig'},{n:'r',t:'sig'},{n:'title',t:'txt'},{n:'pos',t:'num'},{n:'dur',t:'num'},{n:'playing',t:'num'},{n:'end',t:'num'}],
+  outs:[{n:'l',t:'sig'},{n:'r',t:'sig'},{n:'title',t:'txt'},{n:'pos',t:'num'},{n:'dur',t:'num'},{n:'playing',t:'num'},{n:'end',t:'num'},{n:'video',t:'txt'}],
   params:[
     {n:'url',t:'text',d:'',label:'address: a file or a stream on the network (http / https / HLS), multicast udp://@239.1.1.1:1234 or rtp://@…, rtsp://, rtmp://, smb://, ftp://, sftp://, nfs://, upnp:// — any format libVLC knows (AC3 / DTS / FLAC / AAC / Opus …)'},
     {n:'playb',t:'button',label:'Play',fn:n=>vlsStart(n,n.p.url)},
@@ -82,10 +89,14 @@ def({ id:'vlcsrc', title:'VLC Source', cat:'Sources', readout:true, always:true,
     {n:'channels',t:'select',opts:['stereo','mono'],d:'stereo',label:'channels: stereo → «l» and «r»; mono → both outputs the same'},
     {n:'caching',t:'range',min:100,max:5000,step:100,d:1000,label:'libVLC network cache, ms (more — fewer dropouts on a bad network, a later start)'},
     {n:'lag',t:'range',min:50,max:1000,step:10,d:300,label:'smoothing reserve in the graph, ms (less — shorter delay, but gaps if the pieces come unevenly)'},
+    {n:'video',t:'select',opts:['off','MJPEG → pin «video»'],d:'off',label:'picture: libVLC takes the picture of the address (a second connection to it) and serves it as MJPEG on 127.0.0.1; the address comes out on the «video» pin — wire it to the «url» of IP Camera'},
+    {n:'vfps',t:'range',min:1,max:30,step:1,d:10,label:'picture: frames per second'},
+    {n:'vwidth',t:'select',opts:['320','480','640','960','1280'],d:'640',label:'picture: width, px'},
+    {n:'vkbps',t:'range',min:200,max:6000,step:100,d:1500,label:'picture: quality (bitrate of MJPEG), kbit/s'},
     {n:'bridge',t:'text',d:VLS_BRIDGE,label:'bridge of the DSP app: ws://127.0.0.1:8765 or a device name (@phone)'}],
   init(n){ ssInit(n,2); n.sExact=true; n.sLag=.3; n.pcm=vlsNew(2); n.sr=48000; n.vT=0; n.vT0=0; n.ns=null; n.ws=null; n.lnP=null; n.udpConn=null; n.vid=0; n.port=0; n.gen=0;
     n.status='enter an address and press Play (needs the DSP app for Android)'; n.title=''; n.pos=0; n.dur=0; n.playing=0; n.state=''; n.rx=0; n.endPulse=0;
-    n.inUrl=''; n.goPrev=false; n.pausePrev=false; n.url=''; },
+    n.vvid=0; n.vurl=''; n.vstate=''; n.vmsg=''; n.inUrl=''; n.goPrev=false; n.pausePrev=false; n.url=''; },
   dispose(n){ vlsStop(n).finally(()=>vlsDrop(n)); },
   process(n,I){
     if(typeof I.url==='string' && I.url && I.url!==n.inUrl){ n.inUrl=I.url; setMod(n,'url',I.url); vlsStart(n,I.url); }
@@ -95,9 +106,9 @@ def({ id:'vlcsrc', title:'VLC Source', cat:'Sources', readout:true, always:true,
     const l=buf(n,'l'), r=buf(n,'r');
     if(n.vT0) ssProcess(n,[l,r]); else { l.fill(0); r.fill(0); }
     const end=n.endPulse; n.endPulse=0;
-    return {l,r,title:n.title,pos:n.pos,dur:n.dur,playing:n.playing,end}; },
+    return {l,r,title:n.title,pos:n.pos,dur:n.dur,playing:n.playing,end,video:n.vurl}; },
   draw(n){
     const r=n.el.querySelector('.readout'); if(!r) return;
-    const t=n.status+(n.vT0 ? '\n'+(n.sr/1000).toFixed(1)+' kHz · '+(n.pcm.ch===2 ? 'stereo' : 'mono')+' · '+(n.rx/1024|0)+' kB'+(ssStatus(n) ? ' · '+ssStatus(n) : '') : '');
+    const t=n.status+(n.vT0 ? '\n'+(n.sr/1000).toFixed(1)+' kHz · '+(n.pcm.ch===2 ? 'stereo' : 'mono')+' · '+(n.rx/1024|0)+' kB'+(ssStatus(n) ? ' · '+ssStatus(n) : '') : '')+(n.vurl ? '\npicture: '+(n.vstate||'…')+' · MJPEG on the «video» pin' : '')+(n.vmsg ? '\n'+n.vmsg : '');
     if(r.textContent!==t) r.textContent=t; }
 });
