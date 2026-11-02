@@ -86,14 +86,14 @@ object VlcStreamArgs {
 }
 
 /**
- * Статический сервер каталога HLS только на 127.0.0.1, путь со случайным токеном, заголовки CORS (libVLC их не ставит). Список ждёт, пока libVLC
+ * Статический сервер каталога HLS: по умолчанию только 127.0.0.1; для клиента моста по сети (lan) — на всех интерфейсах, а в адресе тот IP телефона, по которому клиент подключился. Путь со случайным токеном, заголовки CORS (libVLC их не ставит). Список ждёт, пока libVLC
  * его создаст (до 25 с): страница может прийти раньше первого сегмента.
  */
-class HlsRelay(private val dir: File, private val pool: ExecutorService) {
-    private val server = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
+class HlsRelay(private val dir: File, private val pool: ExecutorService, lan: Boolean = false, private val host: String = "127.0.0.1") {
+    private val server = ServerSocket(0, 16, InetAddress.getByName(if (lan) "0.0.0.0" else "127.0.0.1"))
     val token = ByteArray(12).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it) }
     val port: Int get() = server.localPort
-    val url: String get() = "http://127.0.0.1:$port/$token/${VlcStreamArgs.INDEX}"
+    val url: String get() = "http://$host:$port/$token/${VlcStreamArgs.INDEX}"
 
     fun start() {
         pool.execute {

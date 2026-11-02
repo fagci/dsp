@@ -198,7 +198,8 @@ class VlcHub(private val ctx: Context) {
 
     fun exec(c: BridgeServer.Client, j: JSONObject) {
         val cmd = j.optString("cmd"); val id = j.opt("id")
-        if (!c.trusted) return Reply.done(c, id, cmd, "only the page of the DSP app may use it", "forbidden")
+        // vlc.stream.*: и страница по сети (с токеном моста и включёнными «открытыми командами» — c.power), остальное vlc.* — только страница приложения
+        if (!c.trusted && !(c.power && cmd.startsWith("vlc.stream."))) return Reply.done(c, id, cmd, "only the page of the DSP app may use it (vlc.stream.* also a LAN client with the bridge token when open commands are allowed)", "forbidden")
         try {
             when (cmd) {
                 "vlc.open" -> {
@@ -385,7 +386,8 @@ class VlcHub(private val ctx: Context) {
                 media.addOption(":avcodec-hw=any")                  // если видео всё же перекодируется, декодирует его MediaCodec (кодирует x264: аппаратного кодировщика в libVLC 3.x нет)
                 for (o in VlcStreamArgs.options(j.optLong("start", 0), j.optInt("audio", -1), j.optInt("sub", -1), j.optInt("adelay", 0), j.optInt("caching", 1000), j.optDouble("rate", 1.0).toFloat())) media.addOption(o)
                 val mp = MediaPlayer(lib); mp.media = media; media.release()
-                relay = HlsRelay(dir, pool).also { it.start() }
+                val lan = !c.sock.inetAddress.isLoopbackAddress
+                relay = HlsRelay(dir, pool, lan, if (lan) c.sock.localAddress.hostAddress ?: "127.0.0.1" else "127.0.0.1").also { it.start() }
                 strs[sid] = Str(sid, lib, mp, relay, dir)
                 mp.setEventListener(MediaPlayer.EventListener { ev ->
                     val st = when (ev.type) { MediaPlayer.Event.Playing -> "playing"; MediaPlayer.Event.Stopped -> "stopped"; MediaPlayer.Event.EndReached -> "ended"

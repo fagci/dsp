@@ -105,6 +105,9 @@ fun main() {
     val h3 = URL(hr.url.replace(Regex("/[0-9a-f]{24}/"), "/00/")).openConnection() as HttpURLConnection
     ok("hls relay: wrong token is 404", h3.responseCode == 404)
     ok("hls relay: only loopback with a token", hr.url.startsWith("http://127.0.0.1:") && Regex("/[0-9a-f]{24}/live\\.m3u8$").containsMatchIn(hr.url))
+    val hl = HlsRelay(sdir.also { it.mkdirs(); File(it, "live.m3u8").writeText("#EXTM3U\n") }, pool, true, "192.168.1.50"); hl.start()
+    ok("hls relay for a LAN client: the phone's address in the url, listens on all interfaces", hl.url.startsWith("http://192.168.1.50:${hl.port}/") && (URL(hl.url.replace("192.168.1.50", "127.0.0.1")).openConnection() as HttpURLConnection).responseCode == 200)
+    hl.close()
     hr.close(); sdir.deleteRecursively(); pool.shutdownNow()
     println(if (bad == 0) "all ok" else "$bad FAILED")
     if (bad != 0) System.exit(1)
