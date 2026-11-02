@@ -4,6 +4,9 @@ import app.dsp.phone.VlcArgs
 import app.dsp.phone.VlcOutArgs
 import app.dsp.phone.VlcVideoArgs
 import app.dsp.phone.MjpegRelay
+import app.dsp.phone.VlcStreamArgs
+import app.dsp.phone.HlsRelay
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -66,7 +69,41 @@ fun main() {
     val opt = URL(relay.url).openConnection() as HttpURLConnection; opt.requestMethod = "OPTIONS"
     ok("relay: preflight", opt.responseCode == 204 && opt.getHeaderField("Access-Control-Allow-Origin") == "*")
     ok("relay: only loopback, address has a token", relay.url.startsWith("http://127.0.0.1:") && Regex("/[0-9a-f]{24}/v\\.mjpg$").containsMatchIn(relay.url))
-    relay.close(); fake.close(); pool.shutdownNow()
+    relay.close(); fake.close()
+    // HLS для <video>: ремукс того, что браузер знает, перекодирование остального
+    ok("copy codecs", VlcStreamArgs.copyV("h264") && VlcStreamArgs.copyV("AVC1") && !VlcStreamArgs.copyV("mp2v") && !VlcStreamArgs.copyV("DIV3") && VlcStreamArgs.copyA("mp4a") && VlcStreamArgs.copyA("mpga") && !VlcStreamArgs.copyA("a52 ") && !VlcStreamArgs.copyA("dts "))
+    val pa = VlcStreamArgs.plan("auto", "h264", "mp4a", false, false)
+    ok("plan auto: h264 + aac is copied", !pa.video && !pa.audio && pa.hasVideo && pa.hasAudio)
+    val pb = VlcStreamArgs.plan("auto", "h264", "a52 ", false, false)
+    ok("plan auto: only the AC3 audio is transcoded", !pb.video && pb.audio)
+    ok("plan auto: DivX video is transcoded", VlcStreamArgs.plan("auto", "DIV3", "mpga", false, false).let { it.video && !it.audio })
+    ok("plan: burnt subtitles and deinterlace force video", VlcStreamArgs.plan("auto", "h264", "mp4a", true, false).video && VlcStreamArgs.plan("auto", "h264", "mp4a", false, true).video)
+    ok("plan: remux never transcodes, transcode always", VlcStreamArgs.plan("remux", "DIV3", "dts ", true, true).let { !it.video && !it.audio } && VlcStreamArgs.plan("transcode", "h264", "mp4a", false, false).let { it.video && it.audio })
+    ok("plan: audio-only source has no video", VlcStreamArgs.plan("auto", "-", "flac", false, true).let { !it.hasVideo && !it.video && it.audio })
+    ok("plan: unknown codecs are transcoded", VlcStreamArgs.plan("auto", "", "", false, false).let { it.video && it.audio })
+    val d = "/data/cache/vlcstream/1"
+    ok("sout: remux is a bare std", VlcStreamArgs.sout(d, pa, 2500, 0, 128, false, false, 2, 40) == ":sout=#std{access=livehttp{seglen=2,delsegs=true,numsegs=40,index=$d/live.m3u8,index-url=seg-########.ts},mux=ts{use-key-frames},dst=$d/seg-########.ts}")
+    ok("sout: audio transcode only", VlcStreamArgs.sout(d, pb, 2500, 0, 128, false, false, 2, 40)!!.startsWith(":sout=#transcode{acodec=mp4a,ab=128,channels=2,samplerate=48000}:std{"))
+    val pc = VlcStreamArgs.plan("transcode", "mp2v", "a52 ", true, true)
+    val sc = VlcStreamArgs.sout(d, pc, 99999, 99999, 5, true, true, 99, 1)!!
+    ok("sout: video transcode, clamps, deinterlace, burnt subtitles", sc.contains("vcodec=h264,vb=20000,width=3840,vfilter=deinterlace,venc=x264{preset=veryfast,tune=zerolatency},soverlay,acodec=mp4a,ab=32") && sc.contains("seglen=10") && sc.contains("numsegs=5,"), sc)
+    ok("sout: unsafe cache path refused", VlcStreamArgs.sout("/a b/c", pa, 1, 0, 1, false, false, 2, 40) == null && VlcStreamArgs.sout("/a/../b", pa, 1, 0, 1, false, false, 2, 40) == null && VlcStreamArgs.sout("/a'}/b", pa, 1, 0, 1, false, false, 2, 40) == null)
+    ok("options: start, tracks, no subs by default", VlcStreamArgs.options(90_500, 1, -1, 0, 1000, 1f).let { ":start-time=90.5" in it && ":audio-track=1" in it && ":no-spu" in it && ":network-caching=1000" in it && it.none { x -> x.startsWith(":sub-track") } })
+    ok("options: subtitle track, delay and rate", VlcStreamArgs.options(0, -1, 2, -300, 50, 1.5f).let { ":sub-track=2" in it && ":audio-desync=-300" in it && ":rate=1.5" in it && ":no-spu" !in it && ":network-caching=100" in it && it.none { x -> x.startsWith(":start-time") || x.startsWith(":audio-track") } })
+    ok("route", VlcStreamArgs.route("GET /ab/live.m3u8?x=1 HTTP/1.1", "ab") == ("GET" to "live.m3u8") && VlcStreamArgs.route("GET /ab/seg-00000001.ts HTTP/1.1", "ab") == ("GET" to "seg-00000001.ts")
+        && VlcStreamArgs.route("GET /xx/live.m3u8 HTTP/1.1", "ab") == null && VlcStreamArgs.route("GET /ab/../x.ts HTTP/1.1", "ab") == null && VlcStreamArgs.route("GET /ab/a.exe HTTP/1.1", "ab") == null && VlcStreamArgs.route("junk", "ab") == null)
+    val sdir = File.createTempFile("hls", "").also { it.delete(); it.mkdirs() }
+    File(sdir, "live.m3u8").writeText("#EXTM3U\n#EXTINF:2,\nseg-00000001.ts\n")
+    val ts = ByteArray(5000) { i -> (i * 3).toByte() }; File(sdir, "seg-00000001.ts").writeBytes(ts)
+    val hr = HlsRelay(sdir, pool); hr.start()
+    val h1 = URL(hr.url).openConnection() as HttpURLConnection
+    ok("hls relay: playlist, CORS, type", h1.responseCode == 200 && h1.getHeaderField("Access-Control-Allow-Origin") == "*" && h1.contentType == "application/vnd.apple.mpegurl" && h1.inputStream.readBytes().toString(Charsets.UTF_8).contains("seg-00000001.ts"))
+    val h2 = URL(hr.url.replace("live.m3u8", "seg-00000001.ts")).openConnection() as HttpURLConnection
+    ok("hls relay: segment arrives intact", h2.contentType == "video/mp2t" && h2.inputStream.readBytes().contentEquals(ts))
+    val h3 = URL(hr.url.replace(Regex("/[0-9a-f]{24}/"), "/00/")).openConnection() as HttpURLConnection
+    ok("hls relay: wrong token is 404", h3.responseCode == 404)
+    ok("hls relay: only loopback with a token", hr.url.startsWith("http://127.0.0.1:") && Regex("/[0-9a-f]{24}/live\\.m3u8$").containsMatchIn(hr.url))
+    hr.close(); sdir.deleteRecursively(); pool.shutdownNow()
     println(if (bad == 0) "all ok" else "$bad FAILED")
     if (bad != 0) System.exit(1)
 }

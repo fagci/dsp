@@ -4,6 +4,7 @@ import android.content.Context
 import org.json.JSONObject
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
+import org.videolan.libvlc.interfaces.IMedia
 import org.videolan.libvlc.MediaPlayer
 import org.videolan.libvlc.RendererDiscoverer
 import org.videolan.libvlc.RendererItem
@@ -173,6 +174,8 @@ class VlcHub(private val ctx: Context) {
     private val outs = ConcurrentHashMap<Int, Out>()
     private class Vid(val vid: Int, val lib: LibVLC, val mp: MediaPlayer, val relay: MjpegRelay, val client: BridgeServer.Client)
     private val vids = ConcurrentHashMap<Int, Vid>()
+    private class Str(val sid: Int, val lib: LibVLC, val mp: MediaPlayer, val relay: HlsRelay, val dir: java.io.File)
+    private val strs = ConcurrentHashMap<Int, Str>()
     private val pool = java.util.concurrent.Executors.newCachedThreadPool()
     private val ids = AtomicInteger(0)
 
@@ -202,6 +205,8 @@ class VlcHub(private val ctx: Context) {
                 }
                 "vlc.video.open" -> videoOpen(c, id, cmd, j)
                 "vlc.video.close" -> { videoClose(j.optInt("vid", -1)); Reply.done(c, id, cmd, null) }
+                "vlc.stream.open" -> streamOpen(c, id, cmd, j)
+                "vlc.stream.close" -> { streamClose(j.optInt("sid", -1)); Reply.done(c, id, cmd, null) }
                 "vlc.out.open" -> outOpen(c, id, cmd, j)
                 "vlc.out.close" -> { outClose(j.optInt("oid", -1)); Reply.done(c, id, cmd, null) }
                 "vlc.out.renderers" -> pool.execute {
@@ -313,6 +318,79 @@ class VlcHub(private val ctx: Context) {
         v.relay.close()
     }
 
+    /** Дорожки адреса для страницы: [{type: audio | video | sub, i (номер среди своего типа), codec, lang, name}] и (длительность мс, название). */
+    private fun tracksOf(media: Media): Triple<org.json.JSONArray, Pair<String, String>, Pair<String, String>> {
+        val arr = org.json.JSONArray(); var nv = 0; var na = 0; var ns = 0; var vc = "-"; var ac = "-"
+        for (k in 0 until media.trackCount) {
+            val t = media.getTrack(k) ?: continue
+            val o = JSONObject().put("codec", t.codec ?: "").put("lang", t.language ?: "").put("name", t.description ?: "")
+            when (t.type) {
+                IMedia.Track.Type.Video -> { o.put("type", "video").put("i", nv); if (nv++ == 0) vc = t.codec ?: "" }
+                IMedia.Track.Type.Audio -> { o.put("type", "audio").put("i", na); if (na++ == 0) ac = t.codec ?: "" }
+                IMedia.Track.Type.Text -> { o.put("type", "sub").put("i", ns++) }
+                else -> continue
+            }
+            arr.put(o)
+        }
+        return Triple(arr, vc to ac, (media.duration.toString()) to (media.getMeta(IMedia.Meta.Title) ?: ""))
+    }
+
+    /**
+     * vlc.stream.open {url, start (мс), mode: auto | remux | transcode, audio (номер дорожки), sub (номер, -1 — без), burn (субтитры в картинку), deint, adelay (мс),
+     * vkbps, width, abr, rate, caching, seg} → {sid, url, tracks, dur, title, vc, ac, plan}: libVLC кладёт HLS в кэш, страница играет url в <video>.
+     * Перемотка и смена дорожки — новый vlc.stream.open с другим start / audio (старый закрывается страницей).
+     */
+    private fun streamOpen(c: BridgeServer.Client, id: Any?, cmd: String, j: JSONObject) {
+        val url = j.optString("url").trim()
+        if (!VlcArgs.urlOk(url)) return Reply.done(c, id, cmd, "url: http(s) rtsp rtp udp rtmp smb ftp sftp nfs upnp … (not file:// or fd://)", "args")
+        if (strs.size >= 2) return Reply.done(c, id, cmd, "2 streams at most", "limit")
+        val sid = ids2.incrementAndGet()
+        pool.execute {
+            var lib: LibVLC? = null; var relay: HlsRelay? = null; val dir = java.io.File(ctx.cacheDir, "vlcstream/$sid")
+            try {
+                dir.deleteRecursively(); dir.mkdirs()
+                lib = LibVLC(ctx.applicationContext, arrayListOf("--http-reconnect"))
+                val probe = Media(lib, android.net.Uri.parse(url))
+                probe.parse(IMedia.Parse.ParseNetwork)
+                val (tracks, codecs, meta) = tracksOf(probe)
+                probe.release()
+                val burn = j.optBoolean("burn", false) && j.optInt("sub", -1) >= 0
+                val deint = j.optBoolean("deint", false)
+                val plan = VlcStreamArgs.plan(j.optString("mode", "auto"), if (tracks.length() == 0) "" else codecs.first, if (tracks.length() == 0) "" else codecs.second, burn, deint)
+                val sout = VlcStreamArgs.sout(dir.absolutePath, plan, j.optInt("vkbps", 2500), j.optInt("width", 0), j.optInt("abr", 128), burn, deint, j.optInt("seg", 2), 40)
+                    ?: return@execute Reply.done(c, id, cmd, "cache path not usable", "args")
+                val media = Media(lib, android.net.Uri.parse(url))
+                media.addOption(sout)
+                for (o in VlcStreamArgs.options(j.optLong("start", 0), j.optInt("audio", -1), j.optInt("sub", -1), j.optInt("adelay", 0), j.optInt("caching", 1000), j.optDouble("rate", 1.0).toFloat())) media.addOption(o)
+                val mp = MediaPlayer(lib); mp.media = media; media.release()
+                relay = HlsRelay(dir, pool).also { it.start() }
+                strs[sid] = Str(sid, lib, mp, relay, dir)
+                mp.setEventListener(MediaPlayer.EventListener { ev ->
+                    val st = when (ev.type) { MediaPlayer.Event.Playing -> "playing"; MediaPlayer.Event.Stopped -> "stopped"; MediaPlayer.Event.EndReached -> "ended"
+                        MediaPlayer.Event.EncounteredError -> "error"; else -> return@EventListener }
+                    val o = JSONObject().put("src", "vlc").put("ev", "stream").put("sid", sid).put("state", st)
+                    if (st == "error") o.put("msg", "libVLC cannot repack this address")
+                    try { c.send(o.toString()) } catch (e: Throwable) { }
+                })
+                mp.play()
+                Reply.done(c, id, cmd, null, extra = arrayOf("sid" to sid.toString(), "url" to Json.str(relay.url), "tracks" to tracks.toString(), "dur" to meta.first,
+                    "title" to Json.str(meta.second), "plan" to Json.str((if (plan.video) "video: H.264" else "video: copy") + ", " + (if (plan.audio) "audio: AAC" else "audio: copy"))))
+            } catch (e: Throwable) {
+                strs.remove(sid)
+                try { relay?.close() } catch (x: Throwable) { }
+                try { lib?.release() } catch (x: Throwable) { }
+                dir.deleteRecursively()
+                Reply.done(c, id, cmd, e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+    private fun streamClose(sid: Int) {
+        val s = strs.remove(sid) ?: return
+        try { s.mp.setEventListener(null); s.mp.stop(); s.mp.release() } catch (e: Throwable) { }
+        try { s.lib.release() } catch (e: Throwable) { }
+        s.relay.close(); s.dir.deleteRecursively()
+    }
+
     private fun localIps(): List<String> = try {
         NetworkInterface.getNetworkInterfaces().toList().filter { it.isUp && !it.isLoopback }.flatMap { it.inetAddresses.toList() }
             .filterIsInstance<Inet4Address>().map { it.hostAddress ?: "" }.filter { it.isNotEmpty() }
@@ -403,5 +481,5 @@ class VlcHub(private val ctx: Context) {
     }
 
     /** Остановка службы. */
-    fun close() { for (k in srcs.keys.toList()) close(k); for (k in outs.keys.toList()) outClose(k); for (k in vids.keys.toList()) videoClose(k) }
+    fun close() { for (k in srcs.keys.toList()) close(k); for (k in outs.keys.toList()) outClose(k); for (k in vids.keys.toList()) videoClose(k); for (k in strs.keys.toList()) streamClose(k) }
 }

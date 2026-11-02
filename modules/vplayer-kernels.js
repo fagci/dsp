@@ -304,3 +304,30 @@ function vpTorrentSearchLine(st,secs){
 
 // двойной тап по картинке: левая треть — назад, правая — вперёд, середина — полный экран (x — от левого края, w — ширина)
 function vpTapZone(x,w){ if(!(w>0)) return 'full'; const f=x/w; return f<1/3 ? 'back' : f>2/3 ? 'fwd' : 'full'; }
+
+/* ---------- libVLC → HLS → <video> (мост приложения: vlc.stream.open) ---------- */
+// играть ли адрес через поток libVLC: engine 'vlc stream' — любой адрес; auto — те, что браузер не знает (smb / ftp / sftp / nfs / upnp / rtmp / mms); только в приложении
+function vpStreamWanted(eng,kind,inApp){
+  if(!inApp) return false;
+  return eng==='vlc stream' || (eng==='auto' && kind==='vlc');
+}
+// ответ моста: tracks может прийти строкой JSON → {audio:[{i,codec,lang,name}], sub:[…], video:[…]}
+function vpTracks(raw){
+  let a=raw; if(typeof a==='string'){ try{ a=JSON.parse(a); }catch(e){ a=[]; } }
+  const out={audio:[],sub:[],video:[]};
+  for(const t of Array.isArray(a) ? a : []){ if(t && out[t.type] && Number.isInteger(t.i)) out[t.type].push({i:t.i,codec:String(t.codec||''),lang:String(t.lang||''),name:String(t.name||'')}); }
+  return out;
+}
+// подпись дорожки в списке: «2 · rus · AC3» (название, если оно не повторяет язык)
+function vpTrackLabel(t,k){
+  const bits=[String(k+1)]; if(t.lang) bits.push(t.lang); if(t.name && t.name!==t.lang) bits.push(t.name); if(t.codec) bits.push(t.codec.trim().toUpperCase());
+  return bits.join(' · ');
+}
+// запрос vlc.stream.open: p — параметры узла, st — {start (с), audio, sub (номера дорожек, -1 — по умолчанию / без)}
+function vpStreamReq(url,p,st){
+  const mode=['auto','remux','transcode'].includes(p.smode) ? p.smode : 'auto';
+  return {url,start:Math.max(0,Math.round((st.start||0)*1000)),mode,audio:st.audio>=0 ? st.audio : -1,sub:st.sub>=0 ? st.sub : -1,burn:!!p.sburn && st.sub>=0,
+    deint:!!p.sdeint,adelay:Math.round(+p.sadelay||0),vkbps:Math.round(+p.skbps||2500),width:+p.swidth>0 ? +p.swidth : 0,caching:Math.round(+p.scaching||1000)};
+}
+// перемотка в потоке: внутри уже записанного окна — обычный seek <video>, иначе поток открывается заново с нужной секунды
+function vpStreamSeekPlan(t,base,seekEnd){ const rel=t-base; return rel>=0 && rel<=seekEnd-1 ? {reopen:false,rel} : {reopen:true,rel:0}; }
