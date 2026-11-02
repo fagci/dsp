@@ -450,6 +450,7 @@ const PRESET_CATS={
   'VLC Out: Your Phone as a Radio Station (HTTP, Icecast, Chromecast) from the Graph (DSP app)':'Music: Player',
   'Video: Torrents (magnet / .torrent) → Player (DSP app)':'Images & TV',
   'Video: Network Folders (SMB / FTP / UPnP) and Any Format → libVLC (DSP app)':'Images & TV',
+  'Video: libVLC Stream into the Player — Audio Tracks, Subtitles, Seek, Double Tap (DSP app)':'Images & TV',
   'Digital TV: DVB-T2 → record video to Files (trigger, path)':'Images & TV',
   'Analog TV: FPV Multiband Scanner (HackRF)':'Images & TV',
   'Analog TV: FPV Mosaic (one HackRF)':'Images & TV',
@@ -7107,13 +7108,27 @@ markWiresDirty();
 preset('Video: Network Folders (SMB / FTP / UPnP) and Any Format → libVLC (DSP app)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'In the DSP app for Android the player has a second native engine, libVLC (LGPL 2.1): it plays almost anything — mkv / avi / DivX, AC3 / DTS, rtmp, multicast — and reads network sources itself: smb://server/share/file.mkv (login: smb://user:password@server/…), ftp:// and sftp://, nfs://, upnp:// (a UPnP / DLNA server). Put such addresses into the Table (name, url) and pick a row; «who plays» = auto sends them to libVLC (and goes to it when ExoPlayer cannot play a file), vlc forces it. '+
-  'The picture is full screen (✕ closes, Back too) or in a window over other apps (🗔), PiP of the app (⧉) works too; the bar has −10 / +10, pause, seek and ⟲ audio tracks (🔊) and subtitles (CC) — also driven from here. The position of every source is saved as usual. The addresses below are examples: replace them with yours. A browser alone cannot open them.'});
+  '«who plays» = auto: libVLC repacks the address into a stream (HLS on 127.0.0.1) that THIS player plays with the browser’s own <video> — tracks, subtitles and seek are in the bar; if that fails the native libVLC window opens (full screen, 🗔 over other apps, ⧉ PiP). The position of every source is saved as usual. The addresses below are examples: replace them with yours. A browser alone cannot open them.'});
 nt.size.w=1000; nt.size.h=130; applySize(nt);
 const tb=addNode('table',40,200,{list:'@patch',key:'url',initial:false,cols:['name','url'],data:'name,url\nNAS: film (SMB),smb://192.168.1.10/video/film.mkv\nProvider FTP: series S01E01,ftp://ftp.example.net/tv/show.S01E01.avi\nHome server (NFS),nfs://192.168.1.10/export/video/clip.mp4\nDLNA server (UPnP),upnp://uuid:00000000-0000-0000-0000-000000000000/1\nStream (RTMP),rtmp://live.example.net/app/stream'});
 tb.size.w=420; tb.size.h=360; applySize(tb);
 const pl=addNode('vplayer',490,200,{engine:'auto'});
 pl.size.w=520; pl.size.h=440; applySize(pl);
 const hs=addNode('table',1040,200,{list:'video/history',key:'url',rev:true});
+hs.size.w=380; hs.size.h=360; applySize(hs);
+addEdge(tb.id,'all',pl.id,'rows'); addEdge(pl.id,'rec',hs.id,'rec');
+markWiresDirty();
+});
+preset('Video: libVLC Stream into the Player — Audio Tracks, Subtitles, Seek, Double Tap (DSP app)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'libVLC only OPENS the address; the picture is played by the ordinary player of the page. The app repacks smb:// ftp:// sftp:// nfs:// upnp:// rtmp:// rtsp:// udp:// or an http mkv / avi / DivX into HLS segments and serves them on 127.0.0.1 (random path, CORS), the Video Player plays them in its <video>. H.264 and AAC / MP3 pass as they are (remux — almost no load); the rest (DivX, MPEG-2, VP9, AC3, DTS, FLAC…) is re-encoded to H.264 / AAC — «libVLC stream» parameters: mode (auto / remux / transcode), bitrate, width, deinterlace, audio delay. '+
+  'Under the picture: the audio-track list (it appears when the file has several) and the subtitle list (burnt into the picture, or off); a change reopens the stream from the same second. Seek: the slider or a double tap on the left / right third of the picture (−10 / +10 s); inside the already written window it is instant, farther the stream starts again from that second. Re-encoding loads the phone CPU — for DivX or AC3 prefer a short test first. Not a browser feature: the engine «vlc stream» works in the DSP app; the addresses below are examples.'});
+nt.size.w=1000; nt.size.h=150; applySize(nt);
+const tb=addNode('table',40,220,{list:'@patch',key:'url',initial:false,cols:['name','url'],data:'name,url\nNAS: film with several audio tracks (SMB),smb://192.168.1.10/video/film.mkv\nSFTP: series,sftp://user:password@192.168.1.10/home/tv/show.S01E01.avi\nDLNA server (UPnP),upnp://uuid:00000000-0000-0000-0000-000000000000/1\nIPTV channel (multicast),udp://@239.1.1.1:1234'});
+tb.size.w=420; tb.size.h=360; applySize(tb);
+const pl=addNode('vplayer',490,220,{engine:'vlc stream',smode:'auto',skbps:2500,sburn:true});
+pl.size.w=560; pl.size.h=460; applySize(pl);
+const hs=addNode('table',1080,220,{list:'video/history',key:'url',rev:true});
 hs.size.w=380; hs.size.h=360; applySize(hs);
 addEdge(tb.id,'all',pl.id,'rows'); addEdge(pl.id,'rec',hs.id,'rec');
 markWiresDirty();
