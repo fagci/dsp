@@ -82,6 +82,9 @@ fun main() {
     val http = TorrentHttp(core, "tok123"); http.start()
     val url = http.url(item.id, 0, "clip.mp4")
     ok("url shape", url.startsWith("http://127.0.0.1:${http.port}/t/tok123/${item.id}/0/clip.mp4"))
+    val httpL = TorrentHttp(core, "tokL", true); httpL.start()
+    ok("LAN client: the phone's address in the url", httpL.url(item.id, 0, "clip.mp4", "192.168.1.5").startsWith("http://192.168.1.5:${httpL.port}/t/tokL/${item.id}/0/clip.mp4"))
+    httpL.stop()
 
     val mid = get(url, "bytes=1000000-1000099")
     ok("range in the middle: 206 + exact bytes", mid.first == 206 && mid.second.contentEquals(data.copyOfRange(1_000_000, 1_000_100)), "code=${mid.first} n=${mid.second.size}")
