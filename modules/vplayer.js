@@ -204,6 +204,15 @@ async function vpTorrentGo(n,url,ref,r,from,g,ns){
   }catch(e){ if(g===n.gen) vpStatus(n,'torrent: '+e.message); }
 }
 // файл .torrent с телефона / компьютера (трекеры с входом, как rutracker, не отдают его по ссылке): байты → мост → тот же путь, что у magnet
+// файл от пользователя (кнопка 📂 или перетаскивание на картинку): .torrent — в торрент-клиент приложения, видео / звук — играет браузер по blob-адресу
+function vpDropFile(n,f){
+  if(!f) return;
+  if(/\.torrent$/i.test(f.name) || f.type==='application/x-bittorrent'){ vpOpenTorrentFile(n,f); return; }
+  if(/^(video|audio)\//.test(f.type) || /\.(mp4|m4v|webm|ogv|ogg|mov|mkv|mp3|m4a|aac|wav|flac|opus)$/i.test(f.name)){
+    if(n.blobUrl){ try{ URL.revokeObjectURL(n.blobUrl); }catch(e){} }
+    n.blobUrl=URL.createObjectURL(f); vpOpen(n,n.blobUrl,f.name,0); return; }
+  vpStatus(n,f.name+': not a .torrent or a video file');
+}
 async function vpOpenTorrentFile(n,f){
   vpDestroy(n); const g=n.gen; n.url=''; n.torrent=null; n.tline='';
   vpStatus(n,'torrent: reading '+f.name+'…');
@@ -375,6 +384,8 @@ function vpMount(n){
   const bPrev=mk('⏮','previous source',()=>vpStep(n,-1));
   const bPlay=mk('▶','play / pause (Space)',()=>vpToggle(n));
   const bCont=mk('↻','continue watching: the last started source from its position',()=>vpResumeList(n));
+  const fi=vpEl('input'); fi.type='file'; fi.accept='.torrent,video/*,audio/*,application/x-bittorrent'; fi.hidden=true; fi.onchange=()=>{ if(fi.files[0]) vpDropFile(n,fi.files[0]); fi.value=''; };
+  const bOpen=mk('📂','open a .torrent file (needs the DSP app) or a video / audio file from this device — or drop it on the picture',()=>fi.click());
   const bNext=mk('⏭','next source',()=>vpStep(n,1)), bFull=mk('⤢','fullscreen (F, double tap the middle of the picture)',()=>vpFull(n));
   const seek=vpEl('input','vp-seek'); seek.type='range'; seek.min=0; seek.max=1000; seek.value=0;
   const time=vpEl('span','vp-time','0:00 / 0:00');
@@ -384,8 +395,8 @@ function vpMount(n){
   const src=vpEl('select','vp-src'); src.title='source';
   const q=vpEl('select','vp-q'); q.title='quality'; q.hidden=true;
   const aud=vpEl('select','vp-aud'), sub=vpEl('select','vp-sub'); aud.title='audio track (libVLC)'; sub.title='subtitles (libVLC)'; aud.hidden=sub.hidden=true;
-  bar.append(bCont,bPrev,bPlay,bNext,seek,time,speed,q,aud,sub,bFull);
-  root.append(stage,bar,src);
+  bar.append(bCont,bPrev,bPlay,bNext,seek,time,speed,q,aud,sub,bOpen,bFull);
+  root.append(stage,bar,src,fi);
   let drag=false;
   seek.addEventListener('input',()=>{ drag=true; const d=vpD(n); if(d>0) time.textContent=vpFmt(seek.value/1000*d)+' / '+vpFmt(d); });
   seek.addEventListener('change',()=>{ drag=false; vpSeekTo(n,seek.value/1000); });
@@ -394,6 +405,10 @@ function vpMount(n){
   q.onchange=()=>{ if(n.hls) n.hls.currentLevel=+q.value; };
   aud.onchange=()=>{ n.sAudio=+aud.value; vpStreamReopen(n); };
   sub.onchange=()=>{ n.sSub=+sub.value; vpStreamReopen(n); };
+  // файл на картинку: .torrent или видео
+  stage.addEventListener('dragover',e=>{ if(e.dataTransfer && [...e.dataTransfer.types].includes('Files')){ e.preventDefault(); e.stopPropagation(); stage.classList.add('drop'); } });
+  stage.addEventListener('dragleave',()=>stage.classList.remove('drop'));
+  stage.addEventListener('drop',e=>{ stage.classList.remove('drop'); const f=e.dataTransfer && e.dataTransfer.files[0]; if(!f) return; e.preventDefault(); e.stopPropagation(); vpDropFile(n,f); });
   // клик — пауза (с задержкой: двойной клик — на весь экран, а не два переключения); события дальше узла не идут, иначе двойной клик сворачивает модуль
   let clickT=0;
   stage.addEventListener('click',e=>{ e.stopPropagation(); clearTimeout(clickT); clickT=setTimeout(()=>vpToggle(n),260); });
