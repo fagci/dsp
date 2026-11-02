@@ -81,6 +81,7 @@ fun main() {
     core.stallMs = 10_000
     val http = TorrentHttp(core, "tok123"); http.start()
     val url = http.url(item.id, 0, "clip.mp4")
+    ok("a login page is not a torrent", !TorrentArgs.looksTorrent("<!DOCTYPE html><html>".toByteArray()) && !TorrentArgs.looksTorrent(ByteArray(0)) && TorrentArgs.looksTorrent("d8:announce".toByteArray()) && TorrentArgs.NOT_TORRENT.contains("open a .torrent file"))
     ok("url shape", url.startsWith("http://127.0.0.1:${http.port}/t/tok123/${item.id}/0/clip.mp4"))
     val httpL = TorrentHttp(core, "tokL", true); httpL.start()
     ok("LAN client: the phone's address in the url", httpL.url(item.id, 0, "clip.mp4", "192.168.1.5").startsWith("http://192.168.1.5:${httpL.port}/t/tokL/${item.id}/0/clip.mp4"))

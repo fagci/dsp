@@ -33,6 +33,10 @@ import java.util.concurrent.Executors
 
 /** Чистая логика торрент-стриминга (без libtorrent и Android — проверяется на JVM). */
 object TorrentArgs {
+    /** Файл .torrent — bencode-словарь («d…»); трекер с логином (rutracker dl.php) вместо файла отдаёт страницу входа. */
+    fun looksTorrent(b: ByteArray): Boolean = b.isNotEmpty() && b[0] == 'd'.code.toByte()
+    const val NOT_TORRENT = "the address gave a web page, not a .torrent file (a tracker with a login, such as rutracker dl.php, does not give the file to a link without your cookies) — download the file in the browser where you are logged in and press «open a .torrent file» in the player, or use the magnet link"
+
     val VIDEO = setOf("mp4", "m4v", "mkv", "webm", "avi", "mov", "ts", "m2ts", "mts", "mpg", "mpeg", "flv", "wmv", "ogv", "vob")
     const val READAHEAD = 24                    // кусков, которые просим заранее после читаемого места
 
@@ -407,7 +411,11 @@ class TorrentHub(private val ctx: Context) {
                         TorrentArgs.kind(src) == "magnet" ->
                             core.addMagnet(src, j.optInt("timeout", 90).coerceIn(5, 300))
                                 ?: return Reply.done(c, id, cmd, "no metadata yet (DHT nodes: ${sm?.dhtNodes() ?: 0}): nobody has answered in time. The search goes on in the background — press again to wait further; a torrent without seeds, a network that blocks UDP, or DHT is still starting", "timeout")
-                        TorrentArgs.kind(src) == "url" -> core.add(TorrentInfo.bdecode(URL(src).openStream().use { it.readNBytes(8 * 1024 * 1024) }))
+                        TorrentArgs.kind(src) == "url" -> {
+                            val body = URL(src).openStream().use { it.readNBytes(8 * 1024 * 1024) }
+                            if (!TorrentArgs.looksTorrent(body)) return Reply.done(c, id, cmd, TorrentArgs.NOT_TORRENT, "args")
+                            core.add(TorrentInfo.bdecode(body))
+                        }
                         else -> return Reply.done(c, id, cmd, "src: a magnet: link, an http(s) address of a .torrent, or b64 of the file", "args")
                     }
                     val ti = item.ti
