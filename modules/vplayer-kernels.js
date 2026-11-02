@@ -301,3 +301,6 @@ function vpTorrentSearchLine(st,secs){
   const dht=+(st&&st.dht)||0, peers=+(st&&st.peers)||0;
   return 'torrent: looking for the metadata — '+Math.round(secs)+' s · DHT nodes: '+dht+' · peers: '+peers+(secs>20 && dht===0 ? ' (DHT is silent: UDP blocked or no network?)' : secs>40 && peers===0 ? ' (no peers yet — a rare torrent, wait or try another)' : '')+(secs>10 && st && st.trk ? '\ntrackers: '+st.trk : '')+(secs>10 && st && st.log ? '\nlog: '+st.log : '');
 }
+
+// двойной тап по картинке: левая треть — назад, правая — вперёд, середина — полный экран (x — от левого края, w — ширина)
+function vpTapZone(x,w){ if(!(w>0)) return 'full'; const f=x/w; return f<1/3 ? 'back' : f>2/3 ? 'fwd' : 'full'; }
