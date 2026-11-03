@@ -6,7 +6,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float64Array,Float32Array,Set,Map,Number,String,JSON,isFinite,Infinity,Array,Object});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/siteplan-kernels.js'),'utf8')+';this.K={spSolve,spParse,spTilt,spPoly,spDXF,spGeoJSON,spSVG,spCSV,spFrame};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/siteplan-kernels.js'),'utf8')+';this.K={spSolve,spParse,spTilt,spPoly,spDXF,spGeoJSON,spSVG,spCSV,spFrame,spNice,spGridFrame,spToFrame,spFromFrame,spGridLines};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -72,4 +72,12 @@ ok('dxf: entities and EOF',/ENTITIES[\s\S]*POLYLINE[\s\S]*EOF/.test(K.spDXF(R)))
 ok('svg: area label',/m²/.test(K.spSVG(R)));
 ok('csv: header + 3 rows',K.spCSV(R).trim().split('\n').length===4);
 ok('empty text: no crash',K.spSolve('').pts.length===0);
+// 13. сетка
+near('nice step: 7.3 → 10',K.spNice(7.3),10,0); near('nice step: 0.13 → 0.2',K.spNice(.13),.2,1e-12); near('nice step: 4 → 5',K.spNice(4),5,0);
+R=K.spSolve('A at 10 5\nB at 10 15\nC at 0 15\nD at 0 5\npoly A B C D');
+{ const f=K.spGridFrame(R,'structure'); near('structure frame: origin at the first vertex',f.ox,10,1e-9);
+  const q=K.spToFrame(f,10,15); near('structure frame: the first side is the u axis (length 10)',q[0],10,1e-9); near('…and v = 0 on it',q[1],0,1e-9);
+  const w=K.spFromFrame(f,3,2); near('round trip x',K.spToFrame(f,...w)[0],3,1e-12); near('round trip y',K.spToFrame(f,...w)[1],2,1e-12);
+  const n=K.spGridFrame(R,'north'); ok('north frame is the plan frame',n.ux===1 && n.uy===0 && n.vy===1 && n.ox===0);
+  const g=K.spGridLines(R,n,5,0); ok('grid lines cover the points at a nice step',g.step===5 && g.u[0]<=0 && g.u[g.u.length-1]>=10 && g.v[0]<=5 && g.v[g.v.length-1]>=15,JSON.stringify(g.u)+JSON.stringify(g.v)); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);

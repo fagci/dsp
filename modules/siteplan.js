@@ -12,6 +12,7 @@ const spName=s=>String(s??'').trim().replace(/[\s-]+/g,'_');
 function spText(n){                                                       // текст замеров + GPS-замеры, пришедшие записями
   let t=String(n.p.plan||'');
   for(const l of n.fixLines.values()) t+='\n'+l;
+  if(n.extLines) t+='\n'+n.extLines;                                      // вход lines: Photo Measure, Clinometer
   return t;
 }
 function spOpts(n){
@@ -51,14 +52,42 @@ function spExport(n,kind){
   else { const j=spGeoJSON(R); if(!j){ n.msg='GeoJSON needs a georeferenced plan: two GPS points, or one GPS point plus an azimuth («A-B az 90»)'; return; } sitepDl('siteplan.geojson',j,'application/geo+json'); }
 }
 
-def({ id:'siteplan', title:'Site Plan', cat:'Geo', kw:'plan site survey land plot measure tape gps clinometer height building outdoor indoor area perimeter slope dxf 3d construction fence foundation',
-  // lat / lon / acc / alt — позиция (My Position) для кнопки «＋ GPS fix»; rec — GPS-замеры записями (name, lat, lon, acc, alt): складываются в план как «name gps …»;
+// жесты на холсте: один палец / левая кнопка — поворот (3D) или сдвиг (план), два пальца / колесо — масштаб, правая кнопка / shift — сдвиг, двойной клик — сбросить вид
+function spGesture(n,cv){
+  if(n._gcv===cv) return; n._gcv=cv;
+  const P=new Map(), clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  cv.style.touchAction='none'; cv.style.cursor='grab';
+  const pos=ev=>{ const r=cv.getBoundingClientRect(); return [(ev.clientX-r.left)/r.width*cv.width,(ev.clientY-r.top)/r.height*cv.height]; };
+  cv.addEventListener('contextmenu',ev=>ev.preventDefault());
+  cv.addEventListener('pointerdown',ev=>{ ev.stopPropagation(); cv.setPointerCapture(ev.pointerId); P.set(ev.pointerId,{p:pos(ev),b:ev.button}); });
+  const end=ev=>{ P.delete(ev.pointerId); };
+  cv.addEventListener('pointerup',end); cv.addEventListener('pointercancel',end);
+  cv.addEventListener('pointermove',ev=>{
+    const q=P.get(ev.pointerId); if(!q) return; const np=pos(ev), dx=np[0]-q.p[0], dy=np[1]-q.p[1];
+    if(P.size===1){
+      if(n.p.view!=='3D' || q.b===1 || q.b===2 || ev.shiftKey){ n.panX+=dx; n.panY+=dy; }
+      else { const az=((+n.p.az+dx*.4+180)%360+360)%360-180; setMod(n,'az',+az.toFixed(1)); setMod(n,'el',+clamp(+n.p.el+dy*.4,0,90).toFixed(1)); }
+    } else if(P.size===2){
+      const o=[...P.entries()].find(([id])=>id!==ev.pointerId)[1].p, d0=Math.hypot(q.p[0]-o[0],q.p[1]-o[1]), d1=Math.hypot(np[0]-o[0],np[1]-o[1]);
+      if(d0>0) n.zoom=clamp(n.zoom*d1/d0,.2,40);
+      n.panX+=dx/2; n.panY+=dy/2;
+    }
+    q.p=np; redraw(n);
+  });
+  cv.addEventListener('wheel',ev=>{ ev.preventDefault(); ev.stopPropagation(); n.zoom=clamp(n.zoom*Math.exp(-ev.deltaY*.0015),.2,40); redraw(n); },{passive:false});
+  cv.addEventListener('dblclick',ev=>{ ev.stopPropagation(); n.zoom=1; n.panX=0; n.panY=0; redraw(n); });
+}
+
+def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, kw:'plan site survey land plot measure tape gps clinometer height building outdoor indoor area perimeter slope dxf 3d construction fence foundation',
+  // lines — замеры текстом с других модулей (Photo Measure, Clinometer), дописываются к списку; lat / lon / acc / alt — позиция (My Position) для кнопки «＋ GPS fix»; rec — GPS-замеры записями (name, lat, lon, acc, alt): складываются в план как «name gps …»;
   // area — площадь первого контура, м²; perim — его периметр, м; slope — уклон, °; rms — невязки в σ (≈1 — замеры согласованы); n — точек; rec — точки, poly — контуры для карты
-  ins:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'acc',t:'num'},{n:'alt',t:'num'},{n:'rec',t:'rec'}],
+  ins:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'acc',t:'num'},{n:'alt',t:'num'},{n:'rec',t:'rec'},{n:'lines',t:'txt'}],
   outs:[{n:'area',t:'num'},{n:'perim',t:'num'},{n:'slope',t:'num'},{n:'rms',t:'num'},{n:'n',t:'num'},{n:'rec',t:'rec'},{n:'poly',t:'rec'}],
   w:460, view:{h:380}, resize:true, readout:true,
   params:[{n:'plan',t:'code',plain:true,d:SP_DEF,label:'measurements, one per line: A-B 12.4 · A-B h 12.4 · A-B dz 1.2 · A-B az 45 · A-B-C 90 · A-B tilt 25 15 eye 1.6 · A z 120 · A gps lat lon ±3 · A at x y · poly A B C D (± — error, m or °)',fn:n=>{ n.key=''; }},
           {n:'view',t:'select',opts:['plan','3D'],d:'plan',label:'view'},
+          {n:'grid',t:'select',opts:['north','structure','off'],d:'north',label:'grid: north (E / N axes of the plan) · structure (along the first side of the contour, from its first point) · off'},
+          {n:'coords',t:'check',d:false,label:'label points with their grid coordinates'},
           {n:'az',t:'range',min:-180,max:180,step:5,d:-30,label:'3D: turn, °'},
           {n:'el',t:'range',min:5,max:90,step:5,d:35,label:'3D: elevation, °'},
           {n:'zex',t:'range',min:1,max:10,step:.5,d:2,label:'3D: height exaggeration ×'},
@@ -75,9 +104,10 @@ def({ id:'siteplan', title:'Site Plan', cat:'Geo', kw:'plan site survey land plo
           {n:'gj',t:'button',label:'⬇ GeoJSON (georeferenced plans)',fn:n=>spExport(n,'gj')},
           {n:'csv',t:'button',label:'⬇ CSV (points ± error)',fn:n=>spExport(n,'csv')},
           {n:'clr',t:'button',label:'Forget GPS fixes from rec',fn:n=>{ n.fixLines.clear(); n.key=''; }}],
-  init:n=>{ n.res=null; n.emit=null; n.key=''; n.err=[]; n.msg=''; n.fixLines=new Map(); n.inLat=null; n.inLon=null; n.inAcc=null; n.inAlt=null; },
+  init:n=>{ n.res=null; n.emit=null; n.key=''; n.err=[]; n.msg=''; n.fixLines=new Map(); n.extLines=''; n.inLat=null; n.inLon=null; n.inAcc=null; n.inAlt=null; n.zoom=1; n.panX=0; n.panY=0; },
   process(n,I){
     const p=n.p;
+    const ext=typeof I.lines==='string' ? I.lines : ''; if(ext!==n.extLines){ n.extLines=ext; n.key=''; }
     n.inLat=recNum(I.lat); n.inLon=recNum(I.lon); n.inAcc=recNum(I.acc); n.inAlt=recNum(I.alt);
     for(const r of recList(I.rec)){
       const la=recNum(r?.lat), lo=recNum(r?.lon), nm=spName(r?.name ?? r?.label ?? '');
@@ -95,21 +125,44 @@ def({ id:'siteplan', title:'Site Plan', cat:'Geo', kw:'plan site survey land plo
       rec:e ? e.rec : null, poly:e ? e.poly : null};
   },
   draw(n,cv,cx){
-    const W=cv.width, H=cv.height, R=n.res, p=n.p, L=[], pad=26;
+    const W=cv.width, H=cv.height, R=n.res, p=n.p, L=[], pad=26, d3=p.view==='3D';
     cx.fillStyle=themeColor('--screen')||'#0a0d0e'; cx.fillRect(0,0,W,H);
     const fg=themeColor('--scr-txt')||'#9fb0b6';
+    spGesture(n,cv);
     if(n.msg) L.push(n.msg);
     for(const e of n.err.slice(0,4)) L.push('line '+e.line+': '+e.msg+' — «'+e.text+'»');
     if(R && R.pts.length){
-      const d3=p.view==='3D', pts=R.pts, A=(+p.az)*Math.PI/180, E=(+p.el)*Math.PI/180, zx=+p.zex;
-      const pr=q=>{ if(!d3) return [q.x,q.y]; const xr=q.x*Math.cos(A)+q.y*Math.sin(A), yr=-q.x*Math.sin(A)+q.y*Math.cos(A); return [xr,q.z*zx*Math.cos(E)+yr*Math.sin(E)]; };
+      const pts=R.pts, A=(+p.az)*Math.PI/180, E=(+p.el)*Math.PI/180, zx=+p.zex;
+      const F=spGridFrame(R,p.grid==='structure' ? 'structure' : 'north'), unit=R.georef || F.mode==='structure' ? ['E','N'] : ['x','y'];
+      const pr=q=>{ if(!d3) return F.mode==='structure' ? spToFrame(F,q.x,q.y) : [q.x,q.y]; const xr=q.x*Math.cos(A)+q.y*Math.sin(A), yr=-q.x*Math.sin(A)+q.y*Math.cos(A); return [xr,q.z*zx*Math.cos(E)+yr*Math.sin(E)]; };
       const xy=pts.map(pr), zmin=Math.min(...pts.map(q=>q.z));
       let x0=1e99,x1=-1e99,y0=1e99,y1=-1e99; for(const [x,y] of xy){ x0=Math.min(x0,x); x1=Math.max(x1,x); y0=Math.min(y0,y); y1=Math.max(y1,y); }
-      const sc=Math.min((W-2*pad)/Math.max(x1-x0,1e-6),(H-2*pad)/Math.max(y1-y0,1e-6)), ox=(W-(x1-x0)*sc)/2, oy=(H+(y1-y0)*sc)/2;
-      const S=i=>[ox+(xy[i][0]-x0)*sc, oy-(xy[i][1]-y0)*sc];
+      const fit=Math.min((W-2*pad)/Math.max(x1-x0,1e-6),(H-2*pad)/Math.max(y1-y0,1e-6)), sc=fit*n.zoom;
+      const ox=(W-(x1-x0)*sc)/2+n.panX, oy=(H+(y1-y0)*sc)/2+n.panY;
+      const T=(px,py)=>[ox+(px-x0)*sc, oy-(py-y0)*sc], S=i=>T(xy[i][0],xy[i][1]);
       const bad=new Set(); for(const r of R.res) if(r.out && r.b!=='') bad.add([r.a,r.b].sort().join('|'));
       const idx=nm=>pts.findIndex(q=>q.name===nm);
       cx.font='10px monospace'; cx.textBaseline='alphabetic';
+      // сетка с координатами: по северу (оси плана) или относительно конструкции (первая сторона контура)
+      let gridStep=0;
+      if(p.grid!=='off'){
+        const G=spGridLines(R,F,60/sc,1); gridStep=G.step;
+        const gp=(u,v)=>{ const w=spFromFrame(F,u,v), q=pr({x:w[0],y:w[1],z:d3 ? zmin : 0}); return T(q[0],q[1]); };
+        cx.lineWidth=1; cx.strokeStyle='rgba(150,170,180,.22)'; cx.beginPath();
+        for(const u of G.u){ const a=gp(u,G.v0), b=gp(u,G.v1); cx.moveTo(a[0],a[1]); cx.lineTo(b[0],b[1]); }
+        for(const v of G.v){ const a=gp(G.u0,v), b=gp(G.u1,v); cx.moveTo(a[0],a[1]); cx.lineTo(b[0],b[1]); }
+        cx.stroke();
+        cx.fillStyle='rgba(150,170,180,.85)'; cx.textAlign='center';
+        const lab=v=>Math.abs(v)<1e-9 ? '0' : (+v.toFixed(3))+'';
+        // подписи: в плане оси горизонтальны — числа у нижнего и левого края кадра; в 3D — у концов линий, прижатые к кадру
+        const cl=(a,x0,x1,y0,y1)=>[Math.max(x0,Math.min(x1,a[0])),Math.max(y0,Math.min(y1,a[1]))];
+        for(const u of G.u){ const a=gp(u,G.v0); if(a[0]<8||a[0]>W-8) continue; const c=d3 ? cl(a,8,W-8,12,H-6) : [a[0],H-5]; cx.textAlign='center'; cx.fillText(lab(u),c[0],c[1]); }
+        for(const v of G.v){ const a=gp(G.u0,v); if(a[1]<12||a[1]>H-12) continue; const c=d3 ? cl(a,8,W-8,12,H-6) : [4,a[1]+3]; cx.textAlign=d3 ? 'right' : 'left'; cx.fillText(lab(v),c[0],c[1]); }
+        // оси: u — по востоку / вдоль конструкции, v — по северу / поперёк; стрелка на конце
+        const o=gp(0,0), au=gp(G.step*2,0), av=gp(0,G.step*2);
+        cx.strokeStyle='rgba(255,183,77,.8)'; cx.fillStyle='rgba(255,183,77,.95)'; cx.lineWidth=1.5; cx.beginPath(); cx.moveTo(o[0],o[1]); cx.lineTo(au[0],au[1]); cx.moveTo(o[0],o[1]); cx.lineTo(av[0],av[1]); cx.stroke();
+        cx.textAlign='left'; cx.fillText(unit[0],au[0]+3,au[1]+3); cx.fillText(unit[1],av[0]+3,av[1]-3);
+      }
       for(const pl of R.polys){
         cx.beginPath(); pl.names.forEach((nm,k)=>{ const s=S(idx(nm)); if(k) cx.lineTo(s[0],s[1]); else cx.moveTo(s[0],s[1]); }); cx.closePath();
         cx.fillStyle='rgba(79,195,247,.18)'; cx.fill(); cx.strokeStyle='#4fc3f7'; cx.lineWidth=2; cx.stroke();
@@ -124,18 +177,24 @@ def({ id:'siteplan', title:'Site Plan', cat:'Geo', kw:'plan site survey land plo
       }
       pts.forEach((q,i)=>{
         const s=S(i);
-        if(d3 && q.z>zmin+1e-6){ const f=pr({x:q.x,y:q.y,z:zmin}), fy=oy-(f[1]-y0)*sc; cx.strokeStyle='rgba(150,170,180,.35)'; cx.beginPath(); cx.moveTo(s[0],s[1]); cx.lineTo(ox+(f[0]-x0)*sc,fy); cx.stroke(); }
+        if(d3 && q.z>zmin+1e-6){ const f=T(...pr({x:q.x,y:q.y,z:zmin})); cx.strokeStyle='rgba(150,170,180,.35)'; cx.beginPath(); cx.moveTo(s[0],s[1]); cx.lineTo(f[0],f[1]); cx.stroke(); }
         cx.fillStyle=q.weak ? '#ffb74d' : '#7dff9a'; cx.strokeStyle='#000'; cx.lineWidth=1.5; cx.beginPath(); cx.arc(s[0],s[1],4,0,7); cx.stroke(); cx.fill();
-        cx.fillStyle=fg; cx.textAlign='left'; cx.fillText(q.name+(Math.abs(q.z)>.005 ? ' ↑'+q.z.toFixed(1) : ''),s[0]+7,s[1]-6);
+        let t=q.name+(Math.abs(q.z)>.005 ? ' ↑'+q.z.toFixed(1) : '');
+        if(p.coords){ const c=spToFrame(F,q.x,q.y); t=q.name+' ('+c[0].toFixed(2)+', '+c[1].toFixed(2)+(Math.abs(q.z)>.005 ? ', ↑'+q.z.toFixed(2) : '')+')'; }
+        cx.fillStyle=fg; cx.textAlign='left'; cx.fillText(t,s[0]+7,s[1]-6);
       });
-      // стрелка севера (план привязан по азимуту / GPS)
-      if(!d3 && R.georef){ cx.strokeStyle=fg; cx.fillStyle=fg; cx.beginPath(); cx.moveTo(W-18,pad+14); cx.lineTo(W-18,pad-8); cx.stroke(); cx.textAlign='center'; cx.fillText('N',W-18,pad-12); }
+      // стрелка севера в углу — в плане и в 3D (по повороту); только если план привязан к сторонам света
+      if(R.georef){ const c=[W-22,pad+8], v=d3 ? [Math.sin(A),-Math.cos(A)*Math.sin(E)] : F.mode==='structure' ? [F.uy,-F.vy] : [0,-1], l=Math.hypot(v[0],v[1])||1;
+        cx.strokeStyle=fg; cx.fillStyle=fg; cx.lineWidth=1.5; cx.beginPath(); cx.moveTo(c[0]-v[0]/l*14,c[1]-v[1]/l*14); cx.lineTo(c[0]+v[0]/l*14,c[1]+v[1]/l*14); cx.stroke();
+        cx.textAlign='center'; cx.fillText('N',c[0]+v[0]/l*23,c[1]+v[1]/l*23+3); }
       const worst=R.res.filter(r=>r.out).sort((a,b)=>b.nmax-a.nmax).slice(0,3);
       L.push(R.n+' point'+(R.n===1 ? '' : 's')+' · '+R.res.length+' measurement'+(R.res.length===1 ? '' : 's')+(R.dof>0 ? ' · redundancy '+R.dof+' · residuals '+R.rms.toFixed(2)+'σ'+(R.rms>2 ? ' — inconsistent' : R.rms<1.5 ? ' — consistent' : '') : ' · no redundancy: nothing to cross-check (add a diagonal or a second measurement)'));
+      if(gridStep) L.push('grid '+gridStep+' m · '+(F.mode==='structure' ? 'axes along the first side of the contour, origin at its first point' : R.georef ? 'north-aligned (E, N from the local origin)' : 'plan axes x, y from the origin (no north: the plan is not georeferenced)'));
       for(const w of worst) L.push('⚠ line '+w.li+' '+w.a+(w.b ? '-'+w.b : '')+' '+w.k+': off by '+w.r.map(v=>v.toFixed(3)).join(', ')+' ('+w.nmax.toFixed(1)+'σ) — check it');
       for(const pl of R.polys) L.push('contour '+pl.names.join('-')+': plan '+pl.area.toFixed(2)+' m² · surface '+pl.surf.toFixed(2)+' m² · perimeter '+pl.perimeter.toFixed(2)+' m'+(pl.slope>.05 ? ' · slope '+pl.slope.toFixed(1)+'° ('+pl.slopePct.toFixed(0)+'%)' : ''));
       const wk=pts.filter(q=>q.weak).map(q=>q.name); if(wk.length) L.push('poorly determined (amber): '+wk.join(', ')+' — measure more distances to them');
       const ok=pts.filter(q=>!q.weak && isFinite(q.sx)); if(ok.length){ const m=Math.max(...ok.map(q=>Math.hypot(q.sx,q.sy))); L.push('position error up to ±'+(m<1 ? (m*100).toFixed(1)+' cm' : m.toFixed(1)+' m')+(R.georef ? ' · georeferenced' : ' · local coordinates (for the map: two GPS points or GPS + azimuth)')); }
+      L.push(d3 ? 'drag — turn · two fingers / wheel — zoom · right drag or shift+drag — move · double click — reset view' : 'drag — move · two fingers / wheel — zoom · double click — reset view');
     } else if(!n.err.length) L.push('no measurements — write them in «measurements» (A-B 12.4 …)');
     n.el.querySelector('.readout').textContent=L.join('\n');
   }});
