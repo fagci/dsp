@@ -377,6 +377,7 @@ const PRESET_CATS={
   'Site Plan: Points and Measurements from a Table':'Maps & Locating',
   'Echo Ranger: Distance to a Wall by Chirp → Measure Entry → Site Plan':'Maps & Locating',
   'Room Walk: a Room from Wall Distances and Compass Azimuths → Site Plan':'Maps & Locating',
+  'Plan Editor: Rooms in 3D with Cameras and Wi-Fi, Shared with Video Overlay':'Maps & Locating',
   'Clinometer: Tree Height from the Phone Tilt → Site Plan':'Maps & Locating',
   'Signal Paths: Direct and Reflected Between Two Points':'Maps & Locating',
   'Flight Sim: Fly over Terrain (Joystick)':'Aircraft, Satellites & Telemetry',
@@ -8398,6 +8399,32 @@ rw.size.w=420; rw.size.h=560; applySize(rw);
 const sp=addNode('siteplan',960,210,{view:'plan',plan:'# the corners come from Room Walk'});
 sp.size.w=500; sp.size.h=480; applySize(sp);
 addEdge(or.id,'az',rw.id,'az'); addEdge(er.id,'dist',rw.id,'d'); addEdge(er.id,'go',rw.id,'go'); addEdge(rw.id,'lines',sp.id,'lines');
+markWiresDirty();
+});
+preset('Plan Editor: Rooms in 3D with Cameras and Wi-Fi, Shared with Video Overlay', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Draw and edit a plan in 3D. Tools on the canvas strip: wall (click points, the first one closes a room; Esc ends), door / window (click a wall), box, column, camera, antenna, erase; «select» picks and drags points, objects, cameras and antennas — in the plan and in 3D alike (turn the model by dragging the empty space, wheel / two fingers zoom, right drag moves). A selected wall shows its thickness, height, material and a lock: a locked length stays while you drag the points (🔒). '+
+  'Cameras (azimuth by the white handle, tilt, field of view, range) cast shadows from the walls: layer «cameras» shows what is seen (green) and the blind spots (red) with the percentage; antennas (EIRP, beam width, frequency) lose signal on every wall by its material and thickness — layer «signal». '+
+  'Shared space with Video Overlay: the plan is placed on the Earth by the origin lat / lon / north / floor altitude (advanced); the walls, doors, boxes, cameras and antennas go out as 3D outlines and markers to Video Overlay (rec), which draws them over the live video from the same pose wires (lat / lon / alt / az / el), and the phone’s pose is drawn back in the plan (magenta). Here the pose comes from My Position and Constants — wire Orientation for a real phone. «lines» go to Site Plan, «rec» can go to a Table.'});
+nt.size.w=1180; nt.size.h=150; applySize(nt);
+const sc=peNew(), W=(a,b,o)=>peAddWall(sc,a.id,b.id,o), Pn=(x,y)=>peAddPoint(sc,x,y);
+const a=Pn(0,0), b=Pn(5,0), c=Pn(5,4), d=Pn(0,4), e=Pn(8,0), f=Pn(8,4);
+const w1=W(a,b), w2=W(b,c,{t:.1,mat:'drywall'}), w3=W(c,d), w4=W(d,a), w5=W(b,e), w6=W(e,f), w7=W(f,c);
+peAddRoom(sc,[a.id,b.id,c.id,d.id],'Living'); peAddRoom(sc,[b.id,e.id,f.id,c.id],'Bedroom');
+peAddObj(sc,'door',{wall:w2.id,u:.5,w:.9,name:'door'}); peAddObj(sc,'door',{wall:w1.id,u:.15,w:1}); peAddObj(sc,'window',{wall:w3.id,u:.5,w:1.6}); peAddObj(sc,'window',{wall:w6.id,u:.5,w:1.2});
+peAddObj(sc,'box',{x:1.4,y:3.2,w:2,d:.9,h:.8,name:'sofa'}); peAddObj(sc,'box',{x:6.9,y:2.9,w:1.6,d:2,h:.5,name:'bed'}); peAddObj(sc,'column',{x:3.6,y:1.2});
+peAddCam(sc,.15,3.85,{az:135,fov:100,range:9,z:2.6,tilt:22,name:'Cam living'}); peAddCam(sc,7.85,.15,{az:315,fov:90,range:7,z:2.5,tilt:25,name:'Cam bed'});
+peAddAnt(sc,4.9,2,{az:270,bw:360,eirp:20,f:2437,z:2.2,name:'AP'});
+peLock(sc,w1.id);
+const o={lat:55.0302,lon:82.9204,north:20,alt:0}, g=peGeo(o,1.2,1.0);
+const me=addNode('geoMe',40,230,{src:'manual',lat:+g[0].toFixed(7),lon:+g[1].toFixed(7)});
+const cs=[['alt',1.5],['az',60],['el',-5]].map(([k,v],i)=>addNode('const',40,330+i*95,{v}));
+const pe=addNode('planedit',300,230,{scene:JSON.stringify(sc),view:'3D',layer:'cameras',olat:o.lat,olon:o.lon,north:o.north,oalt:o.alt,snap:'0.1'});
+pe.size.w=760; pe.size.h=700; applySize(pe);
+const ov=addNode('overlay',1090,230,{fov:75,models:true,sky:true,planets:false,deep:false,starMag:-1,terrain:false,relief:'off'});
+ov.size.w=520; ov.size.h=420; applySize(ov);
+for(const t of [pe,ov]){ addEdge(me.id,'lat',t.id,'lat'); addEdge(me.id,'lon',t.id,'lon'); addEdge(cs[0].id,'out',t.id,'alt'); addEdge(cs[1].id,'out',t.id,'az'); addEdge(cs[2].id,'out',t.id,'el'); }
+addEdge(pe.id,'rec',ov.id,'rec');
 markWiresDirty();
 });
 preset('Clinometer: Tree Height from the Phone Tilt → Site Plan', function(){
