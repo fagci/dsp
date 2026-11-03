@@ -372,6 +372,9 @@ const PRESET_CATS={
   'Site Plan: Plot and House from Tape, GPS and Clinometer (3D)':'Maps & Locating',
   'Photo Measure: a Bed from an A4 Sheet in the Photo → Site Plan':'Maps & Locating',
   'Plan Scan: Trace a Plot from an Image with a Scale → Site Plan':'Maps & Locating',
+  'Measure Entry: Walk a Plot with a Tape, Numbers from a Keypad → Site Plan':'Maps & Locating',
+  'Laser Distance Meter (BLE) → Measure Entry → Site Plan':'Maps & Locating',
+  'Site Plan: Points and Measurements from a Table':'Maps & Locating',
   'Clinometer: Tree Height from the Phone Tilt → Site Plan':'Maps & Locating',
   'Signal Paths: Direct and Reflected Between Two Points':'Maps & Locating',
   'Flight Sim: Fly over Terrain (Joystick)':'Aircraft, Satellites & Telemetry',
@@ -8314,6 +8317,50 @@ pm.size.w=520; pm.size.h=470; applySize(pm);
 const sp=addNode('siteplan',600,200,{view:'plan',grid:'north',plan:'# traced from the scan; tape measurements go here, e.g. the diagonal:\nC1-C3 35.10 ± 0.03'});
 sp.size.w=520; sp.size.h=470; applySize(sp);
 addEdge(pm.id,'lines',sp.id,'lines');
+markWiresDirty();
+});
+preset('Measure Entry: Walk a Plot with a Tape, Numbers from a Keypad → Site Plan', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Walk around the plot with a tape and type the numbers. Measure Entry takes a number from the Number Pad (or the Pocket Calculator, or a typed expression like 12.4+3.6*2) and the «ENT» pulse: every press adds one line to the log — A-B, then B-C, C-D… (the chain: the next side starts where the last one ended). Switch «what is measured» for diagonals, heights (dz), compass bearings, angles, clinometer readings; «Close the contour» adds the poly. '+
+  'The log is plain text — edit it, undo the last line, and its lines go to Site Plan (lines); the new measurement also goes out as a record (kind, a, b, value, sigma) — wire it to a Table to keep the history, or to Site Plan’s rec. Pre-filled: a 20×12 m plot with a diagonal; press ENT on the keypad to add the next one (type e.g. 23.3 and choose the diagonal A-C).'});
+nt.size.w=980; nt.size.h=130; applySize(nt);
+const np=addNode('numpad',40,200,{mode:'number'});
+np.size.w=240; np.size.h=300; applySize(np);
+const me=addNode('measureentry',320,200,{log:'A-B 20.00\nB-C 12.00\nC-D 20.00\nD-A 12.00\nA-C 23.32\npoly A B C D'});
+me.size.w=420; me.size.h=470; applySize(me);
+const sp=addNode('siteplan',780,200,{view:'plan',plan:''});
+sp.size.w=520; sp.size.h=470; applySize(sp);
+addEdge(np.id,'out',me.id,'v'); addEdge(np.id,'enter',me.id,'go'); addEdge(me.id,'lines',sp.id,'lines');
+markWiresDirty();
+});
+preset('Laser Distance Meter (BLE) → Measure Entry → Site Plan', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A Bluetooth laser distance meter fills the plan: every shot adds a side. BLE GATT connects (button Connect, pick the meter) and sends the number on each measurement («value», pulse «new»); Measure Entry turns the number into a line of the log (A-B, B-C … the chain) and Site Plan solves the contour. Set up here for the Leica DISTO GATT service from its published description (service 3ab10100-…, characteristic 3ab10101-…, float32 LE, metres) — not tried on a real device; '+
+  'any meter that notifies a number works: find its service and characteristic UUIDs (nRF Connect), set the format and the scale (a meter that sends millimetres as uint32 — scale 0.001). Bosch GLM meters use a command protocol and are not covered by this plain-notification setup. The log below holds a sample plot so the plan is not empty.'});
+nt.size.w=980; nt.size.h=130; applySize(nt);
+const bl=addNode('bleGatt',40,200,{svc:'3ab10100-f831-4395-b29d-570977d5bf94',chr:'3ab10101-f831-4395-b29d-570977d5bf94',fmt:'float32 LE',k:1,mode:'notify'});
+bl.size.w=330; bl.size.h=300; applySize(bl);
+const me=addNode('measureentry',410,200,{log:'A-B 20.00\nB-C 12.00\nC-D 20.00\nD-A 12.00\nA-C 23.32\npoly A B C D'});
+me.size.w=420; me.size.h=470; applySize(me);
+const sp=addNode('siteplan',870,200,{view:'plan',plan:''});
+sp.size.w=520; sp.size.h=470; applySize(sp);
+addEdge(bl.id,'value',me.id,'v'); addEdge(bl.id,'new',me.id,'go'); addEdge(me.id,'lines',sp.id,'lines');
+markWiresDirty();
+});
+preset('Site Plan: Points and Measurements from a Table', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Table is where the measurements live. Site Plan reads the Table lists named in «table» (a list of the Table library; here the rows come from the Table node itself through «play rows» into Site Plan’s rec, the same rows work either way): rows with kind (d — tape, h — horizontal, dz — height difference, az — bearing, ang — angle, tilt — clinometer, poly — contour) + a, b, c + value [+ sigma]; rows with name + lat, lon [+ acc, alt] (GPS); name + x, y [+ z] (coordinates); or a ready «line». '+
+  'Edit a cell and the plan is solved again. The same rows can come from a Table’s rec output (play rows, Measure Entry records) into Site Plan’s rec; «Points to the Table list» writes the solved points back (name, x, y, z, ± error, lat, lon).'});
+nt.size.w=980; nt.size.h=110; applySize(nt);
+const tb=addNode('table',40,180,{list:'@patch',
+  data:'kind,a,b,c,value,sigma,name,lat,lon,acc,alt,line\nd,A,B,,24.80,,,,,,,\nd,B,C,,15.10,,,,,,,\nd,C,D,,25.10,,,,,,,\nd,D,A,,14.90,,,,,,,\nd,A,C,,29.05,,,,,,,\nd,B,D,,29.00,,,,,,,\ndz,A,B,,0.6,,,,,,,\naz,A,B,,90,,,,,,,\n,,,,,,,,,,,poly A B C D\n,,,,,,A,55.0302,82.9204,4,,\n,,,,,,B,55.0302,82.92079,4,,'});
+tb.size.w=520; tb.size.h=330; applySize(tb);
+const pl=playRows(tb,40,540,{advance:'rate',rate:20,loop:false});
+const sp=addNode('siteplan',600,180,{view:'plan',plan:'A z 0'});
+sp.size.w=520; sp.size.h=470; applySize(sp);
+const mp=addNode('geoMap',1160,180,{mz:19,mlat:55.0302,mlon:82.9206});
+mp.size.w=420; mp.size.h=400; applySize(mp);
+addEdge(pl.id,'rec',sp.id,'rec'); addEdge(sp.id,'rec',mp.id,'rec'); addEdge(sp.id,'poly',mp.id,'rec');
 markWiresDirty();
 });
 preset('Clinometer: Tree Height from the Phone Tilt → Site Plan', function(){
