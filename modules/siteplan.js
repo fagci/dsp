@@ -12,6 +12,7 @@ const spName=s=>String(s??'').trim().replace(/[\s-]+/g,'_');
 function spText(n){                                                       // текст замеров + GPS-замеры, пришедшие записями
   let t=String(n.p.plan||'');
   for(const l of n.fixLines.values()) t+='\n'+l;
+  if(n.tblText) t+='\n'+n.tblText;                                         // списки Table
   if(n.extLines) t+='\n'+n.extLines;                                      // вход lines: Photo Measure, Clinometer
   return t;
 }
@@ -78,13 +79,26 @@ function spGesture(n,cv){
   cv.addEventListener('dblclick',ev=>{ ev.stopPropagation(); n.zoom=1; n.panX=0; n.panY=0; redraw(n); });
 }
 
+async function spLoadTables(n,tk){                                        // замеры из списков Table (колонки — в spRowToLine)
+  const lists=String(n.p.table||'').split(',').map(x=>x.trim()).filter(Boolean), rows=[];
+  for(const l of lists) rows.push(...(await gsRead(l).catch(()=>[])));
+  if(n.tblKey!==tk) return;
+  const text=spRowsToText(rows); if(text!==n.tblText){ n.tblText=text; n.key=''; }
+}
+async function spSaveTable(n){
+  const R=n.res; if(!R || !R.pts.length){ n.msg='nothing to save yet'; return; }
+  const t=new Date().toISOString(), rows=R.pts.map(p=>({name:p.name,t,x:+p.x.toFixed(3),y:+p.y.toFixed(3),z:+p.z.toFixed(2),sx:isFinite(p.sx) ? +p.sx.toFixed(4) : '',sy:isFinite(p.sy) ? +p.sy.toFixed(4) : '',sz:isFinite(p.sz) ? +p.sz.toFixed(4) : '',...(R.georef ? {lat:+p.lat.toFixed(8),lon:+p.lon.toFixed(8)} : {})}));
+  const list=n.p.save||'analysis/siteplan'; await tblPut(list,Object.keys(rows[0]),rows); n.msg='saved '+rows.length+' points to «'+list+'» (name, x, y, z, sx, sy, sz'+(R.georef ? ', lat, lon' : '')+')';
+}
+
 def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, kw:'plan site survey land plot measure tape gps clinometer height building outdoor indoor area perimeter slope dxf 3d construction fence foundation',
-  // lines — замеры текстом с других модулей (Photo Measure, Clinometer), дописываются к списку; lat / lon / acc / alt — позиция (My Position) для кнопки «＋ GPS fix»; rec — GPS-замеры записями (name, lat, lon, acc, alt): складываются в план как «name gps …»;
+  // rec — записи: строки замеров (kind, a, b, value, sigma — от Measure Entry или Table), GPS-замеры (name, lat, lon, acc, alt), точки (name, x, y, z); lines — замеры текстом с других модулей (Photo Measure, Clinometer), дописываются к списку; lat / lon / acc / alt — позиция (My Position) для кнопки «＋ GPS fix»; rec — GPS-замеры записями (name, lat, lon, acc, alt): складываются в план как «name gps …»;
   // area — площадь первого контура, м²; perim — его периметр, м; slope — уклон, °; rms — невязки в σ (≈1 — замеры согласованы); n — точек; rec — точки, poly — контуры для карты
   ins:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'acc',t:'num'},{n:'alt',t:'num'},{n:'rec',t:'rec'},{n:'lines',t:'txt'}],
   outs:[{n:'area',t:'num'},{n:'perim',t:'num'},{n:'slope',t:'num'},{n:'rms',t:'num'},{n:'n',t:'num'},{n:'rec',t:'rec'},{n:'poly',t:'rec'}],
   w:460, view:{h:380}, resize:true, readout:true,
   params:[{n:'plan',t:'code',plain:true,d:SP_DEF,label:'measurements, one per line: A-B 12.4 · A-B h 12.4 · A-B dz 1.2 · A-B az 45 · A-B-C 90 · A-B tilt 25 15 eye 1.6 · A z 120 · A gps lat lon ±3 · A at x y · poly A B C D (± — error, m or °)',fn:n=>{ n.key=''; }},
+          {n:'table',t:'text',d:'',label:'Table lists with measurements, comma-separated. Columns: kind (d h dz az tilt ang poly) + a, b, c + value [+ sigma]; or name + lat, lon [+ acc, alt]; or name + x, y [+ z]; or a ready «line»',fn:n=>{ n.tblKey=''; }},
           {n:'view',t:'select',opts:['plan','3D'],d:'plan',label:'view'},
           {n:'grid',t:'select',opts:['north','structure','off'],d:'north',label:'grid: north (E / N axes of the plan) · structure (along the first side of the contour, from its first point) · off'},
           {n:'coords',t:'check',d:false,label:'label points with their grid coordinates'},
@@ -99,25 +113,26 @@ def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, kw:'plan site sur
           {n:'sgr',t:'range',min:1,max:30,step:1,d:5,label:'terrain height error, m',adv:true},
           {n:'pname',t:'text',d:'',label:'name for «＋ GPS fix» (empty — P1, P2…)'},
           {n:'addgps',t:'button',label:'＋ GPS fix (My Position → the list)',fn:n=>spAddGps(n)},
+          {n:'save',t:'text',d:'analysis/siteplan',label:'Table list for the points'},
+          {n:'tosave',t:'button',label:'⬇ Points to the Table list (name, x, y, z, ± error, lat, lon)',fn:n=>spSaveTable(n)},
           {n:'dxf',t:'button',label:'⬇ DXF (3D)',fn:n=>spExport(n,'dxf')},
           {n:'svg',t:'button',label:'⬇ SVG (dimensioned plan)',fn:n=>spExport(n,'svg')},
           {n:'gj',t:'button',label:'⬇ GeoJSON (georeferenced plans)',fn:n=>spExport(n,'gj')},
           {n:'csv',t:'button',label:'⬇ CSV (points ± error)',fn:n=>spExport(n,'csv')},
           {n:'clr',t:'button',label:'Forget GPS fixes from rec',fn:n=>{ n.fixLines.clear(); n.key=''; }}],
-  init:n=>{ n.res=null; n.emit=null; n.key=''; n.err=[]; n.msg=''; n.fixLines=new Map(); n.extLines=''; n.inLat=null; n.inLon=null; n.inAcc=null; n.inAlt=null; n.zoom=1; n.panX=0; n.panY=0; },
+  init:n=>{ n.res=null; n.emit=null; n.key=''; n.err=[]; n.msg=''; n.fixLines=new Map(); n.extLines=''; n.tblText=''; n.tblKey=''; n.inLat=null; n.inLon=null; n.inAcc=null; n.inAlt=null; n.zoom=1; n.panX=0; n.panY=0; },
   process(n,I){
     const p=n.p;
     const ext=typeof I.lines==='string' ? I.lines : ''; if(ext!==n.extLines){ n.extLines=ext; n.key=''; }
     n.inLat=recNum(I.lat); n.inLon=recNum(I.lon); n.inAcc=recNum(I.acc); n.inAlt=recNum(I.alt);
-    for(const r of recList(I.rec)){
-      const la=recNum(r?.lat), lo=recNum(r?.lon), nm=spName(r?.name ?? r?.label ?? '');
-      if(la==null || lo==null || !nm) continue;
-      const acc=recNum(r.acc ?? r.accuracy), alt=recNum(r.alt ?? r.altitude), key=nm+'|'+la+'|'+lo;
-      if(n.fixLines.has(key)) continue;
+    for(const r of recList(I.rec)){                                         // записи: строки замеров (kind a b value…), GPS (name lat lon acc alt), точки (name x y z)
+      const line=spRowToLine(r); if(!line || n.fixLines.has(line)) continue;
       if(n.fixLines.size>=500) n.fixLines.delete(n.fixLines.keys().next().value);
-      n.fixLines.set(key,nm+' gps '+la+' '+lo+(acc>0 ? ' ±'+acc : '')+(alt!=null ? ' alt '+alt : '')); n.key='';
+      n.fixLines.set(line,line); n.key='';
     }
-    const key=[p.plan,p.sd,p.sa,p.sg,p.eye,p.ground,p.sgr,n.fixLines.size,typeof Horizon!=='undefined' ? Horizon.ver : 0].join('|');
+    const tk=p.table+'|'+(typeof ListDB!=='undefined' ? ListDB.rev : 0);
+    if(tk!==n.tblKey){ n.tblKey=tk; spLoadTables(n,tk); }
+    const key=[p.plan,p.sd,p.sa,p.sg,p.eye,p.ground,p.sgr,n.fixLines.size,n.tblText.length,typeof Horizon!=='undefined' ? Horizon.ver : 0].join('|');
     let e=null;
     if(key!==n.key){ n.key=key; try{ spRun(n); }catch(err){ n.res=null; n.msg='plan: '+err.message; } e=n.emit; n.emit=null; }
     const R=n.res, pl=R?.polys[0];

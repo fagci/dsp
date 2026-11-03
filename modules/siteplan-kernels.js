@@ -349,3 +349,34 @@ function spGridLines(R,f,want,pad=1){
   const U=[],V=[]; for(let u=u0;u<=u1+1e-9 && U.length<200;u+=step) U.push(+u.toFixed(9)); for(let v=v0;v<=v1+1e-9 && V.length<200;v+=step) V.push(+v.toFixed(9));
   return {step,u:U,v:V,u0,u1,v0,v1};
 }
+
+// ---------- строки таблицы (Table) и записей (rec) → строки замеров ----------
+// Колонки (регистр не важен): line | text — готовая строка; kind (d / h / dz / az / tilt / ang / poly) + a, b[, c] (или from, to) + value (или v, d, dist, length) [+ sigma | s | err];
+// без kind: name + lat, lon [+ acc, alt] — GPS; name + x, y [+ z] — координаты; name + z — высота; a, b + value — расстояние.
+function spRowToLine(r){
+  if(!r || typeof r!=='object') return '';
+  const R={}; for(const k of Object.keys(r)) R[String(k).trim().toLowerCase()]=r[k];
+  const has=v=>v!==undefined && v!==null && String(v).trim()!=='';
+  const g=(...ks)=>{ for(const k of ks) if(has(R[k])) return R[k]; return undefined; };
+  const nm=v=>String(v).trim().replace(/[\s-]+/g,'_');
+  const num=v=>{ if(!has(v)) return NaN; const x=Number(String(v).trim().replace(',','.')); return isFinite(x) ? x : NaN; };
+  const f=v=>String(+v.toFixed(6)), sg=v=>isFinite(v) && v>0 ? ' ± '+f(v) : '';
+  const raw=g('line','text','dsl'); if(typeof raw==='string' && raw.trim()) return raw.trim();
+  const kind=String(g('kind','type','k')??'').trim().toLowerCase(), sig=num(g('sigma','s','err','error','±'));
+  const a=g('a','from','p1','name','point'), b=g('b','to','p2'), c=g('c','p3'), val=num(g('value','v','d','dist','distance','len','length','m'));
+  if(kind==='poly'){ const l=g('names','points','poly')??[a,b,c].filter(has).join(' '); const ids=String(l).split(/[\s,;]+/).filter(Boolean).map(nm); return ids.length>=3 ? 'poly '+ids.join(' ') : ''; }
+  if(kind==='tilt'){ const ang=num(g('angle','value','v')), hd=num(g('hd','dist','distance','h')), eye=num(g('eye')); return has(a)&&has(b)&&isFinite(ang)&&hd>0 ? nm(a)+'-'+nm(b)+' tilt '+f(ang)+' '+f(hd)+(isFinite(eye) ? ' eye '+f(eye) : '')+sg(sig) : ''; }
+  if(kind==='ang'||kind==='angle'){ return has(a)&&has(b)&&has(c)&&isFinite(val) ? nm(a)+'-'+nm(b)+'-'+nm(c)+' '+f(val)+sg(sig) : ''; }
+  if(kind==='d'||kind==='h'||kind==='dz'||kind==='az'||(!kind && has(a) && has(b) && isFinite(val))){
+    return has(a)&&has(b)&&isFinite(val) ? nm(a)+'-'+nm(b)+' '+(kind && kind!=='d' ? kind+' ' : '')+f(val)+sg(sig) : '';
+  }
+  if(kind && kind!=='gps' && kind!=='at' && kind!=='z') return '';
+  const la=num(g('lat','latitude')), lo=num(g('lon','lng','longitude')), x=num(g('x','east')), y=num(g('y','north')), z=num(g('z','height','alt','altitude','h'));
+  if(has(a) && isFinite(la) && isFinite(lo) && Math.abs(la)<=90 && Math.abs(lo)<=180){
+    const acc=num(g('acc','accuracy','sigma','s')); return nm(a)+' gps '+f(la)+' '+f(lo)+sg(acc)+(isFinite(z) ? ' alt '+f(z) : '');
+  }
+  if(has(a) && isFinite(x) && isFinite(y)) return nm(a)+' at '+f(x)+' '+f(y)+sg(sig)+(isFinite(z) ? '\n'+nm(a)+' z '+f(z) : '');
+  if(has(a) && isFinite(z) && !isFinite(x) && !isFinite(y)) return nm(a)+' z '+f(z)+sg(sig);
+  return '';
+}
+const spRowsToText=rows=>(rows||[]).map(spRowToLine).filter(Boolean).join('\n');
