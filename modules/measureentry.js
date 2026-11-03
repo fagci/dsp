@@ -17,14 +17,14 @@ function meAdd(n,value,src){
   if(p.chain && (K.k==='d' || K.k==='h' || K.k==='dz' || K.k==='az' || K.k==='tilt')){ setMod(n,'from',meName(p.to)); setMod(n,'to',meNext(meName(p.to))); }
   else if(K.pts===1){ setMod(n,'from',meNext(meName(p.from))); }
   if(p.clear) setMod(n,'value','');
-  n.logKey=''; return true;
+  n.logKey=''; redraw(n); return true;
 }
 function meUndo(n){
   const L=String(n.p.log||'').split('\n'); while(L.length && !L[L.length-1].trim()) L.pop();
-  const gone=L.pop(); const v=L.join('\n'); if(n.set?.log) n.set.log(v); else n.p.log=v; n.msg=gone ? 'removed: '+gone : 'the log is empty'; n.logKey='';
+  const gone=L.pop(); const v=L.join('\n'); if(n.set?.log) n.set.log(v); else n.p.log=v; n.msg=gone ? 'removed: '+gone : 'the log is empty'; n.logKey=''; redraw(n);
 }
 
-def({ id:'measureentry', title:'Measure Entry', cat:'Geo', touch:true, kw:'measure entry tape calculator keypad survey measurements log distance chain walk perimeter laser meter rangefinder input table site plan',
+def({ id:'measureentry', title:'Measure Entry', cat:'Geo', touch:true, lazy:true, kw:'measure entry tape calculator keypad survey measurements log distance chain walk perimeter laser meter rangefinder input table site plan',
   // v — значение снаружи (Number Pad, Pocket Calculator, BLE GATT дальномер), go — импульс «добавить» (Number Pad enter, BLE GATT new);
   // lines — весь журнал для Site Plan; rec — новый замер записью (kind, a, b, c, value, sigma, line, src) — в Table или в Site Plan; n — число замеров
   ins:[{n:'v',t:'num'},{n:'go',t:'num'}],
