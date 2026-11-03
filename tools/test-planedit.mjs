@@ -3,7 +3,7 @@
 import vm from 'node:vm'; import fs from 'node:fs'; import path from 'node:path'; import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Array,String,Number,Object,JSON,Set,Map,Float32Array,Uint8Array,isFinite,Infinity});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints};`,ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peOverlaps,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints};`,ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -130,5 +130,9 @@ ok('the same wall is a bigger obstacle at 5 GHz: the level behind it drops more 
   const far={cx:4.8,cy:-.5,ux:1,uy:0,l:.8,t:.4,z0:0,z1:.8,kind:'box'}; const o2=K.peBoxOrder([wall,far],view,depth); ok('a box at the very end of a long wall, on the viewer’s side: after the wall',o2[1]===1,JSON.stringify(o2));
   const view2={dx:0,dy:1,h:Math.cos(40*Math.PI/180)}, o3=K.peBoxOrder([wall,front,back],view2,b=>-b.cy); ok('the viewer on the north: the order flips',o3.indexOf(2)>o3.indexOf(0) && o3.indexOf(1)<o3.indexOf(0),JSON.stringify(o3));
   const sill={cx:0,cy:0,ux:1,uy:0,l:1,t:.2,z0:0,z1:.9,kind:'wall'}, head={...sill,z0:2.1,z1:2.7}; const o4=K.peBoxOrder([head,sill],{dx:0,dy:-1,h:0},b=>0); ok('from above (h = 0): the lower block first, even on the same footprint (a window sill under its header)',o4[0]===1,JSON.stringify(o4)); }
+// объект, вошедший в стену
+{ const {s,P,Wl}=room(); const inside=K.peAddObj(s,'box',{x:1.4,y:2,w:2,d:.9,h:.8,rot:90}); ok('a sofa fully inside the room overlaps nothing',K.peOverlaps(s).length===0);
+  const bad=K.peAddObj(s,'box',{x:1.4,y:3.2,w:2,d:.9,h:.8,rot:0}); const ov=K.peOverlaps(s); ok('a box 2 m long along y centred at y = 3.2 sticks out through the north wall: flagged once with that wall',ov.length===1 && ov[0].obj===bad.id && ov[0].wall===Wl[2].id,JSON.stringify(ov));
+  const tall=K.peAddObj(s,'box',{x:3,y:2,w:.5,d:.5,h:.5,rot:0,z:2.8}); ok('a box above the wall top does not collide',!K.peOverlaps(s).some(o=>o.obj===tall.id)); }
 ok('an empty scene has no bounds and no grid',K.peGrid(K.peNew())===null);
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
