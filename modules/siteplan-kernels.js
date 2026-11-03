@@ -321,3 +321,31 @@ function spSVG(R,w=800,h=600){
   for(const pl of R.polys) o.push('<text x="'+spF(pad+(pl.cx-x0)*sc,1)+'" y="'+spF(h-pad-(pl.cy-y0)*sc,1)+'" text-anchor="middle" font-weight="bold">'+spF(pl.area,1)+' m²</text>');
   o.push('</svg>'); return o.join('\n');
 }
+
+// ---------- сетка ----------
+// «красивый» шаг сетки (1, 2, 5 × 10^k) не меньше want (м)
+function spNice(want){
+  if(!(want>0)) return 1;
+  const e=Math.pow(10,Math.floor(Math.log10(want))), m=want/e;
+  return (m<=1 ? 1 : m<=2 ? 2 : m<=5 ? 5 : 10)*e;
+}
+// система координат сетки: 'north' — оси плана (x — восток, y — север), начало в 0;
+// 'structure' — начало в первой точке контура, ось u вдоль его первой стороны, v — влево от неё (как у чертежа конструкции)
+function spGridFrame(R,mode){
+  if(mode!=='structure' || R.pts.length<2) return {mode:'north',ox:0,oy:0,ux:1,uy:0,vx:0,vy:1};
+  let a=R.pts[0], b=R.pts[1];
+  if(R.polys.length){ const nm=R.polys[0].names; a=R.pts.find(p=>p.name===nm[0]); b=R.pts.find(p=>p.name===nm[1]); }
+  const L=Math.hypot(b.x-a.x,b.y-a.y)||1, ux=(b.x-a.x)/L, uy=(b.y-a.y)/L;
+  return {mode:'structure',ox:a.x,oy:a.y,ux,uy,vx:-uy,vy:ux};
+}
+const spToFrame=(f,x,y)=>[(x-f.ox)*f.ux+(y-f.oy)*f.uy,(x-f.ox)*f.vx+(y-f.oy)*f.vy];
+const spFromFrame=(f,u,v)=>[f.ox+u*f.ux+v*f.vx,f.oy+u*f.uy+v*f.vy];
+// линии сетки, покрывающие точки: {step,u:[…],v:[…],u0,u1,v0,v1} в системе сетки (поле — запас в шагах)
+function spGridLines(R,f,want,pad=1){
+  const step=spNice(want); let u0=1e99,u1=-1e99,v0=1e99,v1=-1e99;
+  for(const p of R.pts){ const q=spToFrame(f,p.x,p.y); u0=Math.min(u0,q[0]); u1=Math.max(u1,q[0]); v0=Math.min(v0,q[1]); v1=Math.max(v1,q[1]); }
+  if(!isFinite(u0)) return {step,u:[],v:[],u0:0,u1:0,v0:0,v1:0};
+  u0=Math.floor(u0/step-pad)*step; u1=Math.ceil(u1/step+pad)*step; v0=Math.floor(v0/step-pad)*step; v1=Math.ceil(v1/step+pad)*step;
+  const U=[],V=[]; for(let u=u0;u<=u1+1e-9 && U.length<200;u+=step) U.push(+u.toFixed(9)); for(let v=v0;v<=v1+1e-9 && V.length<200;v+=step) V.push(+v.toFixed(9));
+  return {step,u:U,v:V,u0,u1,v0,v1};
+}

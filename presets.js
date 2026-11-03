@@ -370,6 +370,8 @@ const PRESET_CATS={
   'Signal Paths: Links in 3D (Free Fly)':'Maps & Locating',
   'Coverage: Transmitters from Table → Dead Zones':'Maps & Locating',
   'Site Plan: Plot and House from Tape, GPS and Clinometer (3D)':'Maps & Locating',
+  'Photo Measure: a Bed from an A4 Sheet in the Photo → Site Plan':'Maps & Locating',
+  'Clinometer: Tree Height from the Phone Tilt → Site Plan':'Maps & Locating',
   'Signal Paths: Direct and Reflected Between Two Points':'Maps & Locating',
   'Flight Sim: Fly over Terrain (Joystick)':'Aircraft, Satellites & Telemetry',
   'Flight Sim: Take Off from the Nearest Runway':'Aircraft, Satellites & Telemetry',
@@ -8278,7 +8280,7 @@ markWiresDirty();
 preset('Site Plan: Plot and House from Tape, GPS and Clinometer (3D)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Plan of a plot from field measurements. Write one measurement per line in «measurements» — the solver fits all of them at once, weighting each by its error: a tape (±3 cm) shapes the plot, GPS (±4 m) puts it on the Earth, the compass turns it. Lines: A-B 24.8 (tape along the ground), A-B dz 0.6 (B is higher), A-B az 90 (compass), A-B-C 90 (angle), E-R tilt 31 9.5 eye 1.6 (clinometer: 31° up from 9.5 m away, eye at 1.6 m → height of R), A gps lat lon ±4, poly A B C D (area, perimeter, slope). '+
-  'Why diagonals: four sides do not fix a quadrilateral — the diagonals A-C and B-D do, and they also expose a mistyped number (the line turns red and the readout names it). Two GPS points (or one plus an azimuth) place the plan on the Map. «＋ GPS fix» appends your current position as a new point; downloads: DXF (3D), SVG (dimensioned plan), GeoJSON, CSV. «3D» view turns the plot with its heights.'});
+  'Why diagonals: four sides do not fix a quadrilateral — the diagonals A-C and B-D do, and they also expose a mistyped number (the line turns red and the readout names it). Two GPS points (or one plus an azimuth) place the plan on the Map. «＋ GPS fix» appends your current position as a new point; downloads: DXF (3D), SVG (dimensioned plan), GeoJSON, CSV. «3D» view turns the plot with its heights: drag to turn it, two fingers or the wheel to zoom, right button / shift+drag to move, double click to reset; «grid» is north-aligned or follows the first side of the contour (structure), «coords» labels the points.'});
 nt.size.w=980; nt.size.h=150; applySize(nt);
 const me=addNode('geoMe',40,230,{src:'manual',lat:55.0302,lon:82.9204});
 const sp=addNode('siteplan',300,230,{view:'3D',plan:'# plot: tape along the ground (m), both diagonals for rigidity\nA-B 24.80\nB-C 15.10\nC-D 25.10\nD-A 14.90\nA-C 29.05\nB-D 29.00\n# heights: A is 0, level/clinometer steps (m)\nA z 0\nA-B dz 0.6\nA-D dz 1.1\nB-C dz 0.4\n# GPS in two corners and a compass bearing\nA gps 55.0302 82.9204 ±4\nB gps 55.0302 82.92079 ±4\nA-B az 90\npoly A B C D\n# house: stand at E (8.0 m from A, 18.1 m from B; the compass says which side of A-B), look at the ridge R 9.5 m away (31° up, eye 1.6 m)\nA-E 8.00\nB-E 18.10\nA-E az 118\nE-R az 200\nE-R tilt 31 9.5 eye 1.6'});
@@ -8287,6 +8289,33 @@ const mp=addNode('geoMap',860,230,{mz:19,mlat:55.0302,mlon:82.9206});
 mp.size.w=480; mp.size.h=420; applySize(mp);
 addEdge(me.id,'lat',sp.id,'lat'); addEdge(me.id,'lon',sp.id,'lon');
 addEdge(sp.id,'rec',mp.id,'rec'); addEdge(sp.id,'poly',mp.id,'rec');
+markWiresDirty();
+});
+preset('Photo Measure: a Bed from an A4 Sheet in the Photo → Site Plan', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Measure from a photo with a ruler in the frame. Put a sheet of A4 (or a bank card) on the same plane as what you measure, take a photo, choose it in Photo Measure, click the four corners of the sheet in order (top-left, top-right, bottom-right, bottom-left), then click the points you need: the distances, the path and the area appear on the photo (error ≈ 1.5 % + 1 cm; the sheet should fill at least a tenth of the frame; the camera should not be strongly wide-angle). Here is a demo image: a 4×3 m plane in perspective, an A4 sheet and a 3×1.5 m bed with four points already clicked. '+
+  '«lines» go to Site Plan — the distances between all pairs of points become tape measurements, so the contour is solved and its area counted; add your tape, GPS and height lines there. In «wall» mode the sheet’s top edge is horizontal and the lines are width and height differences (for windows and facades).'});
+nt.size.w=980; nt.size.h=130; applySize(nt);
+const pm=addNode('photomeasure',40,200,{autodemo:true,prefix:'B'});
+pm.size.w=520; pm.size.h=470; applySize(pm);
+const sp=addNode('siteplan',600,200,{view:'plan',plan:'# the lines come from Photo Measure; add your own below\n'});
+sp.size.w=520; sp.size.h=470; applySize(sp);
+addEdge(pm.id,'lines',sp.id,'lines');
+markWiresDirty();
+});
+preset('Clinometer: Tree Height from the Phone Tilt → Site Plan', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Height of a tree or a house without a ladder. Stand at a known distance (here 20 m, paced or from the Site Plan), point the back camera at the foot («① base») and at the top («② top») — the phone’s accelerometer gives the angles, the height is d·(tg top − tg base); your eye height is not needed (it is found from the same two angles). Without a base sighting, give the eye height and the distance. Wire Phone sensors’ ax / ay / az for a phone on the bridge, or press «Allow sensor» to use the browser’s own. Here three Constants imitate a phone tilted 27.5° up. '+
+  'The «line» output (E-R tilt …) goes to Site Plan, where it becomes the height of the point R above E. For a level bias put the phone on a table: its reading is the offset.'});
+nt.size.w=980; nt.size.h=130; applySize(nt);
+const el=Math.atan((12-1.6)/20), g=9.81;
+const ax=addNode('const',40,200,{v:0}), ay=addNode('const',40,290,{v:+(g*Math.cos(el)).toFixed(2)}), az=addNode('const',40,380,{v:+(-g*Math.sin(el)).toFixed(2)});
+const cl=addNode('clinometer',300,200,{d:20,eye:1.6,from:'E',to:'R',state:JSON.stringify({top:+(el*180/Math.PI).toFixed(2),base:+(-Math.atan(1.6/20)*180/Math.PI).toFixed(2)})});
+cl.size.w=380; cl.size.h=300; applySize(cl);
+const sp=addNode('siteplan',720,200,{view:'3D',plan:'E z 0\nE-R az 90'});
+sp.size.w=520; sp.size.h=470; applySize(sp);
+addEdge(ax.id,'out',cl.id,'ax'); addEdge(ay.id,'out',cl.id,'ay'); addEdge(az.id,'out',cl.id,'az');
+addEdge(cl.id,'line',sp.id,'lines');
 markWiresDirty();
 });
 preset('Radio Reach: ADS-B Coverage over Terrain (Generator)', function(){
