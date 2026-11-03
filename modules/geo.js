@@ -665,11 +665,13 @@ def({ id:'geoMe', title:'My Position', cat:'Geo',
           {n:'fovKm',t:'num',d:'',label:'field of view range, km'},
           {n:'rings',t:'text',d:'',label:'distance rings, km (e.g. 1,5,10)'},
           {n:'hi',t:'check',d:true,label:'high accuracy (GPS)',adv:true},
+          {n:'maxacc',t:'range',min:0,max:100,step:1,d:0,label:'GPS: ignore fixes worse than … m (0 — take all; the last good one is kept while waiting)'},
+          {n:'avg',t:'range',min:0,max:120,step:1,d:0,label:'GPS: average the fixes of the last … s, weights 1/accuracy² (0 — the latest): the random error falls ≈ 1/√N, a systematic one does not'},
           {n:'id',t:'text',d:'me',label:'record id',adv:true}],
   init:n=>{
     if(n.p.on===true) n.p.src='gps';               // старые патчи: галка «track position»
     delete n.p.on;
-    n.watch=null; n.fix=null; n.newFix=false; n.msg=''; n.wOn=false; n.lastGrid=n.p.grid; n.lastLL='';
+    n.watch=null; n.fix=null; n.newFix=false; n.msg=''; n.wOn=false; n.lastGrid=n.p.grid; n.lastLL=''; n.hist=[]; n.raw=null; n.startAt=0;
   },
   dispose:n=>geoMeStop(n),
   process(n){
@@ -677,7 +679,7 @@ def({ id:'geoMe', title:'My Position', cat:'Geo',
     if(gps && !n.wOn) geoMeStart(n);
     else if(!gps && n.wOn) geoMeStop(n);
     let f=null;
-    if(gps) f=n.fix;
+    if(gps){ if(n.hist.length){ const sel=gfSelect(n.hist,Date.now(),{avg:+n.p.avg,maxAcc:+n.p.maxacc}); if(sel) n.fix=sel; } f=n.fix; }
     else {
       // локатор правят руками — пересчитать lat/lon; lat/lon правят — обновить локатор
       if(n.p.grid!==n.lastGrid){
@@ -722,7 +724,15 @@ def({ id:'geoMe', title:'My Position', cat:'Geo',
   draw(n){ const gps=n.p.src==='gps', f=gps ? n.fix : null;
     const lat=gps ? f?.lat ?? null : recNum(n.p.lat), lon=gps ? f?.lon ?? null : recNum(n.p.lon);
     n.el.querySelector('.readout').textContent = n.msg+(lat!=null && lon!=null ?
-      '\n'+lat.toFixed(5)+', '+lon.toFixed(5)+(f?' ±'+Math.round(f.acc)+' m':'')+' · '+latLonToGrid(lat,lon,6) : ''); }});
+      '\n'+lat.toFixed(5)+', '+lon.toFixed(5)+(f?' ±'+Math.round(f.acc)+' m'+(f.n>1 ? ' (mean of '+f.n+')' : ''):'')+' · '+latLonToGrid(lat,lon,6) : '')+geoMeStatus(n,gps); }});
+// что происходит с точностью: сырой фикс, лучший за минуту, чем он получен; подсказка, если долго хуже 30 м
+function geoMeStatus(n,gps){
+  if(!gps || !n.raw) return gps && n.wOn ? '\nno fix yet' : '';
+  const now=Date.now(), best=gfBest(n.hist,now,60), cls=gfClass(n.raw.acc); let t='\nraw ±'+Math.round(n.raw.acc)+' m'+(best!=null ? ' · best in 60 s ±'+Math.round(best)+' m' : '')+(cls ? ' · '+cls : '');
+  if(+n.p.maxacc>0 && (!n.fix || n.fix.acc>+n.p.maxacc)) t+='\nwaiting for a fix better than '+n.p.maxacc+' m…';
+  if(best!=null && best>30 && now-n.startAt>40000) t+='\n⚠ accuracy has not dropped below '+Math.round(best)+' m: this is a Wi-Fi / cell position — the satellites are not used (indoors, no sky view, a cold start takes 1–3 minutes outside, or the browser only has coarse location). Android: Settings → Location → precise location and Google Location Accuracy on; Chrome → site settings → Location → precise. A phone with the DSP / Termux app gives raw GNSS fixes (Phone sensors: gps, gnss).';
+  return t;
+}
 function geoMeLocate(n){
   if(!navigator.geolocation){ n.msg='geolocation not available'; return; }
   n.msg='locating…';
@@ -736,10 +746,13 @@ function geoMeStart(n){
   n.wOn=true;
   if(!navigator.geolocation){ n.msg='geolocation not available'; return; }
   n.msg='waiting for fix…';
+  n.startAt=Date.now(); n.hist=[]; n.raw=null;
   n.watch=navigator.geolocation.watchPosition(p=>{
-    const c=p.coords;
-    n.fix={lat:c.latitude, lon:c.longitude, acc:c.accuracy, alt:c.altitude,
-           speed:c.speed, heading:(c.heading!=null && isFinite(c.heading)) ? c.heading : null, t:p.timestamp||Date.now()};
+    const c=p.coords, now=Date.now();
+    n.raw={lat:c.latitude, lon:c.longitude, acc:c.accuracy, alt:c.altitude,
+           speed:c.speed, heading:(c.heading!=null && isFinite(c.heading)) ? c.heading : null, t:p.timestamp||now};
+    gfPush(n.hist,n.raw,now);
+    const sel=gfSelect(n.hist,now,{avg:+n.p.avg,maxAcc:+n.p.maxacc}); if(sel) n.fix=sel;       // отбор по порогу и усреднение; пока нет подходящего — держим прежний
     n.newFix=true; n.msg='tracking';
   }, e=>{ n.msg='geolocation: '+e.message; }, {enableHighAccuracy:!!n.p.hi, maximumAge:1000, timeout:30000});
 }
