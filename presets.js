@@ -369,6 +369,7 @@ const PRESET_CATS={
   'Map Editor: Points, Shapes, Rings, Checklists ↔ Table':'Maps & Locating',
   'Signal Paths: Links in 3D (Free Fly)':'Maps & Locating',
   'Coverage: Transmitters from Table → Dead Zones':'Maps & Locating',
+  'Site Plan: Plot and House from Tape, GPS and Clinometer (3D)':'Maps & Locating',
   'Signal Paths: Direct and Reflected Between Two Points':'Maps & Locating',
   'Flight Sim: Fly over Terrain (Joystick)':'Aircraft, Satellites & Telemetry',
   'Flight Sim: Take Off from the Nearest Runway':'Aircraft, Satellites & Telemetry',
@@ -8272,6 +8273,20 @@ mp.size.w=480; mp.size.h=420; applySize(mp);
 addEdge(pl.id,'rec',cv.id,'rec'); addEdge(me.id,'lat',cv.id,'lat'); addEdge(me.id,'lon',cv.id,'lon');
 addEdge(me.id,'lat',hz.id,'lat'); addEdge(me.id,'lon',hz.id,'lon');
 addEdge(cv.id,'rec',mp.id,'rec'); addEdge(cv.id,'poly',mp.id,'rec'); addEdge(cv.id,'raster',mp.id,'rec');
+markWiresDirty();
+});
+preset('Site Plan: Plot and House from Tape, GPS and Clinometer (3D)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Plan of a plot from field measurements. Write one measurement per line in «measurements» — the solver fits all of them at once, weighting each by its error: a tape (±3 cm) shapes the plot, GPS (±4 m) puts it on the Earth, the compass turns it. Lines: A-B 24.8 (tape along the ground), A-B dz 0.6 (B is higher), A-B az 90 (compass), A-B-C 90 (angle), E-R tilt 31 9.5 eye 1.6 (clinometer: 31° up from 9.5 m away, eye at 1.6 m → height of R), A gps lat lon ±4, poly A B C D (area, perimeter, slope). '+
+  'Why diagonals: four sides do not fix a quadrilateral — the diagonals A-C and B-D do, and they also expose a mistyped number (the line turns red and the readout names it). Two GPS points (or one plus an azimuth) place the plan on the Map. «＋ GPS fix» appends your current position as a new point; downloads: DXF (3D), SVG (dimensioned plan), GeoJSON, CSV. «3D» view turns the plot with its heights.'});
+nt.size.w=980; nt.size.h=150; applySize(nt);
+const me=addNode('geoMe',40,230,{src:'manual',lat:55.0302,lon:82.9204});
+const sp=addNode('siteplan',300,230,{view:'3D',plan:'# plot: tape along the ground (m), both diagonals for rigidity\nA-B 24.80\nB-C 15.10\nC-D 25.10\nD-A 14.90\nA-C 29.05\nB-D 29.00\n# heights: A is 0, level/clinometer steps (m)\nA z 0\nA-B dz 0.6\nA-D dz 1.1\nB-C dz 0.4\n# GPS in two corners and a compass bearing\nA gps 55.0302 82.9204 ±4\nB gps 55.0302 82.92079 ±4\nA-B az 90\npoly A B C D\n# house: stand at E (8.0 m from A, 18.1 m from B; the compass says which side of A-B), look at the ridge R 9.5 m away (31° up, eye 1.6 m)\nA-E 8.00\nB-E 18.10\nA-E az 118\nE-R az 200\nE-R tilt 31 9.5 eye 1.6'});
+sp.size.w=520; sp.size.h=520; applySize(sp);
+const mp=addNode('geoMap',860,230,{mz:19,mlat:55.0302,mlon:82.9206});
+mp.size.w=480; mp.size.h=420; applySize(mp);
+addEdge(me.id,'lat',sp.id,'lat'); addEdge(me.id,'lon',sp.id,'lon');
+addEdge(sp.id,'rec',mp.id,'rec'); addEdge(sp.id,'poly',mp.id,'rec');
 markWiresDirty();
 });
 preset('Radio Reach: ADS-B Coverage over Terrain (Generator)', function(){
