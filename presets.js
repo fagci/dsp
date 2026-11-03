@@ -375,6 +375,7 @@ const PRESET_CATS={
   'Measure Entry: Walk a Plot with a Tape, Numbers from a Keypad → Site Plan':'Maps & Locating',
   'Laser Distance Meter (BLE) → Measure Entry → Site Plan':'Maps & Locating',
   'Site Plan: Points and Measurements from a Table':'Maps & Locating',
+  'Echo Ranger: Distance to a Wall by Chirp → Measure Entry → Site Plan':'Maps & Locating',
   'Clinometer: Tree Height from the Phone Tilt → Site Plan':'Maps & Locating',
   'Signal Paths: Direct and Reflected Between Two Points':'Maps & Locating',
   'Flight Sim: Fly over Terrain (Joystick)':'Aircraft, Satellites & Telemetry',
@@ -8361,6 +8362,25 @@ sp.size.w=520; sp.size.h=470; applySize(sp);
 const mp=addNode('geoMap',1160,180,{mz:19,mlat:55.0302,mlon:82.9206});
 mp.size.w=420; mp.size.h=400; applySize(mp);
 addEdge(pl.id,'rec',sp.id,'rec'); addEdge(sp.id,'rec',mp.id,'rec'); addEdge(sp.id,'poly',mp.id,'rec');
+markWiresDirty();
+});
+preset('Echo Ranger: Distance to a Wall by Chirp → Measure Entry → Site Plan', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A tape measure made of sound. The phone plays a chirp (2–10 kHz, 30 ms) and listens: the loudest peak of the correlation is the direct sound speaker → microphone (all the audio delays of the phone sit in it and cancel), the next peaks are walls and furniture, a wall is c·Δt/2 away; an 8 kHz band resolves 2 cm and 6 chirps are averaged. Wire: Echo Ranger «chirp» → Sound Card, Microphone «a» → «mic»; press Run, then «▶ Measure» with the phone pointed at the wall (switch off echo cancellation and noise suppression in Microphone, not headphones, a little volume). '+
+  '«dist» and the «go» pulse go to Measure Entry, which writes A-B 2.50 into the log for Site Plan (turn the phone to the next wall, change the point names). Here «simulate» replaces the microphone with a computed room (echoes at 2.5 m and 4.1 m) so the whole chain runs without hardware — clear it to use the real microphone. Accuracy: ≈ 1–2 cm to a flat wall at 1–5 m when the phone faces it squarely; set the air temperature (0.2 % per °C); soft surfaces and furniture give weak or false echoes — compare with the tape.'});
+nt.size.w=980; nt.size.h=150; applySize(nt);
+const mic=addNode('mic',40,230,{echo:false,ns:false,agc:false});
+mic.size.w=240; mic.size.h=200; applySize(mic);
+const er=addNode('echorange',300,230,{sim:'2.5:0.4, 4.1:0.2',bursts:4,period:350});
+er.size.w=420; er.size.h=380; applySize(er);
+const dac=addNode('dac',40,460,{vol:.3});
+dac.size.w=260; dac.size.h=170; applySize(dac);
+const me=addNode('measureentry',760,230,{log:'',from:'A',to:'B'});
+me.size.w=400; me.size.h=400; applySize(me);
+const sp=addNode('siteplan',1200,230,{view:'plan',plan:'# the wall distances arrive from Measure Entry'});
+sp.size.w=480; sp.size.h=420; applySize(sp);
+addEdge(mic.id,'a',er.id,'mic'); addEdge(er.id,'chirp',dac.id,'L');
+addEdge(er.id,'dist',me.id,'v'); addEdge(er.id,'go',me.id,'go'); addEdge(me.id,'lines',sp.id,'lines');
 markWiresDirty();
 });
 preset('Clinometer: Tree Height from the Phone Tilt → Site Plan', function(){
