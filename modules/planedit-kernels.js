@@ -421,3 +421,18 @@ function peBoxOrder(B,view,depth){
   }
   return res;
 }
+
+// ---------- пересечения объёмов ----------
+// ящик / колонна, вошедшие в стену, дают неверный порядок рисования в 3D (объёмы пересекаются) и просто неверный план: находим такие пары
+function peRectsOverlap(ca,cb,eps=1e-4){
+  for(const R of [ca,cb]) for(let i=0;i<4;i++){ const p=R[i], q=R[(i+1)%4], nx=-(q[1]-p[1]), ny=q[0]-p[0]; let a0=1e99,a1=-1e99,b0=1e99,b1=-1e99;
+    for(const c of ca){ const v=c[0]*nx+c[1]*ny; if(v<a0)a0=v; if(v>a1)a1=v; } for(const c of cb){ const v=c[0]*nx+c[1]*ny; if(v<b0)b0=v; if(v>b1)b1=v; }
+    const sc=Math.hypot(nx,ny)||1; if(a1<=b0+eps*sc || b1<=a0+eps*sc) return false; }
+  return true;
+}
+function peOverlaps(s){
+  const B=peBoxes(s), out=[], seen=new Set();
+  for(const o of B){ if(o.kind==='wall') continue; const co=peBoxCorners(o);
+    for(const w of B){ if(w.kind!=='wall' || w.z1<=o.z0+1e-6 || o.z1<=w.z0+1e-6) continue; if(peRectsOverlap(co,peBoxCorners(w))){ const k=o.ref+'|'+w.ref; if(!seen.has(k)){ seen.add(k); out.push({obj:o.ref,wall:w.ref}); } } } }
+  return out;
+}

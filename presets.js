@@ -8413,7 +8413,7 @@ const a=Pn(0,0), b=Pn(5,0), c=Pn(5,4), d=Pn(0,4), e=Pn(8,0), f=Pn(8,4);
 const w1=W(a,b), w2=W(b,c,{t:.1,mat:'drywall'}), w3=W(c,d), w4=W(d,a), w5=W(b,e), w6=W(e,f), w7=W(f,c);
 peAddRoom(sc,[a.id,b.id,c.id,d.id],'Living'); peAddRoom(sc,[b.id,e.id,f.id,c.id],'Bedroom');
 peAddObj(sc,'door',{wall:w2.id,u:.5,w:.9,name:'door'}); peAddObj(sc,'door',{wall:w1.id,u:.15,w:1}); peAddObj(sc,'window',{wall:w3.id,u:.5,w:1.6}); peAddObj(sc,'window',{wall:w6.id,u:.5,w:1.2});
-peAddObj(sc,'box',{x:1.4,y:3.2,w:2,d:.9,h:.8,name:'sofa'}); peAddObj(sc,'box',{x:6.9,y:2.9,w:1.6,d:2,h:.5,name:'bed'}); peAddObj(sc,'column',{x:3.6,y:1.2});
+peAddObj(sc,'box',{x:1.4,y:3.2,w:2,d:.9,h:.8,rot:90,name:'sofa'}); peAddObj(sc,'box',{x:6.9,y:2.9,w:1.6,d:2,h:.5,name:'bed'}); peAddObj(sc,'column',{x:3.6,y:1.2});
 peAddCam(sc,.15,3.85,{az:135,fov:100,range:9,z:2.6,tilt:22,name:'Cam living'}); peAddCam(sc,7.85,.15,{az:315,fov:90,range:7,z:2.5,tilt:25,name:'Cam bed'});
 peAddAnt(sc,4.9,2,{az:270,bw:360,eirp:20,f:2437,z:2.2,name:'AP'});
 peLock(sc,w1.id);
