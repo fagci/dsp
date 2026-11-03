@@ -66,7 +66,7 @@ function pmCalc(n){                                               // гомог�
   n.lines=!n.H ? '' : n.p.mode==='trace' ? (n.pts.length ? pmLinesTrace(n.mp,nm,+n.p.up||0,n.p.poly && n.pts.length>=3) : '') : n.pts.length>1 ? pmLines(n.mp,nm,n.p.mode,n.p.poly && n.pts.length>=3) : '';
 }
 
-def({ id:'photomeasure', title:'Photo Measure', cat:'Geo', touch:true, kw:'photo measure ruler a4 reference homography perspective distance area plan wall floor facade camera scale site',
+def({ id:'photomeasure', title:'Photo Measure', cat:'Geo', touch:true, lazy:true, kw:'photo measure ruler a4 reference homography perspective distance area plan wall floor facade camera scale site',
   // lines — замеры для Site Plan (A-B 3.42 ± 0.06): расстояния между всеми парами точек; dist — последний отрезок, м; len — ломаная по порядку, м; area — площадь многоугольника, м²
   outs:[{n:'lines',t:'txt'},{n:'dist',t:'num'},{n:'len',t:'num'},{n:'area',t:'num'},{n:'n',t:'num'}],
   w:460, view:{h:360}, resize:true, readout:true,
@@ -89,7 +89,7 @@ def({ id:'photomeasure', title:'Photo Measure', cat:'Geo', touch:true, kw:'photo
     try{ const s=JSON.parse(n.p.state||'null'); if(s){ n.ref=s.ref||[]; n.pts=s.pts||[]; } }catch(e){}
     if(n.p.autodemo==='photo') pmUseDemo(n); else if(n.p.autodemo==='scan') pmUseDemoScan(n); },
   process(n){
-    if(n.dirty){ n.dirty=false; pmCalc(n); }
+    if(n.dirty){ n.dirty=false; pmCalc(n); redraw(n); }
     const P=n.mp, m=P.length;
     let len=0; for(let i=1;i<m;i++) len+=pmDist(P[i-1],P[i]);
     return {lines:n.lines, dist:m>1 ? pmDist(P[m-2],P[m-1]) : null, len:m>1 ? len : null, area:m>2 ? pmArea(P) : null, n:n.pts.length};

@@ -33,7 +33,7 @@ function spRecords(R){
 }
 function spRun(n,I){
   const R=spSolve(spText(n),spOpts(n));
-  n.res=R; n.emit=spRecords(R); n.err=R.errors;
+  n.res=R; n.emit=spRecords(R); n.err=R.errors; redraw(n);
 }
 
 function spAddGps(n){
@@ -67,7 +67,11 @@ function spGesture(n,cv){
     const q=P.get(ev.pointerId); if(!q) return; const np=pos(ev), dx=np[0]-q.p[0], dy=np[1]-q.p[1];
     if(P.size===1){
       if(n.p.view!=='3D' || q.b===1 || q.b===2 || ev.shiftKey){ n.panX+=dx; n.panY+=dy; }
-      else { const az=((+n.p.az-dx*.4+180)%360+360)%360-180; setMod(n,'az',+az.toFixed(1)); setMod(n,'el',+clamp(+n.p.el+dy*.4,0,90).toFixed(1)); }
+      else {
+        const az=+(((+n.p.az-dx*.4+180)%360+360)%360-180).toFixed(1), el=+clamp(+n.p.el+dy*.4,0,90).toFixed(1);
+        if(n.slowSync){ setMod(n,'az',az); setMod(n,'el',el); }
+        else { n.p.az=az; n.p.el=el; if(!n.syncT) n.syncT=setTimeout(()=>{ n.syncT=0; setMod(n,'az',n.p.az); setMod(n,'el',n.p.el); },150); }   // ползунки догоняют раз в 150 мс, а не на каждый пиксель
+      }
     } else if(P.size===2){
       const o=[...P.entries()].find(([id])=>id!==ev.pointerId)[1].p, d0=Math.hypot(q.p[0]-o[0],q.p[1]-o[1]), d1=Math.hypot(np[0]-o[0],np[1]-o[1]);
       if(d0>0) n.zoom=clamp(n.zoom*d1/d0,.2,40);
@@ -88,10 +92,10 @@ async function spLoadTables(n,tk){                                        // з�
 async function spSaveTable(n){
   const R=n.res; if(!R || !R.pts.length){ n.msg='nothing to save yet'; return; }
   const t=new Date().toISOString(), rows=R.pts.map(p=>({name:p.name,t,x:+p.x.toFixed(3),y:+p.y.toFixed(3),z:+p.z.toFixed(2),sx:isFinite(p.sx) ? +p.sx.toFixed(4) : '',sy:isFinite(p.sy) ? +p.sy.toFixed(4) : '',sz:isFinite(p.sz) ? +p.sz.toFixed(4) : '',...(R.georef ? {lat:+p.lat.toFixed(8),lon:+p.lon.toFixed(8)} : {})}));
-  const list=n.p.save||'analysis/siteplan'; await tblPut(list,Object.keys(rows[0]),rows); n.msg='saved '+rows.length+' points to «'+list+'» (name, x, y, z, sx, sy, sz'+(R.georef ? ', lat, lon' : '')+')';
+  const list=n.p.save||'analysis/siteplan'; await tblPut(list,Object.keys(rows[0]),rows); n.msg='saved '+rows.length+' points to «'+list+'» (name, x, y, z, sx, sy, sz'+(R.georef ? ', lat, lon' : '')+')'; redraw(n);
 }
 
-def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, kw:'plan site survey land plot measure tape gps clinometer height building outdoor indoor area perimeter slope dxf 3d construction fence foundation',
+def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, lazy:true, kw:'plan site survey land plot measure tape gps clinometer height building outdoor indoor area perimeter slope dxf 3d construction fence foundation',
   // rec — записи: строки замеров (kind, a, b, value, sigma — от Measure Entry или Table), GPS-замеры (name, lat, lon, acc, alt), точки (name, x, y, z); lines — замеры текстом с других модулей (Photo Measure, Clinometer), дописываются к списку; lat / lon / acc / alt — позиция (My Position) для кнопки «＋ GPS fix»; rec — GPS-замеры записями (name, lat, lon, acc, alt): складываются в план как «name gps …»;
   // area — площадь первого контура, м²; perim — его периметр, м; slope — уклон, °; rms — невязки в σ (≈1 — замеры согласованы); n — точек; rec — точки, poly — контуры для карты
   ins:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'acc',t:'num'},{n:'alt',t:'num'},{n:'rec',t:'rec'},{n:'lines',t:'txt'}],
