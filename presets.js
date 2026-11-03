@@ -8406,6 +8406,7 @@ preset('Plan Editor: Rooms in 3D with Cameras and Wi-Fi, Shared with Video Overl
 clearAll();
 const nt=addNode('note',40,40,{text:'Draw and edit a plan in 3D. Tools on the canvas strip: wall (click points, the first one closes a room; Esc ends), door / window (click a wall), box, column, camera, antenna, erase; «select» picks and drags points, objects, cameras and antennas — in the plan and in 3D alike (turn the model by dragging the empty space, wheel / two fingers zoom, right drag moves). A selected wall shows its thickness, height, material and a lock: a locked length stays while you drag the points (🔒). '+
   'Cameras (azimuth by the white handle, tilt, field of view, range) cast shadows from the walls: layer «cameras» shows what is seen (green) and the blind spots (red) with the percentage; antennas (EIRP, beam width, frequency) lose signal on every wall by its material and thickness — layer «signal». '+
+  'Antennas are transmitters (EIRP, frequency) or receivers (gain, sensitivity, frequency): a receiver shows its level, the transmitter it hears and its margin over the sensitivity. Tap an item to select it: a strip with its parameters (thickness, height, length lock, field of view, power, frequency…) appears at the bottom of the canvas, with − / + steppers; tap a value to type it; a selected item can then be dragged (on a touch screen only after it is selected, so a swipe never moves things by accident). '+
   'Shared space with Video Overlay: the plan is placed on the Earth by the origin lat / lon / north / floor altitude (advanced); the walls, doors, boxes, cameras and antennas go out as 3D outlines and markers to Video Overlay (rec), which draws them over the live video from the same pose wires (lat / lon / alt / az / el), and the phone’s pose is drawn back in the plan (magenta). Here the pose comes from My Position and Constants — wire Orientation for a real phone. «lines» go to Site Plan, «rec» can go to a Table.'});
 nt.size.w=1180; nt.size.h=150; applySize(nt);
 const sc=peNew(), W=(a,b,o)=>peAddWall(sc,a.id,b.id,o), Pn=(x,y)=>peAddPoint(sc,x,y);
@@ -8416,6 +8417,7 @@ peAddObj(sc,'door',{wall:w2.id,u:.5,w:.9,name:'door'}); peAddObj(sc,'door',{wall
 peAddObj(sc,'box',{x:1.4,y:3.2,w:2,d:.9,h:.8,rot:90,name:'sofa'}); peAddObj(sc,'box',{x:6.9,y:2.9,w:1.6,d:2,h:.5,name:'bed'}); peAddObj(sc,'column',{x:3.6,y:1.2});
 peAddCam(sc,.15,3.85,{az:135,fov:100,range:9,z:2.6,tilt:22,name:'Cam living'}); peAddCam(sc,7.85,.15,{az:315,fov:90,range:7,z:2.5,tilt:25,name:'Cam bed'});
 peAddAnt(sc,4.9,2,{az:270,bw:360,eirp:20,f:2437,z:2.2,name:'AP'});
+peAddRx(sc,7.1,3.5,{name:'Sensor',f:2437,sens:-85,gain:2,z:1});
 peLock(sc,w1.id);
 const o={lat:55.0302,lon:82.9204,north:20,alt:0}, g=peGeo(o,1.2,1.0);
 const me=addNode('geoMe',40,230,{src:'manual',lat:+g[0].toFixed(7),lon:+g[1].toFixed(7)});

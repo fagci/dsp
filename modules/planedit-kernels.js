@@ -47,7 +47,10 @@ function peAddObj(s,type,o){
   const ob={id:peId(s,'o'),type,x:0,y:0,z:0,name:'',...base,...o}; s.objs.push(ob); return ob;
 }
 function peAddCam(s,x,y,o={}){ const c={id:peId(s,'c'),name:'Cam'+(s.cams.length+1),x,y,z:2.6,az:0,tilt:25,fov:90,range:12,...o}; s.cams.push(c); return c; }
-function peAddAnt(s,x,y,o={}){ const a={id:peId(s,'a'),name:'AP'+(s.ants.length+1),x,y,z:2.4,az:0,bw:360,eirp:20,f:2437,...o}; s.ants.push(a); return a; }
+function peAddAnt(s,x,y,o={}){ const a={id:peId(s,'a'),role:'tx',name:'AP'+(s.ants.filter(q=>q.role!=='rx').length+1),x,y,z:2.4,az:0,bw:360,eirp:20,f:2437,...o}; s.ants.push(a); return a; }
+// приёмная антенна: усиление, чувствительность, частота, диаграмма (bw < 360 — направленная, az — куда смотрит)
+function peAddRx(s,x,y,o={}){ const a={id:peId(s,'a'),role:'rx',name:'RX'+(s.ants.filter(q=>q.role==='rx').length+1),x,y,z:1,az:0,bw:360,gain:2,sens:-85,f:2437,...o}; s.ants.push(a); return a; }
+const peIsRx=a=>a.role==='rx';
 // комната по замкнутой цепочке точек (id); площадь — по формуле шнурования
 function peAddRoom(s,ids,name){ const r={id:peId(s,'r'),pts:ids.slice(),name:name||'Room'+(s.rooms.length+1)}; s.rooms.push(r); return r; }
 function peRoomArea(s,r){ let a=0; for(let i=0;i<r.pts.length;i++){ const p=pePt(s,r.pts[i]), q=pePt(s,r.pts[(i+1)%r.pts.length]); a+=p.x*q.y-q.x*p.y; } return Math.abs(a)/2; }
@@ -75,6 +78,8 @@ function peDrag(s,id,x,y,iters=40){
   return err;
 }
 // зафиксировать / отпустить длину стены (len — число, 0 — отпустить; без аргумента — переключить по текущей длине)
+// сдвинуть стену целиком (оба конца на новые места), остальные зафиксированные стороны подтягиваются
+function peMoveWall(s,wid,ax,ay,bx,by){ const w=peWall(s,wid); if(!w) return; const a=pePt(s,w.a), b=pePt(s,w.b); a.x=ax; a.y=ay; b.x=bx; b.y=by; a.fix=true; b.fix=true; peDrag(s,w.a,ax,ay); delete a.fix; delete b.fix; }
 function peLock(s,wid,len){ const w=peWall(s,wid); if(!w) return; w.len=len===undefined ? (w.len>0 ? 0 : +peWallLen(s,w).toFixed(4)) : len; return w.len; }
 // установить длину стены точно: сдвигаем второй конец (a остаётся) и подтягиваем соседей с зафиксированными длинами
 function peSetLen(s,wid,len){ const w=peWall(s,wid); if(!w||!(len>0)) return; const a=pePt(s,w.a), b=pePt(s,w.b), d=Math.hypot(b.x-a.x,b.y-a.y)||1e-9;
@@ -166,6 +171,16 @@ function peAntLevel(s,a,x,y,zr=1){
   return a.eirp+peAntGain(a,dx,dy)-peFspl(d3,a.f)-peWallLoss(s,a.x,a.y,x,y,a.f);
 }
 
+// канал «передатчики → приёмник»: лучший по уровню передатчик на частоте приёмника (допуск max(10 МГц, 1 %)); уровень = EIRP + диаграмма передатчика − потери (дистанция, стены на этой частоте) + усиление и диаграмма приёмника; запас — над чувствительностью
+function peRxLevel(s,rx,opt={}){
+  const tol=opt.tol??Math.max(10,rx.f*.01), sens=rx.sens??-90; let best=null;
+  for(const t of s.ants){ if(peIsRx(t) || Math.abs(t.f-rx.f)>tol) continue;
+    const dx=rx.x-t.x, dy=rx.y-t.y, d3=Math.hypot(dx,dy,t.z-rx.z);
+    const lv=t.eirp+peAntGain(t,dx,dy)-peFspl(d3,t.f)-peWallLoss(s,t.x,t.y,rx.x,rx.y,t.f)+(rx.gain||0)+peAntGain(rx,-dx,-dy);
+    if(!best||lv>best.level) best={level:lv,from:t.id,name:t.name}; }
+  if(!best) return {level:-200,from:null,name:'',margin:-200-sens,ok:false};
+  best.margin=best.level-sens; best.ok=best.margin>=0; return best;
+}
 // ---------- сетка охвата ----------
 function peBounds(s,margin=1){ let x0=1e99,x1=-1e99,y0=1e99,y1=-1e99; const A=[...s.pts,...s.cams,...s.ants,...s.objs.filter(o=>o.type==='box'||o.type==='column')]; for(const p of A){ x0=Math.min(x0,p.x); x1=Math.max(x1,p.x); y0=Math.min(y0,p.y); y1=Math.max(y1,p.y); } return x0<=x1 ? {x0:x0-margin,x1:x1+margin,y0:y0-margin,y1:y1+margin} : null; }
 function peGrid(s,cell=.25,maxN=160){ const b=peBounds(s,.5); if(!b) return null; const span=Math.max(b.x1-b.x0,b.y1-b.y0), c=Math.max(cell,span/maxN), nx=Math.ceil((b.x1-b.x0)/c), ny=Math.ceil((b.y1-b.y0)/c); return {x0:b.x0,y0:b.y0,cell:c,nx,ny}; }
@@ -185,7 +200,7 @@ function peCamCoverage(s,g,zt=1){
 // уровень сигнала по сетке: лучший из антенн, дБм (по ids — только выбранные); статистика по клеткам внутри комнат
 function peAntHeat(s,g,opt={}){
   g=g||peGrid(s); if(!g) return null;
-  const ants=opt.id ? s.ants.filter(a=>a.id===opt.id) : s.ants, lvl=new Float32Array(g.nx*g.ny).fill(-200), polys=s.rooms.map(r=>peRoomPoly(s,r));
+  const tol=opt.f>0 ? Math.max(10,opt.f*.01) : 0, ants=(opt.id ? s.ants.filter(a=>a.id===opt.id) : s.ants).filter(a=>!peIsRx(a) && (!(opt.f>0) || Math.abs(a.f-opt.f)<=tol)), lvl=new Float32Array(g.nx*g.ny).fill(-200), polys=s.rooms.map(r=>peRoomPoly(s,r));
   const thr=opt.thr??-70; let tot=0, ok=0, sum=0, mn=1e9;
   for(let j=0;j<g.ny;j++) for(let i=0;i<g.nx;i++){
     const x=g.x0+(i+.5)*g.cell, y=g.y0+(j+.5)*g.cell; let best=-200; for(const a of ants){ const v=peAntLevel(s,a,x,y,opt.zr??1); if(v>best) best=v; } lvl[j*g.nx+i]=best;
@@ -239,7 +254,7 @@ function peOverlay(s,o){
     const half=c.fov/2, L=Math.min(c.range,c.tilt-c.fov*.5625/2>0 ? Math.max(1,c.z/Math.tan((c.tilt-c.fov*.5625/2)*PE_D)) : c.range), pt=a=>[c.x+Math.sin((c.az+a)*PE_D)*L,c.y+Math.cos((c.az+a)*PE_D)*L,0];
     loop('plan:'+c.id+':fov','','#7dff9a',[[c.x,c.y,c.z],pt(-half),pt(half),[c.x,c.y,c.z]]);
   }
-  for(const a of s.ants){ const g=peGeo(o,a.x,a.y); out.push({id:'plan:'+a.id,label:a.name+' '+a.eirp+' dBm',kind:'antenna',lat:+g[0].toFixed(8),lon:+g[1].toFixed(8),alt_m:+((o.alt||0)+a.z).toFixed(2),color:'#ffb74d',icon:'dot',az:+peAzTrue(o,a.az).toFixed(1),bw:a.bw,eirp:a.eirp,freq_mhz:a.f}); }
+  for(const a of s.ants){ const g=peGeo(o,a.x,a.y); out.push({id:'plan:'+a.id,label:a.name+(peIsRx(a) ? ' RX '+a.sens+' dBm' : ' '+a.eirp+' dBm'),kind:'antenna',lat:+g[0].toFixed(8),lon:+g[1].toFixed(8),alt_m:+((o.alt||0)+a.z).toFixed(2),color:'#ffb74d',icon:'dot',az:+peAzTrue(o,a.az).toFixed(1),bw:a.bw,role:a.role||'tx',freq_mhz:a.f,...(peIsRx(a) ? {gain_dbi:a.gain,sens_dbm:a.sens} : {eirp:a.eirp})}); }
   for(const p of s.pts){ const g=peGeo(o,p.x,p.y); out.push({id:'plan:'+p.id,label:p.name||'',kind:'plan point',lat:+g[0].toFixed(8),lon:+g[1].toFixed(8),alt_m:+(o.alt||0).toFixed(2),x:+p.x.toFixed(3),y:+p.y.toFixed(3),color:'#9fb0b6',icon:'dot'}); }
   return out;
 }
@@ -374,7 +389,7 @@ function* peCamPlan(s,opt){
 // антенны: tpl {z, eirp, f, bw}; opt {n, target, thr (дБм), step, cell, refine}. Кандидаты — сетка внутри комнат не ближе 0,3 м к стенам.
 function* peAntPlan(s,opt){
   const tpl=opt.tpl, rc=peRoomCells(s,opt.cell||.5,false); if(!rc) return {error:'draw at least one room first (a closed contour of walls)'};
-  const thr=opt.thr??-70, pre=new Uint8Array(rc.n), fixed=s.ants.filter(a=>!a.auto);
+  const thr=opt.thr??-70, pre=new Uint8Array(rc.n), fixed=s.ants.filter(a=>!a.auto && !peIsRx(a));
   for(let i=0;i<rc.n;i++) for(const a of fixed) if(peAntLevel(s,a,rc.x[i],rc.y[i])>=thr){ pre[i]=1; break; }
   const step=opt.step||.75, g=peGrid(s,step,80), cands=[]; let t0=performance_now(), done=0, total=0;
   const spots=[]; if(g) for(let j=0;j<g.ny;j++) for(let i=0;i<g.nx;i++){ const x=g.x0+(i+.5)*g.cell, y=g.y0+(j+.5)*g.cell; if(!peInRooms(s,x,y)) continue; let near=1e9; for(const w of s.walls){ const [a,b]=peWallEnds(s,w), dx=b.x-a.x, dy=b.y-a.y, u=Math.max(0,Math.min(1,((x-a.x)*dx+(y-a.y)*dy)/(dx*dx+dy*dy||1))); near=Math.min(near,Math.hypot(x-a.x-dx*u,y-a.y-dy*u)); } if(near>=.3) spots.push([x,y]); }

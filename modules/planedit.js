@@ -7,7 +7,8 @@
    отдаёт стены, камеры и антенны как 3D-каркасы и маркеры; поза телефона с тех же входов lat / lon / alt / az / el / fov рисуется в плане.
    Ядро — planedit-kernels.js (тест tools/test-planedit.mjs). */
 
-const PE_TOOLS=[['select','☝ select'],['wall','▭ wall'],['point','• point'],['door','🚪 door'],['window','▤ window'],['box','■ box'],['column','● column'],['camera','🎥 camera'],['antenna','📶 antenna'],['erase','✕ erase']];
+const PE_TOOLS=[['select','☝','select'],['wall','▭','wall'],['point','•','point'],['door','🚪','door'],['window','▤','window'],['box','■','box'],['column','●','column'],['camera','🎥','camera'],['antenna','📶','TX'],['receiver','📡','RX'],['erase','✕','erase']];
+const PE_BANDS=[88,144,433,868,915,1575,1800,2100,2437,3500,5200,5800,6000,24000];       // частоты для шагов ± у антенн, МГц
 const PE_MATS=Object.keys(PE_MAT);
 
 // ---------- проекция: орбитальная камера, ортографическая ----------
@@ -18,7 +19,7 @@ function peProj(n,W,H){
     un:(sx,sy,z0)=>{ const xr=(sx-cx)/V.sc, yr=((cy-sy)/V.sc-z0*ce)/Math.max(se,.05); return [V.tx+xr*ca-yr*sa, V.ty+xr*sa+yr*ca]; }};
   return P;
 }
-const PE_BAR=26;                                            // высота панели инструментов на холсте
+const PE_BAR=(typeof matchMedia!=='undefined' && matchMedia('(pointer:coarse)').matches) ? 38 : 26;       // высота панели инструментов на холсте (на касании крупнее)
 function peFit(n,W,H){
   let b=peBounds(n.sc,1.2); const V=n.vw; if(!b && n.under && n.under.b){ const u=n.under.b; b={x0:u.x0-.5,x1:u.x1+.5,y0:u.y0-.5,y1:u.y1+.5}; }
   if(!b){ V.cw=W; V.ch=H; V.tx=3; V.ty=2; V.sc=Math.max(20,Math.min(W,H-PE_BAR)/9); V.fit=true; return; }
@@ -40,7 +41,7 @@ function peLoad(n){
     case 'wall': S('wt',it.t); S('wh',it.h); S('mat',it.mat); S('wlen',it.len>0 ? it.len : 0); break;
     case 'obj': S('ow',it.w); S('od',it.d??.5); S('oh',it.h); S('orot',it.rot??0); S('osill',it.type==='box'||it.type==='column' ? (it.z||0) : it.sill); break;
     case 'cam': S('cname',it.name); S('cz',it.z); S('caz',it.az); S('ctilt',it.tilt); S('cfov',it.fov); S('crange',it.range); break;
-    case 'ant': S('aname',it.name); S('az2',it.z); S('aaz',it.az); S('abw',it.bw); S('aeirp',it.eirp); S('afreq',it.f); break;
+    case 'ant': S('aname',it.name); S('arole',it.role==='rx' ? 'receive' : 'transmit'); S('az2',it.z); S('aaz',it.az); S('abw',it.bw); S('aeirp',it.eirp??20); S('again',it.gain??2); S('asens',it.sens??-85); S('afreq',it.f); break;
   }
 }
 // параметр панели → выбранное
@@ -52,7 +53,7 @@ function peApply(n,k){
     case 'wall': if(k==='wt') it.t=+p.wt; if(k==='wh') it.h=+p.wh; if(k==='mat') it.mat=p.mat; if(k==='wlen'){ if(+p.wlen>0) peSetLen(n.sc,it.id,+p.wlen); else it.len=0; if(+p.wlen>0) it.len=+p.wlen; } break;
     case 'obj': if(k==='ow') it.w=+p.ow; if(k==='od') it.d=+p.od; if(k==='oh') it.h=+p.oh; if(k==='orot') it.rot=+p.orot; if(k==='osill'){ if(it.type==='box'||it.type==='column') it.z=+p.osill; else it.sill=+p.osill; } break;
     case 'cam': { const m={cname:'name',cz:'z',caz:'az',ctilt:'tilt',cfov:'fov',crange:'range'}[k]; if(m) it[m]=k==='cname' ? String(p[k]) : +p[k]; break; }
-    case 'ant': { const m={aname:'name',az2:'z',aaz:'az',abw:'bw',aeirp:'eirp',afreq:'f'}[k]; if(m) it[m]=k==='aname' ? String(p[k]) : +p[k]; break; }
+    case 'ant': { if(k==='arole'){ it.role=p.arole==='receive' ? 'rx' : 'tx'; if(it.role==='rx'){ it.gain??=2; it.sens??=-85; } else it.eirp??=20; break; } const m={aname:'name',az2:'z',aaz:'az',abw:'bw',aeirp:'eirp',again:'gain',asens:'sens',afreq:'f'}[k]; if(m) it[m]=k==='aname' ? String(p[k]) : +p[k]; break; }
   }
   peTouch(n);
 }
@@ -101,6 +102,7 @@ function peUse(n,P,tool,x,y,hit){
     const w=peWall(s,hit.id), u=peWallU(n,P,w,x,y), o=peAddObj(s,tool,{wall:w.id,u}); peSelect(n,'obj',o.id); peTouch(n); return;
   }
   if(tool==='box'||tool==='column'){ const g=peGround(n,P,x,y,{noPt:true}), o=peAddObj(s,tool,{x:g.x,y:g.y}); peSelect(n,'obj',o.id); peTouch(n); return; }
+  if(tool==='receiver'){ const g=peGround(n,P,x,y,{noPt:true}), o=peAddRx(s,g.x,g.y,{}); peSelect(n,'ant',o.id); peTouch(n); return; }
   if(tool==='camera'||tool==='antenna'){
     const g=peGround(n,P,x,y,{noPt:true}); let az=0; const R=s.rooms[0]; if(R){ const P2=peRoomPoly(s,R), cx=P2.reduce((a,q)=>a+q[0],0)/P2.length, cy=P2.reduce((a,q)=>a+q[1],0)/P2.length; az=Math.round(peWrap360(Math.atan2(cx-g.x,cy-g.y)/PE_D)); }
     const o=tool==='camera' ? peAddCam(s,g.x,g.y,{az}) : peAddAnt(s,g.x,g.y,{az}); peSelect(n,tool==='camera' ? 'cam' : 'ant',o.id); peTouch(n); return;
@@ -120,13 +122,18 @@ function peGesture(n,cv){
   cv.addEventListener('pointerdown',ev=>{
     ev.stopPropagation(); cv.focus({preventScroll:true}); cv.setPointerCapture(ev.pointerId); const q=pos(ev); n.touch=ev.pointerType==='touch'; Ptr.set(ev.pointerId,{p:q,b:ev.button});
     if(Ptr.size>1){ g={mode:'pinch'}; n.vw.user=true; return; }
+    if(n.chipBox && q[1]>=n.chipBox.y){ const r=n.chipRects.find(r=>q[0]>=r.x && q[0]<=r.x+r.w && q[1]>=r.y && q[1]<=r.y+r.h); if(r) peChipHit(n,r); g={mode:'chip'}; return; }
     if(q[1]<PE_BAR){ const i=barHit(q[0]); if(i<PE_TOOLS.length){ setMod(n,'tool',PE_TOOLS[i][0]); n.chain=null; n.chainPts=[]; } else if(i===PE_TOOLS.length){ setMod(n,'view',n.p.view==='3D' ? 'plan' : '3D'); peFit(n,cv.width,cv.height); } else { peFit(n,cv.width,cv.height); } redraw(n); g={mode:'bar'}; return; }
     const P=peProj(n,cv.width,cv.height), hit=pePick(n,P,q[0],q[1]), tool=n.p.tool, pan=ev.button===1||ev.button===2||ev.shiftKey;
     g={mode:'none',x0:q[0],y0:q[1],moved:false,hit,tool};
     if(tool==='select' && !pan && hit){
       if(hit.kind==='handle'){ g.mode='handle'; return; }
-      peSelect(n,hit.kind,hit.id); if(hit.kind!=='wall'){ g.mode='drag'; n.dragging=true; }
-      return;
+      const same=n.sel && n.sel.id===hit.id;
+      if(same || !n.touch){                                                       // мышь: выделил и сразу тянешь; касание: таскать можно уже выделенное
+        if(!same) peSelect(n,hit.kind,hit.id);
+        if(hit.kind==='wall'){ const w=peWall(n.sc,hit.id), [a,b]=peWallEnds(n.sc,w); g.mode='dragwall'; g.wa=[a.x,a.y]; g.wb=[b.x,b.y]; g.g0=peGround(n,P,q[0],q[1],{noPt:true}); } else g.mode='drag';
+        n.dragging=true; return; }
+      g.mode='pendSel'; return;                                                   // касание по невыделенному: короткое — выделить, протяжка — двигает вид
     }
     g.mode=pan||(!P.d3) ? 'pan' : 'orbit'; if(!pan && tool!=='select') g.mode='maybe';       // инструменты: короткий клик действует, протяжка двигает вид
   });
@@ -137,7 +144,8 @@ function peGesture(n,cv){
       if(g.mode==='maybe' && !moved){ const P=peProj(n,cv.width,cv.height); peUse(n,P,g.tool,p[0],p[1],pePick(n,P,p[0],p[1])); }
       else if((g.mode==='pan'||g.mode==='orbit') && !moved && g.tool==='select'){ peSelect(n,null); }
       else if(g.mode==='pan' && !moved && g.tool!=='select'){ const P=peProj(n,cv.width,cv.height); peUse(n,P,g.tool,p[0],p[1],pePick(n,P,p[0],p[1])); }
-      if(g.mode==='drag'||g.mode==='handle'){ n.dragging=false; n.p.scene=JSON.stringify(n.sc); redraw(n); }
+      if(g.mode==='pendSel' && !moved && g.hit) peSelect(n,g.hit.kind,g.hit.id);
+      if(g.mode==='drag'||g.mode==='handle'||g.mode==='dragwall'){ n.dragging=false; n.p.scene=JSON.stringify(n.sc); redraw(n); }
       g=null;
     }
   };
@@ -151,7 +159,9 @@ function peGesture(n,cv){
     const moved=Math.hypot(q[0]-g.x0,q[1]-g.y0)>6; if(moved) g.moved=true;
     if(g.mode==='maybe' && moved) g.mode=P.d3 ? 'orbit' : 'pan';
     if(moved && (g.mode==='pan'||g.mode==='orbit')){ n.vw.user=true; n.fastT=performance.now(); clearTimeout(n.fastRe); n.fastRe=setTimeout(()=>redraw(n),290); }
-    if(g.mode==='pan'){ peShift(n,P,dx,dy); }
+    if(g.mode==='pendSel' && moved){ g.mode=P.d3 ? 'orbit' : 'pan'; n.vw.user=true; }
+    if(g.mode==='dragwall'){ const w=peItem(n); if(w){ const gp=peGround(n,P,q[0],q[1],{noPt:true}), dx2=gp.x-g.g0.x, dy2=gp.y-g.g0.y; peMoveWall(n.sc,w.id,g.wa[0]+dx2,g.wa[1]+dy2,g.wb[0]+dx2,g.wb[1]+dy2); peTouch(n); } }
+    else if(g.mode==='pan'){ peShift(n,P,dx,dy); }
     else if(g.mode==='orbit'){ setMod(n,'vaz',+((((+n.p.vaz-dx*.4+180)%360)+360)%360-180).toFixed(1)); n.p.vel=+clamp(+n.p.vel+dy*.4,5,90).toFixed(1); if(!n.syncT){ n.syncT=setTimeout(()=>{ n.syncT=0; setMod(n,'vel',n.p.vel); },150); } }
     else if(g.mode==='drag'){ const it=peItem(n), k=n.sel.k;
       if(k==='pt'){ const gp=peGround(n,P,q[0],q[1],{noPt:true}); peDrag(n.sc,it.id,gp.x,gp.y); }
@@ -177,7 +187,8 @@ function peOrigin(n){ return {lat:+n.p.olat||0,lon:+n.p.olon||0,north:+n.p.north
 function peRecalc(n){
   const s=n.sc, g=peGrid(s,+n.p.cell||.25);
   n.camCov=s.cams.length&&g ? peCamCoverage(s,g) : null;
-  n.antHeat=s.ants.length&&g ? peAntHeat(s,g,{thr:+n.p.thr}) : null;
+  n.antHeat=s.ants.some(a=>!peIsRx(a))&&g ? peAntHeat(s,g,{thr:+n.p.thr,f:+n.p.lfreq||0}) : null;
+  n.links={}; n.minMargin=null; for(const a of s.ants) if(peIsRx(a)){ const r=peRxLevel(s,a); n.links[a.id]=r; if(r.from && (n.minMargin===null || r.margin<n.minMargin)) n.minMargin=r.margin; }
   n.calcRev=n.rev; n.rasKey='';
   n.area=s.rooms.reduce((a,r)=>a+peRoomArea(s,r),0);
   n.overlaps=peOverlaps(s);
@@ -248,13 +259,73 @@ function peUnderBuild(n){
   }catch(e){ u.err='underlay: '+e.message; }
 }
 
+// ---------- строка свойств на холсте: степперы для выбранного ----------
+function peChips(n){
+  const it=peItem(n); if(!it) return []; const s=n.sc, k=n.sel.k, C=[], clamp=(v,a,b)=>Math.max(a,Math.min(b,v)), R=v=>+(+v).toFixed(3);
+  const num=(label,get,set,step,min,max,unit)=>C.push({label,show:()=>R(get())+(unit||''),bump:d=>set(clamp(R(get()+d*step),min,max)),edit:t=>{ const v=typeof meEval==='function' ? meEval(t) : parseFloat(t); if(isFinite(v)) set(clamp(v,min,max)); },cur:()=>R(get())});
+  const wrap=(label,get,set,step)=>C.push({label,show:()=>Math.round(get())+'°',bump:d=>set(peWrap360(Math.round(get()+d*step))),edit:t=>{ const v=parseFloat(t); if(isFinite(v)) set(peWrap360(v)); },cur:()=>Math.round(get())});
+  const btn=(label,show,tap)=>C.push({label,show,kind:'button',tap});
+  const cyc=(label,get,set)=>C.push({label,show:get,bump:d=>set(d),edit:()=>set(1),cur:get,kind:'cycle'});
+  const freq=(label,get,set)=>C.push({label,show:()=>(get()>=1000 ? R(get()/1000)+' GHz' : R(get())+' MHz'),bump:d=>{ const f=get(); let i; if(d>0){ i=PE_BANDS.findIndex(b=>b>f+1e-6); set(i<0 ? PE_BANDS[PE_BANDS.length-1] : PE_BANDS[i]); } else { i=PE_BANDS.slice().reverse().findIndex(b=>b<f-1e-6); set(i<0 ? PE_BANDS[0] : PE_BANDS.slice().reverse()[i]); } },edit:t=>{ const v=parseFloat(t); if(v>0) set(v); },cur:get});
+  if(k==='pt') C.push({label:'name',show:()=>it.name||it.id,kind:'button',tap:()=>{ const t=prompt('point name',it.name||''); if(t!==null) it.name=String(t).trim(); }});
+  else if(k==='wall'){
+    num('thickness',()=>it.t,v=>{ it.t=v; },.05,.02,1.2,' m'); num('height',()=>it.h,v=>{ it.h=v; },.1,.5,8,' m');
+    num('length',()=>peWallLen(s,it),v=>{ const was=it.len>0; peSetLen(s,it.id,v); if(was) it.len=v; },.1,.1,200,' m');
+    btn('length lock',()=>it.len>0 ? '🔒 on' : 'off',()=>{ peLock(s,it.id); });
+    cyc('material',()=>it.mat,d=>{ const i=PE_MATS.indexOf(it.mat); it.mat=PE_MATS[(i+d+PE_MATS.length)%PE_MATS.length]; });
+  } else if(k==='obj'){
+    const dw=it.type==='door'||it.type==='window';
+    num('width',()=>it.w,v=>{ it.w=v; },.1,.1,6,' m'); if(it.type==='box') num('depth',()=>it.d,v=>{ it.d=v; },.1,.1,6,' m');
+    num('height',()=>it.h,v=>{ it.h=v; },.05,.1,4,' m');
+    if(it.type==='box') wrap('turn',()=>it.rot||0,v=>{ it.rot=peWrap180(v); },15);
+    if(dw) num('sill',()=>it.sill,v=>{ it.sill=v; },.05,0,3,' m'); else num('base z',()=>it.z||0,v=>{ it.z=v; },.1,0,5,' m');
+  } else if(k==='cam'){
+    num('field of view',()=>it.fov,v=>{ it.fov=v; },5,20,180,'°'); num('tilt down',()=>it.tilt,v=>{ it.tilt=v; },5,-10,90,'°'); num('range',()=>it.range,v=>{ it.range=v; },1,1,60,' m');
+    num('height',()=>it.z,v=>{ it.z=v; },.1,.3,8,' m'); wrap('azimuth',()=>it.az,v=>{ it.az=v; },5);
+    btn('name',()=>it.name,()=>{ const t=prompt('camera name',it.name); if(t!==null) it.name=String(t); });
+  } else if(k==='ant'){
+    const rx=peIsRx(it);
+    cyc('type',()=>rx ? 'receive' : 'transmit',()=>{ it.role=rx ? 'tx' : 'rx'; if(it.role==='rx'){ it.gain??=2; it.sens??=-85; } else it.eirp??=20; });
+    freq('frequency',()=>it.f,v=>{ it.f=v; });
+    if(rx){ num('gain',()=>it.gain??2,v=>{ it.gain=v; },1,-10,30,' dBi'); num('sensitivity',()=>it.sens??-85,v=>{ it.sens=v; },1,-120,-40,' dBm'); }
+    else num('power (EIRP)',()=>it.eirp??20,v=>{ it.eirp=v; },1,-10,40,' dBm');
+    num('beam width',()=>it.bw,v=>{ it.bw=v; },10,20,360,'°'); wrap('azimuth',()=>it.az,v=>{ it.az=v; },5); num('height',()=>it.z,v=>{ it.z=v; },.1,.3,8,' m');
+    btn('name',()=>it.name,()=>{ const t=prompt('antenna name',it.name); if(t!==null) it.name=String(t); });
+  }
+  btn('delete',()=>'🗑',()=>{ peDeleteSel(n); });
+  return C;
+}
+function peChipHit(n,r){
+  const C=peChips(n), c=C[r.i]; if(!c) return;
+  if(c.kind==='button') c.tap();
+  else if(r.zone==='m') c.bump(-1); else if(r.zone==='p') c.bump(1);
+  else if(c.kind==='cycle') c.bump(1);
+  else { const t=prompt(c.label+':',String(c.cur())); if(t!==null) c.edit(t); }
+  if(n.sel) peLoad(n); peTouch(n);
+}
+function peDrawChips(n,cx,W,H,fg){
+  n.chipRects=[]; n.chipBox=null; const C=n.sel ? peChips(n) : []; if(!C.length) return;
+  const ch=PE_BAR>30 ? 40 : 28, pad=4, fs=Math.round(ch*.38); cx.font=fs+'px sans-serif'; cx.textBaseline='middle';
+  const widths=C.map(c=>c.kind==='button' ? Math.max(ch*2,cx.measureText(c.label+'  '+c.show()).width+16) : Math.max(ch*3.2,cx.measureText(c.label+'  '+c.show()).width+ch*2+16)), rows=[[]]; let x=pad;
+  C.forEach((c,i)=>{ if(x+widths[i]>W-pad && rows[rows.length-1].length){ rows.push([]); x=pad; } rows[rows.length-1].push(i); x+=widths[i]+pad; });
+  const top=H-rows.length*(ch+pad)-pad; cx.fillStyle='rgba(16,22,26,.92)'; cx.fillRect(0,top,W,H-top); n.chipBox={y:top};
+  rows.forEach((r,ri)=>{ let x=pad; const y=top+pad+ri*(ch+pad);
+    for(const i of r){ const c=C[i], w=widths[i], btn=c.kind==='button';
+      cx.fillStyle='rgba(255,255,255,.09)'; cx.fillRect(x,y,w,ch);
+      if(!btn){ cx.fillStyle='rgba(255,183,77,.22)'; cx.fillRect(x,y,ch,ch); cx.fillRect(x+w-ch,y,ch,ch); cx.fillStyle='#ffb74d'; cx.font=Math.round(ch*.55)+'px sans-serif'; cx.textAlign='center'; cx.fillText(c.kind==='cycle' ? '‹' : '−',x+ch/2,y+ch/2+1); cx.fillText(c.kind==='cycle' ? '›' : '+',x+w-ch/2,y+ch/2+1); }
+      cx.font=fs+'px sans-serif'; cx.textAlign='center'; const mx=btn ? x+w/2 : x+w/2; cx.fillStyle='rgba(223,231,234,.65)'; cx.fillText(c.label,mx,y+ch*.32); cx.fillStyle='#fff'; cx.fillText(c.show(),mx,y+ch*.72);
+      if(btn) n.chipRects.push({x,y,w,h:ch,i,zone:'c'}); else { n.chipRects.push({x,y,w:ch,h:ch,i,zone:'m'},{x:x+w-ch,y,w:ch,h:ch,i,zone:'p'},{x:x+ch,y,w:w-2*ch,h:ch,i,zone:'c'}); }
+      x+=w+pad; } });
+  cx.textBaseline='alphabetic';
+}
+
 def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, readout:true, view:{h:520}, w:640, resize:true,
   kw:'plan editor floor plan 3d walls thickness lock length door window furniture box column camera cctv antenna wifi coverage heat map blind spots video overlay augmented reality drag points',
   // rec — точки из Site Plan / Table (name, x, y) — добавляются или двигаются по имени (import); lat / lon / alt / az / el / fov — поза телефона (те же провода, что у Video Overlay): рисуется в плане;
   // lines — для Site Plan (точки at, зафиксированные длины, poly); rec — стены, проёмы, ящики (3D-каркасы path3 [lat, lon, alt]), камеры, антенны, точки — в Video Overlay / Map / Table (при заданной привязке к земле);
-  // area — площадь комнат, м²; cover — доля комнат под камерами, 0…1; sig — доля комнат с сигналом выше порога, 0…1; ncam / nant — число
+  // area — площадь комнат, м²; margin — наименьший запас приёмников над чувствительностью, дБ; cover — доля комнат под камерами, 0…1; sig — доля комнат с сигналом выше порога, 0…1; ncam / nant — число
   ins:[{n:'rec',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'alt',t:'num'},{n:'az',t:'num'},{n:'el',t:'num'},{n:'fov',t:'num'}],
-  outs:[{n:'lines',t:'txt'},{n:'rec',t:'rec'},{n:'area',t:'num'},{n:'cover',t:'num'},{n:'sig',t:'num'},{n:'ncam',t:'num'},{n:'nant',t:'num'}],
+  outs:[{n:'lines',t:'txt'},{n:'rec',t:'rec'},{n:'area',t:'num'},{n:'cover',t:'num'},{n:'sig',t:'num'},{n:'ncam',t:'num'},{n:'nant',t:'num'},{n:'margin',t:'num'}],
   params:[{n:'tool',t:'select',opts:PE_TOOLS.map(t=>t[0]),d:'select',label:'tool (also the strip on the canvas)',fn:n=>{ n.chain=null; n.chainPts=[]; redraw(n); }},
           {n:'view',t:'select',opts:['plan','3D'],d:'plan',label:'view'},
           {n:'vaz',t:'range',min:-180,max:180,step:1,d:-30,label:'3D: turn, °'},
@@ -264,6 +335,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
           {n:'layer',t:'select',opts:['none','cameras','signal'],d:'none',label:'layer: cameras (green — seen, red — blind) · signal (antennas, dBm)'},
           {n:'thr',t:'range',min:-100,max:-30,step:1,d:-70,label:'signal threshold, dBm (below — dim)'},
           {n:'cell',t:'range',min:.1,max:1,step:.05,d:.25,label:'coverage cell, m'},
+          {n:'lfreq',t:'num',d:0,label:'signal layer: only the transmitters on this frequency, MHz (0 — all; ±1 %, at least 10 MHz)'},
           // подложка из Photo Measure
           {n:'uon',t:'check',d:true,label:'underlay (Photo Measure rec → here): show'},
           {n:'uop',t:'range',min:.1,max:1,step:.05,d:.6,label:'underlay opacity'},
@@ -308,7 +380,10 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
           {n:'az2',t:'range',min:.3,max:8,step:.05,d:2.4,label:'antenna height, m',if:peOn('ant'),fn:n=>peApply(n,'az2')},
           {n:'aaz',t:'range',min:0,max:359,step:1,d:0,label:'antenna azimuth, ° (drag the white handle)',if:peOn('ant'),fn:n=>peApply(n,'aaz')},
           {n:'abw',t:'range',min:20,max:360,step:5,d:360,label:'beam width, ° (360 — omni)',if:peOn('ant'),fn:n=>peApply(n,'abw')},
-          {n:'aeirp',t:'range',min:-10,max:40,step:.5,d:20,label:'EIRP, dBm (Wi-Fi 20)',if:peOn('ant'),fn:n=>peApply(n,'aeirp')},
+          {n:'arole',t:'select',opts:['transmit','receive'],d:'transmit',label:'antenna type: transmit (access point, base station) / receive (a phone, a sensor: its level and margin are calculated)',if:peOn('ant'),fn:n=>peApply(n,'arole')},
+          {n:'aeirp',t:'range',min:-10,max:40,step:.5,d:20,label:'EIRP, dBm (Wi-Fi 20)',if:n=>n.selKind==='ant' && peItem(n)?.role!=='rx',fn:n=>peApply(n,'aeirp')},
+          {n:'again',t:'range',min:-10,max:30,step:.5,d:2,label:'receiver gain, dBi',if:n=>n.selKind==='ant' && peItem(n)?.role==='rx',fn:n=>peApply(n,'again')},
+          {n:'asens',t:'range',min:-120,max:-40,step:1,d:-85,label:'receiver sensitivity, dBm (the margin is the level above it)',if:n=>n.selKind==='ant' && peItem(n)?.role==='rx',fn:n=>peApply(n,'asens')},
           {n:'afreq',t:'num',d:2437,label:'frequency, MHz',if:peOn('ant'),fn:n=>peApply(n,'afreq')},
           {n:'del',t:'button',label:'✕ Delete the selected (Delete key)',if:n=>!!n.selKind,fn:n=>peDeleteSel(n)},
           // привязка к земле
@@ -322,7 +397,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
           {n:'newscene',t:'button',label:'Clear the whole scene',adv:true,fn:n=>{ n.sc=peNew(); n.sel=null; n.selKind=''; peTouch(n); n.vw.fit=false; }},
           {n:'scene',t:'text',d:'',hidden:true}],
   init:n=>{ n.sc=peParse(n.p.scene); n.rev=1; n.calcRev=0; n.sel=null; n.selKind=''; n.chain=null; n.chainPts=[]; n.vw={tx:0,ty:0,sc:40,fit:false}; n.msg=''; n.inPose={}; n.lastEdit=0; n.saveT=0; n.syncT=0;
-    n.job=null; n.zcv=null; n.fastT=0; n.fastRe=0; n.overlaps=[]; n.under=null; n.camCov=null; n.antHeat=null; n.recs=[]; n.lines=''; n.area=0; n.emitDue=false; n.lastEmit=0; n.rasKey=''; n.ras=null; n.georef=false; n.touch=false; n.dragging=false; },
+    n.links={}; n.minMargin=null; n.chipRects=[]; n.chipBox=null; n.job=null; n.zcv=null; n.fastT=0; n.fastRe=0; n.overlaps=[]; n.under=null; n.camCov=null; n.antHeat=null; n.recs=[]; n.lines=''; n.area=0; n.emitDue=false; n.lastEmit=0; n.rasKey=''; n.ras=null; n.georef=false; n.touch=(typeof matchMedia!=='undefined' && matchMedia('(pointer:coarse)').matches); n.dragging=false; },
   dispose:n=>{ if(n.saveT){ clearTimeout(n.saveT); n.p.scene=JSON.stringify(n.sc); } },
   process(n,I){
     const num=v=>typeof v==='number' && isFinite(v) ? v : null;
@@ -334,7 +409,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     if(n.calcRev!==n.rev && now-n.lastEdit>(n.dragging ? 180 : 60)){ peRecalc(n); redraw(n); }
     let rec=null; const every=+n.p.emit*1000;
     if(n.emitDue || (every>0 && n.recs.length && now-n.lastEmit>every)){ rec=n.recs.length ? n.recs : null; n.emitDue=false; n.lastEmit=now; }
-    return {lines:n.lines, rec, area:n.sc.rooms.length ? n.area : null, cover:n.camCov ? n.camCov.cover : null, sig:n.antHeat ? n.antHeat.share : null, ncam:n.sc.cams.length, nant:n.sc.ants.length};
+    return {lines:n.lines, rec, area:n.sc.rooms.length ? n.area : null, cover:n.camCov ? n.camCov.cover : null, sig:n.antHeat ? n.antHeat.share : null, ncam:n.sc.cams.length, nant:n.sc.ants.length, margin:n.minMargin};
   },
   draw(n,cv,cx){
     const W=cv.width, H=cv.height, s=n.sc, p=n.p, L=[], fg=themeColor('--scr-txt')||'#9fb0b6'; peGesture(n,cv);
@@ -398,11 +473,15 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
       cx.save(); cx.translate(A[0],A[1]); const dir=P.pt(c.x+Math.sin(c.az*PE_D),c.y+Math.cos(c.az*PE_D),c.z), ang=Math.atan2(dir[1]-A[1],dir[0]-A[0]); cx.rotate(ang);
       cx.fillStyle=isSel ? '#ffb74d' : c.auto ? '#6fd0ff' : '#7dff9a'; cx.strokeStyle='#000'; cx.lineWidth=1.5; cx.beginPath(); cx.moveTo(10,0); cx.lineTo(-6,-6); cx.lineTo(-6,6); cx.closePath(); cx.stroke(); cx.fill(); cx.restore();
       cx.fillStyle=fg; cx.font='10px monospace'; cx.textAlign='left'; cx.fillText(c.name,A[0]+9,A[1]-8); }
-    // антенны
-    for(const a of s.ants){ const A=P.pt(a.x,a.y,a.z), F=P.pt(a.x,a.y,0), isSel=n.sel&&n.sel.id===a.id; if(P.d3){ cx.strokeStyle='rgba(255,183,77,.5)'; cx.beginPath(); cx.moveTo(A[0],A[1]); cx.lineTo(F[0],F[1]); cx.stroke(); }
-      cx.fillStyle=isSel ? '#fff' : a.auto ? '#6fd0ff' : '#ffb74d'; cx.strokeStyle='#000'; cx.lineWidth=1.5; cx.beginPath(); cx.moveTo(A[0],A[1]-7); cx.lineTo(A[0]+6,A[1]); cx.lineTo(A[0],A[1]+7); cx.lineTo(A[0]-6,A[1]); cx.closePath(); cx.stroke(); cx.fill();
-      cx.strokeStyle='#ffb74d'; cx.lineWidth=1.2; for(const r of [10,15]){ cx.beginPath(); cx.arc(A[0],A[1],r,-2.4,-.75); cx.stroke(); }
-      cx.fillStyle=fg; cx.font='10px monospace'; cx.textAlign='left'; cx.fillText(a.name,A[0]+10,A[1]-10); }
+    // антенны: передающие — ромб с волнами, приёмные — «вилка» с уровнем и запасом
+    for(const a of s.ants){ const A=P.pt(a.x,a.y,a.z), F=P.pt(a.x,a.y,0), isSel=n.sel&&n.sel.id===a.id, rx=peIsRx(a); if(P.d3){ cx.strokeStyle=rx ? 'rgba(199,146,255,.55)' : 'rgba(255,183,77,.5)'; cx.beginPath(); cx.moveTo(A[0],A[1]); cx.lineTo(F[0],F[1]); cx.stroke(); }
+      const col=isSel ? '#fff' : rx ? '#c792ff' : a.auto ? '#6fd0ff' : '#ffb74d';
+      cx.fillStyle=col; cx.strokeStyle='#000'; cx.lineWidth=1.5; cx.beginPath();
+      if(rx){ cx.arc(A[0],A[1],6,0,7); cx.stroke(); cx.fill(); cx.strokeStyle=col; cx.lineWidth=2; cx.beginPath(); cx.moveTo(A[0],A[1]-6); cx.lineTo(A[0],A[1]-14); cx.moveTo(A[0]-6,A[1]-14); cx.lineTo(A[0],A[1]-8); cx.lineTo(A[0]+6,A[1]-14); cx.stroke(); }
+      else { cx.moveTo(A[0],A[1]-7); cx.lineTo(A[0]+6,A[1]); cx.lineTo(A[0],A[1]+7); cx.lineTo(A[0]-6,A[1]); cx.closePath(); cx.stroke(); cx.fill(); cx.strokeStyle='#ffb74d'; cx.lineWidth=1.2; for(const r of [10,15]){ cx.beginPath(); cx.arc(A[0],A[1],r,-2.4,-.75); cx.stroke(); } }
+      cx.fillStyle=fg; cx.font='10px monospace'; cx.textAlign='left'; let lab=a.name+(rx ? '' : ' '+(a.f>=1000 ? (a.f/1000)+' GHz' : a.f+' MHz'));
+      if(rx){ const L=n.links && n.links[a.id]; lab+=L ? (L.from ? ' '+L.level.toFixed(0)+' dBm '+(L.ok ? '✓' : '✗ '+L.margin.toFixed(0)+' dB') : ' — no signal') : ''; if(L) cx.fillStyle=L.ok ? '#7dff9a' : '#ff8a80'; }
+      cx.fillText(lab,A[0]+10,A[1]-10); }
     // поза телефона (общее пространство с Video Overlay)
     { const o=peOrigin(n), ps=n.inPose; if(n.georef && ps.lat!=null && ps.lon!=null){ const l=peLocal(o,ps.lat,ps.lon), z=(ps.alt!=null ? ps.alt-o.alt : 1.5), A=P.pt(l[0],l[1],Math.max(0,z)); cx.fillStyle='#ff6bd6'; cx.strokeStyle='#000'; cx.lineWidth=1.5; cx.beginPath(); cx.arc(A[0],A[1],6,0,7); cx.stroke(); cx.fill();
         if(ps.az!=null){ const az=peAzPlan(o,ps.az), f=(ps.fov||60)/2, len=Math.min(4,3/Math.max(.2,Math.cos(((ps.el||0))*PE_D))); cx.strokeStyle='#ff6bd6'; cx.lineWidth=1.5; cx.beginPath(); for(const d of [-f,f]){ const T=P.pt(l[0]+Math.sin((az+d)*PE_D)*len,l[1]+Math.cos((az+d)*PE_D)*len,Math.max(0,z)); cx.moveTo(A[0],A[1]); cx.lineTo(T[0],T[1]); } cx.stroke(); }
@@ -413,19 +492,23 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
         else if(k==='obj'){ let q; if(it.type==='door'||it.type==='window'){ const pl=peOpenPlace(s,it); q=pl ? P.pt(pl.x,pl.y,it.sill+it.h/2) : null; } else q=P.pt(it.x,it.y,(it.z||0)+it.h/2); if(q){ cx.beginPath(); cx.arc(q[0],q[1],11,0,7); cx.stroke(); } }
         else if(k==='cam'||k==='ant'){ const A=P.pt(it.x,it.y,it.z), h=peHandle(it,P); cx.beginPath(); cx.arc(A[0],A[1],13,0,7); cx.stroke(); cx.strokeStyle='rgba(255,255,255,.7)'; cx.lineWidth=1; cx.beginPath(); cx.moveTo(A[0],A[1]); cx.lineTo(h[0],h[1]); cx.stroke(); cx.fillStyle='#fff'; cx.strokeStyle='#000'; cx.beginPath(); cx.arc(h[0],h[1],6,0,7); cx.stroke(); cx.fill(); }
         else if(k==='pt'){ } } }
-    // строка инструментов
-    { cx.fillStyle='rgba(20,26,30,.92)'; cx.fillRect(0,0,W,PE_BAR); const bw=W/(PE_TOOLS.length+2); cx.font='11px sans-serif'; cx.textBaseline='middle'; cx.textAlign='center';
-      PE_TOOLS.forEach(([id,lab],i)=>{ const on=p.tool===id; cx.fillStyle=on ? '#ffb74d' : 'rgba(255,255,255,.06)'; cx.fillRect(i*bw+1,1,bw-2,PE_BAR-2); cx.fillStyle=on ? '#000' : '#dfe7ea'; cx.fillText(lab,i*bw+bw/2,PE_BAR/2+1); });
-      cx.fillStyle='rgba(255,255,255,.06)'; cx.fillRect(PE_TOOLS.length*bw+1,1,bw-2,PE_BAR-2); cx.fillStyle='#dfe7ea'; cx.fillText(p.view==='3D' ? '→ plan' : '→ 3D',PE_TOOLS.length*bw+bw/2,PE_BAR/2+1);
-      cx.fillStyle='rgba(255,255,255,.06)'; cx.fillRect((PE_TOOLS.length+1)*bw+1,1,bw-2,PE_BAR-2); cx.fillStyle='#dfe7ea'; cx.fillText('⌂ fit',(PE_TOOLS.length+1)*bw+bw/2,PE_BAR/2+1); cx.textBaseline='alphabetic'; }
+    // строка инструментов: подпись, если влезает, иначе только значок
+    { cx.fillStyle='rgba(20,26,30,.92)'; cx.fillRect(0,0,W,PE_BAR); const items=PE_TOOLS.map(t=>({id:t[0],icon:t[1],name:t[2]})).concat([{id:'#view',icon:p.view==='3D' ? '◫' : '⬡',name:p.view==='3D' ? 'plan' : '3D'},{id:'#fit',icon:'⌂',name:'fit'}]), bw=W/items.length;
+      cx.textBaseline='middle'; cx.textAlign='center';
+      items.forEach((it,i)=>{ const on=p.tool===it.id; cx.fillStyle=on ? '#ffb74d' : 'rgba(255,255,255,.06)'; cx.fillRect(i*bw+1,1,bw-2,PE_BAR-2); cx.fillStyle=on ? '#000' : '#dfe7ea';
+        cx.font=Math.round(PE_BAR*.42)+'px sans-serif'; const full=it.icon+' '+it.name; let t=full; if(cx.measureText(full).width>bw-6){ t=it.icon; cx.font=Math.round(PE_BAR*.56)+'px sans-serif'; } cx.fillText(t,i*bw+bw/2,PE_BAR/2+1); });
+      cx.textBaseline='alphabetic'; }
+    peDrawChips(n,cx,W,H,fg);
     // сводка
     if(n.msg) L.push(n.msg);
     { const it=peItem(n); if(it){ const k=n.sel.k; L.push('selected: '+(k==='pt' ? 'point '+(it.name||it.id)+' ('+it.x.toFixed(2)+', '+it.y.toFixed(2)+')' : k==='wall' ? 'wall '+peWallLen(s,it).toFixed(2)+' m, '+(it.t*100).toFixed(0)+' cm thick, '+it.h+' m high, '+it.mat+(it.len>0 ? ', length locked' : '')+(s.ants.length ? ' · signal loss '+peMatLoss(it.mat,s.ants[0].f,it.t).toFixed(1)+' dB at '+s.ants[0].f+' MHz' : '') : k==='obj' ? it.type+' '+it.w+(it.type==='box' ? '×'+it.d : '')+' m' : (k==='cam' ? 'camera ' : 'antenna ')+it.name+' at '+it.z+' m, az '+it.az+'°')); } }
     L.push(s.pts.length+' points · '+s.walls.length+' walls · '+s.objs.length+' objects · '+s.cams.length+' camera'+(s.cams.length===1 ? '' : 's')+' · '+s.ants.length+' antenna'+(s.ants.length===1 ? '' : 's')+(s.rooms.length ? ' · rooms '+n.area.toFixed(1)+' m²' : ''));
     if(n.under && n.under.err) L.push('⚠ '+n.under.err);
     if(n.overlaps && n.overlaps.length) L.push('⚠ '+n.overlaps.length+' object'+(n.overlaps.length===1 ? '' : 's')+' go through a wall ('+n.overlaps.slice(0,3).map(o=>{ const ob=s.objs.find(q=>q.id===o.obj); return ob ? (ob.name||ob.type) : o.obj; }).join(', ')+'): move them or turn them — the 3D picture and the plan are wrong there (a box’s width runs along the north at rotation 0)');
+    for(const a of s.ants) if(peIsRx(a)){ const r=n.links && n.links[a.id]; L.push('receiver '+a.name+' ('+(a.f>=1000 ? a.f/1000+' GHz' : a.f+' MHz')+'): '+(r && r.from ? r.level.toFixed(1)+' dBm from '+r.name+', margin '+(r.margin>=0 ? '+' : '')+r.margin.toFixed(1)+' dB over '+a.sens+' dBm' : 'no transmitter on this frequency')); }
     if(n.camCov) L.push('cameras see '+(100*n.camCov.cover).toFixed(0)+'% of '+(s.rooms.length ? 'the rooms' : 'the area')+' ('+n.camCov.seen.toFixed(1)+' of '+n.camCov.total.toFixed(1)+' m², blind '+(n.camCov.total-n.camCov.seen).toFixed(1)+' m², by two or more '+n.camCov.multi.toFixed(1)+' m²)');
     if(n.antHeat) L.push('signal above '+p.thr+' dBm in '+(100*n.antHeat.share).toFixed(0)+'% · mean '+n.antHeat.mean.toFixed(0)+' dBm, weakest '+n.antHeat.min.toFixed(0)+' dBm');
+    if(!n.sel && p.tool==='select') L.push('tap an item to select it: a strip with its parameters (thickness, height, length lock, field of view, power, frequency…) appears at the bottom of the canvas; a selected item can be dragged (on a touch screen only after it is selected)');
     L.push(p.tool==='select' ? (P.d3 ? 'drag empty space — turn the model · wheel / two fingers — zoom · right drag / shift — move · click an object — select, drag — move' : 'click — select, drag — move · empty space: drag — pan · wheel — zoom · double click — fit') : 'tool «'+p.tool+'»: click to use; drag moves the view; Esc — back to select');
     if(n.georef) L.push('georeferenced: records go to Video Overlay / Map (floor altitude '+(+p.oalt)+' m)'); else L.push('no georeference (advanced: origin lat / lon): the records carry local x, y, z');
     n.el.querySelector('.readout').textContent=L.join('\n');

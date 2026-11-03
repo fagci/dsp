@@ -3,7 +3,7 @@
 import vm from 'node:vm'; import fs from 'node:fs'; import path from 'node:path'; import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Array,String,Number,Object,JSON,Set,Map,Float32Array,Uint8Array,isFinite,Infinity});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peOverlaps,peZRaster,peBoxCorners,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints};`,ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peOverlaps,peAddRx,peRxLevel,peMoveWall,peZRaster,peBoxCorners,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints};`,ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -146,5 +146,16 @@ ok('the same wall is a bigger obstacle at 5 GHz: the level behind it drops more 
   const behind=run([wall,tbl(1.5,'t')]); ok('a table behind the wall: the point of its top is hidden by the wall’s near face',eq(at(behind,0,1.5,.8),WALL),JSON.stringify(at(behind,0,1.5,.8)));
   const thru=run([wall,tbl(0,'t')]); ok('a table that straddles the wall (intersecting volumes): the south half of its top is visible, the north half is cut by the wall',eq(at(thru,0,-.2,.8),TOP) && eq(at(thru,0,.2,.8),WALL),JSON.stringify([at(thru,0,-.2,.8),at(thru,0,.2,.8)]));
   ok('background is transparent',at(front,-6,-3,0)[3]===0); }
+// приёмная антенна
+{ const {s}=room(20,10); const tx=K.peAddAnt(s,2,5,{z:1,eirp:20,f:2400,bw:360}); const rx=K.peAddRx(s,12,5,{z:1,gain:3,sens:-85,f:2400});
+  const r=K.peRxLevel(s,rx); near('RX level = EIRP − FSPL(10 m) + RX gain',r.level,20-K.peFspl(10,2400)+3,1e-6); near('margin over the sensitivity',r.margin,r.level+85,1e-9); ok('link ok, from the transmitter',r.ok && r.from===tx.id);
+  const far=K.peAddRx(s,12,5,{z:1,f:5800}); ok('a receiver on another frequency hears nobody',K.peRxLevel(s,far).from===null && !K.peRxLevel(s,far).ok);
+  const dir=K.peAddRx(s,12,5,{z:1,gain:3,f:2400,bw:60,az:90}); ok('a directional receiver turned away (az 90° east, the transmitter is west): ≥ 20 dB weaker',r.level-K.peRxLevel(s,dir).level>20);
+  const p1=K.peAddPoint(s,7,0), p2=K.peAddPoint(s,7,10); K.peAddWall(s,p1.id,p2.id,{mat:'concrete',t:.2}); near('a concrete wall on the way costs its loss at 2.4 GHz',r.level-K.peRxLevel(s,rx).level,K.peMatLoss('concrete',2400,.2),1e-6);
+  const h=K.peAntHeat(s,K.peGrid(s,1),{thr:-70}); ok('the heat map ignores receivers (the same with and without)',(()=>{ const q=K.peAntHeat((()=>{ const t2=room(20,10).s; K.peAddAnt(t2,2,5,{z:1,eirp:20,f:2400}); return t2; })(),K.peGrid(s,1),{thr:-70}); return Math.abs(q.mean-h.mean)<30; })());
+  const hf=K.peAntHeat(s,K.peGrid(s,1),{thr:-70,f:5800}); ok('a frequency filter: nothing transmits on 5.8 GHz → no signal',hf.min<=-199); }
+{ const {s,P,Wl}=room(); K.peLock(s,Wl[0].id); K.peMoveWall(s,Wl[2].id,1,5,7,5); const q1=K.pePt(s,Wl[2].a), q2=K.pePt(s,Wl[2].b);
+  ok('moving a wall puts both its ends where asked',Math.abs(q1.x-1)<1e-9 && Math.abs(q1.y-5)<1e-9 && Math.abs(q2.x-7)<1e-9);
+  ok('…and a locked neighbour keeps its length',Math.abs(K.peWallLen(s,Wl[0])-6)<2e-3 && !s.pts.some(p=>p.fix),K.peWallLen(s,Wl[0])); }
 ok('an empty scene has no bounds and no grid',K.peGrid(K.peNew())===null);
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
