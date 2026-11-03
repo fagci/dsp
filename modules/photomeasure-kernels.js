@@ -75,3 +75,24 @@ function clinoHeight(d,topDeg,baseDeg){
 function clinoDist(eye,baseDeg){ const t=Math.tan(-baseDeg*Math.PI/180); return t>0 ? eye/t : NaN; }
 // строка для Site Plan: из точки from в точку to
 function clinoLine(from,to,topDeg,d,eye){ return from+'-'+to+' tilt '+(+topDeg.toFixed(2))+' '+(+d.toFixed(3))+' eye '+(+eye.toFixed(3)); }
+
+// ---------- подложка (скан плана, снимок карты): масштаб по двум точкам ----------
+// подобие «пиксели → метры»: s = dist / |p1p2|, начало — первая точка, v вверх (картинка перевёрнута по y), как у гомографии выше
+function pmScale2(p1,p2,dist){
+  const L=Math.hypot(p2[0]-p1[0],p2[1]-p1[1]); if(!(L>0) || !(dist>0)) return null;
+  const s=dist/L; return [s,0,-s*p1[0], 0,-s,s*p1[1], 0,0,1];
+}
+// поворот из «картинка вверх» в стороны света: up — азимут направления «вверх по картинке», ° (0 — вверх на север). u вправо по картинке, v вверх → восток, север
+function pmWorld(p,upDeg){ const b=upDeg*Math.PI/180; return [p[0]*Math.cos(b)+p[1]*Math.sin(b), -p[0]*Math.sin(b)+p[1]*Math.cos(b)]; }
+// погрешность координат обводки, м: 0,5 % размера плана + 2 см (клик ≈ 1–2 px при масштабе в полкадра)
+function pmSigmaTrace(P){
+  let x0=1e99,x1=-1e99,y0=1e99,y1=-1e99; for(const q of P){ x0=Math.min(x0,q[0]); x1=Math.max(x1,q[0]); y0=Math.min(y0,q[1]); y1=Math.max(y1,q[1]); }
+  return Math.hypot(.005*Math.hypot(x1-x0,y1-y0),.02);
+}
+// строки «P1 at x y ± σ» (x — восток, y — север) + poly
+function pmLinesTrace(P,names,upDeg,poly){
+  const f=v=>String(+v.toFixed(3)), s=pmSigmaTrace(P), o=[];
+  P.forEach((q,i)=>{ const w=pmWorld(q,upDeg); o.push(names[i]+' at '+f(w[0])+' '+f(w[1])+' ± '+f(s)); });
+  if(poly && P.length>=3) o.push('poly '+names.join(' '));
+  return o.join('\n');
+}

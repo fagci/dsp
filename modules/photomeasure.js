@@ -24,8 +24,27 @@ function pmDemo(){
 
 // ---------- Photo Measure ----------
 const PM_CORN=['top-left','top-right','bottom-right','bottom-left'];
+const PM_SCALE2='2 points: a scan / map scale';
+const pmNeed=n=>n.p.ref===PM_SCALE2 ? 2 : 4;
+
+// демо-скан: чертёж участка 30×18 м с домом на бумаге, масштабная линейка 10 м, север вверху
+function pmDemoScan(){
+  const W=800,H=560,c=document.createElement('canvas'); c.width=W; c.height=H; const x=c.getContext('2d'), k=20, X0=100, Y0=60;       // 20 px = 1 м
+  x.fillStyle='#fbf7e8'; x.fillRect(0,0,W,H);
+  x.strokeStyle='rgba(120,100,60,.15)'; x.lineWidth=1; for(let i=0;i<W;i+=k){ x.beginPath(); x.moveTo(i,0); x.lineTo(i,H); x.stroke(); } for(let j=0;j<H;j+=k){ x.beginPath(); x.moveTo(0,j); x.lineTo(W,j); x.stroke(); }
+  const plot=[[0,18],[30,18],[30,0],[0,0]], P=q=>[X0+q[0]*k,Y0+(18-q[1])*k];                  // метры (v вверх) → пиксели
+  x.strokeStyle='#223'; x.lineWidth=3; x.beginPath(); plot.forEach((q,i)=>{ const p=P(q); i ? x.lineTo(p[0],p[1]) : x.moveTo(p[0],p[1]); }); x.closePath(); x.stroke();
+  x.fillStyle='rgba(160,120,80,.35)'; x.strokeStyle='#642'; x.lineWidth=2; x.beginPath(); [[5,5],[15,5],[15,11],[5,11]].forEach((q,i)=>{ const p=P(q); i ? x.lineTo(p[0],p[1]) : x.moveTo(p[0],p[1]); }); x.closePath(); x.fill(); x.stroke();
+  x.fillStyle='#223'; x.font='14px sans-serif'; x.fillText('house',P([8,8])[0],P([8,8])[1]); x.fillText('N ↑',W-70,50);
+  const a=[X0,H-60], b=[X0+10*k,H-60]; x.lineWidth=4; x.beginPath(); x.moveTo(a[0],a[1]); x.lineTo(b[0],b[1]); x.stroke(); x.fillText('10 m',a[0]+80,H-68);
+  return {canvas:c, ref:[a,b], pts:plot.map(P)};
+}
 function pmLoad(n,f){
-  createImageBitmap(f).then(bm=>{ n.bm?.close?.(); n.bm=bm; n.ref=[]; n.pts=[]; n.msg='image '+bm.width+'×'+bm.height+': click the 4 corners of the reference'; pmSave(n); n.dirty=true; },e=>{ n.msg='cannot read the image: '+e.message; });
+  createImageBitmap(f).then(bm=>{ n.bm?.close?.(); n.bm=bm; n.ref=[]; n.pts=[]; n.msg='image '+bm.width+'×'+bm.height+': click the '+(pmNeed(n)===2 ? '2 scale points' : '4 corners of the reference'); pmSave(n); n.dirty=true; },e=>{ n.msg='cannot read the image: '+e.message; });
+}
+function pmUseDemoScan(n){
+  const d=pmDemoScan(); n.bm=d.canvas; n.ref=d.ref; n.pts=d.pts; n.p.ref=PM_SCALE2; n.set?.ref?.(PM_SCALE2); n.p.rd=10; n.set?.rd?.(10); n.p.mode='trace'; n.set?.mode?.('trace');
+  n.msg='demo scan: a 30×18 m plot with a house; the scale line (10 m) is clicked, north is up'; pmSave(n); n.dirty=true;
 }
 function pmUseDemo(n){
   const d=pmDemo(); n.bm=d.canvas; n.ref=d.ref; n.pts=d.pts; n.msg='demo image: a 4×3 m plane in perspective, an A4 sheet and a 3×1.5 m bed'; pmSave(n); n.dirty=true;
@@ -36,12 +55,15 @@ function pmRefSize(n){
 }
 function pmCalc(n){                                               // гомография и точки в метрах
   n.H=null; n.mp=[];
-  if(n.ref.length===4){
+  if(pmNeed(n)===2){
+    if(n.ref.length===2){ n.H=pmScale2(n.ref[0],n.ref[1],+n.p.rd); n.bad=n.H ? '' : 'the two scale points coincide, or the distance is 0'; } else n.bad='';
+  } else if(n.ref.length===4){
     if(!pmQuadOk(n.ref)){ n.H=null; n.bad='the corners must go top-left → top-right → bottom-right → bottom-left, around the reference'; }
     else { n.bad=''; const [w,h]=pmRefSize(n); n.H=pmHomography(n.ref,pmRect(w,h)); }
   } else n.bad='';
   if(n.H) n.mp=n.pts.map(q=>pmApply(n.H,q[0],q[1]));
-  n.lines=n.H && n.pts.length>1 ? pmLines(n.mp,n.mp.map((_,i)=>(String(n.p.prefix||'P').replace(/[\s-]+/g,'_'))+(i+1)),n.p.mode,n.p.poly && n.pts.length>=3) : '';
+  const nm=n.mp.map((_,i)=>(String(n.p.prefix||'P').replace(/[\s-]+/g,'_'))+(i+1));
+  n.lines=!n.H ? '' : n.p.mode==='trace' ? (n.pts.length ? pmLinesTrace(n.mp,nm,+n.p.up||0,n.p.poly && n.pts.length>=3) : '') : n.pts.length>1 ? pmLines(n.mp,nm,n.p.mode,n.p.poly && n.pts.length>=3) : '';
 }
 
 def({ id:'photomeasure', title:'Photo Measure', cat:'Geo', touch:true, kw:'photo measure ruler a4 reference homography perspective distance area plan wall floor facade camera scale site',
@@ -49,20 +71,23 @@ def({ id:'photomeasure', title:'Photo Measure', cat:'Geo', touch:true, kw:'photo
   outs:[{n:'lines',t:'txt'},{n:'dist',t:'num'},{n:'len',t:'num'},{n:'area',t:'num'},{n:'n',t:'num'}],
   w:460, view:{h:360}, resize:true, readout:true,
   params:[{n:'file',t:'file',accept:'image/*',label:'photo (a phone offers the camera)',fn:(n,f)=>pmLoad(n,f)},
-          {n:'demo',t:'button',label:'Demo image',fn:n=>pmUseDemo(n)},
-          {n:'ref',t:'select',opts:Object.keys(PM_REFS),d:'A4 (297×210)',label:'reference in the frame (lying in the same plane as what you measure)',fn:n=>{ n.dirty=true; }},
+          {n:'demo',t:'button',label:'Demo photo',fn:n=>pmUseDemo(n)},
+          {n:'demo2',t:'button',label:'Demo scan (plan with a scale line)',fn:n=>pmUseDemoScan(n)},
+          {n:'ref',t:'select',opts:[...Object.keys(PM_REFS),PM_SCALE2],d:'A4 (297×210)',label:'reference in the frame (lying in the same plane as what you measure) · or the 2-point scale of a scan / map / satellite screenshot',fn:n=>{ n.ref=[]; n.dirty=true; pmSave(n); }},
+          {n:'rd',t:'num',d:10,label:'scan scale: the real distance between the 2 clicked points, m',fn:n=>{ n.dirty=true; }},
+          {n:'up',t:'range',min:-180,max:180,step:1,d:0,label:'scan north: bearing of the image’s «up», ° (0 — up is north; 90 — up is east)',fn:n=>{ n.dirty=true; }},
           {n:'rw',t:'num',d:.3,label:'custom reference width, m (top edge)',fn:n=>{ n.dirty=true; }},
           {n:'rh',t:'num',d:.2,label:'custom reference height, m (side edge)',fn:n=>{ n.dirty=true; }},
-          {n:'mode',t:'select',opts:['ground','wall'],d:'ground',label:'plane: ground / floor (distances) · wall (the reference’s top edge is horizontal: width and height)'},
+          {n:'mode',t:'select',opts:['ground','wall','trace'],d:'ground',label:'lines: ground / floor (distances between points) · wall (width and height; the reference’s top edge is horizontal) · trace (coordinates «P1 at x y» in metres, north up — for a scan / map)',fn:n=>{ n.dirty=true; }},
           {n:'prefix',t:'text',d:'P',label:'point name prefix for Site Plan (P → P1, P2…)'},
           {n:'poly',t:'check',d:true,label:'add «poly» (a contour through the points in order) to the lines'},
           {n:'undo',t:'button',label:'Undo last point',fn:n=>{ if(n.pts.length) n.pts.pop(); else n.ref.pop(); pmSave(n); n.dirty=true; }},
-          {n:'reset',t:'button',label:'Reset points and reference',fn:n=>{ n.ref=[]; n.pts=[]; pmSave(n); n.msg='click the 4 corners of the reference'; n.dirty=true; }},
-          {n:'autodemo',t:'check',d:false,label:'load the demo image on start',adv:true},
+          {n:'reset',t:'button',label:'Reset points and reference',fn:n=>{ n.ref=[]; n.pts=[]; pmSave(n); n.msg='click the reference'; n.dirty=true; }},
+          {n:'autodemo',t:'select',opts:['off','photo','scan'],d:'off',label:'load a demo image on start',adv:true},
           {n:'state',t:'text',d:'',hidden:true}],
   init:n=>{ n.bm=null; n.ref=[]; n.pts=[]; n.H=null; n.mp=[]; n.lines=''; n.msg=''; n.bad=''; n.dirty=true; n.drag=null; n.vt=null;
     try{ const s=JSON.parse(n.p.state||'null'); if(s){ n.ref=s.ref||[]; n.pts=s.pts||[]; } }catch(e){}
-    if(n.p.autodemo) pmUseDemo(n); },
+    if(n.p.autodemo==='photo') pmUseDemo(n); else if(n.p.autodemo==='scan') pmUseDemoScan(n); },
   process(n){
     if(n.dirty){ n.dirty=false; pmCalc(n); }
     const P=n.mp, m=P.length;
@@ -81,7 +106,7 @@ def({ id:'photomeasure', title:'Photo Measure', cat:'Geo', touch:true, kw:'photo
       const X=q=>[ox+q[0]*s, oy+q[1]*s];
       cx.font='11px monospace'; cx.textBaseline='alphabetic';
       if(n.ref.length){
-        cx.strokeStyle='#ffb74d'; cx.lineWidth=2; cx.beginPath(); n.ref.forEach((q,i)=>{ const p=X(q); i ? cx.lineTo(p[0],p[1]) : cx.moveTo(p[0],p[1]); }); if(n.ref.length===4) cx.closePath(); cx.stroke();
+        cx.strokeStyle='#ffb74d'; cx.lineWidth=2; cx.beginPath(); n.ref.forEach((q,i)=>{ const p=X(q); i ? cx.lineTo(p[0],p[1]) : cx.moveTo(p[0],p[1]); }); if(n.ref.length===4 && pmNeed(n)===4) cx.closePath(); cx.stroke();
         n.ref.forEach((q,i)=>{ const p=X(q); cx.fillStyle='#ffb74d'; cx.beginPath(); cx.arc(p[0],p[1],5,0,7); cx.fill(); cx.fillStyle='#000'; cx.textAlign='center'; cx.fillText(String(i+1),p[0],p[1]+4); });
       }
       if(n.pts.length>1){ cx.strokeStyle='rgba(125,255,154,.85)'; cx.lineWidth=2; cx.beginPath(); n.pts.forEach((q,i)=>{ const p=X(q); i ? cx.lineTo(p[0],p[1]) : cx.moveTo(p[0],p[1]); }); if(n.pts.length>2 && n.p.poly) cx.closePath(); cx.stroke(); }
@@ -91,10 +116,10 @@ def({ id:'photomeasure', title:'Photo Measure', cat:'Geo', touch:true, kw:'photo
       }
       n.pts.forEach((q,i)=>{ const p=X(q); cx.fillStyle='#7dff9a'; cx.strokeStyle='#000'; cx.lineWidth=1.5; cx.beginPath(); cx.arc(p[0],p[1],5,0,7); cx.stroke(); cx.fill();
         cx.fillStyle='#fff'; cx.textAlign='left'; cx.strokeStyle='rgba(0,0,0,.75)'; cx.strokeText((n.p.prefix||'P')+(i+1),p[0]+8,p[1]-6); cx.fillText((n.p.prefix||'P')+(i+1),p[0]+8,p[1]-6); });
-      if(n.ref.length<4) L.push('click reference corner '+(n.ref.length+1)+'/4: '+PM_CORN[n.ref.length]+' ('+(n.p.ref)+')');
+      if(n.ref.length<pmNeed(n)) L.push(pmNeed(n)===2 ? 'click scale point '+(n.ref.length+1)+'/2 (the ends of a distance of '+(+n.p.rd)+' m on the scan: a scale bar, a known wall)' : 'click reference corner '+(n.ref.length+1)+'/4: '+PM_CORN[n.ref.length]+' ('+(n.p.ref)+')');
       else if(n.H){
         const m=n.mp.length;
-        L.push('reference '+pmRefSize(n).map(v=>+(v*100).toFixed(1)).join(' × ')+' cm · '+m+' point'+(m===1 ? '' : 's')+' · click to add, drag to move'+(m>1 ? ' · error ≈ 1.5 % + 1 cm' : ''));
+        L.push((pmNeed(n)===2 ? 'scale '+(+n.p.rd)+' m = '+Math.round(Math.hypot(n.ref[1][0]-n.ref[0][0],n.ref[1][1]-n.ref[0][1]))+' px' : 'reference '+pmRefSize(n).map(v=>+(v*100).toFixed(1)).join(' × ')+' cm')+' · '+m+' point'+(m===1 ? '' : 's')+' · click to add, drag to move'+(m>1 ? ' · error ≈ 1.5 % + 1 cm' : ''));
         if(m>1){ let len=0; for(let i=1;i<m;i++) len+=pmDist(n.mp[i-1],n.mp[i]); L.push('path '+len.toFixed(3)+' m'+(m>2 ? ' · area '+pmArea(n.mp).toFixed(3)+' m²' : '')); }
       }
     }
@@ -105,7 +130,7 @@ def({ id:'photomeasure', title:'Photo Measure', cat:'Geo', touch:true, kw:'photo
         if(ri>=0){ n.drag={k:'ref',i:ri}; return; }
         if(pi>=0){ n.drag={k:'pts',i:pi}; return; }
         const q=[(x-ox)/s,(y-oy)/s]; if(q[0]<0||q[1]<0||q[0]>n.bm.width||q[1]>n.bm.height) return;
-        if(n.ref.length<4){ n.ref.push(q); n.drag={k:'ref',i:n.ref.length-1}; } else { n.pts.push(q); n.drag={k:'pts',i:n.pts.length-1}; }
+        if(n.ref.length<pmNeed(n)){ n.ref.push(q); n.drag={k:'ref',i:n.ref.length-1}; } else { n.pts.push(q); n.drag={k:'pts',i:n.pts.length-1}; }
         n.dirty=true; pmSave(n); },
       move:(x,y)=>{ if(!n.drag||!n.vt) return; const {s,ox,oy}=n.vt; n[n.drag.k][n.drag.i]=[Math.max(0,Math.min(n.bm.width,(x-ox)/s)),Math.max(0,Math.min(n.bm.height,(y-oy)/s))]; n.dirty=true; },
       up:()=>{ if(n.drag){ n.drag=null; pmSave(n); } }});

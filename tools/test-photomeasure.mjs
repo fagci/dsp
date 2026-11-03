@@ -3,7 +3,7 @@
 import vm from 'node:vm'; import fs from 'node:fs'; import path from 'node:path'; import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Array,String,Number,Object});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/photomeasure-kernels.js'),'utf8')+';this.K={PM_REFS,pmHomography,pmApply,pmQuadOk,pmRect,pmDist,pmArea,pmLines,pmSigma,clinoElev,clinoHeight,clinoDist,clinoLine};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/photomeasure-kernels.js'),'utf8')+';this.K={PM_REFS,pmHomography,pmApply,pmQuadOk,pmRect,pmDist,pmArea,pmLines,pmSigma,clinoElev,clinoHeight,clinoDist,clinoLine,pmScale2,pmWorld,pmLinesTrace,pmSigmaTrace};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -44,4 +44,15 @@ near('tree height from two sightings, eye height not needed',r.height,12,1e-9);
 near('eye height recovered',r.eye,1.6,1e-9);
 near('distance from the eye height and the base sighting',K.clinoDist(1.6,base),20,1e-9);
 ok('site plan line',K.clinoLine('E','R',top,20,1.6)==='E-R tilt '+(+top.toFixed(2))+' 20 eye 1.6',K.clinoLine('E','R',top,20,1.6));
+// подложка: масштаб по двум точкам, север
+{ const Hs=K.pmScale2([100,400],[300,400],10);                 // 200 px = 10 m → 0.05 m/px
+  const a=K.pmApply(Hs,100,400), b=K.pmApply(Hs,300,400), c=K.pmApply(Hs,100,200);
+  near('scale2: the first point is the origin',Math.hypot(...a),0,1e-12); near('scale2: 200 px = 10 m',K.pmDist(a,b),10,1e-12);
+  near('scale2: up on the image is +v (200 px up = 10 m)',c[1],10,1e-12); ok('scale2: degenerate input → null',K.pmScale2([1,1],[1,1],5)===null && K.pmScale2([0,0],[1,0],0)===null);
+  const w0=K.pmWorld([0,10],0), w90=K.pmWorld([0,10],90);
+  near('north up: the image-up vector points north',w0[1],10,1e-12);
+  near('image up = east (up bearing 90): v goes east',w90[0],10,1e-9); near('…and u (image right) goes south',K.pmWorld([10,0],90)[1],-10,1e-9);
+  const t=K.pmLinesTrace([[0,0],[30,0],[30,18]],['P1','P2','P3'],0,true).split('\n');
+  ok('trace lines: at x y ± σ and a contour',t.length===4 && t[1].startsWith('P2 at 30 0 ±') && t[3]==='poly P1 P2 P3',t.join('|'));
+  ok('trace error grows with the plan size',K.pmSigmaTrace([[0,0],[200,0]])>K.pmSigmaTrace([[0,0],[20,0]])); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
