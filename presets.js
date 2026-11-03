@@ -376,6 +376,7 @@ const PRESET_CATS={
   'Laser Distance Meter (BLE) → Measure Entry → Site Plan':'Maps & Locating',
   'Site Plan: Points and Measurements from a Table':'Maps & Locating',
   'Echo Ranger: Distance to a Wall by Chirp → Measure Entry → Site Plan':'Maps & Locating',
+  'Room Walk: a Room from Wall Distances and Compass Azimuths → Site Plan':'Maps & Locating',
   'Clinometer: Tree Height from the Phone Tilt → Site Plan':'Maps & Locating',
   'Signal Paths: Direct and Reflected Between Two Points':'Maps & Locating',
   'Flight Sim: Fly over Terrain (Joystick)':'Aircraft, Satellites & Telemetry',
@@ -8381,6 +8382,22 @@ const sp=addNode('siteplan',1200,230,{view:'plan',plan:'# the wall distances arr
 sp.size.w=480; sp.size.h=420; applySize(sp);
 addEdge(mic.id,'a',er.id,'mic'); addEdge(er.id,'chirp',dac.id,'L');
 addEdge(er.id,'dist',me.id,'v'); addEdge(er.id,'go',me.id,'go'); addEdge(me.id,'lines',sp.id,'lines');
+markWiresDirty();
+});
+preset('Room Walk: a Room from Wall Distances and Compass Azimuths → Site Plan', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A room from one spot. Stand in the room, point the phone at a wall — Echo Ranger gives the distance (chirp), Orientation gives the compass azimuth — and press «＋ Wall shot» (or let Echo Ranger’s «go» pulse do it); turn to the next wall. Each shot is a wall line perpendicular to its direction; the corners are where neighbouring walls cross, so the area, the perimeter and the sides come out of 3–4 shots, and Site Plan gets the corners (with their error) and the contour. '+
+  '«rectangular room» snaps the walls to one angle + 90° steps: the compass is noisy (3–5°), the walls are straight. A second shot at the same wall is averaged. Pre-filled here: a 5×4 m room turned by 20° from north with 2° of compass noise, standing 2 m from the west and 1.5 m from the south wall. For the real thing wire Echo Ranger «chirp» to Sound Card and Microphone to «mic» (see its preset), press Run and ▶ Measure at each wall; the phone must face the wall squarely (the distance is along the normal).'});
+nt.size.w=980; nt.size.h=130; applySize(nt);
+const or=addNode('orient',40,210,{});
+or.size.w=240; or.size.h=170; applySize(or);
+const er=addNode('echorange',40,400,{sim:'2.5:0.4',bursts:3,period:300});
+er.size.w=420; er.size.h=380; applySize(er);
+const rw=addNode('roomwalk',500,210,{shots:'21.5 2.52\n19.2 2.48\n108.8 2.97\n201.7 1.49\n288.9 2.03',rect:true});
+rw.size.w=420; rw.size.h=560; applySize(rw);
+const sp=addNode('siteplan',960,210,{view:'plan',plan:'# the corners come from Room Walk'});
+sp.size.w=500; sp.size.h=480; applySize(sp);
+addEdge(or.id,'az',rw.id,'az'); addEdge(er.id,'dist',rw.id,'d'); addEdge(er.id,'go',rw.id,'go'); addEdge(rw.id,'lines',sp.id,'lines');
 markWiresDirty();
 });
 preset('Clinometer: Tree Height from the Phone Tilt → Site Plan', function(){
