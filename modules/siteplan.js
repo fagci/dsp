@@ -66,7 +66,7 @@ function spGesture(n,cv){
     const q=P.get(ev.pointerId); if(!q) return; const np=pos(ev), dx=np[0]-q.p[0], dy=np[1]-q.p[1];
     if(P.size===1){
       if(n.p.view!=='3D' || q.b===1 || q.b===2 || ev.shiftKey){ n.panX+=dx; n.panY+=dy; }
-      else { const az=((+n.p.az+dx*.4+180)%360+360)%360-180; setMod(n,'az',+az.toFixed(1)); setMod(n,'el',+clamp(+n.p.el+dy*.4,0,90).toFixed(1)); }
+      else { const az=((+n.p.az-dx*.4+180)%360+360)%360-180; setMod(n,'az',+az.toFixed(1)); setMod(n,'el',+clamp(+n.p.el+dy*.4,0,90).toFixed(1)); }
     } else if(P.size===2){
       const o=[...P.entries()].find(([id])=>id!==ev.pointerId)[1].p, d0=Math.hypot(q.p[0]-o[0],q.p[1]-o[1]), d1=Math.hypot(np[0]-o[0],np[1]-o[1]);
       if(d0>0) n.zoom=clamp(n.zoom*d1/d0,.2,40);

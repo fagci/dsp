@@ -371,6 +371,7 @@ const PRESET_CATS={
   'Coverage: Transmitters from Table → Dead Zones':'Maps & Locating',
   'Site Plan: Plot and House from Tape, GPS and Clinometer (3D)':'Maps & Locating',
   'Photo Measure: a Bed from an A4 Sheet in the Photo → Site Plan':'Maps & Locating',
+  'Plan Scan: Trace a Plot from an Image with a Scale → Site Plan':'Maps & Locating',
   'Clinometer: Tree Height from the Phone Tilt → Site Plan':'Maps & Locating',
   'Signal Paths: Direct and Reflected Between Two Points':'Maps & Locating',
   'Flight Sim: Fly over Terrain (Joystick)':'Aircraft, Satellites & Telemetry',
@@ -8296,9 +8297,21 @@ clearAll();
 const nt=addNode('note',40,40,{text:'Measure from a photo with a ruler in the frame. Put a sheet of A4 (or a bank card) on the same plane as what you measure, take a photo, choose it in Photo Measure, click the four corners of the sheet in order (top-left, top-right, bottom-right, bottom-left), then click the points you need: the distances, the path and the area appear on the photo (error ≈ 1.5 % + 1 cm; the sheet should fill at least a tenth of the frame; the camera should not be strongly wide-angle). Here is a demo image: a 4×3 m plane in perspective, an A4 sheet and a 3×1.5 m bed with four points already clicked. '+
   '«lines» go to Site Plan — the distances between all pairs of points become tape measurements, so the contour is solved and its area counted; add your tape, GPS and height lines there. In «wall» mode the sheet’s top edge is horizontal and the lines are width and height differences (for windows and facades).'});
 nt.size.w=980; nt.size.h=130; applySize(nt);
-const pm=addNode('photomeasure',40,200,{autodemo:true,prefix:'B'});
+const pm=addNode('photomeasure',40,200,{autodemo:'photo',prefix:'B'});
 pm.size.w=520; pm.size.h=470; applySize(pm);
 const sp=addNode('siteplan',600,200,{view:'plan',plan:'# the lines come from Photo Measure; add your own below\n'});
+sp.size.w=520; sp.size.h=470; applySize(sp);
+addEdge(pm.id,'lines',sp.id,'lines');
+markWiresDirty();
+});
+preset('Plan Scan: Trace a Plot from an Image with a Scale → Site Plan', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'An underlay: a scan of an old plan, a drawing, a screenshot of a map or a satellite view becomes coordinates. Choose the image in Photo Measure, set «reference» to «2 points: a scan / map scale», click the two ends of a distance you know (a scale bar, a wall) and type its real length into «rd»; if the image is not north-up, give the bearing of its «up» in «up». Then click the corners to trace (drag to adjust): mode «trace» sends «P1 at x y ± error» lines (metres, east / north from the first scale point) and the contour to Site Plan. '+
+  'Tape measurements written in Site Plan overrule the scan where they disagree, each by its error — a rough scan plus a few tape lengths gives a plan as good as the tape. Here is a demo scan: a 30×18 m plot with a house, the 10 m scale line already clicked and four corners traced.'});
+nt.size.w=980; nt.size.h=130; applySize(nt);
+const pm=addNode('photomeasure',40,200,{autodemo:'scan',ref:'2 points: a scan / map scale',rd:10,mode:'trace',prefix:'C'});
+pm.size.w=520; pm.size.h=470; applySize(pm);
+const sp=addNode('siteplan',600,200,{view:'plan',grid:'north',plan:'# traced from the scan; tape measurements go here, e.g. the diagonal:\nC1-C3 35.10 ± 0.03'});
 sp.size.w=520; sp.size.h=470; applySize(sp);
 addEdge(pm.id,'lines',sp.id,'lines');
 markWiresDirty();
