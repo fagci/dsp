@@ -3,7 +3,7 @@
 import vm from 'node:vm'; import fs from 'node:fs'; import path from 'node:path'; import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Array,String,Number,Object,JSON,Set,Map,Float32Array,Uint8Array,isFinite,Infinity});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peOverlaps,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints};`,ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peOverlaps,peZRaster,peBoxCorners,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints};`,ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -134,5 +134,17 @@ ok('the same wall is a bigger obstacle at 5 GHz: the level behind it drops more 
 { const {s,P,Wl}=room(); const inside=K.peAddObj(s,'box',{x:1.4,y:2,w:2,d:.9,h:.8,rot:90}); ok('a sofa fully inside the room overlaps nothing',K.peOverlaps(s).length===0);
   const bad=K.peAddObj(s,'box',{x:1.4,y:3.2,w:2,d:.9,h:.8,rot:0}); const ov=K.peOverlaps(s); ok('a box 2 m long along y centred at y = 3.2 sticks out through the north wall: flagged once with that wall',ov.length===1 && ov[0].obj===bad.id && ov[0].wall===Wl[2].id,JSON.stringify(ov));
   const tall=K.peAddObj(s,'box',{x:3,y:2,w:.5,d:.5,h:.5,rot:0,z:2.8}); ok('a box above the wall top does not collide',!K.peOverlaps(s).some(o=>o.obj===tall.id)); }
+// z-буфер: порядок блоков не важен
+{ const E=35*Math.PI/180, ce=Math.cos(E), se=Math.sin(E), W=300, H=300, sc=20, proj=(x,y,z)=>[W/2+x*sc,H*.75-(z*ce+y*se)*sc,y*ce-z*se];
+  const wall={cx:0,cy:0,ux:1,uy:0,l:10,t:.2,z0:0,z1:2.7,kind:'wall',ref:'w'}, tbl=(y,ref)=>({cx:0,cy:y,ux:1,uy:0,l:1.2,t:.6,z0:0,z1:.8,kind:'box',ref}), col=b=>b.kind==='wall' ? [200,200,200] : [200,120,40];
+  const at=(R,x,y,z)=>{ const q=proj(x,y,z), i=(Math.round(q[1]-.5)*R.w+Math.round(q[0]-.5))*4; return [R.data[i],R.data[i+1],R.data[i+2],R.data[i+3]]; };
+  const run=(B)=>K.peZRaster(B,proj,W,H,{cam:[0,-1],ce,color:col,edge:false});
+  const front=run([wall,tbl(-1.5,'t')]), frontRev=run([tbl(-1.5,'t'),wall]);
+  const eq=(c,r)=>c[0]===r[0]&&c[1]===r[1]&&c[2]===r[2]&&c[3]===r[3], TOP=[190,114,38,255], WALL=[132,132,132,255];
+  ok('a table in front of the wall: its top shows over the wall',eq(at(front,0,-1.5,.8),TOP),JSON.stringify(at(front,0,-1.5,.8)));
+  ok('the order of the blocks does not change the picture (byte for byte)',front.data.every((v,i)=>v===frontRev.data[i]));
+  const behind=run([wall,tbl(1.5,'t')]); ok('a table behind the wall: the point of its top is hidden by the wall’s near face',eq(at(behind,0,1.5,.8),WALL),JSON.stringify(at(behind,0,1.5,.8)));
+  const thru=run([wall,tbl(0,'t')]); ok('a table that straddles the wall (intersecting volumes): the south half of its top is visible, the north half is cut by the wall',eq(at(thru,0,-.2,.8),TOP) && eq(at(thru,0,.2,.8),WALL),JSON.stringify([at(thru,0,-.2,.8),at(thru,0,.2,.8)]));
+  ok('background is transparent',at(front,-6,-3,0)[3]===0); }
 ok('an empty scene has no bounds and no grid',K.peGrid(K.peNew())===null);
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
