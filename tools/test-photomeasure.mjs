@@ -3,7 +3,7 @@
 import vm from 'node:vm'; import fs from 'node:fs'; import path from 'node:path'; import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Array,String,Number,Object});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/photomeasure-kernels.js'),'utf8')+';this.K={PM_REFS,pmHomography,pmApply,pmQuadOk,pmRect,pmDist,pmArea,pmLines,pmSigma,clinoElev,clinoHeight,clinoDist,clinoLine,pmScale2,pmWorld,pmLinesTrace,pmSigmaTrace};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/photomeasure-kernels.js'),'utf8')+';this.K={PM_REFS,pmHomography,pmApply,pmQuadOk,pmRect,pmDist,pmArea,pmLines,pmSigma,clinoElev,clinoHeight,clinoDist,clinoLine,pmScale2,pmWorld,pmLinesTrace,pmSigmaTrace,pmInv3,pmToWorld,pmUnderBounds,pmRectify};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -55,4 +55,19 @@ ok('site plan line',K.clinoLine('E','R',top,20,1.6)==='E-R tilt '+(+top.toFixed(
   const t=K.pmLinesTrace([[0,0],[30,0],[30,18]],['P1','P2','P3'],0,true).split('\n');
   ok('trace lines: at x y ± σ and a contour',t.length===4 && t[1].startsWith('P2 at 30 0 ±') && t[3]==='poly P1 P2 P3',t.join('|'));
   ok('trace error grows with the plan size',K.pmSigmaTrace([[0,0],[200,0]])>K.pmSigmaTrace([[0,0],[20,0]])); }
+// подложка: ректификация
+{ // «снимок» 100×100 px, пол 4×4 м: масштаб 25 px/м (подобие), клетки по метру: чётность (floor(x)+floor(y)) → белый/чёрный
+  const sw=100, sh=100, src=new Uint8ClampedArray(sw*sh*4); for(let y=0;y<sh;y++) for(let x=0;x<sw;x++){ const wx=x/25, wy=(sh-y)/25, c=((Math.floor(wx)+Math.floor(wy))%2===0) ? 255 : 0, o=(y*sw+x)*4; src[o]=c; src[o+1]=c; src[o+2]=c; src[o+3]=255; }
+  const H=K.pmScale2([0,sh],[sw,sh],4);                                  // нижний левый угол — начало, 100 px = 4 м
+  const inv=K.pmInv3(H); near('inverse: H⁻¹·H = identity on a point',K.pmApply(inv,...K.pmApply(H,30,60))[0],30,1e-9);
+  const b=K.pmUnderBounds(H,0,sw,sh); near('bounds: 4 × 4 m from the origin',b.x1-b.x0,4,1e-9); near('…its lower left corner is the origin',b.y0,0,1e-9);
+  const R=K.pmRectify(src,sw,sh,H,0,b,25); ok('rectified size: 100×100 px at 25 px/m',R.w===100 && R.h===100 && Math.abs(R.res-25)<1e-9,JSON.stringify([R.w,R.h,R.res]));
+  const px=(x,y)=>R.data[((Math.floor((R.y1-y)*R.res))*R.w+Math.floor((x-R.x0)*R.res))*4];                  // цвет в мировой точке
+  ok('a world point (0.5, 0.5) is on a white cell, (1.5, 0.5) on a black one (the checkerboard comes through unchanged)',px(.5,.5)===255 && px(1.5,.5)===0 && px(1.5,1.5)===255);
+  // поворот: «верх» картинки смотрит на восток (up=90) — клетки поворачиваются, площадь та же
+  const b2=K.pmUnderBounds(H,90,sw,sh); near('rotated by 90°: still 4 × 4 m',b2.x1-b2.x0,4,1e-9);
+  const R2=K.pmRectify(src,sw,sh,H,90,b2,25); const op=(x,y)=>R2.data[((Math.floor((R2.y1-y)*R2.res))*R2.w+Math.floor((x-R2.x0)*R2.res))*4+3];
+  ok('rotated by 90°: the rectified square is fully covered (every pixel opaque), and the colours are the same checkerboard turned',(()=>{ let n=0; for(let i=3;i<R2.data.length;i+=4) if(R2.data[i]===255) n++; return n===R2.w*R2.h; })() && op((b2.x0+b2.x1)/2,(b2.y0+b2.y1)/2)===255);
+  ok('a degenerate H gives no rectification',K.pmInv3([1,2,3,2,4,6,0,0,0])===null);
+  ok('a huge area is refused (the horizon in the frame)',K.pmUnderBounds([1,0,0,0,1,0,0,.0001,1],0,2000,1500,80)===null); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);

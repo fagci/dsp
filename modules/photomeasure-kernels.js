@@ -96,3 +96,33 @@ function pmLinesTrace(P,names,upDeg,poly){
   if(poly && P.length>=3) o.push('poly '+names.join(' '));
   return o.join('\n');
 }
+
+// ---------- подложка под Plan Editor: снимок → метры (ректификация) ----------
+// Отображение пикселей снимка в мир: плоскость эталона (гомография H или масштаб скана), для скана — ещё поворот к сторонам света (up — азимут «верха» картинки)
+function pmInv3(H){
+  const [a,b,c,d,e,f,g,h,i]=H, A=e*i-f*h, B=-(d*i-f*g), C=d*h-e*g, det=a*A+b*B+c*C; if(Math.abs(det)<1e-18) return null;
+  return [A/det,-(b*i-c*h)/det,(b*f-c*e)/det, B/det,(a*i-c*g)/det,-(a*f-c*d)/det, C/det,-(a*h-b*g)/det,(a*e-b*d)/det];
+}
+function pmToWorld(H,up,x,y){ const p=pmApply(H,x,y); return up ? pmWorld(p,up) : p; }
+// рамка снимка в мире (по четырём углам и серединам сторон, чтобы поймать перспективу); null — вырожденный случай; span — предел размера, м
+function pmUnderBounds(H,up,w,h,span=80){
+  const pts=[[0,0],[w,0],[w,h],[0,h],[w/2,0],[w,h/2],[w/2,h],[0,h/2]].map(q=>pmToWorld(H,up,q[0],q[1]));
+  if(pts.some(q=>!isFinite(q[0])||!isFinite(q[1]))) return null;
+  let x0=1e99,x1=-1e99,y0=1e99,y1=-1e99; for(const q of pts){ x0=Math.min(x0,q[0]); x1=Math.max(x1,q[0]); y0=Math.min(y0,q[1]); y1=Math.max(y1,q[1]); }
+  if(x1-x0>span||y1-y0>span||!(x1>x0)||!(y1>y0)) return null; return {x0,x1,y0,y1};
+}
+// ректификация: src — RGBA (Uint8ClampedArray, sw×sh); результат — RGBA ширины w, строка 0 — север; res — пикселей на метр (не больше maxPx по большей стороне)
+function pmRectify(src,sw,sh,H,up,b,res,maxPx=1600){
+  const inv=pmInv3(H); if(!inv) return null;
+  const span=Math.max(b.x1-b.x0,b.y1-b.y0), r=Math.min(res,maxPx/span), w=Math.max(1,Math.ceil((b.x1-b.x0)*r)), h=Math.max(1,Math.ceil((b.y1-b.y0)*r)), out=new Uint8ClampedArray(w*h*4);
+  for(let j=0;j<h;j++){
+    const wy=b.y1-(j+.5)/r;
+    for(let i=0;i<w;i++){
+      const wx=b.x0+(i+.5)/r, p=up ? pmWorld([wx,wy],-up) : [wx,wy], den=inv[6]*p[0]+inv[7]*p[1]+inv[8]; if(Math.abs(den)<1e-12) continue;
+      const px=(inv[0]*p[0]+inv[1]*p[1]+inv[2])/den, py=(inv[3]*p[0]+inv[4]*p[1]+inv[5])/den, ix=Math.floor(px), iy=Math.floor(py);
+      if(ix<0||iy<0||ix>=sw||iy>=sh) continue;
+      const o=(j*w+i)*4, s=(iy*sw+ix)*4; out[o]=src[s]; out[o+1]=src[s+1]; out[o+2]=src[s+2]; out[o+3]=src[s+3];
+    }
+  }
+  return {data:out,w,h,res:r,x0:b.x0,y1:b.y1};
+}

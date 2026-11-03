@@ -20,7 +20,8 @@ function peProj(n,W,H){
 }
 const PE_BAR=26;                                            // высота панели инструментов на холсте
 function peFit(n,W,H){
-  const b=peBounds(n.sc,1.2), V=n.vw; if(!b){ V.tx=3; V.ty=2; V.sc=Math.max(20,Math.min(W,H-PE_BAR)/9); V.fit=true; return; }
+  let b=peBounds(n.sc,1.2); const V=n.vw; if(!b && n.under && n.under.b){ const u=n.under.b; b={x0:u.x0-.5,x1:u.x1+.5,y0:u.y0-.5,y1:u.y1+.5}; }
+  if(!b){ V.tx=3; V.ty=2; V.sc=Math.max(20,Math.min(W,H-PE_BAR)/9); V.fit=true; return; }
   V.tx=(b.x0+b.x1)/2; V.ty=(b.y0+b.y1)/2; const sp=Math.max(b.x1-b.x0,b.y1-b.y0,1), k=n.p.view==='3D' ? .8 : 1.0;
   V.sc=Math.min((W-20)/Math.max(b.x1-b.x0,1),(H-PE_BAR-20)/Math.max((b.y1-b.y0)*(n.p.view==='3D' ? Math.sin((+n.p.vel)*PE_D) : 1)+(n.p.view==='3D' ? 3*Math.cos((+n.p.vel)*PE_D) : 0),1))*k; V.fit=true;
 }
@@ -203,6 +204,48 @@ function peRaster(n){
   x.putImageData(im,0,0); n.ras={c,g}; return n.ras;
 }
 
+// ---------- автоподбор мест ----------
+function peTpl(n,kind){
+  const s=n.sc, it=peItem(n);
+  const from=(o)=>kind==='cam' ? {z:o.z,tilt:o.tilt,fov:o.fov,range:o.range} : {z:o.z,eirp:o.eirp,f:o.f,bw:o.bw};
+  if(it && n.sel.k===kind) return from(it);
+  const first=(kind==='cam' ? s.cams : s.ants).find(o=>!o.auto) || (kind==='cam' ? s.cams : s.ants)[0];
+  if(first) return from(first);
+  return kind==='cam' ? {z:2.6,tilt:25,fov:90,range:12} : {z:2.4,eirp:20,f:2437,bw:360};
+}
+function pePlanStart(n){
+  const p=n.p, kind=p.pkind==='antennas' ? 'ant' : 'cam', tpl=peTpl(n,kind);
+  const opt={n:+p.pn,target:+p.ptarget/100,tpl,mount:{'walls & corners':'walls','corners only':'corners','anywhere':'anywhere'}[p.pmount]||'walls',doors:!!p.pdoors,thr:+p.thr,cell:.5};
+  n.job={gen:kind==='cam' ? peCamPlan(n.sc,opt) : peAntPlan(n.sc,opt),kind,tpl,opt,t0:performance.now()}; n.msg='planning the '+(kind==='cam' ? 'cameras' : 'antennas')+'…'; redraw(n);
+  const step=()=>{ const j=n.job; if(!j) return; let r; try{ r=j.gen.next(); }catch(e){ n.job=null; n.msg='planning failed: '+e.message; redraw(n); return; }
+    if(!r.done){ const v=r.value; n.msg='planning '+(kind==='cam' ? 'cameras' : 'antennas')+': '+v.phase+' '+Math.round(100*v.done/Math.max(1,v.total))+'%'; redraw(n); setTimeout(step,0); return; }
+    n.job=null; const res=r.value;
+    if(res.error){ n.msg=res.error; redraw(n); return; }
+    const list=kind==='cam' ? res.cams : res.ants;
+    if(!list.length){ n.msg='nothing to add: '+(res.base>=.999 ? 'the existing devices already cover everything' : 'no candidate position covers anything (range / field of view / threshold too small?)'); redraw(n); return; }
+    peApplyPlan(n.sc,res,kind,tpl); peTouch(n);
+    n.msg=(kind==='cam' ? 'cameras' : 'antennas')+': '+list.length+' placed → '+Math.round(100*res.cover)+'% '+(kind==='cam' ? 'seen' : 'above '+opt.thr+' dBm')+' of '+res.area.toFixed(1)+' m² ('+res.curve.map((v,i)=>(i+1)+': '+Math.round(100*v)+'%').join(', ')+(res.base>0 ? '; already covered before: '+Math.round(100*res.base)+'%' : '')+'; '+res.candidates+' candidates)'; redraw(n); };
+  setTimeout(step,0);
+}
+function peExport(n,kind){
+  const s=n.sc; if(!s.pts.length){ n.msg='nothing to export yet'; redraw(n); return; }
+  if(kind==='svg') sitepDl('plan.svg',peSVG(s,{scale:+n.p.escale,dims:!!n.p.edims,coverage:!!n.p.ecov,north:n.georef ? +n.p.north : undefined}),'image/svg+xml');
+  else sitepDl(kind==='dxf3' ? 'plan3d.dxf' : 'plan.dxf',peDXF(s,{three:kind==='dxf3'}),'application/dxf');
+  n.msg='exported '+(kind==='svg' ? 'plan.svg (1:'+n.p.escale+')' : kind==='dxf3' ? 'plan3d.dxf (walls and objects as 3D faces)' : 'plan.dxf (walls with thickness, doors, windows, rooms, devices)'); redraw(n);
+}
+// подложка: снимок → метры (ректификация) в канвас с прозрачностью; строка 0 — север
+function peUnderBuild(n){
+  const u=n.under; if(!u) return; u.cv=null; u.err='';
+  try{
+    const k=Math.min(1,1600/Math.max(u.w,u.h)), cw=Math.max(1,Math.round(u.w*k)), ch=Math.max(1,Math.round(u.h*k)), c=document.createElement('canvas'); c.width=cw; c.height=ch;
+    const x=c.getContext('2d',{willReadFrequently:true}); x.drawImage(u.bm,0,0,cw,ch); const src=x.getImageData(0,0,cw,ch).data, H=u.H;
+    const H2=[H[0]/k,H[1]/k,H[2],H[3]/k,H[4]/k,H[5],H[6]/k,H[7]/k,H[8]], b=pmUnderBounds(H2,u.up,cw,ch);
+    if(!b){ u.err='the underlay is degenerate or too large (the horizon in the frame?): calibrate on a closer plane'; return; }
+    const R=pmRectify(src,cw,ch,H2,u.up,b,100,1600); if(!R){ u.err='cannot rectify the image'; return; }
+    const o=document.createElement('canvas'); o.width=R.w; o.height=R.h; o.getContext('2d').putImageData(new ImageData(R.data,R.w,R.h),0,0); u.cv=o; u.b=b; u.res=R.res;
+  }catch(e){ u.err='underlay: '+e.message; }
+}
+
 def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, readout:true, view:{h:520}, w:640, resize:true,
   kw:'plan editor floor plan 3d walls thickness lock length door window furniture box column camera cctv antenna wifi coverage heat map blind spots video overlay augmented reality drag points',
   // rec — точки из Site Plan / Table (name, x, y) — добавляются или двигаются по имени (import); lat / lon / alt / az / el / fov — поза телефона (те же провода, что у Video Overlay): рисуется в плане;
@@ -219,11 +262,33 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
           {n:'layer',t:'select',opts:['none','cameras','signal'],d:'none',label:'layer: cameras (green — seen, red — blind) · signal (antennas, dBm)'},
           {n:'thr',t:'range',min:-100,max:-30,step:1,d:-70,label:'signal threshold, dBm (below — dim)'},
           {n:'cell',t:'range',min:.1,max:1,step:.05,d:.25,label:'coverage cell, m'},
+          // подложка из Photo Measure
+          {n:'uon',t:'check',d:true,label:'underlay (Photo Measure rec → here): show'},
+          {n:'uop',t:'range',min:.1,max:1,step:.05,d:.6,label:'underlay opacity'},
+          {n:'uox',t:'num',d:0,label:'underlay shift east, m',adv:true},
+          {n:'uoy',t:'num',d:0,label:'underlay shift north, m',adv:true},
+          {n:'urot',t:'range',min:-180,max:180,step:.1,d:0,label:'underlay turn, ° (counter-clockwise)',adv:true},
+          {n:'usc',t:'range',min:.5,max:2,step:.001,d:1,label:'underlay scale ×',adv:true},
+          // автоподбор мест камер / антенн
+          {n:'pkind',t:'select',opts:['cameras','antennas'],d:'cameras',label:'PLAN PLACEMENT — what to place (the template is the selected camera / antenna, else the first one, else the defaults; devices already placed by hand count as covering)'},
+          {n:'pn',t:'range',min:0,max:16,step:1,d:0,label:'how many at most (0 — as many as the target needs)'},
+          {n:'ptarget',t:'range',min:50,max:100,step:1,d:95,label:'target: % of the rooms seen / above the signal threshold (the threshold is the one in the signal layer)'},
+          {n:'pmount',t:'select',opts:['walls & corners','corners only','anywhere'],d:'walls & corners',label:'cameras: where they may be mounted'},
+          {n:'pdoors',t:'check',d:true,label:'cameras: doors and windows weigh ×3 (a 1.5 m zone around them matters more)'},
+          {n:'pplan',t:'button',label:'⚙ Plan the placement (adds «auto» devices, replacing earlier auto ones)',fn:n=>pePlanStart(n)},
+          {n:'pclear',t:'button',label:'Remove the auto-placed devices',fn:n=>{ const k=peClearAuto(n.sc); n.msg=k ? 'removed '+k+' auto-placed' : 'no auto-placed devices'; peTouch(n); }},
+          // экспорт
+          {n:'escale',t:'select',opts:['20','50','100','200'],d:'50',label:'EXPORT — SVG scale 1:…'},
+          {n:'edims',t:'check',d:true,label:'SVG: wall dimensions'},
+          {n:'ecov',t:'check',d:false,label:'SVG: camera view zones'},
+          {n:'esvg',t:'button',label:'⬇ SVG (to scale, walls with thickness, doors, windows, dimensions)',fn:n=>peExport(n,'svg')},
+          {n:'edxf',t:'button',label:'⬇ DXF 2D (layers: walls, doors, windows, objects, rooms, cameras, antennas, text)',fn:n=>peExport(n,'dxf')},
+          {n:'edxf3',t:'button',label:'⬇ DXF 3D (adds the walls and objects as 3D faces)',fn:n=>peExport(n,'dxf3')},
           // выбранное
           {n:'pname',t:'text',d:'',label:'point name',if:peOn('pt'),fn:n=>peApply(n,'pname')},
           {n:'wt',t:'range',min:.02,max:.8,step:.01,d:.2,label:'wall thickness, m (new walls take it too)',if:n=>n.selKind==='wall'||n.p.tool==='wall',fn:n=>peApply(n,'wt')},
           {n:'wh',t:'range',min:.5,max:6,step:.05,d:2.7,label:'wall height, m',if:n=>n.selKind==='wall'||n.p.tool==='wall',fn:n=>peApply(n,'wh')},
-          {n:'mat',t:'select',opts:PE_MATS,d:'brick',label:'wall material (the signal loss per 10 cm: brick 4, concrete 6, drywall 1.5, wood 2, glass 1, metal 20 dB)',if:n=>n.selKind==='wall'||n.p.tool==='wall',fn:n=>peApply(n,'mat')},
+          {n:'mat',t:'select',opts:PE_MATS,d:'brick',label:'wall material: signal loss per 10 cm at 2.4 GHz — brick 4, concrete 6, drywall 1.5, wood 2, glass 1, metal 20 dB; it grows with the frequency as f^k (brick 0.8, concrete 0.9, drywall 0.5, wood 0.6, glass 0.6, metal 0.1)',if:n=>n.selKind==='wall'||n.p.tool==='wall',fn:n=>peApply(n,'mat')},
           {n:'wlen',t:'num',d:0,label:'locked length, m (0 — free): the side keeps it while you drag the points',if:peOn('wall'),fn:n=>peApply(n,'wlen')},
           {n:'lockw',t:'button',label:'🔒 lock / unlock this side at its length',if:peOn('wall'),fn:n=>{ const w=peItem(n); if(w){ peLock(n.sc,w.id); setMod(n,'wlen',w.len||0); peTouch(n); } }},
           {n:'ow',t:'range',min:.1,max:6,step:.05,d:1,label:'width, m',if:peOn('obj'),fn:n=>peApply(n,'ow')},
@@ -255,13 +320,14 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
           {n:'newscene',t:'button',label:'Clear the whole scene',adv:true,fn:n=>{ n.sc=peNew(); n.sel=null; n.selKind=''; peTouch(n); n.vw.fit=false; }},
           {n:'scene',t:'text',d:'',hidden:true}],
   init:n=>{ n.sc=peParse(n.p.scene); n.rev=1; n.calcRev=0; n.sel=null; n.selKind=''; n.chain=null; n.chainPts=[]; n.vw={tx:0,ty:0,sc:40,fit:false}; n.msg=''; n.inPose={}; n.lastEdit=0; n.saveT=0; n.syncT=0;
-    n.camCov=null; n.antHeat=null; n.recs=[]; n.lines=''; n.area=0; n.emitDue=false; n.lastEmit=0; n.rasKey=''; n.ras=null; n.georef=false; n.touch=false; n.dragging=false; },
+    n.job=null; n.under=null; n.camCov=null; n.antHeat=null; n.recs=[]; n.lines=''; n.area=0; n.emitDue=false; n.lastEmit=0; n.rasKey=''; n.ras=null; n.georef=false; n.touch=false; n.dragging=false; },
   dispose:n=>{ if(n.saveT){ clearTimeout(n.saveT); n.p.scene=JSON.stringify(n.sc); } },
   process(n,I){
     const num=v=>typeof v==='number' && isFinite(v) ? v : null;
     const pose={lat:num(I.lat),lon:num(I.lon),alt:num(I.alt),az:num(I.az),el:num(I.el),fov:num(I.fov)};
     if(JSON.stringify(pose)!==JSON.stringify(n.inPose)){ n.inPose=pose; redraw(n); }
-    if(n.p.imp){ const rows=recList(I.rec).filter(r=>r && r.x!=null && r.y!=null && (r.name!=null||r.label!=null)); if(rows.length){ rows.forEach(r=>{ if(r.name==null) r.name=r.label; }); if(peImportPoints(n.sc,rows)){ peTouch(n); n.vw.fit=false; } } }
+    for(const r of recList(I.rec)){ if(r && r.kind==='underlay' && r.bm){ const sig=JSON.stringify([r.H,r.up,r.w,r.h]); if(!n.under || n.under.sig!==sig){ n.under={bm:r.bm,w:r.w,h:r.h,H:r.H,up:r.up||0,sig,cv:null,b:null,err:''}; peUnderBuild(n); n.vw.fit=false; redraw(n); } else n.under.bm=r.bm; } }
+    if(n.p.imp){ const rows=recList(I.rec).filter(r=>r && ((r.x!=null && r.y!=null && (r.name!=null||r.label!=null)) || r.kind==='plan poly')); if(rows.length){ rows.forEach(r=>{ if(r.name==null && r.label!=null) r.name=r.label; }); if(peImportPoints(n.sc,rows)){ peTouch(n); n.vw.fit=false; } } }
     const now=performance.now();
     if(n.calcRev!==n.rev && now-n.lastEdit>(n.dragging ? 180 : 60)){ peRecalc(n); redraw(n); }
     let rec=null; const every=+n.p.emit*1000;
@@ -280,6 +346,10 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
       for(let x=Math.floor(x0/step)*step;x<=x1 && cnt<400;x+=step,cnt++){ const A=P.pt(x,y0,0), B=P.pt(x,y1,0); cx.moveTo(A[0],A[1]); cx.lineTo(B[0],B[1]); }
       for(let y=Math.floor(y0/step)*step;y<=y1 && cnt<800;y+=step,cnt++){ const A=P.pt(x0,y,0), B=P.pt(x1,y,0); cx.moveTo(A[0],A[1]); cx.lineTo(B[0],B[1]); }
       cx.stroke(); n.gridStep=step; }
+    // подложка: ректифицированный снимок на плоскости пола (аффинно), сдвиг / поворот / масштаб — вручную
+    if(n.under && n.under.cv && p.uon){ const u=n.under, a=+p.usc||1, r=(+p.urot||0)*PE_D, cr=Math.cos(r), sr=Math.sin(r), AL=(x,y)=>[(x*cr-y*sr)*a+(+p.uox||0),(x*sr+y*cr)*a+(+p.uoy||0)];
+      const o0=AL(u.b.x0,u.b.y1), o1=AL(u.b.x0+1/u.res,u.b.y1), o2=AL(u.b.x0,u.b.y1-1/u.res), m=P.pt(o0[0],o0[1],0), ux=P.pt(o1[0],o1[1],0), uy=P.pt(o2[0],o2[1],0);
+      cx.save(); cx.globalAlpha=+p.uop; /* матрицу умножаем, а не заменяем */ cx.transform(ux[0]-m[0],ux[1]-m[1],uy[0]-m[0],uy[1]-m[1],m[0],m[1]); cx.drawImage(u.cv,0,0); cx.restore(); }
     // слой охвата — аффинно на плоскость пола
     const R=peRaster(n);
     if(R){ const g=R.g, sc=P.sc*g.cell, m=P.pt(g.x0,g.y0,0), ux=P.pt(g.x0+g.cell,g.y0,0), uy=P.pt(g.x0,g.y0+g.cell,0);
@@ -316,11 +386,11 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     // камеры
     for(const c of s.cams){ const A=P.pt(c.x,c.y,c.z), F=P.pt(c.x,c.y,0), isSel=n.sel&&n.sel.id===c.id; if(P.d3){ cx.strokeStyle='rgba(125,255,154,.45)'; cx.beginPath(); cx.moveTo(A[0],A[1]); cx.lineTo(F[0],F[1]); cx.stroke(); }
       cx.save(); cx.translate(A[0],A[1]); const dir=P.pt(c.x+Math.sin(c.az*PE_D),c.y+Math.cos(c.az*PE_D),c.z), ang=Math.atan2(dir[1]-A[1],dir[0]-A[0]); cx.rotate(ang);
-      cx.fillStyle=isSel ? '#ffb74d' : '#7dff9a'; cx.strokeStyle='#000'; cx.lineWidth=1.5; cx.beginPath(); cx.moveTo(10,0); cx.lineTo(-6,-6); cx.lineTo(-6,6); cx.closePath(); cx.stroke(); cx.fill(); cx.restore();
+      cx.fillStyle=isSel ? '#ffb74d' : c.auto ? '#6fd0ff' : '#7dff9a'; cx.strokeStyle='#000'; cx.lineWidth=1.5; cx.beginPath(); cx.moveTo(10,0); cx.lineTo(-6,-6); cx.lineTo(-6,6); cx.closePath(); cx.stroke(); cx.fill(); cx.restore();
       cx.fillStyle=fg; cx.font='10px monospace'; cx.textAlign='left'; cx.fillText(c.name,A[0]+9,A[1]-8); }
     // антенны
     for(const a of s.ants){ const A=P.pt(a.x,a.y,a.z), F=P.pt(a.x,a.y,0), isSel=n.sel&&n.sel.id===a.id; if(P.d3){ cx.strokeStyle='rgba(255,183,77,.5)'; cx.beginPath(); cx.moveTo(A[0],A[1]); cx.lineTo(F[0],F[1]); cx.stroke(); }
-      cx.fillStyle=isSel ? '#fff' : '#ffb74d'; cx.strokeStyle='#000'; cx.lineWidth=1.5; cx.beginPath(); cx.moveTo(A[0],A[1]-7); cx.lineTo(A[0]+6,A[1]); cx.lineTo(A[0],A[1]+7); cx.lineTo(A[0]-6,A[1]); cx.closePath(); cx.stroke(); cx.fill();
+      cx.fillStyle=isSel ? '#fff' : a.auto ? '#6fd0ff' : '#ffb74d'; cx.strokeStyle='#000'; cx.lineWidth=1.5; cx.beginPath(); cx.moveTo(A[0],A[1]-7); cx.lineTo(A[0]+6,A[1]); cx.lineTo(A[0],A[1]+7); cx.lineTo(A[0]-6,A[1]); cx.closePath(); cx.stroke(); cx.fill();
       cx.strokeStyle='#ffb74d'; cx.lineWidth=1.2; for(const r of [10,15]){ cx.beginPath(); cx.arc(A[0],A[1],r,-2.4,-.75); cx.stroke(); }
       cx.fillStyle=fg; cx.font='10px monospace'; cx.textAlign='left'; cx.fillText(a.name,A[0]+10,A[1]-10); }
     // поза телефона (общее пространство с Video Overlay)
@@ -340,8 +410,9 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
       cx.fillStyle='rgba(255,255,255,.06)'; cx.fillRect((PE_TOOLS.length+1)*bw+1,1,bw-2,PE_BAR-2); cx.fillStyle='#dfe7ea'; cx.fillText('⌂ fit',(PE_TOOLS.length+1)*bw+bw/2,PE_BAR/2+1); cx.textBaseline='alphabetic'; }
     // сводка
     if(n.msg) L.push(n.msg);
-    { const it=peItem(n); if(it){ const k=n.sel.k; L.push('selected: '+(k==='pt' ? 'point '+(it.name||it.id)+' ('+it.x.toFixed(2)+', '+it.y.toFixed(2)+')' : k==='wall' ? 'wall '+peWallLen(s,it).toFixed(2)+' m, '+(it.t*100).toFixed(0)+' cm thick, '+it.h+' m high, '+it.mat+(it.len>0 ? ', length locked' : '') : k==='obj' ? it.type+' '+it.w+(it.type==='box' ? '×'+it.d : '')+' m' : (k==='cam' ? 'camera ' : 'antenna ')+it.name+' at '+it.z+' m, az '+it.az+'°')); } }
+    { const it=peItem(n); if(it){ const k=n.sel.k; L.push('selected: '+(k==='pt' ? 'point '+(it.name||it.id)+' ('+it.x.toFixed(2)+', '+it.y.toFixed(2)+')' : k==='wall' ? 'wall '+peWallLen(s,it).toFixed(2)+' m, '+(it.t*100).toFixed(0)+' cm thick, '+it.h+' m high, '+it.mat+(it.len>0 ? ', length locked' : '')+(s.ants.length ? ' · signal loss '+peMatLoss(it.mat,s.ants[0].f,it.t).toFixed(1)+' dB at '+s.ants[0].f+' MHz' : '') : k==='obj' ? it.type+' '+it.w+(it.type==='box' ? '×'+it.d : '')+' m' : (k==='cam' ? 'camera ' : 'antenna ')+it.name+' at '+it.z+' m, az '+it.az+'°')); } }
     L.push(s.pts.length+' points · '+s.walls.length+' walls · '+s.objs.length+' objects · '+s.cams.length+' camera'+(s.cams.length===1 ? '' : 's')+' · '+s.ants.length+' antenna'+(s.ants.length===1 ? '' : 's')+(s.rooms.length ? ' · rooms '+n.area.toFixed(1)+' m²' : ''));
+    if(n.under && n.under.err) L.push('⚠ '+n.under.err);
     if(n.camCov) L.push('cameras see '+(100*n.camCov.cover).toFixed(0)+'% of '+(s.rooms.length ? 'the rooms' : 'the area')+' ('+n.camCov.seen.toFixed(1)+' of '+n.camCov.total.toFixed(1)+' m², blind '+(n.camCov.total-n.camCov.seen).toFixed(1)+' m², by two or more '+n.camCov.multi.toFixed(1)+' m²)');
     if(n.antHeat) L.push('signal above '+p.thr+' dBm in '+(100*n.antHeat.share).toFixed(0)+'% · mean '+n.antHeat.mean.toFixed(0)+' dBm, weakest '+n.antHeat.min.toFixed(0)+' dBm');
     L.push(p.tool==='select' ? (P.d3 ? 'drag empty space — turn the model · wheel / two fingers — zoom · right drag / shift — move · click an object — select, drag — move' : 'click — select, drag — move · empty space: drag — pan · wheel — zoom · double click — fit') : 'tool «'+p.tool+'»: click to use; drag moves the view; Esc — back to select');
