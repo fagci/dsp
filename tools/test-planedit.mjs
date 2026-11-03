@@ -3,7 +3,7 @@
 import vm from 'node:vm'; import fs from 'node:fs'; import path from 'node:path'; import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Array,String,Number,Object,JSON,Set,Map,Float32Array,Uint8Array,isFinite,Infinity});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints};`,ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints};`,ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -121,5 +121,14 @@ ok('sub-GHz walls are almost transparent: 433 MHz brick 20 cm < 3.5 dB',K.peMatL
 ok('metal hardly depends on the frequency (< 12 % between 868 MHz and 5.2 GHz)',K.peMatLoss('metal',5200,.1)/K.peMatLoss('metal',868,.1)<1.2);
 ok('a window / a door scale too, but gently',K.peOpenLoss('window',5200)>K.peOpenLoss('window',2400) && K.peOpenLoss('door',5200)<K.peOpenLoss('door',2400)*1.5);
 ok('the same wall is a bigger obstacle at 5 GHz: the level behind it drops more than the free-space difference',(()=>{ const q=room(10,10), A=K.peAddAnt(q.s,1,5,{z:1,f:2400}), B=K.peAddAnt(q.s,1,5,{z:1,f:5200}), p1=K.peAddPoint(q.s,3,0), p2=K.peAddPoint(q.s,3,10); K.peAddWall(q.s,p1.id,p2.id,{mat:'concrete',t:.2}); const d=(a)=>K.peAntLevel(q.s,a,2,5,1)-K.peAntLevel(q.s,a,6,5,1); return d(B)>d(A)+3; })());
+// порядок рисования: длинная стена и ящик перед ней / за ней (виден из точки к югу и сверху)
+{ const wall={cx:0,cy:0,ux:1,uy:0,l:10,t:.2,z0:0,z1:2.7,kind:'wall'}, front={cx:4,cy:-1.5,ux:1,uy:0,l:1,t:.6,z0:0,z1:.8,kind:'box'}, back={cx:-3,cy:1.5,ux:1,uy:0,l:1,t:.6,z0:0,z1:.8,kind:'box'};
+  const view={dx:0,dy:-1,h:Math.cos(40*Math.PI/180)}, depth=b=>b.cy*Math.cos(40*Math.PI/180);          // зритель на юге
+  const o=K.peBoxOrder([wall,front,back],view,depth); const pos=i=>o.indexOf(i);
+  ok('a box in front of the long wall (its centre nearer or not) is drawn after it; a box behind — before it',pos(1)>pos(0) && pos(2)<pos(0),JSON.stringify(o));
+  // тот же ящик, но стена длинная и ящик у самого её края — центр стены «далеко», а ящик ближе: порядок всё равно верный
+  const far={cx:4.8,cy:-.5,ux:1,uy:0,l:.8,t:.4,z0:0,z1:.8,kind:'box'}; const o2=K.peBoxOrder([wall,far],view,depth); ok('a box at the very end of a long wall, on the viewer’s side: after the wall',o2[1]===1,JSON.stringify(o2));
+  const view2={dx:0,dy:1,h:Math.cos(40*Math.PI/180)}, o3=K.peBoxOrder([wall,front,back],view2,b=>-b.cy); ok('the viewer on the north: the order flips',o3.indexOf(2)>o3.indexOf(0) && o3.indexOf(1)<o3.indexOf(0),JSON.stringify(o3));
+  const sill={cx:0,cy:0,ux:1,uy:0,l:1,t:.2,z0:0,z1:.9,kind:'wall'}, head={...sill,z0:2.1,z1:2.7}; const o4=K.peBoxOrder([head,sill],{dx:0,dy:-1,h:0},b=>0); ok('from above (h = 0): the lower block first, even on the same footprint (a window sill under its header)',o4[0]===1,JSON.stringify(o4)); }
 ok('an empty scene has no bounds and no grid',K.peGrid(K.peNew())===null);
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);

@@ -390,3 +390,34 @@ function peApplyPlan(s,res,kind,tpl){
   else { s.ants=s.ants.filter(a=>!a.auto); res.ants.forEach((c,i)=>{ const o=peAddAnt(s,c.x,c.y,{...tpl,az:c.az,name:'AP auto '+(i+1)}); o.auto=1; }); }
 }
 function peClearAuto(s){ const n=s.cams.filter(c=>c.auto).length+s.ants.filter(a=>a.auto).length; s.cams=s.cams.filter(c=>!c.auto); s.ants=s.ants.filter(a=>!a.auto); return n; }
+
+// ---------- порядок рисования блоков (алгоритм художника без ошибок «длинная стена перед ящиком») ----------
+// Сортировка по центру ломается, когда протяжённый блок (стена) по центру далеко, а краем стоит перед близким. Вместо этого каждая пара блоков сравнивается по
+// разделяющей оси (у выпуклых ориентированных прямоугольников она есть среди четырёх нормалей): какая сторона ближе к зрителю — тот и рисуется позже;
+// потом топологическая сортировка. На виде сверху (горизонтальной составляющей взгляда нет) порядок — по высоте: нижний раньше.
+function peBoxCorners(b){ const nx=-b.uy, ny=b.ux, h=b.l/2, q=b.t/2; return [[b.cx+b.ux*h+nx*q,b.cy+b.uy*h+ny*q],[b.cx+b.ux*h-nx*q,b.cy+b.uy*h-ny*q],[b.cx-b.ux*h-nx*q,b.cy-b.uy*h-ny*q],[b.cx-b.ux*h+nx*q,b.cy-b.uy*h+ny*q]]; }
+// 1 — a рисуется раньше b (b ближе к зрителю); -1 — наоборот; 0 — порядок не важен. view: {dx, dy — горизонтальное направление на зрителя (единичное), h — доля горизонтальной составляющей взгляда (cos угла места)}
+function peBefore(a,b,ca,cb,view){
+  const eps=1e-6; let best=null;
+  if(view.h>.12) for(const [ax,ay] of [[a.ux,a.uy],[-a.uy,a.ux],[b.ux,b.uy],[-b.uy,b.ux]]){
+    let a0=1e99,a1=-1e99,b0=1e99,b1=-1e99; for(const c of ca){ const v=c[0]*ax+c[1]*ay; if(v<a0)a0=v; if(v>a1)a1=v; } for(const c of cb){ const v=c[0]*ax+c[1]*ay; if(v<b0)b0=v; if(v>b1)b1=v; }
+    const sc=Math.abs(view.dx*ax+view.dy*ay); if(sc<.05) continue;
+    if(a1<=b0+eps){ if(!best||sc>best.sc) best={sc,aNeg:true,dot:view.dx*ax+view.dy*ay}; }
+    else if(b1<=a0+eps){ if(!best||sc>best.sc) best={sc,aNeg:false,dot:view.dx*ax+view.dy*ay}; }
+  }
+  if(best){ const viewerOnPositive=best.dot>0; return best.aNeg ? (viewerOnPositive ? 1 : -1) : (viewerOnPositive ? -1 : 1); }
+  if(a.z1<=b.z0+eps) return 1; if(b.z1<=a.z0+eps) return -1; return 0;
+}
+// индексы блоков в порядке рисования (дальние раньше); depth(b) — запасной ключ для несравнимых пар
+function peBoxOrder(B,view,depth){
+  const n=B.length, C=B.map(peBoxCorners), out=[[]], adj=Array.from({length:n},()=>[]), indeg=new Int32Array(n);
+  for(let i=0;i<n;i++) for(let j=i+1;j<n;j++){ const r=peBefore(B[i],B[j],C[i],C[j],view); if(r===1){ adj[i].push(j); indeg[j]++; } else if(r===-1){ adj[j].push(i); indeg[i]++; } }
+  const key=B.map(b=>depth(b)), ready=[]; for(let i=0;i<n;i++) if(!indeg[i]) ready.push(i);
+  const res=[], used=new Uint8Array(n);
+  while(res.length<n){
+    if(!ready.length){ let m=-1; for(let i=0;i<n;i++) if(!used[i] && (m<0||key[i]>key[m])) m=i; ready.push(m); indeg[m]=0; }          // цикл: берём самый дальний
+    ready.sort((p,q)=>key[q]-key[p]); const i=ready.shift(); if(used[i]) continue; used[i]=1; res.push(i);
+    for(const j of adj[i]){ indeg[j]--; if(indeg[j]<=0 && !used[j] && !ready.includes(j)) ready.push(j); }
+  }
+  return res;
+}

@@ -361,8 +361,8 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     const occ=peOccluders(s);
     for(const c of s.cams){ const poly=peVisPoly(c,occ,2); cx.beginPath(); poly.forEach((q,i)=>{ const A=P.pt(q[0],q[1],0); i ? cx.lineTo(A[0],A[1]) : cx.moveTo(A[0],A[1]); }); cx.closePath(); cx.fillStyle='rgba(125,255,154,.10)'; cx.fill(); cx.strokeStyle='rgba(125,255,154,.55)'; cx.lineWidth=1; cx.stroke(); }
     // блоки: стены, ящики, колонны — по глубине издали к близким
-    { const B=peBoxes(s).map(b=>{ const q=P.pt(b.cx,b.cy,(b.z0+b.z1)/2); return {b,d:q[2]}; }).sort((a,c)=>c.d-a.d), cam=[P.sa,-P.ca], sel=n.sel;
-      for(const {b} of B){
+    { const raw=peBoxes(s), cam=[P.sa,-P.ca], sel=n.sel, order=peBoxOrder(raw,{dx:cam[0],dy:cam[1],h:P.ce},b=>P.pt(b.cx,b.cy,(b.z0+b.z1)/2)[2]);
+      for(const bi of order){ const b=raw[bi];
         const nx=-b.uy, ny=b.ux, h=b.l/2, q=b.t/2, C=[[b.cx+b.ux*h+nx*q,b.cy+b.uy*h+ny*q],[b.cx+b.ux*h-nx*q,b.cy+b.uy*h-ny*q],[b.cx-b.ux*h-nx*q,b.cy-b.uy*h-ny*q],[b.cx-b.ux*h+nx*q,b.cy-b.uy*h+ny*q]];
         const base=b.kind==='wall' ? [200,208,214] : b.kind==='box' ? [201,143,90] : [160,168,173], isSel=sel && (sel.id===b.ref || (sel.k==='pt'&&false));
         const col=(k,a)=>'rgb('+base.map(v=>Math.round(Math.min(255,v*k+(isSel?40:0)))).join(',')+')';
