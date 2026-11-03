@@ -378,6 +378,7 @@ const PRESET_CATS={
   'Echo Ranger: Distance to a Wall by Chirp → Measure Entry → Site Plan':'Maps & Locating',
   'Room Walk: a Room from Wall Distances and Compass Azimuths → Site Plan':'Maps & Locating',
   'Plan Editor: Rooms in 3D with Cameras and Wi-Fi, Shared with Video Overlay':'Maps & Locating',
+  'Plan Editor: Scan Underlay → Walls → Auto-placed Cameras and Wi-Fi → SVG / DXF':'Maps & Locating',
   'Clinometer: Tree Height from the Phone Tilt → Site Plan':'Maps & Locating',
   'Signal Paths: Direct and Reflected Between Two Points':'Maps & Locating',
   'Flight Sim: Fly over Terrain (Joystick)':'Aircraft, Satellites & Telemetry',
@@ -8425,6 +8426,19 @@ const ov=addNode('overlay',1090,230,{fov:75,models:true,sky:true,planets:false,d
 ov.size.w=520; ov.size.h=420; applySize(ov);
 for(const t of [pe,ov]){ addEdge(me.id,'lat',t.id,'lat'); addEdge(me.id,'lon',t.id,'lon'); addEdge(cs[0].id,'out',t.id,'alt'); addEdge(cs[1].id,'out',t.id,'az'); addEdge(cs[2].id,'out',t.id,'el'); }
 addEdge(pe.id,'rec',ov.id,'rec');
+markWiresDirty();
+});
+preset('Plan Editor: Scan Underlay → Walls → Auto-placed Cameras and Wi-Fi → SVG / DXF', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'From a scan to a ready plan. Photo Measure holds a scan of a plot (the demo: a 30×18 m plot with a house, the 10 m scale line and the four corners already clicked, mode «trace»). It sends the plan to Plan Editor as an underlay (the image rectified into metres, faint under the plan) and as traced points with a contour — the editor builds the walls and the room from them. Draw the rest over the underlay: the house walls (wall tool snaps to the points), doors and windows. '+
+  'Then «PLAN PLACEMENT» (in the editor’s parameters): «cameras» finds the positions and azimuths that cover 95% of the rooms with the fewest cameras (the camera template is the selected one or the first; doors and windows weigh ×3); «antennas» does the same for a signal threshold — and the wall loss grows with the frequency: at 5 GHz a concrete wall costs about twice what it does at 2.4 GHz, below 1 GHz walls are nearly transparent. The auto-placed devices are light blue, «Remove the auto-placed» clears them, the ones you placed by hand count as already covering. '+
+  'Export: SVG to scale with wall thicknesses, doors, windows and dimensions; DXF 2D layers (walls, doors, windows, objects, rooms, cameras, antennas, text) and DXF 3D with the walls and objects as 3D faces. The underlay can be moved / turned / scaled in the advanced parameters.'});
+nt.size.w=1180; nt.size.h=170; applySize(nt);
+const pm=addNode('photomeasure',40,250,{autodemo:'scan',ref:'2 points: a scan / map scale',rd:10,mode:'trace',prefix:'C'});
+pm.size.w=480; pm.size.h=460; applySize(pm);
+const pe=addNode('planedit',560,250,{view:'plan',layer:'none',snap:'0.5',ptarget:95});
+pe.size.w=820; pe.size.h=720; applySize(pe);
+addEdge(pm.id,'rec',pe.id,'rec');
 markWiresDirty();
 });
 preset('Clinometer: Tree Height from the Phone Tilt → Site Plan', function(){

@@ -67,8 +67,9 @@ function pmCalc(n){                                               // гомог�
 }
 
 def({ id:'photomeasure', title:'Photo Measure', cat:'Geo', touch:true, lazy:true, kw:'photo measure ruler a4 reference homography perspective distance area plan wall floor facade camera scale site',
+  // rec — подложка для Plan Editor (снимок + отображение пикселей в метры) и обведённые точки (name, x, y) с контуром — Plan Editor строит по ним стены;
   // lines — замеры для Site Plan (A-B 3.42 ± 0.06): расстояния между всеми парами точек; dist — последний отрезок, м; len — ломаная по порядку, м; area — площадь многоугольника, м²
-  outs:[{n:'lines',t:'txt'},{n:'dist',t:'num'},{n:'len',t:'num'},{n:'area',t:'num'},{n:'n',t:'num'}],
+  outs:[{n:'lines',t:'txt'},{n:'dist',t:'num'},{n:'len',t:'num'},{n:'area',t:'num'},{n:'n',t:'num'},{n:'rec',t:'rec'}],
   w:460, view:{h:360}, resize:true, readout:true,
   params:[{n:'file',t:'file',accept:'image/*',label:'photo (a phone offers the camera)',fn:(n,f)=>pmLoad(n,f)},
           {n:'demo',t:'button',label:'Demo photo',fn:n=>pmUseDemo(n)},
@@ -90,9 +91,17 @@ def({ id:'photomeasure', title:'Photo Measure', cat:'Geo', touch:true, lazy:true
     if(n.p.autodemo==='photo') pmUseDemo(n); else if(n.p.autodemo==='scan') pmUseDemoScan(n); },
   process(n){
     if(n.dirty){ n.dirty=false; pmCalc(n); redraw(n); }
+    // подложка и обведённые точки — когда что-то изменилось (и раз в 8 с, чтобы редактор, добавленный позже, их получил)
+    const trace=n.p.mode==='trace', sig=[n.H ? n.H.join(',') : '',n.bm ? n.bm.width+'x'+n.bm.height : '',trace ? +n.p.up||0 : 0,trace,n.pts.length,n.p.prefix,n.mp.map(q=>q[0].toFixed(3)+q[1].toFixed(3)).join(';')].join('|'), now=performance.now();
+    let rec=null;
+    if(n.H && n.bm && (sig!==n.recSig || now-(n.recT||0)>8000)){
+      n.recSig=sig; n.recT=now; const up=trace ? (+n.p.up||0) : 0, pre=String(n.p.prefix||'P').replace(/[\s-]+/g,'_');
+      rec=[{id:'under:'+n.id,kind:'underlay',bm:n.bm,w:n.bm.width,h:n.bm.height,H:n.H.slice(),up,world:trace}];
+      if(trace && n.mp.length){ const W=n.mp.map(q=>up ? pmWorld(q,up) : q); W.forEach((q,i)=>rec.push({id:'trace:'+n.id+':'+i,kind:'plan point',name:pre+(i+1),x:+q[0].toFixed(3),y:+q[1].toFixed(3)})); if(W.length>=3 && n.p.poly) rec.push({id:'trace:'+n.id+':poly',kind:'plan poly',names:W.map((_,i)=>pre+(i+1))}); }
+    }
     const P=n.mp, m=P.length;
     let len=0; for(let i=1;i<m;i++) len+=pmDist(P[i-1],P[i]);
-    return {lines:n.lines, dist:m>1 ? pmDist(P[m-2],P[m-1]) : null, len:m>1 ? len : null, area:m>2 ? pmArea(P) : null, n:n.pts.length};
+    return {lines:n.lines, dist:m>1 ? pmDist(P[m-2],P[m-1]) : null, len:m>1 ? len : null, area:m>2 ? pmArea(P) : null, n:n.pts.length, rec};
   },
   draw(n,cv,cx){
     const W=cv.width, H=cv.height, L=[], fg=themeColor('--scr-txt')||'#9fb0b6';

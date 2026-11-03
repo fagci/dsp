@@ -3,7 +3,7 @@
 import vm from 'node:vm'; import fs from 'node:fs'; import path from 'node:path'; import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Array,String,Number,Object,JSON,Set,Map,Float32Array,Uint8Array,isFinite,Infinity});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay};`,ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints};`,ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -50,9 +50,10 @@ near('FSPL at 10 m, 2437 MHz = 60.2 dB',K.peFspl(10,2437),60.2,.1); near('FSPL: 
 ({s,P,Wl}=room(10,10)); const ap=K.peAddAnt(s,1,5,{z:1,eirp:20,f:2437,bw:360});
 near('antenna level at 5 m in the open ≈ eirp − FSPL',K.peAntLevel(s,ap,6,5,1),20-K.peFspl(5,2437),1e-6);
 { const p1=K.peAddPoint(s,3,0), p2=K.peAddPoint(s,3,10), wl=K.peAddWall(s,p1.id,p2.id,{mat:'brick',t:.2});
-  near('a 20 cm brick wall costs 8 dB (level behind it = open-air level − 8)',K.peAntLevel(s,ap,6,5,1),20-K.peFspl(5,2437)-8,1e-6);
+  near('a 20 cm brick wall costs 8 dB at 2.4 GHz (level behind it = open-air level − the loss at the antenna’s frequency)',K.peAntLevel(s,ap,6,5,1),20-K.peFspl(5,2437)-K.peMatLoss('brick',2437,.2),1e-6);
+  near('…exactly 8.0 dB at 2400 MHz',K.peMatLoss('brick',2400,.2),8,1e-9);
   near('wall loss function: 8 dB crossing the wall, 0 outside',K.peWallLoss(s,1,5,5,5),8,1e-9); near('…none on the same side',K.peWallLoss(s,1,5,2,5),0,1e-12);
-  K.peAddObj(s,'door',{wall:wl.id,u:.5,w:1}); near('through the doorway: 3 dB instead of 8',K.peWallLoss(s,1,5,5,5),3,1e-9);
+  K.peAddObj(s,'door',{wall:wl.id,u:.5,w:1}); near('through the doorway: 3 dB instead of 8 (at 2.4 GHz)',K.peWallLoss(s,1,5,5,5),3,1e-9);
   K.peAddObj(s,'window',{wall:wl.id,u:.2,w:1,sill:.9,h:1}); near('through the window: 2 dB',K.peWallLoss(s,1,2,5,2),2,1e-9); }
 // направленная антенна: за спиной слабее
 { const d1=K.peAddAnt(s,5,5,{az:90,bw:60}); const front=K.peAntLevel(s,d1,8,5,1), back=K.peAntLevel(s,d1,2,5,1); ok('a 60° antenna facing east: the back is ≥ 20 dB weaker',front-back>20,front-back); }
@@ -61,6 +62,8 @@ near('antenna level at 5 m in the open ≈ eirp − FSPL',K.peAntLevel(s,ap,6,5,
 // экспорт и импорт
 ({s,P,Wl}=room()); K.peLock(s,Wl[0].id); { const t=K.peLines(s).split('\n'); ok('lines: 4 points, 1 locked length, 1 contour',t.length===6 && /^p1 at 0 0 ± 0.01$/.test(t[0]) && t.some(l=>/^p1-p2 6 ± 0.002$/.test(l)) && /^poly p1 p2 p3 p4$/.test(t[5]),t.join('|')); }
 { const q=K.peNew(); const n=K.peImportPoints(q,[{name:'A',x:1,y:2},{name:'B',x:3,y:4},{name:'A',x:5,y:6},{name:'',x:1,y:1}]); ok('import: 3 rows used, 2 points, A moved',n===3 && q.pts.length===2 && q.pts[0].x===5); }
+{ const q=K.peNew(); const n=K.peImportPoints(q,[{name:'C1',x:0,y:0},{name:'C2',x:5,y:0},{name:'C3',x:5,y:4},{name:'C4',x:0,y:4},{kind:'plan poly',names:['C1','C2','C3','C4']}]);
+  ok('import a traced contour: 4 points, 4 walls and a room, once (a second import adds nothing)',q.pts.length===4 && q.walls.length===4 && q.rooms.length===1 && (K.peImportPoints(q,[{kind:'plan poly',names:['C1','C2','C3','C4']}]),q.walls.length===4 && q.rooms.length===1)); }
 ok('parse: round trip, junk → a new scene',JSON.stringify(K.peParse(JSON.stringify(s)).pts.length)==='4' && K.peParse('x').pts.length===0);
 { const nw=K.peNearestWall(s,3,-.5); ok('nearest wall to a point below the south wall is that wall, u = 0.5',nw.wall===Wl[0] && Math.abs(nw.u-.5)<1e-9 && Math.abs(nw.d-.5)<1e-9); }
 // привязка к земле
@@ -73,5 +76,50 @@ ok('parse: round trip, junk → a new scene',JSON.stringify(K.peParse(JSON.strin
   ok('overlay records: wall + door + 4 box faces as 3D outlines; camera, its pyramid, antenna, 2 points',kinds.plan===1+1+4+1 && kinds.camera===1 && kinds.antenna===1 && kinds['plan point']===2,JSON.stringify(kinds));
   const wr=r.find(x=>x.id==='plan:'+w.id); ok('a wall is a closed 3D outline of 5 [lat, lon, alt] points at the floor altitude and +2.7 m',wr.path3.length===5 && wr.path3[0][2]===100 && wr.path3[2][2]===102.7,JSON.stringify(wr.path3.map(p=>p[2])));
   ok('a camera record carries true azimuth and altitude = floor + mounting height',r.find(x=>x.kind==='camera').alt_m===102.6 && r.find(x=>x.kind==='camera').az===90); }
+// экспорт
+{ const {s,P,Wl}=room(); K.peAddObj(s,'door',{wall:Wl[0].id,u:.5,w:1}); K.peAddObj(s,'window',{wall:Wl[1].id,u:.5,w:1.2}); K.peAddObj(s,'box',{x:2,y:2,w:1,d:1,h:.5}); K.peAddCam(s,.3,.3,{az:45}); K.peAddAnt(s,3,2,{});
+  const svg=K.peSVG(s,{scale:50,coverage:true,north:0}), pg=(svg.match(/<polygon/g)||[]).length;
+  ok('svg: size in mm at 1:50 (6.0+1.6 m wide → 7.6 m / 50 = 152 mm)',/width="152mm"/.test(svg),svg.slice(0,160));
+  ok('svg: wall parts (door splits one wall into 2, window splits another into 2 + sill/header boxes) and a box are polygons with thickness',pg>=10,pg);
+  ok('svg: room label with its area, wall lengths, a scale bar and a door arc',/24\.0 m²/.test(svg) && /6\.00/.test(svg) && /1:50/.test(svg) && /<path d="M/.test(svg));
+  ok('svg: closes properly',svg.trim().endsWith('</svg>') && (svg.match(/<svg/g)||[]).length===1);
+  const dxf=K.peDXF(s), lines=dxf.trim().split('\n'); ok('dxf: an even number of group-code lines and EOF',lines.length%2===0 && lines[lines.length-1]==='EOF');
+  ok('dxf: polylines for walls / room, an arc for the door, layers table',(dxf.match(/POLYLINE/g)||[]).length>=8 && /\nARC\n/.test(dxf) && /LAYER/.test(dxf) && /CAMERAS/.test(dxf));
+  const d3=K.peDXF(s,{three:true}); ok('dxf 3D: 3DFACEs for every wall part and the box (6 each)',(d3.match(/3DFACE/g)||[]).length===6*K.peBoxes(s).length); }
+// автоподбор камер: комната 10×4 одним объёмом — одна камера в торце с полем 90° видит почти всё; перегородка с узким проёмом требует второй
+{ const cam={z:2.6,tilt:20,fov:100,range:14};
+  let r=room(10,4), plan=K.peRunGen(K.peCamPlan(r.s,{tpl:cam,n:0,target:.95,mount:'walls'}));
+  ok('one open room 10×4: reaches 95% with 1–2 cameras',plan.cover>=.95 && plan.cams.length<=2,JSON.stringify({c:plan.cover,n:plan.cams.length}));
+  ok('the curve is increasing and ends at the final coverage',plan.curve.every((v,i,a)=>i===0||v>=a[i-1]-1e-9) && Math.abs(plan.curve[plan.curve.length-1]-plan.cover)<1e-9);
+  // два помещения 5×4 и 5×4 через стену с дверью: одной камерой не охватить
+  const s=K.peNew(), p=[[0,0],[5,0],[10,0],[10,4],[5,4],[0,4]].map(([x,y])=>K.peAddPoint(s,x,y)), wl=[0,1,2,3,4,5].map(i=>K.peAddWall(s,p[i].id,p[(i+1)%6].id)); const mid=K.peAddWall(s,p[1].id,p[4].id);
+  K.peAddRoom(s,[p[0].id,p[1].id,p[4].id,p[5].id],'A'); K.peAddRoom(s,[p[1].id,p[2].id,p[3].id,p[4].id],'B'); K.peAddObj(s,'door',{wall:mid.id,u:.5,w:.9});
+  const one=K.peRunGen(K.peCamPlan(s,{tpl:cam,n:1,mount:'walls'})), three=K.peRunGen(K.peCamPlan(s,{tpl:cam,n:0,target:.97,mount:'walls'}));
+  ok('two rooms behind a wall: one camera sees less than 75%',one.cover<.75,one.cover);
+  ok('…the planner asks for 2+ cameras and gets ≥ 95%',three.cams.length>=2 && three.cover>=.95,JSON.stringify({n:three.cams.length,c:three.cover}));
+  near('more cameras never cover less (greedy curve)',three.curve[three.curve.length-1]>=one.cover?1:0,1,0);
+  // уже стоящая камера учитывается: её зона не берётся заново
+  K.peAddCam(s,.3,.3,{az:45,fov:100,range:14,z:2.6,tilt:20}); const rest=K.peRunGen(K.peCamPlan(s,{tpl:cam,n:0,target:.97,mount:'walls'}));
+  ok('an existing camera counts: fewer new ones than from scratch (or the same)',rest.cams.length<=three.cams.length && rest.base>0,JSON.stringify({rest:rest.cams.length,from0:three.cams.length,base:rest.base}));
+  // применить: появляются auto-камеры, повторный расчёт их заменяет, стоящая остаётся
+  K.peApplyPlan(s,three,'cam',{z:2.6,tilt:20,fov:100,range:14}); const n1=s.cams.length; K.peApplyPlan(s,rest,'cam',{z:2.6,tilt:20,fov:100,range:14});
+  ok('apply marks the new cameras auto and re-running replaces them, keeping the manual one',s.cams.filter(c=>!c.auto).length===1 && s.cams.filter(c=>c.auto).length===rest.cams.length && n1>=2);
+  ok('clear removes only the auto ones',K.peClearAuto(s)===rest.cams.length && s.cams.length===1);
+  const ex=K.peRunGen(K.peCamPlan(K.peNew(),{tpl:cam})); ok('no rooms: a clear error, no crash',!!ex.error);
+  const dd=K.peRunGen(K.peCamPlan(s,{tpl:cam,n:1,doors:true,mount:'walls'})); ok('door priority: the chosen camera favours the doorway (covers its neighbourhood)',dd.cams.length===1); }
+// автоподбор антенн: два помещения за бетонной стеной — одной точки мало
+{ const s=K.peNew(), p=[[0,0],[8,0],[16,0],[16,6],[8,6],[0,6]].map(([x,y])=>K.peAddPoint(s,x,y)), wl=[0,1,2,3,4,5].map(i=>K.peAddWall(s,p[i].id,p[(i+1)%6].id,{mat:'concrete',t:.3})); K.peAddWall(s,p[1].id,p[4].id,{mat:'concrete',t:.3});
+  K.peAddRoom(s,[p[0].id,p[1].id,p[4].id,p[5].id],'A'); K.peAddRoom(s,[p[1].id,p[2].id,p[3].id,p[4].id],'B');
+  const tpl={z:2.4,eirp:20,f:5200,bw:360}, one=K.peRunGen(K.peAntPlan(s,{tpl,n:1,thr:-65})), auto=K.peRunGen(K.peAntPlan(s,{tpl,n:0,target:.97,thr:-65}));
+  ok('5 GHz through an 18 dB concrete wall: one access point leaves a gap, two cover ≥ 97%',one.cover<.97 && auto.ants.length===2 && auto.cover>=.97,JSON.stringify({one:one.cover,n:auto.ants.length,c:auto.cover}));
+  ok('the access points sit on both sides of the wall',auto.ants.some(a=>a.x<8) && auto.ants.some(a=>a.x>8),JSON.stringify(auto.ants));
+  K.peApplyPlan(s,auto,'ant',tpl); const h=K.peAntHeat(s,K.peGrid(s,.5),{thr:-65}); ok('the real heat map agrees with the plan (share ≥ 0.95)',h.share>=.95,h.share); }
+// частотная зависимость потерь
+ok('loss grows with the frequency: brick 868 MHz < 2.4 GHz < 5.2 GHz < 5.2 GHz concrete',K.peMatLoss('brick',868,.2)<K.peMatLoss('brick',2400,.2) && K.peMatLoss('brick',2400,.2)<K.peMatLoss('brick',5200,.2) && K.peMatLoss('brick',5200,.2)<K.peMatLoss('concrete',5200,.2));
+near('brick, 5.2 GHz, 20 cm ≈ 8·(5.2/2.4)^0.8 = 14.8 dB',K.peMatLoss('brick',5200,.2),8*Math.pow(5200/2400,.8),1e-9);
+ok('sub-GHz walls are almost transparent: 433 MHz brick 20 cm < 3.5 dB',K.peMatLoss('brick',433,.2)<3.5,K.peMatLoss('brick',433,.2));
+ok('metal hardly depends on the frequency (< 12 % between 868 MHz and 5.2 GHz)',K.peMatLoss('metal',5200,.1)/K.peMatLoss('metal',868,.1)<1.2);
+ok('a window / a door scale too, but gently',K.peOpenLoss('window',5200)>K.peOpenLoss('window',2400) && K.peOpenLoss('door',5200)<K.peOpenLoss('door',2400)*1.5);
+ok('the same wall is a bigger obstacle at 5 GHz: the level behind it drops more than the free-space difference',(()=>{ const q=room(10,10), A=K.peAddAnt(q.s,1,5,{z:1,f:2400}), B=K.peAddAnt(q.s,1,5,{z:1,f:5200}), p1=K.peAddPoint(q.s,3,0), p2=K.peAddPoint(q.s,3,10); K.peAddWall(q.s,p1.id,p2.id,{mat:'concrete',t:.2}); const d=(a)=>K.peAntLevel(q.s,a,2,5,1)-K.peAntLevel(q.s,a,6,5,1); return d(B)>d(A)+3; })());
 ok('an empty scene has no bounds and no grid',K.peGrid(K.peNew())===null);
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);

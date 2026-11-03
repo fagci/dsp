@@ -8,7 +8,13 @@
 const PE_D=Math.PI/180;
 // затухание стены, дБ на 10 см толщины: уровень сигнала на пути через стену = мат × толщина / 0,1 м
 const PE_MAT={brick:4,concrete:6,drywall:1.5,wood:2,glass:1,metal:20};
-const PE_OPEN_LOSS={door:3,window:2};                          // проём: тонкая дверь / стекло, дБ
+// частотная зависимость: потери = таблица (на 2,4 ГГц) × (f / 2,4 ГГц)^k; k — по материалу (эмпирика типа ITU-R P.2040: плотные материалы растут быстрее, металл почти не зависит)
+const PE_MATK={brick:.8,concrete:.9,drywall:.5,wood:.6,glass:.6,metal:.1};
+const PE_OPEN_LOSS={door:3,window:2};                          // проём: тонкая дверь / стекло, дБ на 2,4 ГГц
+const PE_OPEN_K={door:.4,window:.6};
+const peFk=(f,k)=>Math.pow(Math.max(30,Math.min(100000,f||2400))/2400,k);
+const peMatLoss=(mat,f,t)=>(PE_MAT[mat]??4)*peFk(f,PE_MATK[mat]??.7)*(t??.2)/.1;      // потери стены толщиной t (м) на частоте f (МГц), дБ
+const peOpenLoss=(type,f)=>PE_OPEN_LOSS[type]*peFk(f,PE_OPEN_K[type]);
 const PE_TYPES=['box','column','door','window'];               // примитивы (door / window — проёмы в стене)
 const peWrap180=a=>((a+180)%360+360)%360-180;
 const peWrap360=a=>((a%360)+360)%360;
@@ -143,21 +149,21 @@ function peVisPoly(c,occ,stepDeg=1){
 // ---------- антенны ----------
 function peFspl(d,fMHz){ return 20*Math.log10(Math.max(d,1))+20*Math.log10(fMHz)-27.55; }
 function peAntGain(a,dx,dy){ if(!(a.bw<360)) return 0; const off=Math.abs(peWrap180(Math.atan2(dx,dy)/PE_D-a.az)); return -Math.min(25,12*Math.pow(off/Math.max(1,a.bw),2)); }
-// потери на стенах по пути a→(x,y), дБ: пересечение оси стены = материал × толщина / 10 см; проём — потери проёма
-function peWallLoss(s,ax,ay,x,y){
+// потери на стенах по пути a→(x,y) на частоте f (МГц), дБ: пересечение оси стены = материал × толщина / 10 см × (f / 2,4 ГГц)^k; проём — потери проёма
+function peWallLoss(s,ax,ay,x,y,f=2400){
   let loss=0;
   for(const w of s.walls){
     const [p,q]=peWallEnds(s,w), t=peSegT(ax,ay,x,y,[p.x,p.y,q.x,q.y]); if(t<0) continue;
     const hx=ax+(x-ax)*t, hy=ay+(y-ay)*t, L=Math.hypot(q.x-p.x,q.y-p.y)||1, u=Math.hypot(hx-p.x,hy-p.y)/L; let open=null;
     for(const o of s.objs) if(o.wall===w.id && (o.type==='door'||o.type==='window') && Math.abs(u-o.u)*L<=o.w/2) open=o;
-    loss+=open ? PE_OPEN_LOSS[open.type] : (PE_MAT[w.mat]??4)*w.t/.1;
+    loss+=open ? peOpenLoss(open.type,f) : peMatLoss(w.mat,f,w.t);
   }
   return loss;
 }
 // уровень сигнала антенны в точке, дБм (приёмник на высоте zr)
 function peAntLevel(s,a,x,y,zr=1){
   const dx=x-a.x, dy=y-a.y, d3=Math.hypot(dx,dy,a.z-zr);
-  return a.eirp+peAntGain(a,dx,dy)-peFspl(d3,a.f)-peWallLoss(s,a.x,a.y,x,y);
+  return a.eirp+peAntGain(a,dx,dy)-peFspl(d3,a.f)-peWallLoss(s,a.x,a.y,x,y,a.f);
 }
 
 // ---------- сетка охвата ----------
@@ -199,8 +205,14 @@ function peLines(s){
 }
 // точки из записей Site Plan (kind 'plan point': name, x, y, z) или любых (name, x, y): добавляет отсутствующие, существующие по имени двигает
 function peImportPoints(s,recs){
-  let n=0; for(const r of recs||[]){ const x=+r.x, y=+r.y, name=String(r.name??r.label??''); if(!name||!isFinite(x)||!isFinite(y)) continue;
+  let n=0;
+  for(const r of recs||[]){ if(r && r.kind==='plan poly' && Array.isArray(r.names)){ r._poly=true; } }
+  for(const r of recs||[]){ if(r && r._poly) continue; const x=+r.x, y=+r.y, name=String(r.name??r.label??''); if(!name||!isFinite(x)||!isFinite(y)) continue;
     let p=s.pts.find(p=>p.name===name); if(p){ p.x=x; p.y=y; } else { p=peAddPoint(s,x,y); p.name=name; } n++; }
+  // контуры (kind 'plan poly', names): стены между соседними точками и комната, если их ещё нет
+  for(const r of recs||[]){ if(!r || !r._poly) continue; const ids=r.names.map(nm=>s.pts.find(p=>p.name===nm)).filter(Boolean).map(p=>p.id); if(ids.length<3) continue;
+    for(let i=0;i<ids.length;i++) peAddWall(s,ids[i],ids[(i+1)%ids.length]);
+    const key=ids.slice().sort().join(); if(!s.rooms.some(q=>q.pts.slice().sort().join()===key)) peAddRoom(s,ids); n++; delete r._poly; }
   return n;
 }
 function peParse(text){ try{ const o=JSON.parse(text); if(o && Array.isArray(o.pts)){ for(const k of ['walls','objs','cams','ants','rooms']) if(!Array.isArray(o[k])) o[k]=[]; if(!(o.seq>0)) o.seq=1000; return o; } }catch(e){} return peNew(); }
@@ -231,3 +243,150 @@ function peOverlay(s,o){
   for(const p of s.pts){ const g=peGeo(o,p.x,p.y); out.push({id:'plan:'+p.id,label:p.name||'',kind:'plan point',lat:+g[0].toFixed(8),lon:+g[1].toFixed(8),alt_m:+(o.alt||0).toFixed(2),x:+p.x.toFixed(3),y:+p.y.toFixed(3),color:'#9fb0b6',icon:'dot'}); }
   return out;
 }
+
+// ---------- экспорт: SVG (чертёж с толщинами) и DXF (2D и 3D) ----------
+// сплошные прямоугольники стен [x,y]×4 по частям (без проёмов) + ящики / колонны — для чертежа
+function peSolidRects(s){
+  const out=[];
+  for(const b of peBoxes(s)){ const nx=-b.uy, ny=b.ux, h=b.l/2, q=b.t/2; out.push({kind:b.kind,ref:b.ref,z0:b.z0,z1:b.z1,c:[[b.cx+b.ux*h+nx*q,b.cy+b.uy*h+ny*q],[b.cx+b.ux*h-nx*q,b.cy+b.uy*h-ny*q],[b.cx-b.ux*h-nx*q,b.cy-b.uy*h-ny*q],[b.cx-b.ux*h+nx*q,b.cy-b.uy*h+ny*q]]}); }
+  return out;
+}
+const peF=(v,d=3)=>String(+(+v).toFixed(d));
+const peFx=(v,d)=>(+v).toFixed(d);                           // с хвостовыми нулями — для подписей
+const peEsc=t=>String(t).replace(/[<&>"]/g,c=>'&#'+c.charCodeAt(0)+';');
+// opt: scale (знаменатель масштаба, 50 → 1:50), dims (размеры стен), devices (камеры и антенны), coverage (зоны камер), rooms (подписи комнат)
+function peSVG(s,opt={}){
+  const b=peBounds(s,.8); if(!b) return '';
+  const sc=opt.scale>0 ? opt.scale : 50, W=b.x1-b.x0, H=b.y1-b.y0, o=[];
+  const T=(x,y)=>peF(x)+','+peF(-y);                                  // y вверх → вниз
+  o.push('<svg xmlns="http://www.w3.org/2000/svg" width="'+peF(W*1000/sc,1)+'mm" height="'+peF(H*1000/sc,1)+'mm" viewBox="'+peF(b.x0)+' '+peF(-b.y1)+' '+peF(W)+' '+peF(H)+'" font-family="sans-serif">');
+  o.push('<rect x="'+peF(b.x0)+'" y="'+peF(-b.y1)+'" width="'+peF(W)+'" height="'+peF(H)+'" fill="#fff"/>');
+  const txt=(x,y,t,size,o2={})=>'<text transform="translate('+peF(x)+','+peF(-y)+') rotate('+peF(-(o2.rot||0),1)+')" font-size="'+size+'" text-anchor="middle"'+(o2.fill?' fill="'+o2.fill+'"':'')+(o2.bold?' font-weight="bold"':'')+'>'+peEsc(t)+'</text>';
+  if(opt.rooms!==false) for(const r of s.rooms){ const P=peRoomPoly(s,r); o.push('<polygon points="'+P.map(q=>T(q[0],q[1])).join(' ')+'" fill="#eef6fb" stroke="none"/>'); }
+  if(opt.coverage) for(const c of s.cams){ const P=peVisPoly(c,peOccluders(s),2); o.push('<polygon points="'+P.map(q=>T(q[0],q[1])).join(' ')+'" fill="#4caf50" fill-opacity=".18" stroke="#4caf50" stroke-width=".02"/>'); }
+  for(const r of peSolidRects(s)) o.push('<polygon points="'+r.c.map(q=>T(q[0],q[1])).join(' ')+'" fill="'+(r.kind==='wall' ? '#8c9499' : r.kind==='box' ? '#d9b38c' : '#aab2b7')+'" stroke="#222" stroke-width=".015"/>');
+  for(const ob of s.objs){ if(ob.type!=='door'&&ob.type!=='window') continue; const pl=peOpenPlace(s,ob); if(!pl) continue; const h=ob.w/2, ax=pl.x-pl.ux*h, ay=pl.y-pl.uy*h, bx=pl.x+pl.ux*h, by=pl.y+pl.uy*h, nx=-pl.uy, ny=pl.ux, q=pl.t/2;
+    if(ob.type==='window'){ for(const k of [-1,0,1]) o.push('<line x1="'+peF(ax+nx*q*k*.6)+'" y1="'+peF(-(ay+ny*q*k*.6))+'" x2="'+peF(bx+nx*q*k*.6)+'" y2="'+peF(-(by+ny*q*k*.6))+'" stroke="#2a7fb8" stroke-width=".02"/>'); }
+    else { const r=ob.w, ex=ax+nx*r, ey=ay+ny*r; o.push('<line x1="'+peF(ax)+'" y1="'+peF(-ay)+'" x2="'+peF(ex)+'" y2="'+peF(-ey)+'" stroke="#7a5a2a" stroke-width=".03"/><path d="M '+peF(ex)+' '+peF(-ey)+' A '+peF(r)+' '+peF(r)+' 0 0 '+(1)+' '+peF(bx)+' '+peF(-by)+'" fill="none" stroke="#7a5a2a" stroke-width=".015" stroke-dasharray=".06 .04"/>'); } }
+  if(opt.rooms!==false) for(const r of s.rooms){ const P=peRoomPoly(s,r), cx=P.reduce((a,q)=>a+q[0],0)/P.length, cy=P.reduce((a,q)=>a+q[1],0)/P.length; o.push(txt(cx,cy,(r.name||'')+'  '+peFx(peRoomArea(s,r),1)+' m²',.22,{fill:'#345'})); }
+  if(opt.dims!==false) for(const w of s.walls){ const [a,c]=peWallEnds(s,w), L=peWallLen(s,w), ang=Math.atan2(c.y-a.y,c.x-a.x)/PE_D, nx=-(c.y-a.y)/L, ny=(c.x-a.x)/L, off=w.t/2+.18; let rot=ang; if(rot>90||rot<-90) rot+=180; o.push(txt((a.x+c.x)/2+nx*off,(a.y+c.y)/2+ny*off,peFx(L,2)+(w.len>0 ? ' 🔒' : ''),.16,{rot,fill:'#555'})); }
+  if(opt.devices!==false){
+    for(const c of s.cams){ o.push('<polygon points="'+[[0,.12],[-.1,-.1],[.1,-.1]].map(q=>{ const a=c.az*PE_D, x=q[0]*Math.cos(a)+q[1]*Math.sin(a), y=-q[0]*Math.sin(a)+q[1]*Math.cos(a); return T(c.x+x,c.y+y); }).join(' ')+'" fill="#2e7d32"/>'); o.push(txt(c.x,c.y+.3,c.name,.15,{fill:'#2e7d32'})); }
+    for(const a of s.ants){ o.push('<circle cx="'+peF(a.x)+'" cy="'+peF(-a.y)+'" r=".1" fill="#ef6c00"/>'); o.push(txt(a.x,a.y+.3,a.name+' '+a.eirp+' dBm',.15,{fill:'#ef6c00'})); } }
+  // масштабная линейка 1 м и север
+  const bx=b.x0+.3, by=b.y0+.3; o.push('<g stroke="#000" stroke-width=".03"><line x1="'+peF(bx)+'" y1="'+peF(-by)+'" x2="'+peF(bx+1)+'" y2="'+peF(-by)+'"/><line x1="'+peF(bx)+'" y1="'+peF(-by-.05)+'" x2="'+peF(bx)+'" y2="'+peF(-by+.05)+'"/><line x1="'+peF(bx+1)+'" y1="'+peF(-by-.05)+'" x2="'+peF(bx+1)+'" y2="'+peF(-by+.05)+'"/></g>'+txt(bx+.5,by+.1,'1 m   (1:'+sc+')',.14));
+  if(opt.north!==undefined){ const nx=b.x1-.4, ny=b.y1-.6, a=(opt.north||0)*PE_D; o.push('<g stroke="#000" stroke-width=".03"><line x1="'+peF(nx)+'" y1="'+peF(-ny)+'" x2="'+peF(nx+Math.sin(-a)*.4)+'" y2="'+peF(-(ny+Math.cos(a)*.4))+'"/></g>'+txt(nx+Math.sin(-a)*.55,ny+Math.cos(a)*.55,'N',.16,{bold:true})); }
+  o.push('</svg>'); return o.join('\n');
+}
+// DXF R12: слои WALLS / DOORS / WINDOWS / OBJECTS / ROOMS / CAMERAS / ANTENNAS / TEXT; three — ещё 3D-грани (3DFACE) стен и объектов на слое WALLS3D
+function peDXF(s,opt={}){
+  const L=[], g=(c,v)=>{ L.push(String(c),String(v)); }, f=v=>peF(v,4);
+  const layers=[['WALLS',8],['DOORS',30],['WINDOWS',4],['OBJECTS',32],['ROOMS',5],['CAMERAS',3],['ANTENNAS',2],['TEXT',7],['WALLS3D',9]];
+  g(0,'SECTION'); g(2,'HEADER'); g(9,'$ACADVER'); g(1,'AC1009'); g(9,'$INSUNITS'); g(70,6); g(0,'ENDSEC');
+  g(0,'SECTION'); g(2,'TABLES'); g(0,'TABLE'); g(2,'LAYER'); g(70,layers.length);
+  for(const [n,c] of layers){ g(0,'LAYER'); g(2,n); g(70,0); g(62,c); g(6,'CONTINUOUS'); } g(0,'ENDTAB'); g(0,'ENDSEC');
+  g(0,'SECTION'); g(2,'ENTITIES');
+  const poly=(layer,P,closed=true,z=0)=>{ g(0,'POLYLINE'); g(8,layer); g(66,1); g(70,closed ? 1 : 0); for(const q of P){ g(0,'VERTEX'); g(8,layer); g(10,f(q[0])); g(20,f(q[1])); g(30,f(z)); } g(0,'SEQEND'); g(8,layer); };
+  const text=(layer,x,y,h,t)=>{ g(0,'TEXT'); g(8,layer); g(10,f(x)); g(20,f(y)); g(30,0); g(40,h); g(1,t); };
+  const rects=peSolidRects(s);
+  for(const r of rects) poly(r.kind==='wall' ? 'WALLS' : 'OBJECTS',r.c);
+  for(const ob of s.objs){ if(ob.type!=='door'&&ob.type!=='window') continue; const pl=peOpenPlace(s,ob); if(!pl) continue; const h=ob.w/2, ax=pl.x-pl.ux*h, ay=pl.y-pl.uy*h, bx=pl.x+pl.ux*h, by=pl.y+pl.uy*h, nx=-pl.uy, ny=pl.ux, q=pl.t/2;
+    if(ob.type==='window'){ for(const k of [-1,1]) poly('WINDOWS',[[ax+nx*q*k,ay+ny*q*k],[bx+nx*q*k,by+ny*q*k]],false); }
+    else { const a0=Math.atan2(by-ay,bx-ax)/PE_D; g(0,'LINE'); g(8,'DOORS'); g(10,f(ax)); g(20,f(ay)); g(30,0); g(11,f(ax+nx*ob.w)); g(21,f(ay+ny*ob.w)); g(31,0); g(0,'ARC'); g(8,'DOORS'); g(10,f(ax)); g(20,f(ay)); g(30,0); g(40,f(ob.w)); g(50,f(peWrap360(a0))); g(51,f(peWrap360(a0+90))); } }
+  for(const r of s.rooms){ const P=peRoomPoly(s,r); poly('ROOMS',P); text('TEXT',P.reduce((a,q)=>a+q[0],0)/P.length,P.reduce((a,q)=>a+q[1],0)/P.length,.25,(r.name||'')+' '+peFx(peRoomArea(s,r),1)+' m2'); }
+  for(const c of s.cams){ poly('CAMERAS',peVisPoly(c,peOccluders(s),2)); g(0,'POINT'); g(8,'CAMERAS'); g(10,f(c.x)); g(20,f(c.y)); g(30,f(c.z)); text('TEXT',c.x+.1,c.y+.1,.15,c.name); }
+  for(const a of s.ants){ g(0,'POINT'); g(8,'ANTENNAS'); g(10,f(a.x)); g(20,f(a.y)); g(30,f(a.z)); text('TEXT',a.x+.1,a.y+.1,.15,a.name+' '+a.eirp+' dBm'); }
+  if(opt.three) for(const b of peBoxes(s)){ const nx=-b.uy, ny=b.ux, h=b.l/2, q=b.t/2, C=[[b.cx+b.ux*h+nx*q,b.cy+b.uy*h+ny*q],[b.cx+b.ux*h-nx*q,b.cy+b.uy*h-ny*q],[b.cx-b.ux*h-nx*q,b.cy-b.uy*h-ny*q],[b.cx-b.ux*h+nx*q,b.cy-b.uy*h+ny*q]];
+    const face=(P)=>{ g(0,'3DFACE'); g(8,'WALLS3D'); for(let i=0;i<4;i++){ g(10+i,f(P[i][0])); g(20+i,f(P[i][1])); g(30+i,f(P[i][2])); } };
+    face(C.map(c=>[c[0],c[1],b.z1])); face(C.map(c=>[c[0],c[1],b.z0]));
+    for(let i=0;i<4;i++){ const p=C[i], r=C[(i+1)%4]; face([[p[0],p[1],b.z0],[r[0],r[1],b.z0],[r[0],r[1],b.z1],[p[0],p[1],b.z1]]); } }
+  g(0,'ENDSEC'); g(0,'EOF'); return L.join('\n')+'\n';
+}
+
+// ---------- автоподбор мест камер и антенн ----------
+// Задача максимального охвата: клетки комнат (с весами — у дверей и окон важнее), кандидаты «позиция × азимут» знают, какие клетки закроют;
+// жадный выбор берёт кандидата с наибольшим выигрышем, потом несколько проходов замен улучшают набор (каждый по очереди переставляется при остальных на месте).
+// Это приближение (1 − 1/e) к оптимуму, на практике близко к нему. Генераторы отдают {phase, done, total} — вызывающий делит работу по времени; peRunGen доводит до конца.
+function peRunGen(gen){ for(;;){ const r=gen.next(); if(r.done) return r.value; } }
+// клетки внутри комнат: {g, k (индексы), x, y, w (веса), W (сумма)}; doors — вес 3 в радиусе 1,5 м от двери / окна
+function peRoomCells(s,cell,doors){
+  const g=peGrid(s,cell,120); if(!g || !s.rooms.length) return null;
+  const polys=s.rooms.map(r=>peRoomPoly(s,r)), op=doors ? s.objs.filter(o=>o.type==='door'||o.type==='window').map(o=>peOpenPlace(s,o)).filter(Boolean) : [];
+  const k=[], x=[], y=[], w=[]; let W=0;
+  for(let j=0;j<g.ny;j++) for(let i=0;i<g.nx;i++){ const cx=g.x0+(i+.5)*g.cell, cy=g.y0+(j+.5)*g.cell; if(!polys.some(P=>peInPoly(P,cx,cy))) continue;
+    let wt=1; for(const o of op) if(Math.hypot(cx-o.x,cy-o.y)<1.5){ wt=3; break; } k.push(j*g.nx+i); x.push(cx); y.push(cy); w.push(wt); W+=wt; }
+  return {g,k,x,y,w,W,n:k.length};
+}
+function pePosDedupe(P,r=.15){ const out=[]; for(const p of P) if(!out.some(q=>Math.hypot(q[0]-p[0],q[1]-p[1])<r)) out.push(p); return out; }
+function peMountPoints(s,mode,step=.6){
+  const out=[], inRoom=(x,y)=>peInRooms(s,x,y);
+  if(mode!=='anywhere'){
+    for(const r of s.rooms){ const P=peRoomPoly(s,r), cx=P.reduce((a,q)=>a+q[0],0)/P.length, cy=P.reduce((a,q)=>a+q[1],0)/P.length;
+      for(const q of P){ const d=Math.hypot(cx-q[0],cy-q[1])||1, x=q[0]+(cx-q[0])/d*.25, y=q[1]+(cy-q[1])/d*.25; if(inRoom(x,y)) out.push([x,y]); } }
+  }
+  if(mode==='walls'){
+    for(const w of s.walls){ const [a,b]=peWallEnds(s,w), L=Math.hypot(b.x-a.x,b.y-a.y), ux=(b.x-a.x)/L, uy=(b.y-a.y)/L, parts=peWallParts(s,w), off=w.t/2+.08;
+      for(let u=step/2;u<L;u+=step){ if(parts.open.some(o=>u>o.s0-.3 && u<o.s1+.3)) continue; for(const sg of [-1,1]){ const x=a.x+ux*u-uy*off*sg, y=a.y+uy*u+ux*off*sg; if(inRoom(x,y)) out.push([x,y]); } } }
+  }
+  if(mode==='anywhere'){ const g=peGrid(s,1,60); if(g) for(let j=0;j<g.ny;j++) for(let i=0;i<g.nx;i++){ const x=g.x0+(i+.5)*g.cell, y=g.y0+(j+.5)*g.cell; if(inRoom(x,y)) out.push([x,y]); } }
+  return pePosDedupe(out);
+}
+// общий жадный отбор + замены. cands: [{x,y,az,cells:Int32Array}]; pre — Uint8Array уже покрытых (стоящие камеры / антенны)
+function* peGreedy(cands,w,W,pre,opt){
+  const n=w.length, cnt=new Uint8Array(n); for(let i=0;i<n;i++) cnt[i]=pre[i] ? 1 : 0;
+  const gainOf=c=>{ let g=0; const L=c.cells; for(let i=0;i<L.length;i++){ const k=L[i]; if(!cnt[k]) g+=w[k]; } return g; };
+  const coverW=()=>{ let c=0; for(let i=0;i<n;i++) if(cnt[i]) c+=w[i]; return c; };
+  const chosen=[], curve=[], base=coverW()/W; let t0=performance_now();
+  const maxN=opt.n>0 ? opt.n : 64;
+  for(let it=0;it<maxN;it++){
+    let best=null, bg=1e-9; for(let ci=0;ci<cands.length;ci++){ const g=gainOf(cands[ci]); if(g>bg){ bg=g; best=cands[ci]; } if(performance_now()-t0>12){ yield {phase:'choose',done:it,total:maxN}; t0=performance_now(); } }
+    if(!best) break;
+    for(const k of best.cells) cnt[k]++; chosen.push(best); curve.push(coverW()/W);
+    if(opt.target>0 && curve[curve.length-1]>=opt.target-1e-9 && !(opt.n>0 && chosen.length<opt.n && false)) break;
+  }
+  // замены: по очереди снимаем один выбранный и ищем лучшую замену при остальных на месте
+  if(opt.refine!==false) for(let pass=0;pass<2;pass++){ let moved=false;
+    for(let i=0;i<chosen.length;i++){ for(const k of chosen[i].cells) cnt[k]--; let best=chosen[i], bg=gainOf(best);
+      for(const c of cands){ const g=gainOf(c); if(g>bg+1e-9){ bg=g; best=c; } if(performance_now()-t0>12){ yield {phase:'refine',done:pass*chosen.length+i,total:2*chosen.length}; t0=performance_now(); } }
+      if(best!==chosen[i]){ chosen[i]=best; moved=true; } for(const k of best.cells) cnt[k]++; }
+    if(!moved) break; }
+  const final=coverW()/W; if(curve.length) curve[curve.length-1]=final;
+  return {chosen,curve,cover:final,base};
+}
+const performance_now=()=>typeof performance!=='undefined' ? performance.now() : Date.now();
+// камеры: tpl {z, tilt, fov, range}; opt {n, target (0…1), mount, azStep, cell, doors, refine}. Стоящие камеры (без auto) считаются уже установленными.
+function* peCamPlan(s,opt){
+  const tpl=opt.tpl, rc=peRoomCells(s,opt.cell||.5,opt.doors); if(!rc) return {error:'draw at least one room first (a closed contour of walls)'};
+  const occ=peOccluders(s), pre=new Uint8Array(rc.n), fixed=s.cams.filter(c=>!c.auto);
+  for(let i=0;i<rc.n;i++) for(const c of fixed) if(peSees(c,rc.x[i],rc.y[i],occ)){ pre[i]=1; break; }
+  let P=peMountPoints(s,opt.mount||'walls'); if(P.length>400) P=P.filter((_,i)=>i%Math.ceil(P.length/400)===0);
+  const azStep=opt.azStep||15, v=tpl.fov*.5625, cands=[]; let t0=performance_now();
+  for(let pi=0;pi<P.length;pi++){
+    const [px,py]=P[pi], vis=[];
+    for(let i=0;i<rc.n;i++){ const dx=rc.x[i]-px, dy=rc.y[i]-py, d=Math.hypot(dx,dy); if(d>tpl.range||d<.05) continue; const dep=Math.atan2(tpl.z-1,d)/PE_D; if(dep<tpl.tilt-v/2||dep>tpl.tilt+v/2) continue;
+      if(peBlocked(occ,px,py,rc.x[i],rc.y[i],.02)) continue; vis.push([i,Math.atan2(dx,dy)/PE_D]); }
+    for(let az=0;az<360;az+=azStep){ const L=[]; for(const [i,b] of vis) if(Math.abs(peWrap180(b-az))<=tpl.fov/2) L.push(i); if(L.length) cands.push({x:px,y:py,az,cells:Int32Array.from(L)}); }
+    if(performance_now()-t0>12){ yield {phase:'visibility',done:pi,total:P.length}; t0=performance_now(); }
+  }
+  const r=yield* peGreedy(cands,rc.w,rc.W,pre,opt);
+  return {...r,cams:r.chosen.map(c=>({x:+c.x.toFixed(3),y:+c.y.toFixed(3),az:c.az})),positions:P.length,candidates:cands.length,cells:rc.n,area:rc.n*rc.g.cell*rc.g.cell};
+}
+// антенны: tpl {z, eirp, f, bw}; opt {n, target, thr (дБм), step, cell, refine}. Кандидаты — сетка внутри комнат не ближе 0,3 м к стенам.
+function* peAntPlan(s,opt){
+  const tpl=opt.tpl, rc=peRoomCells(s,opt.cell||.5,false); if(!rc) return {error:'draw at least one room first (a closed contour of walls)'};
+  const thr=opt.thr??-70, pre=new Uint8Array(rc.n), fixed=s.ants.filter(a=>!a.auto);
+  for(let i=0;i<rc.n;i++) for(const a of fixed) if(peAntLevel(s,a,rc.x[i],rc.y[i])>=thr){ pre[i]=1; break; }
+  const step=opt.step||.75, g=peGrid(s,step,80), cands=[]; let t0=performance_now(), done=0, total=0;
+  const spots=[]; if(g) for(let j=0;j<g.ny;j++) for(let i=0;i<g.nx;i++){ const x=g.x0+(i+.5)*g.cell, y=g.y0+(j+.5)*g.cell; if(!peInRooms(s,x,y)) continue; let near=1e9; for(const w of s.walls){ const [a,b]=peWallEnds(s,w), dx=b.x-a.x, dy=b.y-a.y, u=Math.max(0,Math.min(1,((x-a.x)*dx+(y-a.y)*dy)/(dx*dx+dy*dy||1))); near=Math.min(near,Math.hypot(x-a.x-dx*u,y-a.y-dy*u)); } if(near>=.3) spots.push([x,y]); }
+  total=spots.length; const azs=tpl.bw<360 ? [0,45,90,135,180,225,270,315] : [0];
+  for(const [x,y] of spots){ for(const az of azs){ const a={...tpl,x,y,az}, L=[]; for(let i=0;i<rc.n;i++) if(peAntLevel(s,a,rc.x[i],rc.y[i])>=thr) L.push(i); if(L.length) cands.push({x,y,az,cells:Int32Array.from(L)}); }
+    done++; if(performance_now()-t0>12){ yield {phase:'signal',done,total}; t0=performance_now(); } }
+  const r=yield* peGreedy(cands,rc.w,rc.W,pre,opt);
+  return {...r,ants:r.chosen.map(c=>({x:+c.x.toFixed(3),y:+c.y.toFixed(3),az:c.az})),positions:spots.length,candidates:cands.length,cells:rc.n,area:rc.n*rc.g.cell*rc.g.cell,thr};
+}
+// применить результат: прежние auto-устройства того же вида убираются, новые помечаются auto
+function peApplyPlan(s,res,kind,tpl){
+  if(kind==='cam'){ s.cams=s.cams.filter(c=>!c.auto); res.cams.forEach((c,i)=>{ const o=peAddCam(s,c.x,c.y,{...tpl,az:c.az,name:'Cam auto '+(i+1)}); o.auto=1; }); }
+  else { s.ants=s.ants.filter(a=>!a.auto); res.ants.forEach((c,i)=>{ const o=peAddAnt(s,c.x,c.y,{...tpl,az:c.az,name:'AP auto '+(i+1)}); o.auto=1; }); }
+}
+function peClearAuto(s){ const n=s.cams.filter(c=>c.auto).length+s.ants.filter(a=>a.auto).length; s.cams=s.cams.filter(c=>!c.auto); s.ants=s.ants.filter(a=>!a.auto); return n; }
