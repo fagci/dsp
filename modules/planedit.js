@@ -21,9 +21,9 @@ function peProj(n,W,H){
 const PE_BAR=26;                                            // высота панели инструментов на холсте
 function peFit(n,W,H){
   let b=peBounds(n.sc,1.2); const V=n.vw; if(!b && n.under && n.under.b){ const u=n.under.b; b={x0:u.x0-.5,x1:u.x1+.5,y0:u.y0-.5,y1:u.y1+.5}; }
-  if(!b){ V.tx=3; V.ty=2; V.sc=Math.max(20,Math.min(W,H-PE_BAR)/9); V.fit=true; return; }
+  if(!b){ V.cw=W; V.ch=H; V.tx=3; V.ty=2; V.sc=Math.max(20,Math.min(W,H-PE_BAR)/9); V.fit=true; return; }
   V.tx=(b.x0+b.x1)/2; V.ty=(b.y0+b.y1)/2; const sp=Math.max(b.x1-b.x0,b.y1-b.y0,1), k=n.p.view==='3D' ? .8 : 1.0;
-  V.sc=Math.min((W-20)/Math.max(b.x1-b.x0,1),(H-PE_BAR-20)/Math.max((b.y1-b.y0)*(n.p.view==='3D' ? Math.sin((+n.p.vel)*PE_D) : 1)+(n.p.view==='3D' ? 3*Math.cos((+n.p.vel)*PE_D) : 0),1))*k; V.fit=true;
+  V.cw=W; V.ch=H; V.user=false; V.sc=Math.min((W-20)/Math.max(b.x1-b.x0,1),(H-PE_BAR-20)/Math.max((b.y1-b.y0)*(n.p.view==='3D' ? Math.sin((+n.p.vel)*PE_D) : 1)+(n.p.view==='3D' ? 3*Math.cos((+n.p.vel)*PE_D) : 0),1))*k; V.fit=true;
 }
 
 // ---------- изменения сцены ----------
@@ -119,7 +119,7 @@ function peGesture(n,cv){
   cv.addEventListener('contextmenu',ev=>ev.preventDefault());
   cv.addEventListener('pointerdown',ev=>{
     ev.stopPropagation(); cv.focus({preventScroll:true}); cv.setPointerCapture(ev.pointerId); const q=pos(ev); n.touch=ev.pointerType==='touch'; Ptr.set(ev.pointerId,{p:q,b:ev.button});
-    if(Ptr.size>1){ g={mode:'pinch'}; return; }
+    if(Ptr.size>1){ g={mode:'pinch'}; n.vw.user=true; return; }
     if(q[1]<PE_BAR){ const i=barHit(q[0]); if(i<PE_TOOLS.length){ setMod(n,'tool',PE_TOOLS[i][0]); n.chain=null; n.chainPts=[]; } else if(i===PE_TOOLS.length){ setMod(n,'view',n.p.view==='3D' ? 'plan' : '3D'); peFit(n,cv.width,cv.height); } else { peFit(n,cv.width,cv.height); } redraw(n); g={mode:'bar'}; return; }
     const P=peProj(n,cv.width,cv.height), hit=pePick(n,P,q[0],q[1]), tool=n.p.tool, pan=ev.button===1||ev.button===2||ev.shiftKey;
     g={mode:'none',x0:q[0],y0:q[1],moved:false,hit,tool};
@@ -137,7 +137,7 @@ function peGesture(n,cv){
       if(g.mode==='maybe' && !moved){ const P=peProj(n,cv.width,cv.height); peUse(n,P,g.tool,p[0],p[1],pePick(n,P,p[0],p[1])); }
       else if((g.mode==='pan'||g.mode==='orbit') && !moved && g.tool==='select'){ peSelect(n,null); }
       else if(g.mode==='pan' && !moved && g.tool!=='select'){ const P=peProj(n,cv.width,cv.height); peUse(n,P,g.tool,p[0],p[1],pePick(n,P,p[0],p[1])); }
-      if(g.mode==='drag'||g.mode==='handle'){ n.dragging=false; n.p.scene=JSON.stringify(n.sc); }
+      if(g.mode==='drag'||g.mode==='handle'){ n.dragging=false; n.p.scene=JSON.stringify(n.sc); redraw(n); }
       g=null;
     }
   };
@@ -150,6 +150,7 @@ function peGesture(n,cv){
     }
     const moved=Math.hypot(q[0]-g.x0,q[1]-g.y0)>6; if(moved) g.moved=true;
     if(g.mode==='maybe' && moved) g.mode=P.d3 ? 'orbit' : 'pan';
+    if(moved && (g.mode==='pan'||g.mode==='orbit')){ n.vw.user=true; n.fastT=performance.now(); clearTimeout(n.fastRe); n.fastRe=setTimeout(()=>redraw(n),290); }
     if(g.mode==='pan'){ peShift(n,P,dx,dy); }
     else if(g.mode==='orbit'){ setMod(n,'vaz',+((((+n.p.vaz-dx*.4+180)%360)+360)%360-180).toFixed(1)); n.p.vel=+clamp(+n.p.vel+dy*.4,5,90).toFixed(1); if(!n.syncT){ n.syncT=setTimeout(()=>{ n.syncT=0; setMod(n,'vel',n.p.vel); },150); } }
     else if(g.mode==='drag'){ const it=peItem(n), k=n.sel.k;
@@ -160,7 +161,7 @@ function peGesture(n,cv){
     st.p=q; redraw(n);
   });
   cv.addEventListener('wheel',ev=>{ ev.preventDefault(); ev.stopPropagation(); const q=pos(ev), P=peProj(n,cv.width,cv.height), V=n.vw, before=P.un(q[0],q[1],0);
-    V.sc=clamp(V.sc*Math.exp(-ev.deltaY*.0015),2,600); const P2=peProj(n,cv.width,cv.height), after=P2.un(q[0],q[1],0); V.tx+=before[0]-after[0]; V.ty+=before[1]-after[1]; redraw(n); },{passive:false});
+    n.vw.user=true; n.fastT=performance.now(); clearTimeout(n.fastRe); n.fastRe=setTimeout(()=>redraw(n),290); V.sc=clamp(V.sc*Math.exp(-ev.deltaY*.0015),2,600); const P2=peProj(n,cv.width,cv.height), after=P2.un(q[0],q[1],0); V.tx+=before[0]-after[0]; V.ty+=before[1]-after[1]; redraw(n); },{passive:false});
   cv.addEventListener('dblclick',ev=>{ ev.stopPropagation(); peFit(n,cv.width,cv.height); redraw(n); });
   cv.addEventListener('keydown',ev=>{ ev.stopPropagation();
     if(ev.key==='Delete'||ev.key==='Backspace'){ peDeleteSel(n); ev.preventDefault(); }
@@ -321,7 +322,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
           {n:'newscene',t:'button',label:'Clear the whole scene',adv:true,fn:n=>{ n.sc=peNew(); n.sel=null; n.selKind=''; peTouch(n); n.vw.fit=false; }},
           {n:'scene',t:'text',d:'',hidden:true}],
   init:n=>{ n.sc=peParse(n.p.scene); n.rev=1; n.calcRev=0; n.sel=null; n.selKind=''; n.chain=null; n.chainPts=[]; n.vw={tx:0,ty:0,sc:40,fit:false}; n.msg=''; n.inPose={}; n.lastEdit=0; n.saveT=0; n.syncT=0;
-    n.job=null; n.overlaps=[]; n.under=null; n.camCov=null; n.antHeat=null; n.recs=[]; n.lines=''; n.area=0; n.emitDue=false; n.lastEmit=0; n.rasKey=''; n.ras=null; n.georef=false; n.touch=false; n.dragging=false; },
+    n.job=null; n.zcv=null; n.fastT=0; n.fastRe=0; n.overlaps=[]; n.under=null; n.camCov=null; n.antHeat=null; n.recs=[]; n.lines=''; n.area=0; n.emitDue=false; n.lastEmit=0; n.rasKey=''; n.ras=null; n.georef=false; n.touch=false; n.dragging=false; },
   dispose:n=>{ if(n.saveT){ clearTimeout(n.saveT); n.p.scene=JSON.stringify(n.sc); } },
   process(n,I){
     const num=v=>typeof v==='number' && isFinite(v) ? v : null;
@@ -337,7 +338,9 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
   },
   draw(n,cv,cx){
     const W=cv.width, H=cv.height, s=n.sc, p=n.p, L=[], fg=themeColor('--scr-txt')||'#9fb0b6'; peGesture(n,cv);
-    if(!n.vw.fit){ peFit(n,W,H); }
+    if(n.calcRev!==n.rev && !n.dragging) peRecalc(n);                          // расчёты не зависят от того, запущен ли движок
+    if(!n.vw.fit){ peFit(n,W,H); } else if(!n.vw.user && (n.vw.cw!==W || n.vw.ch!==H)) peFit(n,W,H);       // раскладка узла изменилась (телефон, окно) — вписываем заново, пока вид не трогали
+    { const ro=n.el.querySelector('.readout'); if(ro && !ro._wrapped){ ro._wrapped=true; ro.style.whiteSpace='pre-wrap'; ro.style.textAlign='left'; ro.style.overflowWrap='anywhere'; } }
     const P=peProj(n,W,H);
     cx.fillStyle=themeColor('--screen')||'#0a0d0e'; cx.fillRect(0,0,W,H);
     // сетка
@@ -362,7 +365,13 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     const occ=peOccluders(s);
     for(const c of s.cams){ const poly=peVisPoly(c,occ,2); cx.beginPath(); poly.forEach((q,i)=>{ const A=P.pt(q[0],q[1],0); i ? cx.lineTo(A[0],A[1]) : cx.moveTo(A[0],A[1]); }); cx.closePath(); cx.fillStyle='rgba(125,255,154,.10)'; cx.fill(); cx.strokeStyle='rgba(125,255,154,.55)'; cx.lineWidth=1; cx.stroke(); }
     // блоки: стены, ящики, колонны — по глубине издали к близким
-    { const raw=peBoxes(s), cam=[P.sa,-P.ca], sel=n.sel, order=peBoxOrder(raw,{dx:cam[0],dy:cam[1],h:P.ce},b=>P.pt(b.cx,b.cy,(b.z0+b.z1)/2)[2]);
+    { const raw=peBoxes(s), cam=[P.sa,-P.ca], sel=n.sel;
+      if(P.d3){            // 3D: z-буфер — порядок блоков не важен, пересечения объёмов тоже рисуются верно; пока вид двигают — вдвое грубее, потом дорисовывается начисто
+        const fast=performance.now()-(n.fastT||0)<260, k=fast ? .55 : 1, zw=Math.max(8,Math.round(W*k)), zh=Math.max(8,Math.round(H*k));
+        const R=peZRaster(raw,(x,y,z)=>{ const q=P.pt(x,y,z); return [q[0]*k,q[1]*k,q[2]]; },zw,zh,{cam,ce:P.ce,sel:sel ? new Set([sel.id]) : null,color:b=>b.kind==='wall' ? [200,208,214] : b.kind==='box' ? [201,143,90] : [160,168,173]});
+        if(!n.zcv){ n.zcv=document.createElement('canvas'); } if(n.zcv.width!==zw||n.zcv.height!==zh){ n.zcv.width=zw; n.zcv.height=zh; }
+        n.zcv.getContext('2d').putImageData(new ImageData(R.data,zw,zh),0,0); cx.save(); cx.imageSmoothingEnabled=fast; cx.drawImage(n.zcv,0,0,W,H); cx.restore(); }
+      const order=P.d3 ? [] : peBoxOrder(raw,{dx:cam[0],dy:cam[1],h:P.ce},b=>P.pt(b.cx,b.cy,(b.z0+b.z1)/2)[2]);
       for(const bi of order){ const b=raw[bi];
         const nx=-b.uy, ny=b.ux, h=b.l/2, q=b.t/2, C=[[b.cx+b.ux*h+nx*q,b.cy+b.uy*h+ny*q],[b.cx+b.ux*h-nx*q,b.cy+b.uy*h-ny*q],[b.cx-b.ux*h-nx*q,b.cy-b.uy*h-ny*q],[b.cx-b.ux*h+nx*q,b.cy-b.uy*h+ny*q]];
         const base=b.kind==='wall' ? [200,208,214] : b.kind==='box' ? [201,143,90] : [160,168,173], isSel=sel && (sel.id===b.ref || (sel.k==='pt'&&false));

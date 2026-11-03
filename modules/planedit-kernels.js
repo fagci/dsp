@@ -436,3 +436,36 @@ function peOverlaps(s){
     for(const w of B){ if(w.kind!=='wall' || w.z1<=o.z0+1e-6 || o.z1<=w.z0+1e-6) continue; if(peRectsOverlap(co,peBoxCorners(w))){ const k=o.ref+'|'+w.ref; if(!seen.has(k)){ seen.add(k); out.push({obj:o.ref,wall:w.ref}); } } } }
   return out;
 }
+
+// ---------- 3D с z-буфером ----------
+// Порядок рисования блоков (peBoxOrder) не годится для пересекающихся объёмов и циклических расположений; z-буфер не зависит от порядка вовсе:
+// каждая грань закрашивает пиксели, где она ближе всего. Проекция ортографическая, значит глубина по экрану линейна, и по каждой грани она задаётся плоскостью.
+// B — блоки (peBoxes), proj(x,y,z) → [sx, sy, depth] (чем меньше depth, тем ближе), W×H — размер, o: {cam:[dx,dy] горизонталь на зрителя, ce: cos угла места, sel: Set ref, color(b)→[r,g,b], edge: true}
+function peZRaster(B,proj,W,H,o){
+  const img=new Uint8ClampedArray(W*H*4), zb=new Float32Array(W*H).fill(Infinity), cam=o.cam, ce=o.ce, L=o.light||[.5,-.8];
+  const fill=(V,rgb)=>{
+    // плоскость глубины d = a·x + b·y + c по трём несовпадающим вершинам
+    const [p0,p1,p2]=V, ux=p1[0]-p0[0], uy=p1[1]-p0[1], vx=p2[0]-p0[0], vy=p2[1]-p0[1], det=ux*vy-uy*vx; if(Math.abs(det)<1e-9) return;
+    const du=p1[2]-p0[2], dv=p2[2]-p0[2], a=(du*vy-dv*uy)/det, bq=(dv*ux-du*vx)/det, c=p0[2]-a*p0[0]-bq*p0[1];
+    let y0=1e9,y1=-1e9; for(const q of V){ if(q[1]<y0)y0=q[1]; if(q[1]>y1)y1=q[1]; }
+    const ys=Math.max(0,Math.ceil(y0-.5)), ye=Math.min(H-1,Math.floor(y1-.5));
+    for(let y=ys;y<=ye;y++){
+      const yc=y+.5; let xa=1e9,xb=-1e9;
+      for(let i=0;i<V.length;i++){ const p=V[i], q=V[(i+1)%V.length]; if((p[1]<=yc&&q[1]>yc)||(q[1]<=yc&&p[1]>yc)){ const x=p[0]+(yc-p[1])/(q[1]-p[1])*(q[0]-p[0]); if(x<xa)xa=x; if(x>xb)xb=x; } }
+      const xs=Math.max(0,Math.ceil(xa-.5)), xe=Math.min(W-1,Math.floor(xb-.5));
+      for(let x=xs;x<=xe;x++){ const d=a*(x+.5)+bq*yc+c, k=y*W+x; if(d<=zb[k]){ zb[k]=d; const j=k*4; img[j]=rgb[0]; img[j+1]=rgb[1]; img[j+2]=rgb[2]; img[j+3]=255; } }
+    }
+  };
+  const edge=(p,q,rgb)=>{ const n=Math.ceil(Math.max(Math.abs(q[0]-p[0]),Math.abs(q[1]-p[1]))); for(let i=0;i<=n;i++){ const t=n ? i/n : 0, x=Math.round(p[0]+(q[0]-p[0])*t-.5), y=Math.round(p[1]+(q[1]-p[1])*t-.5); if(x<0||y<0||x>=W||y>=H) continue; const d=p[2]+(q[2]-p[2])*t, k=y*W+x; if(d<=zb[k]+.02){ const j=k*4; img[j]=rgb[0]; img[j+1]=rgb[1]; img[j+2]=rgb[2]; img[j+3]=255; } } };
+  const faces=[];
+  for(const b of B){
+    const C=peBoxCorners(b), base=o.color(b), sel=o.sel&&o.sel.has(b.ref), shade=k=>base.map(v=>Math.round(Math.min(255,v*k+(sel?40:0))));
+    const top=C.map(c=>proj(c[0],c[1],b.z1)); faces.push([top,shade(.95)]);
+    const nx=-b.uy, ny=b.ux, sides=[[0,1,[b.ux,b.uy]],[1,2,[-nx,-ny]],[2,3,[-b.ux,-b.uy]],[3,0,[nx,ny]]];
+    for(const [i,j,nr] of sides){ if((nr[0]*cam[0]+nr[1]*cam[1])*ce<=.02) continue; const k=.5+.2*Math.max(0,nr[0]*L[0]+nr[1]*L[1]);
+      faces.push([[proj(C[i][0],C[i][1],b.z0),proj(C[j][0],C[j][1],b.z0),proj(C[j][0],C[j][1],b.z1),proj(C[i][0],C[i][1],b.z1)],shade(k)]); }
+  }
+  for(const [V,rgb] of faces) fill(V,rgb);
+  if(o.edge!==false) for(const [V,rgb] of faces){ const dk=rgb.map(v=>Math.round(v*.45)); for(let i=0;i<V.length;i++) edge(V[i],V[(i+1)%V.length],dk); }
+  return {data:img,w:W,h:H,zb};
+}
