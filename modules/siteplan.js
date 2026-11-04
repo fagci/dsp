@@ -53,6 +53,11 @@ function spExport(n,kind){
   else { const j=spGeoJSON(R); if(!j){ n.msg='GeoJSON needs a georeferenced plan: two GPS points, or one GPS point plus an azimuth («A-B az 90»)'; return; } sitepDl('siteplan.geojson',j,'application/geo+json'); }
 }
 
+// масштаб вокруг точки (fx, fy) в пикселях холста: вид — сдвиг от центра, поэтому pan' = (1−k)(f−C) + k·pan
+function spZoomAt(n,cv,k,fx,fy){
+  const z=Math.max(.2,Math.min(40,n.zoom*k)); k=z/n.zoom; n.zoom=z;
+  n.panX=(1-k)*(fx-cv.width/2)+k*n.panX; n.panY=(1-k)*(fy-cv.height/2)+k*n.panY;
+}
 // жесты на холсте: один палец / левая кнопка — поворот (3D) или сдвиг (план), два пальца / колесо — масштаб, правая кнопка / shift — сдвиг, двойной клик — сбросить вид
 function spGesture(n,cv){
   if(n._gcv===cv) return; n._gcv=cv;
@@ -74,12 +79,12 @@ function spGesture(n,cv){
       }
     } else if(P.size===2){
       const o=[...P.entries()].find(([id])=>id!==ev.pointerId)[1].p, d0=Math.hypot(q.p[0]-o[0],q.p[1]-o[1]), d1=Math.hypot(np[0]-o[0],np[1]-o[1]);
-      if(d0>0) n.zoom=clamp(n.zoom*d1/d0,.2,40);
+      if(d0>0) spZoomAt(n,cv,d1/d0,(q.p[0]+o[0])/2,(q.p[1]+o[1])/2);                // масштаб вокруг точки между пальцами
       n.panX+=dx/2; n.panY+=dy/2;
     }
     q.p=np; redraw(n);
   });
-  cv.addEventListener('wheel',ev=>{ ev.preventDefault(); ev.stopPropagation(); n.zoom=clamp(n.zoom*Math.exp(-ev.deltaY*.0015),.2,40); redraw(n); },{passive:false});
+  cv.addEventListener('wheel',ev=>{ ev.preventDefault(); ev.stopPropagation(); const q=pos(ev); spZoomAt(n,cv,Math.exp(-ev.deltaY*(ev.ctrlKey ? .01 : .0015)),q[0],q[1]); redraw(n); },{passive:false});
   cv.addEventListener('dblclick',ev=>{ ev.stopPropagation(); n.zoom=1; n.panX=0; n.panY=0; redraw(n); });
 }
 

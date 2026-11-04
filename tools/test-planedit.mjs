@@ -3,7 +3,7 @@
 import vm from 'node:vm'; import fs from 'node:fs'; import path from 'node:path'; import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Array,String,Number,Object,JSON,Set,Map,Float32Array,Uint8Array,isFinite,Infinity});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peOverlaps,peAddRx,peRxLevel,peMoveWall,peZRaster,peBoxCorners,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints};`,ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peHistNew,peHistCommit,peHistUndo,peHistRedo,peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peOverlaps,peAddRx,peRxLevel,peMoveWall,peZRaster,peBoxCorners,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints};`,ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -158,4 +158,8 @@ ok('the same wall is a bigger obstacle at 5 GHz: the level behind it drops more 
   ok('moving a wall puts both its ends where asked',Math.abs(q1.x-1)<1e-9 && Math.abs(q1.y-5)<1e-9 && Math.abs(q2.x-7)<1e-9);
   ok('…and a locked neighbour keeps its length',Math.abs(K.peWallLen(s,Wl[0])-6)<2e-3 && !s.pts.some(p=>p.fix),K.peWallLen(s,Wl[0])); }
 ok('an empty scene has no bounds and no grid',K.peGrid(K.peNew())===null);
+{ const h=K.peHistNew('A'); K.peHistCommit(h,'B'); K.peHistCommit(h,'C');
+  ok('history: undo steps back',K.peHistUndo(h,'C')==='B' && K.peHistUndo(h,'B')==='A' && K.peHistUndo(h,'A')===null);
+  ok('history: redo steps forward, a new edit drops redo',K.peHistRedo(h,'A')==='B' && (K.peHistCommit(h,'X'),K.peHistRedo(h,'X')===null));
+  ok('history: uncommitted state is saved before undo',(K.peHistUndo(h,'Y')==='X') && K.peHistRedo(h,'X')==='Y'); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
