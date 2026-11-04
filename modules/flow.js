@@ -184,3 +184,55 @@ def({ id:'cases', title:'Cases (If → Value / Command)', cat:'Control', kw:'aut
     if(n.err) t+='\n⚠ '+n.err;
     if(r.textContent!==t) r.textContent=t; }
 });
+
+
+/* ---- Command Templates: «TUNE {f}» — поля со входов, отправка по кнопке или импульсу g1… ----
+   На каждую команду — кнопка ▶ в теле узла и вход gN (фронт 0→1). Выход text — готовая строка
+   (например в Serial Port (text), Text over Network, BLE UART), go — импульс вместе с ней, rec — {cmd, text}.
+   Куда девать go: Serial Port шлёт text по изменению, go удобно в таблицу/лог или как второй такт. */
+def({ id:'cmds', title:'Command Templates', cat:'Control', kw:'serial commands macro template parameter placeholders tune remote rig send text button cat remote control',
+  ins:n=>{ const L=cmdTpls(n.p.cmds);
+    return [...cmdNames(L).map(f=>({n:f,t:'num',tip:'{'+f+'} in the templates'})),
+            ...L.map((_,i)=>({n:'g'+(i+1),t:'num',tip:'a 0→1 pulse sends command '+(i+1)}))]; },
+  outs:[{n:'text',t:'txt',tip:'the last built command — wire to Serial Port (text in), Text over Network, BLE UART, MQTT Out…'},
+        {n:'go',t:'num',tip:'a 0→1 pulse in the same block as a new text'},
+        {n:'rec',t:'rec',tip:'{cmd: number, text} for a Table / log'}],
+  readout:true,
+  params:[
+    {n:'cmds',t:'code',plain:true,d:'TUNE {f}\nMODE {m}',label:'commands, one per line — TUNE {f}: {f} is a value from the input pin named f. ▶ under a line (or the g1… inputs, a 0→1 pulse) sends it'},
+  ],
+  init:n=>{ n.last={}; n.prevG=[]; n.btnQ=[]; n.recQ=[]; n.lastText=''; n.sent=0; n.tplSig=''; },
+  process(n,I){
+    const L=cmdTpls(n.p.cmds), sig=L.join('\n');
+    if(sig!==n.tplSig){ n.tplSig=sig; if(n.el) queueMicrotask(()=>{ if(Graph.map[n.id]===n) rebuildNode(n); }); }   // состав пинов изменился
+    for(const k in I){ const v=I[k]; if(typeof v==='number'&&isFinite(v)) n.last[k]=v; }   // последние значения полей
+    let fire=0;
+    const send=i=>{ const t=L[i]; if(!t) return;
+      n.lastText=cmdFill(t,n.last); n.sent++; fire=1;
+      n.recQ.push({t:Date.now(),cmd:i+1,text:n.lastText}); };
+    while(n.btnQ.length) send(n.btnQ.shift());
+    L.forEach((t,i)=>{ const g=I['g'+(i+1)], p=n.prevG[i]||0;
+      if(typeof g==='number'){ n.prevG[i]=g; if(g>0.5&&p<=0.5) send(i); } });   // фронт 0→1
+    const rec=n.recQ.length?n.recQ.shift():null;
+    return {text:n.lastText, go:fire, rec};
+  },
+  draw(n){
+    const r=n.el?.querySelector('.readout');
+    if(r){ const t='sent '+n.sent+(n.lastText?' | '+n.lastText:''); if(r.textContent!==t) r.textContent=t; }
+    if(!n.el) return;
+    const L=cmdTpls(n.p.cmds), sig=L.join('\n')+'|'+L.length;
+    const cur=n.el.querySelector('.cmds-ui');
+    if(cur && cur.dataset.sig===sig) return;                  // DOM узла пересоздаётся rebuildNode — собираем заново
+    cur?.remove();
+    if(!L.length) return;
+    const box=document.createElement('div'); box.className='cmds-ui'; box.dataset.sig=sig;
+    L.forEach((t,i)=>{
+      const row=document.createElement('div'); row.className='cmds-row';
+      const b=document.createElement('button'); b.textContent='▶'; b.title='Send command '+(i+1);
+      b.addEventListener('click',e=>{ e.stopPropagation(); n.btnQ.push(i); });
+      const s=document.createElement('span'); s.className='cmds-tpl'; s.textContent=t; s.title=t;
+      row.append(b,s); box.append(row);
+    });
+    n.mid.append(box);
+  }
+});

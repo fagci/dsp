@@ -1713,3 +1713,9 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 /* превью цепочки из командной палитры — полупрозрачное, до Enter */
 #content .node.cmdk-ghost{opacity:.55}
 #wires path.cmdk-ghost{opacity:.45}
+/* Command Templates: кнопка ▶ под каждой командой */
+.cmds-ui{display:flex;flex-direction:column;gap:3px;padding:3px 0;width:100%;min-width:0}
+.cmds-row{display:flex;align-items:center;gap:6px;min-width:0}
+.cmds-row button{flex:none;width:22px;height:18px;padding:0;font-size:9px;line-height:1;cursor:pointer;background:var(--panel2);border:1px solid var(--line);border-radius:3px;color:var(--txt)}
+.cmds-row button:hover{border-color:var(--acc)}
+.cmds-tpl{font:10px var(--mono);color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

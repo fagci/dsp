@@ -92,3 +92,17 @@ function casesStep(st,idx,t,settle){
   return false;
 }
 if(typeof module!=='undefined') Object.assign(module.exports,{casesNum,casesParse,casesSource,casesStep});
+
+
+/* ---- Command Templates: «TUNE {f}» — поля подставляются со входов, отправка по импульсу/кнопке ---- */
+// строки-шаблоны: по одной команде на строку, пустые и комментарии (# или //) пропускаются
+function cmdTpls(src){ return String(src==null?'':src).split('\n').map(s=>s.trim()).filter(s=>s && !s.startsWith('#') && !s.startsWith('//')); }
+// {имя} в шаблоне — допустимые имена полей (буквы/цифры/подчёркивание), без повторов, в порядке появления
+function cmdFields(tpl){ const out=[]; for(const m of String(tpl).matchAll(/\{([^}]+)\}/g)){ const f=m[1].trim(); if(/^[A-Za-zА-Яа-яЁё0-9_]+$/.test(f) && !out.includes(f)) out.push(f); } return out; }
+// все поля списка шаблонов, без повторов
+function cmdNames(tpls){ const out=[]; for(const t of tpls) for(const f of cmdFields(t)) if(!out.includes(f)) out.push(f); return out; }
+// число в команду: целые — без точки, дробные — до 6 знаков без хвостовых нулей
+function cmdFmtVal(v){ if(typeof v==='number'){ if(!isFinite(v)) return ''; return Math.abs(v%1)>1e-9 ? String(+v.toFixed(6)) : String(Math.round(v)); } return v==null?'':String(v); }
+// подстановка: нет значения — placeholder остаётся как есть (видно в выводе, что не хватает входа)
+function cmdFill(tpl,vals){ return String(tpl).replace(/\{([^}]+)\}/g,(m,f)=>{ const k=f.trim(); return Object.prototype.hasOwnProperty.call(vals,k)?cmdFmtVal(vals[k]):m; }); }
+if(typeof module!=='undefined') Object.assign(module.exports,{cmdTpls,cmdFields,cmdNames,cmdFmtVal,cmdFill});

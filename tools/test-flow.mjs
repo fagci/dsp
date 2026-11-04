@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n); };
 const ctx=vm.createContext({RegExp,Error,Math,Number,String,Object,Array,JSON,Set,Infinity});
-vm.runInContext(fs.readFileSync(new URL('../modules/flow-kernels.js',import.meta.url),'utf8')+';this.K={rqNew,rqPush,rqStep,ruleApply,casesNum,casesParse,casesSource,casesStep}',ctx);
+vm.runInContext(fs.readFileSync(new URL('../modules/flow-kernels.js',import.meta.url),'utf8')+';this.K={rqNew,rqPush,rqStep,ruleApply,casesNum,casesParse,casesSource,casesStep,cmdTpls,cmdFields,cmdNames,cmdFmtVal,cmdFill}',ctx);
 const K=ctx.K;
 let s=K.rqNew();
 ok('push: key dedupe, max',K.rqPush(s,[{a:1},{a:2},{a:1},{b:3}],'a',10)===2 && s.q.length===2 && K.rqPush(s,[{a:3},{a:4}],'a',3)===1);
@@ -56,4 +56,13 @@ ok('casesNum: expression is not a number',K.casesNum('a*2')===null && K.casesNum
   ok('casesStep: settle passes',K.casesStep(st,0,5200,5)===true && st.cur===0);
   K.casesStep(st,1,6000,5); K.casesStep(st,0,7000,5);
   ok('casesStep: flapping back resets the timer',K.casesStep(st,0,12100,5)===false && st.cur===0); }
+// Command Templates
+{ ok('cmdTpls: one per line, comments out',JSON.stringify(K.cmdTpls('TUNE {f}\n\n  MODE {m} \n# note\n// note'))===JSON.stringify(['TUNE {f}','MODE {m}']));
+  ok('cmdFields: names in order, no dups',JSON.stringify(K.cmdFields('TUNE {f} MODE {m} {f}'))===JSON.stringify(['f','m']));
+  ok('cmdFields: bad names are not fields',K.cmdFields('A {x y} B {} C {ok_1}').join(',')==='ok_1');
+  ok('cmdNames: union over templates',JSON.stringify(K.cmdNames(['TUNE {f}','MODE {m} {f}']))===JSON.stringify(['f','m']));
+  ok('cmdFill: substitution',K.cmdFill('TUNE {f}',{f:145500000})==='TUNE 145500000');
+  ok('cmdFill: float trimmed',K.cmdFill('SET {v}',{v:145.5})==='SET 145.5' && K.cmdFill('SET {v}',{v:1/3})==='SET 0.333333');
+  ok('cmdFill: missing value keeps the placeholder',K.cmdFill('TUNE {f} MODE {m}',{f:1})==='TUNE 1 MODE {m}');
+  ok('cmdFmtVal: non-finite is empty',K.cmdFmtVal(Infinity)==='' && K.cmdFmtVal(null)===''); }
  console.log(bad?bad+' FAILED':'all ok'); process.exit(bad?1:0);

@@ -2153,6 +2153,17 @@ net.size.w=380; net.size.h=300; applySize(net);
 addEdge(ws.id,'bin',net.id,'sendBin'); addEdge(net.id,'bin',ws.id,'send');
 markWiresDirty();
 });
+preset('Serial: Command Templates (Parameters → Serial Port)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Text commands with parameters: {f} and {m} are values from the input pins of the same name (wire a knob, Cases, a number from anywhere). ▶ under a line — or a 0→1 pulse on the g1 / g2 inputs — builds the line and it goes to Serial Port (its text input sends every change). Press Space to run, Connect on the serial node.'});
+nt.size.w=780; nt.size.h=110; applySize(nt);
+const c=addNode('cmds',40,190);
+c.size.w=340; c.size.h=220; applySize(c);
+const ws=addNode('webserial',480,190,{baud:'115200'});
+ws.size.w=360; ws.size.h=300; applySize(ws);
+addEdge(c.id,'text',ws.id,'text');
+markWiresDirty();
+});
 preset('Bridge: BLE UART ↔ Network (TCP/WS Gateway)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'A BLE UART device (Nordic UART / HM-10 / ESP32) reachable over the network, byte for byte, both ways — same «bridge» pattern as the other two presets. Tick «binary» on Text over Network (raw bytes instead of lines) and point the URL at a WebSocket itself bridged to something (websocat -b -s 8765 …), not a plain text server.'});
