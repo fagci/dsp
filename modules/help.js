@@ -26,6 +26,11 @@ async function hpLoad(){                               // оглавление �
   if(!hp.readme){
     const t=await hpDoc('README.md');
     hp.readme=t||''; hp.sections=t ? hlpSections(t) : []; hp.bullets=t ? hlpBullets(t) : new Map();
+    for(const p of hp.toc){                            // абзацы модулей живут в тематических страницах мануала, не в README
+      if(p.file==='modules.md') continue;
+      const txt=await hpDoc('help/'+p.file); if(!txt) continue;
+      for(const [k,v] of hlpBullets(txt)) if(!hp.bullets.has(k)) hp.bullets.set(k,v);
+    }
   }
 }
 async function hpEntries(){                            // всё, по чему ищем: темы, модули, разделы руководства, пресеты

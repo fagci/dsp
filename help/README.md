@@ -3,10 +3,12 @@
 The same pages are shown in the app (the **?** button in the toolbar, or **F1**) and here on GitHub. They work offline.
 
 - [Start here](start.md) — what the workbench is and your first patch
+- [The workbench](workbench.md) — canvas, palettes, dashboards, patches: what the UI can do
 - [Canvas and modules](canvas.md) — adding, moving, folding and deleting modules
 - [Wires and port types](wires.md) — connecting modules, what the pin colours mean
 - [Running and settings](run.md) — run / stop, speed, block size, sample rate
 - [Patches and presets](patches.md) — the patch list, saving, sharing, links
+- [Sources](sources.md) — everything that brings a signal or data into the graph
 - [Tables and records](data.md) — `rec` and `rows`, Table, viewers
 - [Map and records](map.md) — points, layers, Rec → Entities rules
 - [Dashboard](dashboard.md) — panes and tiles for instrument-like screens
