@@ -2305,6 +2305,12 @@ if(!cmdkEl){
   cmdkEl.querySelector('input').addEventListener('input',()=>{ cmdkRender(); clearTimeout(cmdkPrevT); cmdkPrevT=setTimeout(cmdkPreview,140); });
   cmdkEl.addEventListener('keydown',cmdkKeys);
   cmdkEl.addEventListener('pointerdown',e=>e.stopPropagation());
+  cmdkEl.addEventListener('pointermove',e=>{                 // выделение следует за мышью только по реальному движению:
+    if(cmdkChain) return;                                    // pointerenter у пересозданных строк сработал бы и у
+    const row=e.target.closest?.('.cmdk-row'); if(!row) return;   // неподвижного курсора (DOM под ним заменился)
+    const i=[...row.parentNode.children].indexOf(row);       // и увёл бы Enter не на первый пункт
+    if(i>=0 && i!==cmdkSel){ cmdkSel=i; cmdkPaint(); }
+  });
   document.addEventListener('pointerdown',e=>{ if(cmdkEl && !cmdkEl.hidden && !cmdkEl.contains(e.target)) cmdkClose(); });
 }
 cmdkEl.hidden=false; cmdkSel=0; cmdkChain=false; cmdkKeep=null;
@@ -2317,8 +2323,11 @@ if(!cmdkEl || cmdkEl.hidden) return;
 cmdkTeardown();
 const v=cmdkEl.querySelector('input').value;
 if(!cmdkChain) return;
+const cont=v.startsWith('>');                                // «>fft>sa» — продолжить цепочку от выделенного модуля
 const segs=v.split('>').map(s=>s.trim()).filter(Boolean).slice(0,12);
 if(!segs.length) return;
+if(cont && Sel.size!==1) return;                             // про выделение — подсказка в cmdkRender
+const src=cont?Graph.map[[...Sel][0]]:null;
 const chain=segs.map(seg=>({seg,m:modRank(Object.values(MOD),queryWords(seg))[0]||null}));
 const stop=chain.findIndex(st=>!st.m);                       // строим непрерывный префикс: после пропуска — не строим
 const build=stop<0?chain:chain.slice(0,stop);
@@ -2327,22 +2336,25 @@ const was=Undo.busy; Undo.busy=true;
 try{
   cmdkKeep=new Set(Graph.nodes.map(n=>n.id));
   const rect=cv.getBoundingClientRect();
-  const cx=(rect.width/2)/view.k-view.x, cy=(rect.height/2.4)/view.k-view.y;
   const W=n=>(n.el.offsetWidth||n.size.w||180);
+  const cx0=(rect.width/2)/view.k-view.x, cy0=(rect.height/2.4)/view.k-view.y;
   const nodes=[];
-  let x=cx;
+  let x=src?src.x+W(src)+70:cx0, y=src?src.y:cy0;           // продолжение — от правого края выделенного
   for(const st of build){
-    const n=addNodeUI(st.m.id,x,cy);
+    const n=addNodeUI(st.m.id,x,y);
     if(!n){ st.m=null; break; }
     nodes.push(n); x+=W(n)+70;
   }
-  let xx=cx-(x-cx-70)/2;                                     // центрируем готовую цепочку по видимой области
-  for(const n of nodes){ n.x=xx; posNode(n); xx+=W(n)+70; }
-  for(let i=1;i<nodes.length;i++){
-    const pin=chainPins(nodes[i-1],nodes[i]);
+  if(!src){ let xx=cx0-(x-cx0-70)/2;                         // новая цепочка — по центру видимой области
+    for(const n of nodes){ n.x=xx; posNode(n); xx+=W(n)+70; } }
+  const from=src?[src,...nodes]:nodes;
+  for(let i=1;i<from.length;i++){
+    const pin=chainPins(from[i-1],from[i]);
     if(!pin) break;
-    connect(nodes[i-1].id,pin[0],nodes[i].id,pin[1]);        // автоадаптер iq↔sig ставится сам
+    connect(from[i-1].id,pin[0],from[i].id,pin[1]);          // автоадаптер iq↔sig ставится сам
   }
+  for(const n of Graph.nodes) if(!cmdkKeep.has(n.id)) n.el.classList.add('cmdk-ghost');   // превью — полупрозрачное
+  for(const e of Graph.edges) if(!cmdkKeep.has(e.to)) e.path.classList.add('cmdk-ghost');
 } finally { Undo.busy=was; }
 }
 function cmdkTeardown(){
@@ -2367,11 +2379,14 @@ return best;
 function cmdkChainDone(){
 clearTimeout(cmdkPrevT);
 const added=Graph.nodes.filter(n=>cmdkKeep && !cmdkKeep.has(n.id));
-cmdkKeep=null;
+if(!added.length){ cmdkClose(); return; }
+for(const n of added) n.el.classList.remove('cmdk-ghost');   // превью стало постоянным — непрозрачное
+for(const e of Graph.edges) e.path.classList.remove('cmdk-ghost');
+cmdkKeep=null;                                               // cmdkClose больше не считает их превью
+cmdkClose();
 Undo.push();                                                 // одна запись истории на всю цепочку
 Sel.clear(); added.forEach(n=>Sel.add(n.id)); syncSel();
 stat.textContent='chain: '+added.map(n=>shortLabel(MOD[n.type].title)).join(' → ');
-cmdkClose();
 }
 function cmdkClose(){ cmdkTeardown(); if(cmdkEl) cmdkEl.hidden=true; }
 function cmdkRender(){
@@ -2380,9 +2395,14 @@ cmdkChain=q.includes('>');
 list.innerHTML='';
 if(cmdkChain){
   const segs=q.split('>').map(s=>s.trim()).filter(Boolean).slice(0,12);
+  const cont=q.startsWith('>');
   list.innerHTML='<div class="cmdk-chain"></div>';
   const box=list.querySelector('.cmdk-chain');
-  if(!segs.length){ box.innerHTML='<div class="cmdk-hint">mic&gt;fft&gt;sa — каждый кусок ищется нечётко, на канвасе видно, что получится</div>'; return; }
+  if(cont && Sel.size!==1){ box.innerHTML='<div class="cmdk-hint">«&gt;fft&gt;sa» continues the chain from the selected module — select exactly one first</div>'; return; }
+  if(!segs.length){ box.innerHTML='<div class="cmdk-hint">mic&gt;fft&gt;sa — each part is a fuzzy module name, the canvas shows the preview<br>&gt;fft&gt;sa — continue from the selected module</div>'; return; }
+  if(cont){ const s=Graph.map[[...Sel][0]];
+    box.insertAdjacentHTML('beforeend','<div class="cmdk-step"><span class="cmdk-kind">•</span><b>'+hlpEsc(shortLabel(MOD[s.type].title))+'</b><span class="cmdk-arrow">→</span><span class="cmdk-dim">selected</span></div>');
+  }
   segs.forEach((seg,i)=>{
     const m=modRank(Object.values(MOD),queryWords(seg))[0];
     const d=document.createElement('div'); d.className='cmdk-step';
@@ -2390,11 +2410,12 @@ if(cmdkChain){
       + (m ? '<b>'+hlpEsc(m.title)+'</b>' : '<span class="cmdk-bad">no match — the chain stops here</span>');
     box.append(d);
   });
-  const ok=segs.every((seg,i)=>modRank(Object.values(MOD),queryWords(seg)).length);
+  const ok=segs.every(seg=>modRank(Object.values(MOD),queryWords(seg)).length);
   box.insertAdjacentHTML('beforeend','<div class="cmdk-hint">'+(ok?'Enter — add the chain, Esc — cancel':'Enter — add the matched part before the gap, Esc — cancel')+'</div>');
   return;
 }
 cmdkRows=[];
+cmdkSel=0;                                                   // каждый ввод — выделение снова на первом пункте
 for(const m of modRank(Object.values(MOD),words).slice(0,8)) cmdkRows.push({kind:'mod',m});
 try{
   const p=readP(), names=Object.keys(p);
@@ -2411,11 +2432,12 @@ cmdkRows.forEach((r,i)=>{
   b.innerHTML= r.kind==='mod'
     ? '<span class="cmdk-kind">module</span><b>'+hlpEsc(r.m.title)+'</b><span class="cmdk-dim">'+hlpEsc(r.m.id)+'</span>'
     : '<span class="cmdk-kind">patch</span><b>'+hlpEsc(r.name)+'</b>';
-  b.addEventListener('pointerenter',()=>{ cmdkSel=i; cmdkPaint(); });
   b.addEventListener('click',()=>cmdkRun(i));
   list.append(b);
 });
 }
+/* выделение следует за мышью только по реальному движению: pointerenter у пересозданных строк сработал бы
+   и у неподвижного курсора (DOM под ним заменился) и увёл бы Enter не на первый пункт */
 function cmdkPaint(){ cmdkEl.querySelectorAll('.cmdk-row').forEach((b,i)=>b.classList.toggle('on',i===cmdkSel)); }
 function cmdkKeys(e){
 if(e.key==='Escape'){ e.preventDefault(); cmdkClose(); }

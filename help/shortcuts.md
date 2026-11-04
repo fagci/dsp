@@ -5,7 +5,7 @@
 | Help | **F1** (the module under selection) or the **?** button |
 | This page | **?** (Shift+/) |
 | Command palette: modules and patches, fuzzy | **Ctrl+K** or **/** |
-| Chain of modules (Emmet-style, live preview on the canvas) | **Ctrl+K** or **/**, then `mic>fft>sa`, **Enter** |
+| Chain of modules (Emmet-style, live preview on the canvas) | **Ctrl+K** or **/**, then `mic>fft>sa`, **Enter** · `>fft>sa` continues from the selected module |
 | Run / stop | **Space** |
 | Save the patch | **Ctrl+S** |
 | Select all modules | **Ctrl+A** |

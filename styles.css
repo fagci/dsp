@@ -1710,3 +1710,6 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 .cmdk-arrow{color:var(--acc)}
 .cmdk-bad{color:#d66;font-size:12px}
 .cmdk-hint{padding:8px 12px;font-size:11px;color:var(--dim)}
+/* превью цепочки из командной палитры — полупрозрачное, до Enter */
+#content .node.cmdk-ghost{opacity:.55}
+#wires path.cmdk-ghost{opacity:.45}
