@@ -54,8 +54,10 @@ const bl=K.hlpBullets('- **Graph** (Output): a graph\n  - sub line\n- **Table**:
 eq([...bl.keys()],['graph','table'],'пункты с жирным именем, код пропущен');
 ok(bl.get('graph')[0].includes('sub line'),'вложенное идёт с пунктом');
 const real=rd('README.md'), rs=K.hlpSections(real), rb=K.hlpBullets(real);
-ok(rs.length>50 && rs.some(s=>s.id==='table'),'в README есть раздел Table ('+rs.length+' разделов)');
-ok(rb.has('graph') && rb.has('entity card'),'в README есть пункты Graph и Entity Card ('+rb.size+' пунктов)');
+ok(rs.length>=8,'в README есть разделы ('+rs.length+')');
+ok(K.hlpSections(rd('help/data.md')).some(s=>s.id==='table'),'в help/data.md есть раздел Table');
+ok(K.hlpBullets(rd('help/processing.md')).has('graph'),'в help/processing.md есть пункт Graph');
+ok(rd('help/data.md').includes('Entity Card'),'в help/data.md есть Entity Card');
 
 // справка help/*.md
 const toc=K.hlpToc(rd('help/README.md'));
