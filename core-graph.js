@@ -2355,6 +2355,7 @@ try{
   }
   for(const n of Graph.nodes) if(!cmdkKeep.has(n.id)) n.el.classList.add('cmdk-ghost');   // превью — полупрозрачное
   for(const e of Graph.edges) if(!cmdkKeep.has(e.to)) e.path.classList.add('cmdk-ghost');
+  for(const n of Graph.nodes) if(!cmdkKeep.has(n.id)) n._frozen=true;   // и не трогает железо: движок превью пропускает (микрофон, USB SDR…)
 } finally { Undo.busy=was; }
 }
 function cmdkTeardown(){
@@ -2382,6 +2383,7 @@ const added=Graph.nodes.filter(n=>cmdkKeep && !cmdkKeep.has(n.id));
 if(!added.length){ cmdkClose(); return; }
 for(const n of added) n.el.classList.remove('cmdk-ghost');   // превью стало постоянным — непрозрачное
 for(const e of Graph.edges) e.path.classList.remove('cmdk-ghost');
+for(const n of added) n._frozen=false;                       // и снова обрабатывается движком
 cmdkKeep=null;                                               // cmdkClose больше не считает их превью
 cmdkClose();
 Undo.push();                                                 // одна запись истории на всю цепочку
@@ -3082,6 +3084,14 @@ graphDirty=false;                                   // старт приложе
 currentPatchName=nm; syncHash(); buildPatchList();
 if(hdat){ try{ history.replaceState(null,'',location.pathname+location.search+'#d='+hdat+(hrun?'&run=1':'')); }catch(e){} loadFromHash(); }   // syncHash выше стёр #d
 else if(hrun && hpd) setTimeout(autoRun,500);       // патч найден — запускаем; нет такого — не запускаем то, что осталось от прошлого раза
+/* первый запуск: один раз открываем стартовую страницу справки (демо-патч уже на канвасе);
+   по ссылке на патч (#p= / #d=) — не мешаем */
+try{
+if(!ROTILES && !HEADLESS && !hpd && !hdat && !SS.get('dsp-seen-start')){
+  SS.set('dsp-seen-start','1');
+  setTimeout(()=>{ if(typeof hpOpen==='function'){ hpOpen(); if(typeof hpGo==='function') hpGo('page','help/start.md'); } },600);
+}
+}catch(e){}
 })();
 // Совместимость со старым сохранённым DOM: в нём могли остаться нативные range-поля.
 document.querySelectorAll('#content input[type="range"]').forEach(old=>{
