@@ -689,6 +689,10 @@ function plainH(n,d){ return !(d.view||d.resize||d.tall||n.gv||n.ta); }
 function rebuildNode(n){ if(Graph.map[n.id]!==n) return;   // узел уже удалён (загрузка закончилась после clearAll): иначе DOM-«зомби» вне графа
                             // пересобрать DOM, сохранив состояние модуля
 const sel=n.el.classList.contains('sel');
+const ae=document.activeElement;                    // фокус: поле ввода не должно теряться при пересборке (печатаем — sig меняется — rebuildNode)
+const fc=ae && n.el.contains(ae) && ae.closest?.('.prm[data-param]') ?
+  {p:ae.closest('.prm[data-param]').dataset.param, tag:ae.tagName,
+   ss:ae.selectionStart ?? null, se:ae.selectionEnd ?? null, st:ae.scrollTop} : null;
 fillParamDefaults(n,MOD[n.type]);                  // добить дефолтами новые/переименованные параметры
 n.roCv?.disconnect();                               // старая канва уходит вместе с el, наблюдатель — тоже
 visIO.unobserve(n.el);
@@ -698,6 +702,8 @@ if(inDash){ if(host && host!==content) host.append(n.el); else n.el.remove(); ap
 n._drawGen=-1;                                      // новый DOM — lazy-узлу нарисоваться заново
 if(n.xpand){ n._xh=n._xh||0; xpandApply(n); }
 if(sel) n.el.classList.add('sel');
+if(fc){ const ne=n.el.querySelector('.prm[data-param="'+fc.p+'"] '+fc.tag.toLowerCase());
+  if(ne){ ne.focus(); if(fc.ss!=null && ne.setSelectionRange){ ne.setSelectionRange(fc.ss,fc.se); ne.scrollTop=fc.st; } } }
 markWiresDirty();
 }
 function portEl(p,dir){
@@ -3087,8 +3093,8 @@ else if(hrun && hpd) setTimeout(autoRun,500);       // патч найден —
 /* первый запуск: один раз открываем стартовую страницу справки (демо-патч уже на канвасе);
    по ссылке на патч (#p= / #d=) — не мешаем */
 try{
-if(!ROTILES && !HEADLESS && !hpd && !hdat && !SS.get('dsp-seen-start')){
-  SS.set('dsp-seen-start','1');
+if(!ROTILES && !HEADLESS && !hpd && !hdat && !LS.get('dsp-seen-start')){
+  LS.set('dsp-seen-start','1');
   setTimeout(()=>{ if(typeof hpOpen==='function'){ hpOpen(); if(typeof hpGo==='function') hpGo('page','help/start.md'); } },600);
 }
 }catch(e){}
