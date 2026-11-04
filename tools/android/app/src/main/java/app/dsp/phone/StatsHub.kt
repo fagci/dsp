@@ -76,12 +76,12 @@ class StatsHub(private val ctx: Context, private val emit: Emit, private val thr
         }
     }
 
-    /** Ток (мкА, знак зависит от устройства: чаще минус при разряде), напряжение (В), счётчик заряда (мкАч), ёмкость (%). */
+    /** Ток (мкА, знак зависит от устройства: чаще минус при разряде), напряжение (В), счётчик заряда (мкАч), ёмкость (%). Недоступное свойство — Integer.MIN_VALUE. */
     private fun pushBstat() {
-        val ua = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW, Int.MIN_VALUE)
-        val avg = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_AVERAGE, Int.MIN_VALUE)
-        val uah = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER, Int.MIN_VALUE)
-        val cap = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY, -1)
+        val ua = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
+        val avg = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_AVERAGE)
+        val uah = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER)
+        val cap = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
         val volt = ((ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, -1)) ?: -1) / 1000.0
         var sys = 0
         var ua2 = ua
@@ -89,7 +89,7 @@ class StatsHub(private val ctx: Context, private val emit: Emit, private val thr
         var uah2 = uah
         if ((ua == Int.MIN_VALUE || ua == 0) && root()) {
             // sysfs ABI power_supply: current_now в мкА (на старых — мА), voltage_now в мкВ, charge_counter в мкАч
-            val r = RootSh.run("for f in current_now voltage_now charge_counter; do cat /sys/class/power_supply/battery/$f 2>/dev/null; done", 8000)
+            val r = RootSh.run("for f in current_now voltage_now charge_counter; do cat /sys/class/power_supply/battery/\$f 2>/dev/null; done", 8000)
             if (r.first == 0) {
                 val lines = r.second.lineSequence().mapNotNull { it.trim().toIntOrNull() }.toList()
                 if (lines.isNotEmpty()) { sys = 1; ua2 = lines[0] }
