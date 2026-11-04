@@ -1,33 +1,34 @@
-# Handoff (2026-11-04)
+# Handoff (2026-11-05)
 
 ## Контекст
 
-Сессия UX/фичей по проекту DSP workbench. **Всё запушено в `main` (до `89d0473`), ничего не в работе, рабочее дерево чистое.**
+Сессия: мониторинг расхода заряда и использования приложений в Android-приложении (источники `bstat` / `usage`). **Всё запушено в `main`, рабочее дерево чистое.**
 
-## Что сделано (по коммитам, все в main)
+## Что сделано (этой сессией, в main)
 
-1. `2b3c7be` — мануал переехал из README в `help/` (11 тематических страниц); README — лендинг.
-2. `89d0473` — README сжат до топ-фич (~124 строки); новые страницы `help/workbench.md`, `help/sources.md`; карточки модулей собирают абзацы со всех страниц (`hpLoad` в `modules/help.js`).
-3. `eb8ebd9` — модуль **Command Templates** (`def id:'cmds'` в `modules/flow.js`, логика `flow-kernels.js`, тесты в `tools/test-flow.mjs`): шаблоны `TUNE {f}` → пины-поля, кнопки ▶, входы `gN`, выходы `text/go/rec`.
-4. `fbff04d` — онбординг первого запуска (справка «Start here» один раз), aria-label тулбара, pinch-zoom, фриз превью цепочек.
-5. До них: командная палитра Ctrl+K/`/` + Emmet-цепочки (`cmdk*` в `core-graph.js`), fuzzy v2 (`fzAbbr` — «phose»→Phone sensors), шорткаты, подсказка на пустом канвасе.
+- Приложение (`tools/android`): новый хаб `StatsHub.kt` — источник `bstat` (ток/напряжение/µAh/ёмкость каждую секунду через `BatteryManager`, fallback на `/sys/class/power_supply/battery` через root) и `usage` (топ-10 приложений по времени в foreground за день + последнее foreground-приложение через `UsageStatsManager`; мА·ч по приложениям из `dumpsys batterystats` — через DUMP по adb или root; чистый парсер `Batts`). Подключено в `BridgeService` (создание, `refresh()`, `hello` sources, закрытие), `BridgeServer` — новое поле подписки `statEvery`. Манифест: `PACKAGE_USAGE_STATS` + `DUMP`. jvm-тест `StatsTest.kt`, задача `gradle runStatsTest` (в `runTests`).
+- Страница: узел Phone sensors (`modules/termux.js`, `modules/termux-kernels.js`) — пины `bstat`/`usage`, выходы `cur volt uah bcap umin` (+`utop` в readout), параметр *poll every*, строки в readout, подсказка про Usage access. Тесты в `tools/test-termux.mjs`.
+- Доки: `tools/android/README.md` (протокол + раздел Power), `help/sources.md`.
 
 ## Проверено
 
-- `node tools/test-help.mjs`, `tools/test-flow.mjs` — зелёные; `node --check` тронутых JS.
-- Ранжирование fuzzy и разрешение сегментов цепочек прогонялось на симуляции полного пула модулей (ad-hoc скриптами, не сохранены).
-- **Не проверено в живом браузере** — палитра/цепочки/превью визуально не щупались; Serial через Android-приложение на железе не пробовался (по коду — работает через usb-bridge).
+- `node --check` тронутых JS; термиксовая логика — ad-hoc прогоном (8/8 ок); логика `Batts` — транслитерацией на JS (ок). `node tools/stamp.mjs` выполнен.
+- `node tools/test-termux.mjs` зелёный до WebSocket-части — в окружении Node 20, а нужен Node 22+ (`WebSocket`); добавленные мной кейсы лежат за этой точкой и локально не выполнялись (проверены ad-hoc).
+
+## Не проверено
+
+- **Kotlin не компилировался** — в контейнере нет JDK/Gradle. Прогнать `gradle -p tools/android/jvm-test runStatsTest` и `gradle -p tools/android :app:assembleDebug` на машине с JDK 17 + SDK.
+- На живом телефоне не щупалось: знак/наличие `current_now`, экран Usage access, `dumpsys` под DUMP/root.
 
 ## Осталось / идеи (не начато)
 
-- Быстрые: тай-брейк «spectrum» (Spectrum Bars обгоняет Analyzer из-за `-title.length*.002`), циклирование альтернатив неоднозначных шагов цепочки, кнопка палитры для тач-экранов.
-- Крупное: минификация/склейка бутстрепа (380 файлов/8,6 МБ), `help/modules.md` перегенерировать playwright'ом при релизе.
-- Возможные регрессии от сплита: пройтись по страницам `help/` глазами на GitHub (якоря/ссылки проверены тестом, но не глазами).
+- Preset «расход батареи»: Tank из `bcap`, график `cur` (Scope), Table по `drain`.
+- Команда `usage.grant` для открытия экрана Usage access из патча (сейчас — только подсказка в warn).
+- Возможное: собственная атрибуция мА·ч (UsageStats-события × ток), если DUMP/root нет.
 
 ## С чего начать продолжение
 
-1. `docs/PROJECT_MAP.md` → нужный раздел (палитра/поиск/справка/serial — таблица символов).
-2. Палитра и цепочки: `core-graph.js` (`cmdk*` ~стр. 2280–2450).
-3. Fuzzy: `modules/help-kernels.js` (начало файла).
-4. Command Templates: `modules/flow.js` (конец), `modules/flow-kernels.js` (конец).
-5. После правок — `node tools/stamp.mjs` и тесты (см. AGENTS.md).
+1. `docs/PROJECT_MAP.md` → разделы «Связи»/«Ключевые каталоги» (android упомянут обобщённо, файлы не перечислены).
+2. Хаб: `tools/android/app/src/main/java/app/dsp/phone/StatsHub.kt`; подписка: `BridgeServer.kt` (`statEvery` рядом с `cellEvery`).
+3. Узел: `modules/termux.js` (пины/параметры/readout), `modules/termux-kernels.js` (`TERMUX_SUBS`, `termuxApply`, `termuxLine`, `termuxSubMsg`).
+4. После правок — `node tools/stamp.mjs` и тесты (см. AGENTS.md).

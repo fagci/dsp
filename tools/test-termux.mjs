@@ -148,6 +148,18 @@ if(fs.existsSync(kf)){
   ok('apply ext: number kept, text ignored',o.extv===1);
   ok('line power / ext',/thermal 2/.test(K.termuxLine({src:'power',pct:17,thermal:2,throttle:2})) && /ext home 1/.test(K.termuxLine({src:'ext',name:'home',value:1})));
   ok('sub power / ext',K.termuxSub({power:true,ext:true,gps:false}).join()==='power,ext');
+  K.termuxApply(o,{src:'bstat',t:1,ua:-350000,volt:3.87,uah:2200000,cap:55});
+  ok('apply bstat',o.cur===-350 && o.volt===3.87 && o.uah===2200000 && o.bcap===55 && o.bsrc==='api');
+  K.termuxApply(o,{src:'bstat',t:2,ua:100000,sys:1});
+  ok('apply bstat sysfs',o.cur===100 && o.bsrc==='sysfs' && o.volt===3.87);
+  ok('line bstat',/mA/.test(K.termuxLine({src:'bstat',ua:-350000,volt:3.87,uah:2200000})) && /sysfs/.test(K.termuxLine({src:'bstat',ua:1,sys:1})));
+  K.termuxApply(o,{src:'usage',t:1,granted:1,top:[{pkg:'com.example.a',min:42},{pkg:'com.example.b',min:7}],drain:[{app:'com.example.a',mah:120.5}]});
+  ok('apply usage',o.umin===42 && o.utop==='com.example.a' && o.ugranted===undefined);
+  K.termuxApply(o,{src:'usage',t:2,granted:0});
+  ok('apply usage without access',o.ugranted===0 && o.umin===42);
+  ok('line usage',/a 42m/.test(K.termuxLine({src:'usage',granted:1,top:[{pkg:'com.example.a',min:42}]})) && /no usage access/.test(K.termuxLine({src:'usage',granted:0})) && /mAh/.test(K.termuxLine({src:'usage',granted:1,top:[],drain:[{app:'com.x',mah:1.5}]})));
+  ok('sub bstat / usage',K.termuxSub({bstat:true,usage:true,gps:false}).join()==='bstat,usage');
+  ok('statEvery goes with the subscription',K.termuxSubMsg({bstat:true,statEvery:'2'}).statEvery===2 && !('statEvery' in K.termuxSubMsg({bstat:false,usage:false,statEvery:2})));
   ok('apply ignores junk',(K.termuxApply(o,null),K.termuxApply(o,{src:'x'}),true));
   ok('sub from params',K.termuxSub({gps:true,battery:false,accel:true,gyro:true,wifi:true}).join()==='gps,accel,gyro,wifi');
   const sm=K.termuxSubMsg({gps:true,accel:true,hz:'200'});

@@ -1,7 +1,7 @@
 "use strict";
 /* Termux: записи моста tools/termux/bridge.mjs → значения выходов узла. Без DOM — проверяется в tools/test-termux.mjs */
 
-const TERMUX_SUBS=['gps','battery','accel','gyro','mag','light','pressure','gravity','linear','rotation','gamerot','georot','accelraw','gyroraw','magraw','proximity','ambtemp','humidity','steps','step','devorient','sigmotion','stationary','motion','heading','hinge','wifi','cell','ble','bt','gnss','gnssraw','nmea','mic','pkt','power','ext','activity','pickup','wakegest','glance','tilt','offbody'];
+const TERMUX_SUBS=['gps','battery','accel','gyro','mag','light','pressure','gravity','linear','rotation','gamerot','georot','accelraw','gyroraw','magraw','proximity','ambtemp','humidity','steps','step','devorient','sigmotion','stationary','motion','heading','hinge','wifi','cell','ble','bt','gnss','gnssraw','nmea','mic','pkt','power','bstat','usage','ext','activity','pickup','wakegest','glance','tilt','offbody'];
 
 // какие источники просить у моста по чекбоксам узла
 function termuxSub(p){ return TERMUX_SUBS.filter(k=>p[k]); }
@@ -12,6 +12,7 @@ function termuxSubMsg(p){
   if(hz>0) m.hz=hz;
   if(+p.wifiEvery>0 && p.wifi) m.wifiEvery=+p.wifiEvery;
   if(+p.cellEvery>0 && p.cell) m.cellEvery=+p.cellEvery;
+  if(+p.statEvery>0 && (p.bstat || p.usage)) m.statEvery=+p.statEvery;
   if(p.ble && typeof plScanOpts==='function'){ const bo=plScanOpts(p); if(bo) m.ble=bo; }
   if(+p.micHz>0 && p.mic) m.micHz=+p.micHz;
   if(p.mic && p.micSrc && p.micSrc!=='auto') m.micSrc=String(p.micSrc);          // источник: unprocessed / mic / camcorder / … (voice_call, downlink, uplink, submix — с root)
@@ -143,6 +144,10 @@ function termuxApply(o,r){
       if(r.status) o.charging=/^(CHARGING|FULL)$/i.test(r.status) ? 1 : 0;
       break;
     case 'power': set('therm',r.thermal); set('saver',r.saver); set('thr',r.throttle); set('batt',r.pct); o.charging=r.charging ? 1 : 0; set('wake',r.wake); set('nclients',r.clients); if(typeof r.held==='string') o.held=r.held; termuxCpu(o,r); break;
+    case 'bstat': set('cur',typeof r.ua==='number' ? r.ua/1000 : null); set('volt',r.volt); set('uah',r.uah); set('bcap',r.cap); o.bsrc=r.sys ? 'sysfs' : 'api'; break;
+    case 'usage': if(r.granted===0) o.ugranted=0; else { delete o.ugranted;
+      const top=(r.top||[])[0]; set('umin',top && top.min); o.utop=top ? top.pkg : ''; }
+      break;
     case 'ext': set('extv',r.value); break;
     case 'activity': {                       // состояние из датчиков + экран; историю (hist) в «последнее значение» не берём
       if(r.hist) break;
@@ -189,6 +194,10 @@ function termuxLine(r){
     case 'cell': return 'cell '+(r.type||'')+(r.reg ? ' *' : '')+' '+(r.mcc!=null ? r.mcc+'-'+r.mnc+' ' : '')+'cid '+(r.cid ?? '—')+(r.pci!=null ? ' pci '+r.pci : '')+(r.dbm!=null ? ' '+r.dbm+' dBm' : '');
     case 'pkt': return 'pkt '+r.iface+' '+(r.ip ? r.ip+(r.sport ? ':'+r.sport : '')+' → '+r.dip+(r.dport ? ':'+r.dport : '') : (r.smac||'')+' → '+(r.dmac||''))+' '+r.len+' B';
     case 'power': return 'power '+r.pct+'%'+(r.charging ? ' charging' : '')+(r.saver ? ' saver' : '')+' thermal '+r.thermal+' · polling ÷'+(r.throttle||1)+(r.clients!=null ? ' · '+r.clients+' client(s)' : '')+(r.wake ? ' · wake lock' : '')+(r.held ? ' · holding '+r.held : '');
+    case 'bstat': return 'bstat '+(typeof r.ua==='number' ? (r.ua/1000).toFixed(0)+' mA' : '—')+(r.volt!=null ? ' · '+r.volt.toFixed(2)+' V' : '')+(r.uah!=null ? ' · '+(r.uah/1000).toFixed(0)+' mAh counted' : '')+(r.sys ? ' (sysfs, sign/units by phone)' : '');
+    case 'usage': { const top=(r.top||[]).slice(0,3).map(x=>x.pkg.split('.').pop()+' '+(+x.min).toFixed(0)+'m').join(', ');
+      const drain=(r.drain||[]).slice(0,3).map(x=>x.app.split('.').pop()+' '+(+x.mah).toFixed(1)).join(', ');
+      return 'usage '+(r.granted===0 ? 'no usage access' : (top||'none'))+(drain ? ' · mAh: '+drain : ''); }
     case 'activity': return 'activity '+r.state+(r.locked ? ' (locked)' : '')+(r.cadence ? ' '+r.cadence+' steps/min' : '')+(r.hist ? ' [log]' : '');
     case 'ext': return 'ext '+(r.name||'')+' '+(r.value!=null ? r.value : (r.text||''));
     case 'mic': return 'mic '+f(r.rms,0)+' dBFS';

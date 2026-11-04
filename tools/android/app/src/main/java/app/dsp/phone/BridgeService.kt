@@ -57,6 +57,7 @@ class BridgeService : Service() {
     private lateinit var dial: DialHub
     private lateinit var screenrec: ScreenRecHub
     private lateinit var power: PowerHub
+    private lateinit var stats: StatsHub
     private lateinit var activity: ActivityHub
     private val started = android.os.SystemClock.elapsedRealtime()
     private val asked = HashSet<String>()      // разрешения, о которых уже спросили в этой жизни сервиса
@@ -109,6 +110,7 @@ class BridgeService : Service() {
         mic = MicHub(this, cfg, { s, j -> server.emit(s, j) }, { main.post { refresh() } })
         sniffer = SnifferHub(cfg, { s, j -> server.emit(s, j) }) { l, m -> server.note(l, m) }
         power = PowerHub(this, cfg, emit, ::diagPairs) { main.post { refresh() } }
+        stats = StatsHub(this, emit) { power.factor }
         activity = ActivityHub(this, cfg, emit)
         power.start()
         main.postDelayed(tick, TICK_MS)
@@ -263,7 +265,7 @@ class BridgeService : Service() {
         inst = null; up = false
         power.close(); activity.close(); try { torrents.close() } catch (e: Exception) { }; try { vlc.close() } catch (e: Throwable) { }; try { sys.stopMock() } catch (e: Exception) { }; FloatWin.closeAll(); headless.shutdown(); callrec.close(); recorder.close()
         server.stop()
-        sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close(); usb.close(); actions.close(); speech.close(); gatt.close(); gattsrv.close(); l2cap.close(); wlink.close(); monitor.close(); wnet.close(); btlink.close(); adv.close(); net.close(); sys.close()
+        sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close(); usb.close(); actions.close(); speech.close(); gatt.close(); gattsrv.close(); l2cap.close(); wlink.close(); monitor.close(); wnet.close(); btlink.close(); adv.close(); net.close(); sys.close(); stats.close()
         wake?.takeIf { it.isHeld }?.release()
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(ID)
         super.onDestroy()
@@ -335,6 +337,8 @@ class BridgeService : Service() {
         if (!gps.update(needGps)) problems.add("no position: allow Location for the DSP app and turn Location on")
         if (!wifi.update("wifi" in w.subs, w.wifiEvery * f)) problems.add("wifi: allow Location for the DSP app (Android hides the scan without it)")
         battery.update("battery" in w.subs)
+        stats.update("bstat" in w.subs, "usage" in w.subs, w.statEvery)
+        if ("usage" in w.subs && !stats.usageGranted) problems.add("usage: allow «Usage access» for the DSP app (Settings → Apps → Special app access); mAh per app also needs DUMP (adb: pm grant $packageName android.permission.DUMP) or root")
         if (!gnss.update("gnss" in w.subs, "gnssraw" in w.subs, "nmea" in w.subs)) problems.add("gnss: allow Location for the DSP app")
         if (!ble.update("ble" in w.subs, w.bleOpts)) problems.add(ble.lastError)
         sys.update("sys" in w.subs)
@@ -384,7 +388,7 @@ class BridgeService : Service() {
         val sens = sensors.available()
         return Json.obj(
             "src" to "\"bridge\"", "level" to "\"hello\"", "ver" to "1", "app" to "\"dsp-android\"", "host" to Json.str(Build.MODEL),
-            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea", "cell", "mic", "sms", "notify", "torch", "speech", "gatt", "gattsrv", "l2cap", "btlink", "net", "sys", "power", "ext", "activity", "vpn") + (if (cfg.sniffer) listOf("pkt") else emptyList()) + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "sensorInfo" to sensors.info(),
+            "sources" to arr(listOf("gps", "battery", "wifi", "gnss", "gnssraw", "nmea", "cell", "mic", "sms", "notify", "torch", "speech", "gatt", "gattsrv", "l2cap", "btlink", "net", "sys", "power", "bstat", "usage", "ext", "activity", "vpn") + (if (cfg.sniffer) listOf("pkt") else emptyList()) + (if (hasBluetooth()) listOf("ble", "bt") else emptyList()) + sens), "sensors" to arr(sens), "sensorInfo" to sensors.info(),
             "phone" to actions.info(),
             "tls" to server.tlsPort.toString(),                     // порт wss:// / https:// (0 — сертификата нет)
         )

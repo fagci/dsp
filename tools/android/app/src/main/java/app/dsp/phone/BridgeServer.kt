@@ -45,6 +45,7 @@ class BridgeServer(
         @Volatile var filter = ""
         @Volatile var snap = 0
         @Volatile var bleOpts = ""
+        @Volatile var statEvery = 0
         /** Может ли клиент пользоваться действиями (сеть, Bluetooth-соединения, речь, автоматизация): страница приложения или включено «любая страница» в Settings. */
         @Volatile var power = false
         /** Страница самого приложения (знает ключ UsbKey): ей можно читать SMS и контакты и слать SMS, чужим сайтам — нет. */
@@ -60,7 +61,7 @@ class BridgeServer(
     /** Что просят клиенты: источники и их параметры (при нескольких клиентах — самые частые / первые заданные). */
     data class Want(
         val subs: Set<String>, val hz: Int, val wifiEvery: Int,
-        val cellEvery: Int = 5, val micHz: Int = 16000, val micSrc: String = "", val micDev: String = "", val micLow: Boolean = false, val micCh: Int = 1, val iface: String = "any", val filter: String = "", val snap: Int = 256, val bleOpts: String = "",
+        val cellEvery: Int = 5, val micHz: Int = 16000, val micSrc: String = "", val micDev: String = "", val micLow: Boolean = false, val micCh: Int = 1, val iface: String = "any", val filter: String = "", val snap: Int = 256, val bleOpts: String = "", val statEvery: Int = 1,
     )
 
     private class Req(val method: String, val path: String, val query: Map<String, String>, val headers: Map<String, String>)
@@ -75,7 +76,7 @@ class BridgeServer(
 
     /** Внутренний получатель записей (запись на диск, RecHub): подписки и частоты учитываются в wanted() как у клиента, а записи идут в on, не в сокет. */
     class Sink(val subs: Set<String>, val hz: Int = 0, val wifiEvery: Int = 0, val cellEvery: Int = 0, val on: (List<String>) -> Unit,
-              val micHz: Int = 0, val micSrc: String = "", val micDev: String = "", val micCh: Int = 1)
+              val micHz: Int = 0, val micSrc: String = "", val micDev: String = "", val micCh: Int = 1, val statEvery: Int = 0)
     private val sinks = CopyOnWriteArraySet<Sink>()
     fun addSink(s: Sink) { sinks.add(s); onSubs() }
     fun removeSink(s: Sink) { if (sinks.remove(s)) onSubs() }
@@ -173,12 +174,13 @@ class BridgeServer(
     fun wanted(): Want {
         val subs = HashSet<String>()
         var msrc = ""; var mdev = ""; var mlow = false; var mch = 1
-        var hz = 0; var wifi = 0; var cell = 0; var mic = 0; var iface = ""; var filter = ""; var snap = 0; var ble = ""
+        var hz = 0; var wifi = 0; var cell = 0; var mic = 0; var iface = ""; var filter = ""; var snap = 0; var ble = ""; var stat = 0
         for (k in sinks) {
             subs.addAll(k.subs)
             if (k.hz > hz) hz = k.hz
             if (k.wifiEvery > 0 && (wifi == 0 || k.wifiEvery < wifi)) wifi = k.wifiEvery
             if (k.cellEvery > 0 && (cell == 0 || k.cellEvery < cell)) cell = k.cellEvery
+            if (k.statEvery > 0 && (stat == 0 || k.statEvery < stat)) stat = k.statEvery
             if (k.micHz > mic) mic = k.micHz
             if (msrc.isEmpty()) msrc = k.micSrc                       // получатель записи (звонок) главнее страницы: его источник берётся первым
             if (mdev.isEmpty()) mdev = k.micDev
@@ -189,6 +191,7 @@ class BridgeServer(
             if (c.hz > hz) hz = c.hz
             if (c.wifiEvery > 0 && (wifi == 0 || c.wifiEvery < wifi)) wifi = c.wifiEvery
             if (c.cellEvery > 0 && (cell == 0 || c.cellEvery < cell)) cell = c.cellEvery
+            if (c.statEvery > 0 && (stat == 0 || c.statEvery < stat)) stat = c.statEvery
             if (c.micHz > mic) mic = c.micHz
             if (msrc.isEmpty()) msrc = c.micSrc
             if (mdev.isEmpty()) mdev = c.micDev
@@ -200,7 +203,7 @@ class BridgeServer(
             if (ble.isEmpty()) ble = c.bleOpts
         }
         return Want(subs, if (hz > 0) hz.coerceIn(1, 1000) else 20, if (wifi > 0) wifi else 10,
-            if (cell > 0) cell else 5, if (mic > 0) mic else 16000, msrc, mdev, mlow, mch, iface.ifEmpty { "any" }, filter, if (snap > 0) snap else 256, ble)
+            if (cell > 0) cell else 5, if (mic > 0) mic else 16000, msrc, mdev, mlow, mch, iface.ifEmpty { "any" }, filter, if (snap > 0) snap else 256, ble, if (stat > 0) stat else 1)
     }
 
     /** Запись от источника; уйдёт подписанным клиентам в ближайшей пачке. */
@@ -435,6 +438,7 @@ class BridgeServer(
         c.filter = j.optString("filter", "")
         c.snap = j.optInt("snap", 0)
         c.bleOpts = j.optJSONObject("ble")?.toString() ?: ""
+        c.statEvery = j.optInt("statEvery", 0)
         c.send(Json.note("info", "sub: " + c.subs.joinToString(",")))
         onSubs()
     }

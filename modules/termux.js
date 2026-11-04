@@ -66,9 +66,9 @@ function termuxFeed(n,r){
   if(n.lineQ.length>2000) n.lineQ.splice(0,n.lineQ.length-2000);
 }
 
-const TERMUX_OUTS=['lat','lon','alt','acc','speed','hdg','ax','ay','az','gx','gy','gz','mx','my','mz','light','press','prox','atemp','humid','steps','heading','hinge','yaw','pitch','roll','orient','still','sigm','cdbm','crsrp','crsrq','csinr','micdb','batt','charging','temp','nsat','nused','cn0','therm','saver','thr','extv','act','cadence','locked','screen','pick','wakeg','glanc','tiltc','offb'];
+const TERMUX_OUTS=['lat','lon','alt','acc','speed','hdg','ax','ay','az','gx','gy','gz','mx','my','mz','light','press','prox','atemp','humid','steps','heading','hinge','yaw','pitch','roll','orient','still','sigm','cdbm','crsrp','crsrq','csinr','micdb','batt','charging','temp','nsat','nused','cn0','therm','saver','thr','cur','volt','uah','bcap','umin','extv','act','cadence','locked','screen','pick','wakeg','glanc','tiltc','offb'];
 // Чекбоксы источников: у каждого есть скрытый вход-пин с тем же именем (число ≥0.5 — включить), появляется при подключении провода.
-const TERMUX_PINS=['gps','battery','accel','gyro','mag','light','pressure','gravity','linear','rotation','gamerot','georot','accelraw','gyroraw','magraw','proximity','ambtemp','humidity','steps','heading','hinge','wifi','ble','bt','gnss','gnssraw','nmea','cell','mic','pkt','step','devorient','sigmotion','stationary','motion','power','ext','activity','pickup','wakegest','glance','tilt','offbody'];
+const TERMUX_PINS=['gps','battery','accel','gyro','mag','light','pressure','gravity','linear','rotation','gamerot','georot','accelraw','gyroraw','magraw','proximity','ambtemp','humidity','steps','heading','hinge','wifi','ble','bt','gnss','gnssraw','nmea','cell','mic','pkt','step','devorient','sigmotion','stationary','motion','power','bstat','usage','ext','activity','pickup','wakegest','glance','tilt','offbody'];
 def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'termux android app phone background bluetooth ble gnss satellites nmea raw measurements gps accelerometer gyroscope magnetometer battery wifi cell sensors enable gate away from home',
   ins:TERMUX_PINS.map(k=>({n:k,t:'num'})), outs:[{n:'rec',t:'rec'},{n:'pts',t:'rec'},{n:'line',t:'txt'},{n:'nmeatxt',t:'txt'},{n:'mic',t:'sig'},{n:'micB',t:'sig'},{n:'go',t:'num'},...TERMUX_OUTS.map(k=>({n:k,t:'num'}))],
   readout:true, tall:true,
@@ -78,6 +78,9 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'gps',g:'Position & battery',t:'check',d:true,label:'GPS position'},
     {n:'battery',g:'Position & battery',t:'check',d:true,label:'battery'},
     {n:'power',g:'Position & battery',t:'check',d:false,label:'power state → «batt» «charging» «therm» (0–6, 3+ = severe) «saver» «thr» (how many times the app slows its polling) (DSP app)'},
+    {n:'bstat',g:'Position & battery',t:'check',d:false,label:'battery electric, every second → «cur» mA (sign depends on the phone, usually − when discharging) «volt» «uah» (charge counted, µAh) (DSP app; where the phone gives no values the app reads /sys through root — «Allow root features»)'},
+    {n:'statEvery',g:'Position & battery',t:'range',min:1,max:60,step:1,d:1,label:'battery electric: poll every, s (DSP app; the power policy slows it further)'},
+    {n:'usage',g:'Position & battery',t:'check',d:false,label:'app usage today: top apps by time in foreground → «umin» (top app minutes) «utop» (its package) + mAh per app since last charge in rec (DSP app; enable «Usage access» in the app Settings; mAh needs DUMP via adb «pm grant app.dsp.phone android.permission.DUMP» or root)'},
     {n:'accel',g:'Motion (accel · gyro · mag)',t:'check',d:false,label:'accelerometer'},
     {n:'gyro',g:'Motion (accel · gyro · mag)',t:'check',d:false,label:'gyroscope'},
     {n:'mag',g:'Motion (accel · gyro · mag)',t:'check',d:false,label:'magnetometer'},
@@ -200,5 +203,8 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     if(o.cpupct!=null) t+='\nbridge CPU '+f(o.cpupct,1)+' % of a core'+(o.wake ? ' · wake lock held' : '')+(o.nclients!=null ? ' · '+o.nclients+' client(s)' : '')+(o.held ? '\nholding open: '+o.held : '');
     if(o.extv!=null) t+='\next '+f(o.extv,2);
     if(o.batt!=null) t+='\nbattery '+f(o.batt,0)+'%'+(o.charging ? ' (charging)' : '')+(o.temp!=null ? '  '+f(o.temp,1)+' °C' : '');
+    if(o.cur!=null) t+='\ncurrent '+f(o.cur,0)+' mA · '+f(o.volt,2)+' V'+(o.uah!=null ? ' · '+f(o.uah/1000,0)+' mAh counted' : '')+(o.bcap!=null ? ' · cap '+f(o.bcap,0)+'%' : '')+(o.bsrc==='sysfs' ? ' (sysfs)' : '');
+    if(o.ugranted===0) t+='\nusage: no «usage access» — enable it for the app in Settings (the bridge message names the screen)';
+    else if(o.umin!=null) t+='\nusage today: '+o.utop+' '+f(o.umin,0)+' min on top (top 10 and mAh per app — in rec)';
     if(r.textContent!==t) r.textContent=t; }
 });

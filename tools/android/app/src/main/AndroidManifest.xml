@@ -55,6 +55,10 @@
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <!-- статистика использования приложений: включается вручную (Settings → Apps → Special app access → Usage access), из кода не выдаётся -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
+    <!-- расход батареи по приложениям (dumpsys batterystats): один раз через adb — pm grant app.dsp.phone android.permission.DUMP; иначе нужен root -->
+    <uses-permission android:name="android.permission.DUMP" tools:ignore="ProtectedPermissions" />
 
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.sensor.accelerometer" android:required="false" />

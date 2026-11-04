@@ -71,6 +71,9 @@ tasks.register<JavaExec>("runShortcutTest") {
 tasks.register<JavaExec>("runScanDiagTest") {
     classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.scandiagtest.ScanDiagTestKt")
 }
+tasks.register<JavaExec>("runStatsTest") {
+    classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.statstest.StatsTestKt")
+}
 // нативная libtorrent под Linux лежит в jar: System.loadLibrary("torrent4j") ищет её в java.library.path
 val ltNative = tasks.register<Copy>("ltNative") {
     from(configurations.runtimeClasspath.get().filter { it.name.startsWith("libtorrent4j-linux") }.map { zipTree(it) }) { include("lib/x86_64/*.so"); eachFile { path = name }; includeEmptyDirs = false }
@@ -84,4 +87,4 @@ tasks.register<JavaExec>("runTorrentTest") {
 tasks.register<JavaExec>("runVlcTest") {
     classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.vlctest.VlcTestKt")
 }
-tasks.register("runTests") { dependsOn("runVlcTest", "runTorrentTest", "runScanDiagTest", "runShortcutTest", "runScreenTest", "runDialTest", "runFsTest", "runCallTest", "runMicTest", "runServerTest", "runRecordsTest", "runAlarmTest", "runBootTest", "runCalTest", "runRecTest", "runProxyTest", "runVpnEngineTest", "runTlsTest", "runTlsStoreTest") }
+tasks.register("runTests") { dependsOn("runVlcTest", "runTorrentTest", "runScanDiagTest", "runStatsTest", "runShortcutTest", "runScreenTest", "runDialTest", "runFsTest", "runCallTest", "runMicTest", "runServerTest", "runRecordsTest", "runAlarmTest", "runBootTest", "runCalTest", "runRecTest", "runProxyTest", "runVpnEngineTest", "runTlsTest", "runTlsStoreTest") }
