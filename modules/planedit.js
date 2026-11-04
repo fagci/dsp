@@ -29,7 +29,16 @@ function peFit(n,W,H){
 
 // ---------- изменения сцены ----------
 function peTouch(n){ n.rev++; n.lastEdit=performance.now(); redraw(n);
+  clearTimeout(n.histT); n.histT=setTimeout(()=>peCommit(n),450);
   if(!n.saveT) n.saveT=setTimeout(()=>{ n.saveT=0; n.p.scene=JSON.stringify(n.sc); },400); }
+// отмена / повтор: правки склеиваются в шаг, пока пауза между ними короче 450 мс; перетаскивание — один шаг
+function peCommit(n){ n.histT=0; if(n.dragging){ n.histT=setTimeout(()=>peCommit(n),200); return; } peHistCommit(n.hist,JSON.stringify(n.sc)); }
+function peUndo(n,redo){
+  clearTimeout(n.histT); n.histT=0; n.dragging=false; const r=(redo ? peHistRedo : peHistUndo)(n.hist,JSON.stringify(n.sc));
+  if(r===null){ redraw(n); return; }
+  n.sc=peParse(r); n.p.scene=r; if(n.sel){ if(peItem(n)) peLoad(n); else peSelect(n,null); }
+  n.rev++; n.lastEdit=performance.now(); n.chain=null; n.chainPts=[]; redraw(n);
+}
 function peSelect(n,kind,id){ n.sel=kind ? {k:kind,id} : null; n.selKind=kind||''; peLoad(n); redraw(n); }
 function peItem(n,sel=n.sel){ if(!sel) return null; const s=n.sc; return sel.k==='pt' ? pePt(s,sel.id) : sel.k==='wall' ? peWall(s,sel.id) : sel.k==='obj' ? s.objs.find(o=>o.id===sel.id) : sel.k==='cam' ? s.cams.find(o=>o.id===sel.id) : sel.k==='ant' ? s.ants.find(o=>o.id===sel.id) : null; }
 // выбранное → параметры панели
@@ -60,10 +69,41 @@ function peApply(n,k){
 const peOn=k=>n=>n.selKind===k;
 
 // ---------- выбор по экрану ----------
+// ручки-стрелки выбранного: ← → ↑ ↓ вдоль осей плана, квадрат — свободно; у двери и окна — две стрелки вдоль стены
+function peGizmo(n,P){
+  const it=peItem(n); if(!it || !n.sel) return []; const k=n.sel.k, s=n.sc, Lp=n.touch ? 54 : 40, out=[];
+  let wx, wy, wz;
+  if(k==='pt'){ wx=it.x; wy=it.y; wz=0; }
+  else if(k==='wall'){ const [a,b]=peWallEnds(s,it); wx=(a.x+b.x)/2; wy=(a.y+b.y)/2; wz=0; }
+  else if(k==='obj' && (it.type==='door'||it.type==='window')){
+    const pl=peOpenPlace(s,it), w=peWall(s,it.wall); if(!pl || !w) return [];
+    const [a,b]=peWallEnds(s,w), z=it.sill+it.h/2, A=P.pt(a.x,a.y,z), B=P.pt(b.x,b.y,z), l=Math.hypot(B[0]-A[0],B[1]-A[1])||1, u=[(B[0]-A[0])/l,(B[1]-A[1])/l], c=P.pt(pl.x,pl.y,z);
+    for(const sg of [1,-1]) out.push({ax:'u',c,u:[u[0]*sg,u[1]*sg],a:[c[0]+u[0]*sg*14,c[1]+u[1]*sg*14],b:[c[0]+u[0]*sg*Lp,c[1]+u[1]*sg*Lp],col:'#4fc3f7'});
+    return out;
+  } else { wx=it.x; wy=it.y; wz=k==='obj' ? (it.z||0) : it.z; }
+  const c=P.pt(wx,wy,wz); let sx=0, sy=0;
+  for(const [ax,dx,dy,col] of [['x',1,0,'#ff6b6b'],['y',0,1,'#7dff9a']]){
+    const e=P.pt(wx+dx,wy+dy,wz), vx=e[0]-c[0], vy=e[1]-c[1], m=Math.hypot(vx,vy); if(m<1e-6) continue;
+    const u=[vx/m,vy/m]; sx+=u[0]; sy+=u[1];
+    out.push({ax,u,m:Math.max(m,P.sc*.15),wz,a:[c[0]+u[0]*14,c[1]+u[1]*14],b:[c[0]+u[0]*Lp,c[1]+u[1]*Lp],col});
+  }
+  out.push({ax:'xy',wz,b:[c[0]+sx*Lp*.42,c[1]+sy*Lp*.42],a:[c[0]+sx*Lp*.42,c[1]+sy*Lp*.42],col:'#fff'});
+  return out;
+}
+function peMoveStart(n){ const it=peItem(n), k=n.sel.k; if(k==='wall'){ const [a,b]=peWallEnds(n.sc,it); return {wa:[a.x,a.y],wb:[b.x,b.y]}; } return {x:it.x,y:it.y}; }
+function peMoveBy(n,g,dx,dy){
+  const it=peItem(n), k=n.sel?.k; if(!it) return; dx=Math.round(dx*100)/100; dy=Math.round(dy*100)/100;
+  if(k==='wall') peMoveWall(n.sc,it.id,g.wa[0]+dx,g.wa[1]+dy,g.wb[0]+dx,g.wb[1]+dy);
+  else if(k==='pt') peDrag(n.sc,it.id,g.x+dx,g.y+dy);
+  else if(k==='obj' && (it.type==='door'||it.type==='window')) return;
+  else { it.x=g.x+dx; it.y=g.y+dy; }
+  peTouch(n);
+}
 function pePick(n,P,x,y){
   const s=n.sc, R=n.touch ? 20 : 13; let best=null; const hit=(kind,id,sx,sy,r,pri)=>{ const d=Math.hypot(sx-x,sy-y); if(d<=r){ const sc=pri*1000+d; if(!best||sc<best.sc) best={kind,id,sc}; } };
   const sel=n.sel, it=peItem(n);
   if(it && (sel.k==='cam'||sel.k==='ant')){ const h=peHandle(it,P); hit('handle',sel.id,h[0],h[1],R,0); }
+  for(const h of peGizmo(n,P)){ const d=h.ax==='xy' ? Math.hypot(x-h.b[0],y-h.b[1]) : peSegDist(x,y,h.a[0],h.a[1],h.b[0],h.b[1]); if(d<=R*.8 && (!best||d<best.sc)) best={kind:'move',id:sel.id,h,sc:d}; }
   for(const c of s.cams){ const q=P.pt(c.x,c.y,c.z); hit('cam',c.id,q[0],q[1],R,1); }
   for(const a of s.ants){ const q=P.pt(a.x,a.y,a.z); hit('ant',a.id,q[0],q[1],R,1); }
   for(const o of s.objs){ let q; if(o.type==='door'||o.type==='window'){ const pl=peOpenPlace(s,o); if(!pl) continue; q=P.pt(pl.x,pl.y,o.sill+o.h/2); } else q=P.pt(o.x,o.y,(o.z||0)+o.h/2); hit('obj',o.id,q[0],q[1],R,2); }
@@ -116,24 +156,20 @@ function peGesture(n,cv){
   if(n._gcv===cv) return; n._gcv=cv; cv.style.touchAction='none'; cv.tabIndex=0; cv.style.outline='none';
   const Ptr=new Map(), clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
   const pos=ev=>{ const r=cv.getBoundingClientRect(); return [(ev.clientX-r.left)/r.width*cv.width,(ev.clientY-r.top)/r.height*cv.height]; };
-  const barHit=x=>{ const bw=cv.width/(PE_TOOLS.length+2); const i=Math.floor(x/bw); return i; };
+  const barHit=x=>{ const bw=cv.width/(PE_TOOLS.length+4); const i=Math.floor(x/bw); return i; };
   let g=null;
   cv.addEventListener('contextmenu',ev=>ev.preventDefault());
   cv.addEventListener('pointerdown',ev=>{
     ev.stopPropagation(); cv.focus({preventScroll:true}); cv.setPointerCapture(ev.pointerId); const q=pos(ev); n.touch=ev.pointerType==='touch'; Ptr.set(ev.pointerId,{p:q,b:ev.button});
-    if(Ptr.size>1){ g={mode:'pinch'}; n.vw.user=true; return; }
+    if(Ptr.size>1){ g={mode:'pinch'}; n.vw.user=true; n.dragging=false; return; }
     if(n.chipBox && q[1]>=n.chipBox.y){ const r=n.chipRects.find(r=>q[0]>=r.x && q[0]<=r.x+r.w && q[1]>=r.y && q[1]<=r.y+r.h); if(r) peChipHit(n,r); g={mode:'chip'}; return; }
-    if(q[1]<PE_BAR){ const i=barHit(q[0]); if(i<PE_TOOLS.length){ setMod(n,'tool',PE_TOOLS[i][0]); n.chain=null; n.chainPts=[]; } else if(i===PE_TOOLS.length){ setMod(n,'view',n.p.view==='3D' ? 'plan' : '3D'); peFit(n,cv.width,cv.height); } else { peFit(n,cv.width,cv.height); } redraw(n); g={mode:'bar'}; return; }
+    if(q[1]<PE_BAR){ const i=barHit(q[0]); if(i<PE_TOOLS.length){ setMod(n,'tool',PE_TOOLS[i][0]); n.chain=null; n.chainPts=[]; } else if(i===PE_TOOLS.length){ setMod(n,'view',n.p.view==='3D' ? 'plan' : '3D'); peFit(n,cv.width,cv.height); } else if(i===PE_TOOLS.length+1){ peFit(n,cv.width,cv.height); } else peUndo(n,i>PE_TOOLS.length+2); redraw(n); g={mode:'bar'}; return; }
     const P=peProj(n,cv.width,cv.height), hit=pePick(n,P,q[0],q[1]), tool=n.p.tool, pan=ev.button===1||ev.button===2||ev.shiftKey;
     g={mode:'none',x0:q[0],y0:q[1],moved:false,hit,tool};
     if(tool==='select' && !pan && hit){
       if(hit.kind==='handle'){ g.mode='handle'; return; }
-      const same=n.sel && n.sel.id===hit.id;
-      if(same || !n.touch){                                                       // мышь: выделил и сразу тянешь; касание: таскать можно уже выделенное
-        if(!same) peSelect(n,hit.kind,hit.id);
-        if(hit.kind==='wall'){ const w=peWall(n.sc,hit.id), [a,b]=peWallEnds(n.sc,w); g.mode='dragwall'; g.wa=[a.x,a.y]; g.wb=[b.x,b.y]; g.g0=peGround(n,P,q[0],q[1],{noPt:true}); } else g.mode='drag';
-        n.dragging=true; return; }
-      g.mode='pendSel'; return;                                                   // касание по невыделенному: короткое — выделить, протяжка — двигает вид
+      if(hit.kind==='move'){ g.mode='move'; g.h=hit.h; g.q0=q; g.start=peMoveStart(n); if(hit.h.ax==='xy'){ const u=P.un(q[0],q[1],hit.h.wz); g.g0={x:u[0],y:u[1]}; } n.dragging=true; return; }
+      g.mode='pendSel'; return;                                                   // короткое касание — выделить, протяжка — двигает вид (объект двигают только ручки-стрелки)
     }
     g.mode=pan||(!P.d3) ? 'pan' : 'orbit'; if(!pan && tool!=='select') g.mode='maybe';       // инструменты: короткий клик действует, протяжка двигает вид
   });
@@ -145,36 +181,45 @@ function peGesture(n,cv){
       else if((g.mode==='pan'||g.mode==='orbit') && !moved && g.tool==='select'){ peSelect(n,null); }
       else if(g.mode==='pan' && !moved && g.tool!=='select'){ const P=peProj(n,cv.width,cv.height); peUse(n,P,g.tool,p[0],p[1],pePick(n,P,p[0],p[1])); }
       if(g.mode==='pendSel' && !moved && g.hit) peSelect(n,g.hit.kind,g.hit.id);
-      if(g.mode==='drag'||g.mode==='handle'||g.mode==='dragwall'){ n.dragging=false; n.p.scene=JSON.stringify(n.sc); redraw(n); }
+      if(g.mode==='move'||g.mode==='handle'){ n.dragging=false; n.p.scene=JSON.stringify(n.sc); redraw(n); }
       g=null;
     }
   };
   cv.addEventListener('pointerup',end); cv.addEventListener('pointercancel',end);
   cv.addEventListener('pointermove',ev=>{
     const st=Ptr.get(ev.pointerId); if(!st||!g) return; const q=pos(ev), dx=q[0]-st.p[0], dy=q[1]-st.p[1], P=peProj(n,cv.width,cv.height), V=n.vw;
-    if(Ptr.size===2){
-      const o=[...Ptr.entries()].find(([id])=>id!==ev.pointerId)[1].p, d0=Math.hypot(st.p[0]-o[0],st.p[1]-o[1]), d1=Math.hypot(q[0]-o[0],q[1]-o[1]);
-      if(d0>0) V.sc=clamp(V.sc*d1/d0,2,600); peShift(n,P,dx/2,dy/2); st.p=q; redraw(n); return;
+    if(Ptr.size===2){                                                            // щипок: масштаб и сдвиг вокруг точки между пальцами, в 3D ещё и поворот скруткой
+      const e=[...Ptr.entries()].find(([id])=>id!==ev.pointerId)[1].p, m0=[(st.p[0]+e[0])/2,(st.p[1]+e[1])/2], m1=[(q[0]+e[0])/2,(q[1]+e[1])/2];
+      const d0=Math.hypot(st.p[0]-e[0],st.p[1]-e[1]), d1=Math.hypot(q[0]-e[0],q[1]-e[1]), before=P.un(m0[0],m0[1],0);
+      if(d0>0) V.sc=clamp(V.sc*d1/d0,2,600);
+      if(P.d3){ let da=(Math.atan2(q[1]-e[1],q[0]-e[0])-Math.atan2(st.p[1]-e[1],st.p[0]-e[0]))*180/Math.PI; if(da>180) da-=360; if(da<-180) da+=360; if(Math.abs(da)>.05) setMod(n,'vaz',+((((+n.p.vaz+da+180)%360)+360)%360-180).toFixed(1)); }
+      const P2=peProj(n,cv.width,cv.height), after=P2.un(m1[0],m1[1],0); V.tx+=before[0]-after[0]; V.ty+=before[1]-after[1];
+      n.fastT=performance.now(); clearTimeout(n.fastRe); n.fastRe=setTimeout(()=>redraw(n),290); st.p=q; redraw(n); return;
     }
     const moved=Math.hypot(q[0]-g.x0,q[1]-g.y0)>6; if(moved) g.moved=true;
     if(g.mode==='maybe' && moved) g.mode=P.d3 ? 'orbit' : 'pan';
     if(moved && (g.mode==='pan'||g.mode==='orbit')){ n.vw.user=true; n.fastT=performance.now(); clearTimeout(n.fastRe); n.fastRe=setTimeout(()=>redraw(n),290); }
     if(g.mode==='pendSel' && moved){ g.mode=P.d3 ? 'orbit' : 'pan'; n.vw.user=true; }
-    if(g.mode==='dragwall'){ const w=peItem(n); if(w){ const gp=peGround(n,P,q[0],q[1],{noPt:true}), dx2=gp.x-g.g0.x, dy2=gp.y-g.g0.y; peMoveWall(n.sc,w.id,g.wa[0]+dx2,g.wa[1]+dy2,g.wb[0]+dx2,g.wb[1]+dy2); peTouch(n); } }
+    if(g.mode==='move'){ const h=g.h;
+      if(h.ax==='u'){ const it=peItem(n), w=it && peWall(n.sc,it.wall); if(w){ it.u=peWallU(n,P,w,h.c[0]+q[0]-g.q0[0],h.c[1]+q[1]-g.q0[1]); peTouch(n); } }
+      else if(h.ax==='xy'){ const u=P.un(q[0],q[1],h.wz); peMoveBy(n,g.start,u[0]-g.g0.x,u[1]-g.g0.y); }
+      else { const t=((q[0]-g.q0[0])*h.u[0]+(q[1]-g.q0[1])*h.u[1])/h.m; peMoveBy(n,g.start,h.ax==='x' ? t : 0,h.ax==='y' ? t : 0); } }
     else if(g.mode==='pan'){ peShift(n,P,dx,dy); }
     else if(g.mode==='orbit'){ setMod(n,'vaz',+((((+n.p.vaz-dx*.4+180)%360)+360)%360-180).toFixed(1)); n.p.vel=+clamp(+n.p.vel+dy*.4,5,90).toFixed(1); if(!n.syncT){ n.syncT=setTimeout(()=>{ n.syncT=0; setMod(n,'vel',n.p.vel); },150); } }
-    else if(g.mode==='drag'){ const it=peItem(n), k=n.sel.k;
-      if(k==='pt'){ const gp=peGround(n,P,q[0],q[1],{noPt:true}); peDrag(n.sc,it.id,gp.x,gp.y); }
-      else { const z=k==='cam'||k==='ant' ? it.z : (it.z||0); const gp=peGround(n,P,q[0],q[1],{noPt:true,z}); if(k==='obj'&&(it.type==='door'||it.type==='window')){ const w=peWall(n.sc,it.wall); if(w) it.u=peWallU(n,P,w,q[0],q[1]); } else { it.x=gp.x; it.y=gp.y; } }
-      peTouch(n); }
     else if(g.mode==='handle'){ const it=peItem(n), gp=P.un(q[0],q[1],it.z); it.az=Math.round(peWrap360(Math.atan2(gp[0]-it.x,gp[1]-it.y)/PE_D)); setMod(n,n.sel.k==='cam' ? 'caz' : 'aaz',it.az); peTouch(n); }
     st.p=q; redraw(n);
   });
   cv.addEventListener('wheel',ev=>{ ev.preventDefault(); ev.stopPropagation(); const q=pos(ev), P=peProj(n,cv.width,cv.height), V=n.vw, before=P.un(q[0],q[1],0);
-    n.vw.user=true; n.fastT=performance.now(); clearTimeout(n.fastRe); n.fastRe=setTimeout(()=>redraw(n),290); V.sc=clamp(V.sc*Math.exp(-ev.deltaY*.0015),2,600); const P2=peProj(n,cv.width,cv.height), after=P2.un(q[0],q[1],0); V.tx+=before[0]-after[0]; V.ty+=before[1]-after[1]; redraw(n); },{passive:false});
+    n.vw.user=true; n.fastT=performance.now(); clearTimeout(n.fastRe); n.fastRe=setTimeout(()=>redraw(n),290); V.sc=clamp(V.sc*Math.exp(-ev.deltaY*(ev.ctrlKey ? .01 : .0015)),2,600); const P2=peProj(n,cv.width,cv.height), after=P2.un(q[0],q[1],0); V.tx+=before[0]-after[0]; V.ty+=before[1]-after[1]; redraw(n); },{passive:false});
   cv.addEventListener('dblclick',ev=>{ ev.stopPropagation(); peFit(n,cv.width,cv.height); redraw(n); });
   cv.addEventListener('keydown',ev=>{ ev.stopPropagation();
-    if(ev.key==='Delete'||ev.key==='Backspace'){ peDeleteSel(n); ev.preventDefault(); }
+    const mod=ev.ctrlKey||ev.metaKey, K=ev.key.toLowerCase();
+    if(mod && (K==='z'||K==='y')){ peUndo(n,K==='y'||ev.shiftKey); ev.preventDefault(); }
+    else if(ev.key.startsWith('Arrow') && n.sel && !['door','window'].includes(peItem(n)?.type)){      // стрелки сдвигают выбранное на 5 см (Shift — 0.5 м)
+      const st=ev.shiftKey ? .5 : .05, P=peProj(n,cv.width,cv.height), a=P.d3 ? P.A : 0, dx=ev.key==='ArrowRight' ? st : ev.key==='ArrowLeft' ? -st : 0, dy=ev.key==='ArrowUp' ? st : ev.key==='ArrowDown' ? -st : 0;
+      peMoveBy(n,peMoveStart(n),dx*Math.cos(a)-dy*Math.sin(a),dx*Math.sin(a)+dy*Math.cos(a)); ev.preventDefault(); }
+    else if(ev.key==='+'||ev.key==='='||ev.key==='-'){ n.vw.user=true; n.vw.sc=clamp(n.vw.sc*(ev.key==='-' ? 1/1.25 : 1.25),2,600); redraw(n); ev.preventDefault(); }
+    else if(ev.key==='Delete'||ev.key==='Backspace'){ peDeleteSel(n); ev.preventDefault(); }
     else if(ev.key==='Escape'){ n.chain=null; n.chainPts=[]; setMod(n,'tool','select'); peSelect(n,null); n.msg=''; }
     else if(ev.key==='f'||ev.key==='Home'){ peFit(n,cv.width,cv.height); redraw(n); } });
 }
@@ -385,6 +430,8 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
           {n:'again',t:'range',min:-10,max:30,step:.5,d:2,label:'receiver gain, dBi',if:n=>n.selKind==='ant' && peItem(n)?.role==='rx',fn:n=>peApply(n,'again')},
           {n:'asens',t:'range',min:-120,max:-40,step:1,d:-85,label:'receiver sensitivity, dBm (the margin is the level above it)',if:n=>n.selKind==='ant' && peItem(n)?.role==='rx',fn:n=>peApply(n,'asens')},
           {n:'afreq',t:'num',d:2437,label:'frequency, MHz',if:peOn('ant'),fn:n=>peApply(n,'afreq')},
+          {n:'undo',t:'button',label:'↶ Undo (Ctrl+Z)',fn:n=>peUndo(n,false)},
+          {n:'redo',t:'button',label:'↷ Redo (Ctrl+Shift+Z)',fn:n=>peUndo(n,true)},
           {n:'del',t:'button',label:'✕ Delete the selected (Delete key)',if:n=>!!n.selKind,fn:n=>peDeleteSel(n)},
           // привязка к земле
           {n:'olat',t:'num',d:0,label:'origin (plan 0, 0): latitude, ° (0 / 0 — no georeference)',adv:true},
@@ -396,7 +443,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
           {n:'imp',t:'check',d:true,label:'input rec: add / move points by name (from Site Plan)',adv:true},
           {n:'newscene',t:'button',label:'Clear the whole scene',adv:true,fn:n=>{ n.sc=peNew(); n.sel=null; n.selKind=''; peTouch(n); n.vw.fit=false; }},
           {n:'scene',t:'text',d:'',hidden:true}],
-  init:n=>{ n.sc=peParse(n.p.scene); n.rev=1; n.calcRev=0; n.sel=null; n.selKind=''; n.chain=null; n.chainPts=[]; n.vw={tx:0,ty:0,sc:40,fit:false}; n.msg=''; n.inPose={}; n.lastEdit=0; n.saveT=0; n.syncT=0;
+  init:n=>{ n.sc=peParse(n.p.scene); n.hist=peHistNew(JSON.stringify(n.sc)); n.histT=0; n.rev=1; n.calcRev=0; n.sel=null; n.selKind=''; n.chain=null; n.chainPts=[]; n.vw={tx:0,ty:0,sc:40,fit:false}; n.msg=''; n.inPose={}; n.lastEdit=0; n.saveT=0; n.syncT=0;
     n.links={}; n.minMargin=null; n.chipRects=[]; n.chipBox=null; n.job=null; n.zcv=null; n.fastT=0; n.fastRe=0; n.overlaps=[]; n.under=null; n.camCov=null; n.antHeat=null; n.recs=[]; n.lines=''; n.area=0; n.emitDue=false; n.lastEmit=0; n.rasKey=''; n.ras=null; n.georef=false; n.touch=(typeof matchMedia!=='undefined' && matchMedia('(pointer:coarse)').matches); n.dragging=false; },
   dispose:n=>{ if(n.saveT){ clearTimeout(n.saveT); n.p.scene=JSON.stringify(n.sc); } },
   process(n,I){
@@ -492,8 +539,14 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
         else if(k==='obj'){ let q; if(it.type==='door'||it.type==='window'){ const pl=peOpenPlace(s,it); q=pl ? P.pt(pl.x,pl.y,it.sill+it.h/2) : null; } else q=P.pt(it.x,it.y,(it.z||0)+it.h/2); if(q){ cx.beginPath(); cx.arc(q[0],q[1],11,0,7); cx.stroke(); } }
         else if(k==='cam'||k==='ant'){ const A=P.pt(it.x,it.y,it.z), h=peHandle(it,P); cx.beginPath(); cx.arc(A[0],A[1],13,0,7); cx.stroke(); cx.strokeStyle='rgba(255,255,255,.7)'; cx.lineWidth=1; cx.beginPath(); cx.moveTo(A[0],A[1]); cx.lineTo(h[0],h[1]); cx.stroke(); cx.fillStyle='#fff'; cx.strokeStyle='#000'; cx.beginPath(); cx.arc(h[0],h[1],6,0,7); cx.stroke(); cx.fill(); }
         else if(k==='pt'){ } } }
+    for(const h of peGizmo(n,P)){
+      cx.strokeStyle=cx.fillStyle=h.col; cx.lineWidth=3;
+      if(h.ax==='xy'){ cx.fillRect(h.b[0]-6,h.b[1]-6,12,12); cx.strokeStyle='#000'; cx.lineWidth=1; cx.strokeRect(h.b[0]-6,h.b[1]-6,12,12); continue; }
+      const ux=h.u[0], uy=h.u[1]; cx.beginPath(); cx.moveTo(h.a[0],h.a[1]); cx.lineTo(h.b[0]-ux*8,h.b[1]-uy*8); cx.stroke();
+      cx.beginPath(); cx.moveTo(h.b[0],h.b[1]); cx.lineTo(h.b[0]-ux*13-uy*7,h.b[1]-uy*13+ux*7); cx.lineTo(h.b[0]-ux*13+uy*7,h.b[1]-uy*13-ux*7); cx.closePath(); cx.fill(); cx.strokeStyle='#000'; cx.lineWidth=1; cx.stroke();
+    }
     // строка инструментов: подпись, если влезает, иначе только значок
-    { cx.fillStyle='rgba(20,26,30,.92)'; cx.fillRect(0,0,W,PE_BAR); const items=PE_TOOLS.map(t=>({id:t[0],icon:t[1],name:t[2]})).concat([{id:'#view',icon:p.view==='3D' ? '◫' : '⬡',name:p.view==='3D' ? 'plan' : '3D'},{id:'#fit',icon:'⌂',name:'fit'}]), bw=W/items.length;
+    { cx.fillStyle='rgba(20,26,30,.92)'; cx.fillRect(0,0,W,PE_BAR); const items=PE_TOOLS.map(t=>({id:t[0],icon:t[1],name:t[2]})).concat([{id:'#view',icon:p.view==='3D' ? '◫' : '⬡',name:p.view==='3D' ? 'plan' : '3D'},{id:'#fit',icon:'⌂',name:'fit'},{id:'#undo',icon:'↶',name:'undo'},{id:'#redo',icon:'↷',name:'redo'}]), bw=W/items.length;
       cx.textBaseline='middle'; cx.textAlign='center';
       items.forEach((it,i)=>{ const on=p.tool===it.id; cx.fillStyle=on ? '#ffb74d' : 'rgba(255,255,255,.06)'; cx.fillRect(i*bw+1,1,bw-2,PE_BAR-2); cx.fillStyle=on ? '#000' : '#dfe7ea';
         cx.font=Math.round(PE_BAR*.42)+'px sans-serif'; const full=it.icon+' '+it.name; let t=full; if(cx.measureText(full).width>bw-6){ t=it.icon; cx.font=Math.round(PE_BAR*.56)+'px sans-serif'; } cx.fillText(t,i*bw+bw/2,PE_BAR/2+1); });
@@ -508,8 +561,8 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     for(const a of s.ants) if(peIsRx(a)){ const r=n.links && n.links[a.id]; L.push('receiver '+a.name+' ('+(a.f>=1000 ? a.f/1000+' GHz' : a.f+' MHz')+'): '+(r && r.from ? r.level.toFixed(1)+' dBm from '+r.name+', margin '+(r.margin>=0 ? '+' : '')+r.margin.toFixed(1)+' dB over '+a.sens+' dBm' : 'no transmitter on this frequency')); }
     if(n.camCov) L.push('cameras see '+(100*n.camCov.cover).toFixed(0)+'% of '+(s.rooms.length ? 'the rooms' : 'the area')+' ('+n.camCov.seen.toFixed(1)+' of '+n.camCov.total.toFixed(1)+' m², blind '+(n.camCov.total-n.camCov.seen).toFixed(1)+' m², by two or more '+n.camCov.multi.toFixed(1)+' m²)');
     if(n.antHeat) L.push('signal above '+p.thr+' dBm in '+(100*n.antHeat.share).toFixed(0)+'% · mean '+n.antHeat.mean.toFixed(0)+' dBm, weakest '+n.antHeat.min.toFixed(0)+' dBm');
-    if(!n.sel && p.tool==='select') L.push('tap an item to select it: a strip with its parameters (thickness, height, length lock, field of view, power, frequency…) appears at the bottom of the canvas; a selected item can be dragged (on a touch screen only after it is selected)');
-    L.push(p.tool==='select' ? (P.d3 ? 'drag empty space — turn the model · wheel / two fingers — zoom · right drag / shift — move · click an object — select, drag — move' : 'click — select, drag — move · empty space: drag — pan · wheel — zoom · double click — fit') : 'tool «'+p.tool+'»: click to use; drag moves the view; Esc — back to select');
+    if(!n.sel && p.tool==='select') L.push('tap an item to select it: a strip with its parameters (thickness, height, length lock, field of view, power, frequency…) appears at the bottom of the canvas; drag the arrows on it to move it (the body itself is never dragged by accident), ↶ ↷ in the toolbar undo');
+    L.push(p.tool==='select' ? (P.d3 ? 'drag empty space — turn the model · wheel / pinch — zoom at the cursor or between the fingers · twist two fingers — rotate · right drag / shift — move · click an object — select, drag its arrows — move' : 'click — select; the selected item has arrow handles (← → ↑ ↓, square — free) · empty space: drag — pan · wheel — zoom at the cursor · double click — fit · arrows nudge · Ctrl+Z / Ctrl+Shift+Z — undo / redo') : 'tool «'+p.tool+'»: click to use; drag moves the view; Esc — back to select');
     if(n.georef) L.push('georeferenced: records go to Video Overlay / Map (floor altitude '+(+p.oalt)+' m)'); else L.push('no georeference (advanced: origin lat / lon): the records carry local x, y, z');
     n.el.querySelector('.readout').textContent=L.join('\n');
   }});

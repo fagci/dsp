@@ -230,6 +230,11 @@ function peImportPoints(s,recs){
     const key=ids.slice().sort().join(); if(!s.rooms.some(q=>q.pts.slice().sort().join()===key)) peAddRoom(s,ids); n++; delete r._poly; }
   return n;
 }
+// история правок: base — последнее закреплённое состояние (JSON), u / r — стеки отмены и повтора
+function peHistNew(base){ return {base:String(base),u:[],r:[]}; }
+function peHistCommit(h,cur){ if(cur===h.base) return false; h.u.push(h.base); if(h.u.length>100) h.u.shift(); h.r.length=0; h.base=cur; return true; }
+function peHistUndo(h,cur){ peHistCommit(h,cur); if(!h.u.length) return null; h.r.push(h.base); h.base=h.u.pop(); return h.base; }
+function peHistRedo(h,cur){ peHistCommit(h,cur); if(!h.r.length) return null; h.u.push(h.base); h.base=h.r.pop(); return h.base; }
 function peParse(text){ try{ const o=JSON.parse(text); if(o && Array.isArray(o.pts)){ for(const k of ['walls','objs','cams','ants','rooms']) if(!Array.isArray(o[k])) o[k]=[]; if(!(o.seq>0)) o.seq=1000; return o; } }catch(e){} return peNew(); }
 
 // ---------- привязка к земле (общее пространство с Video Overlay и Map) ----------
