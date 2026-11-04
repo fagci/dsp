@@ -559,6 +559,7 @@ const PRESET_CATS={
   'OFDM: Text via Multi-Carrier Modulation':'Modems & Data Links',
 
   'Map: My Position and Points from CSV':'Maps & Locating',
+  'My Position from Phone Sensors (wire) → Satellites and Map':'Maps & Locating',
   'Sequencer: Vehicle Track on the Map':'Maps & Locating',
   'Sequencer: Frequency Stepper (CSV → Oscillator)':'Analysis & Measurement',
   'Sequencer: Random Beacon (Trigger Clock)':'Modems & Data Links',
@@ -951,6 +952,24 @@ addEdge(m.id,'a',af.id,'in');
 addEdge(af.id,'soft',hd.id,'in');
 addEdge(m.id,'a',dt.id,'in');
 addEdge(m.id,'a',f8.id,'in');
+markWiresDirty();
+});
+preset('My Position from Phone Sensors (wire) → Satellites and Map', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Position without the browser\'s geolocation: Phone sensors (the Termux bridge or the DSP app) read the GNSS of the phone, its lat / lon / alt / acc / speed / hdg go on wires into My Position (source = wire). My Position then works as always: it fills the shared position (Satellites, ADS-B, Sked… take it from there), sends the \u00abme\u00bb record to the Map and shows the locator.\n'+
+  'Connect Phone sensors to the bridge (url), tick \u00abGPS position\u00bb. Until the phone sends a fix My Position says \u00abwire: waiting for lat / lon\u00bb. Press Download TLE in Satellites (once): the pass is counted from the phone\'s position.'});
+nt.size.w=760; nt.size.h=130; applySize(nt);
+const tx=addNode('termux',40,200,{url:'ws://127.0.0.1:8765',gps:true});
+tx.size.w=380; tx.size.h=360; applySize(tx);
+const me=addNode('geoMe',480,200,{src:'wire'});
+me.size.w=300; applySize(me);
+const st=addNode('satTrack',820,200,{group:'amateur',sat:'ISS'});
+st.size.w=380; st.size.h=420; applySize(st);
+const map=addNode('geoMap',480,480,{mz:10,labels:true});
+map.size.w=520; map.size.h=380; applySize(map);
+addEdge(tx.id,'lat',me.id,'lat'); addEdge(tx.id,'lon',me.id,'lon'); addEdge(tx.id,'acc',me.id,'acc');
+addEdge(tx.id,'alt',me.id,'alt'); addEdge(tx.id,'speed',me.id,'speed'); addEdge(tx.id,'hdg',me.id,'heading');
+addEdge(me.id,'rec',map.id,'rec');
 markWiresDirty();
 });
 preset('Map: My Position and Points from CSV', function(){
