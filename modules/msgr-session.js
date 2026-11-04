@@ -345,7 +345,7 @@ function mgOpenEmail(cfg,c){
     setTimeout(()=>cl && cl.poll(),1500);
   } else c.status('send only (no IMAP server)','up');
   return {
-    send(text,to){
+    send(text,to,atts){
       text=String(text||''); const a=/^@(\S+@\S+)\s+([\s\S]+)$/.exec(text);
       if(a){ to=a[1]; text=a[2]; }
       to=String(to||'').trim();
@@ -357,7 +357,7 @@ function mgOpenEmail(cfg,c){
         let h=null, cli=null;
         h=io.tcp(smtp.host,smtp.port,smtp.secure,{
           open:()=>{},data:x=>cli.feed(x),close:err=>cli.abort()},{binary:true});
-        cli=mgSmtpClient({host:smtp.host,user:cfg.user,pass:cfg.pass,from:me,to,subject,body,secure:smtp.secure,insecure:!!cfg.insecure,
+        cli=mgSmtpClient({host:smtp.host,user:cfg.user,pass:cfg.pass,from:me,to,subject,body,atts:Array.isArray(atts)&&atts.length?atts:null,secure:smtp.secure,insecure:!!cfg.insecure,
           write:x=>{ try{ h.write(x); }catch(e){} },tls:done=>h.upgrade(done),
           done:err=>{ try{ h.close(); }catch(e){} if(err){ c.status('SMTP: '+err,'warn'); res(false); } else { c.msg({from:me,to,subject,text:(nl>0 ? '['+subject+'] ' : '')+body,t:Date.now(),self:true,local:true,kind:'mail'}); res(true); } }});
       });
@@ -634,7 +634,7 @@ function mgConnect(proto,cfg,cb){
   const open=remote ? (cfg2,c)=>mgOpenGateway(proto,cfg2,c) : MG_OPEN[proto];
   let h=null, timer=null, dead=false, gen=0;
   const out={
-    send:(text,to)=>h ? h.send(text,to) : false,
+    send:(text,to,atts)=>h ? h.send(text,to,atts) : false,
     close(){ dead=true; clearTimeout(timer); const x=h; h=null; if(x) try{ x.close(); }catch(e){} },
   };
   if(!open){ cb.status('unknown protocol '+proto,'fatal'); return out; }

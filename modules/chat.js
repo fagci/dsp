@@ -6,8 +6,9 @@
    from — автор входящего text, rec — готовые сообщения {from, text}; у сообщений аватарка и имя автора. */
 
 const CH_KEEP=300;
-function chPush(n,d,text,from){
-  n.log.push({d,t:Date.now(),text,from:from||''}); n.dirty=true;
+function chPush(n,d,text,from,thread){
+  const prev=n.log[n.log.length-1];
+  n.log.push({d,t:Date.now(),text,from:from||'',thread:thread||'',cont:!!(thread && prev && prev.thread===thread)}); n.dirty=true;
   if(n.log.length>CH_KEEP){ n.log.splice(0,n.log.length-CH_KEEP); n.full=true; }
 }
 function chSend(n,text){
@@ -18,6 +19,7 @@ const chPeople=n=>n.people||[];
 const chFind=(n,name)=>chPeople(n).find(p=>p.name===name);
 function chMsgEl(n,m){
   const e=document.createElement('div'); e.className='chat-msg chat-'+m.d;
+  if(m.cont) e.classList.add('chat-sub');                       // продолжение треда — со сдвигом, без имени
   const who=m.d==='in' ? m.from : String(n.p.me||'');
   const grp=!!who && (m.d==='in' || chFind(n,who));
   const body=grp ? document.createElement('div') : e;
@@ -103,7 +105,7 @@ def({ id:'chat', title:'Chat', cat:'Output', kw:'chat messages text terminal con
       for(const r of Array.isArray(I.rec) ? I.rec : [I.rec]){
         if(!r || typeof r!=='object') continue;
         const text=r.text ?? r.msg ?? r.message, from=String(r.from ?? r.name ?? r.user ?? '');
-        if(text!=null && text!=='') chPush(n,from && from===String(n.p.me||'') ? 'out' : 'in',String(text),from);
+        if(text!=null && text!=='') chPush(n,from && from===String(n.p.me||'') ? 'out' : 'in',String(text),from,r.thread);
       }
     }
     if(typeof I.send==='string' && I.send!==n.lastSend){ n.lastSend=I.send; chSend(n,I.send); }   // исходящее с провода

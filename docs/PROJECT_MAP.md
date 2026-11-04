@@ -46,6 +46,7 @@
 - `help-kernels.js` грузится раньше `core-graph.js` (fuzzy используется в обоих); `presets.js` раньше `core-graph.js`; `usb-bridge.js` раньше `webusb-serial.js`.
 - Канвас-пан/зум — `vendor/panzoom.min.js` (`panzoom.zoomIn/zoomOut`); перетаскивание — `vendor/interact.min.js`.
 - Модули телефона общаются с Android-приложением через мост (`phonelink-kernels.js`, `phoneact-kernels.js`, адреса `@имя` из Settings → Devices, `modules/gateways.js`).
+- Учётки (Settings → Credentials): `modules/creds-kernels.js` (чистая логика) + `modules/creds.js` (LS `dsp-creds`, окно в Settings, API `Cred.get(name)`); секреты не входят в бэкап (`modules/backup.js`). Использование: поле `account` в Messenger (`modules/msgr.js`).
 
 ## Команды
 

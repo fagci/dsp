@@ -524,40 +524,87 @@ function mgPart(raw){
   const head=i<0 ? raw : raw.slice(0,i);
   return {h:mgHeaders(head),body:i<0 ? '' : raw.slice(i).replace(/^\r?\n\r?\n/,'')};
 }
-function mgBodyText(raw,depth){
+// листья MIME-дерева: [{h, body}] без декодирования содержимого
+function mgMailLeaves(raw,depth){
   const {h,body}=mgPart(raw), ct=(h['content-type']||'text/plain').toLowerCase();
   if(ct.startsWith('multipart/') && depth<5){
-    const b=mgParam(h['content-type'],'boundary'); if(!b) return '';
-    const parts=body.split('--'+b).slice(1).filter(p=>!p.startsWith('--')).map(p=>p.replace(/^\r?\n/,''));
-    let html='';
-    for(const p of parts){
-      const t=mgBodyText(p,depth+1); if(!t.text) continue;
-      if(t.html) html=html||t.text; else return t;
-    }
-    return html ? {text:html,html:true} : {text:''};
+    const b=mgParam(h['content-type'],'boundary'); if(!b) return [];
+    return body.split('--'+b).slice(1).filter(p=>!p.startsWith('--')).map(p=>p.replace(/^\r?\n/,''))
+      .flatMap(p=>mgMailLeaves(p,depth+1));
   }
-  if(!ct.startsWith('text/')) return {text:''};
-  const cte=(h['content-transfer-encoding']||'7bit').toLowerCase();
-  const bytes=cte==='base64' ? mgFromB64(body) : cte==='quoted-printable' ? mgFromQp(body) : mgBin(body);
-  let text=mgDecode(bytes,mgParam(h['content-type'],'charset')||'utf-8');
-  const html=ct.startsWith('text/html');
-  if(html) text=text.replace(/<(script|style)[\s\S]*?<\/\1>/gi,'').replace(/<br\s*\/?>|<\/p>|<\/div>/gi,'\n').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
-  return {text:text.replace(/\r\n/g,'\n').trim(),html};
+  return [{h,body}];
 }
-function mgMailParse(raw){                                   // → {from,fromAddr,subject,date,text}
+function mgLeafBytes(h,body){
+  const cte=(h['content-transfer-encoding']||'7bit').toLowerCase();
+  return cte==='base64' ? mgFromB64(body) : cte==='quoted-printable' ? mgFromQp(body) : mgBin(body);
+}
+function mgHtmlText(t){
+  return t.replace(/<(script|style)[\s\S]*?<\/\1>/gi,'').replace(/<br\s*\/?>|<\/p>|<\/div>/gi,'\n').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/\r\n/g,'\n').trim();
+}
+function mgBodyText(raw,depth){
+  let html='';
+  for(const {h,body} of mgMailLeaves(raw,0)){
+    const ct=(h['content-type']||'text/plain').toLowerCase();
+    if(!ct.startsWith('text/') || mgParam(ct,'name')) continue;              // именованная text/* часть — вложение
+    const text=mgDecode(mgLeafBytes(h,body),mgParam(ct,'charset')||'utf-8');
+    if(ct.startsWith('text/html')){ if(!html) html=mgHtmlText(text); }
+    else return {text:text.replace(/\r\n/g,'\n').trim(),html:false};
+  }
+  return html ? {text:html,html:true} : {text:''};
+}
+function mgMailParse(raw){                                   // → {from,fromAddr,subject,date,thread,text,atts}
   const {h}=mgPart(raw);
   const from=mgMimeWords(h.from||''), m=/<([^>]+)>/.exec(from), addr=m ? m[1] : from.trim();
   const name=from.replace(/<[^>]*>/,'').replace(/^"|"\s*$/g,'').trim();
-  return {from:name||addr,fromAddr:addr,subject:mgMimeWords(h.subject||''),date:h.date||'',text:mgBodyText(raw,0).text};
+  const pick=s=>String(s||'').replace(/[<>]/g,' ').trim().split(/\s+/)[0]||'';       // тред: первый Message-ID из References, иначе In-Reply-To, иначе свой
+  const thread=pick(h.references)||pick(h['in-reply-to'])||pick(h['message-id']);
+  const atts=[];
+  for(const p of mgMailLeaves(raw,0)){                                             // вложения: части с filename / name
+    const ct=p.h['content-type']||'', cd=p.h['content-disposition']||'';
+    const fn=mgParam(cd,'filename')||mgParam(ct,'name');
+    if(!fn) continue;
+    const bytes=mgLeafBytes(p.h,p.body);
+    if(!bytes.length || bytes.length>25e6) continue;
+    atts.push({name:mgMimeWords(fn).replace(/[\\/:*?"<>|\r\n]+/g,'_').trim().slice(0,120)||'attachment',
+      mime:(ct.split(';')[0]||'application/octet-stream').trim().toLowerCase(),size:bytes.length,bytes});
+  }
+  return {from:name||addr,fromAddr:addr,subject:mgMimeWords(h.subject||''),date:h.date||'',thread,text:mgBodyText(raw,0).text,atts};
 }
 const mgAscii=s=>/^[\x20-\x7e]*$/.test(s);
 const mgMimeWord=s=>mgAscii(s) ? s : '=?UTF-8?B?'+mgB64(mgUtf8(s))+'?=';
-function mgMailCompose(o){                                   // → строка письма с CRLF
+function mgMailCompose(o){                                   // → строка письма с CRLF; o.atts: [{name, mime, bytes|b64}] → multipart/mixed
   const wrap=s=>s.replace(/.{1,76}/g,'$&\r\n');
+  const bodyB64=wrap(mgB64(mgUtf8(String(o.body||''))));
+  const atts=Array.isArray(o.atts)?o.atts.filter(a=>a&&(a.bytes||a.b64)):[];
   const hdr=['From: '+mgLine(o.from),'To: '+mgLine(o.to),'Subject: '+mgMimeWord(mgLine(o.subject||'')),
     'Date: '+new Date(o.date||Date.now()).toUTCString().replace('GMT','+0000'),'Message-ID: <'+(o.id||mgHex(mgRandom(8)))+'@dsp>',
-    'MIME-Version: 1.0','Content-Type: text/plain; charset=utf-8','Content-Transfer-Encoding: base64','X-Mailer: DSP workbench'];
-  return hdr.join('\r\n')+'\r\n\r\n'+wrap(mgB64(mgUtf8(String(o.body||''))));
+    'MIME-Version: 1.0','X-Mailer: DSP workbench'];
+  if(!atts.length)
+    return hdr.concat(['Content-Type: text/plain; charset=utf-8','Content-Transfer-Encoding: base64']).join('\r\n')+'\r\n\r\n'+bodyB64;
+  const b='----dsp'+mgHex(mgRandom(10));
+  const enc=n=>{ n=String(n||'file.bin').replace(/[\r\n"]+/g,'_'); return mgAscii(n) ? n : '=?UTF-8?B?'+mgB64(mgUtf8(n))+'?='; };
+  const parts=[hdr.concat(['Content-Type: multipart/mixed; boundary="'+b+'"']).join('\r\n'),'',
+    '--'+b,'Content-Type: text/plain; charset=utf-8','Content-Transfer-Encoding: base64','',bodyB64];
+  for(const a of atts){
+    const bytes=a.bytes||mgFromB64(a.b64||'');
+    if(!bytes.length) continue;
+    parts.push('--'+b,'Content-Type: '+(a.mime||'application/octet-stream'),'Content-Transfer-Encoding: base64',
+      'Content-Disposition: attachment; filename="'+enc(a.name)+'"','',wrap(mgB64(bytes)));
+  }
+  parts.push('--'+b+'--','');
+  return parts.join('\r\n');
+}
+// адресная книга: alias/name/nick строки контакта → его addr/address/email/to
+function mgAddrResolve(book,token){
+  token=String(token||'').trim().toLowerCase(); if(!token) return '';
+  for(const r of Array.isArray(book)?book:[]){
+    if(!r||typeof r!=='object') continue;
+    const names=[r.name,r.alias,r.nick,r.user].filter(v=>v!=null).map(v=>String(v).trim().toLowerCase());
+    if(!names.includes(token)) continue;
+    const addr=[r.addr,r.address,r.email,r.to].filter(v=>v!=null).map(String).map(s=>s.trim()).find(Boolean);
+    if(addr) return addr;
+  }
+  return '';
 }
 
 // ---------- IMAP: клиент с опросом (без IDLE) ----------
@@ -618,7 +665,8 @@ function mgImapClient(o){
       if(ok) for(const r of un){
         if(!/ FETCH /i.test(r.text) || !r.lits.length) continue;
         const m=mgMailParse(r.lits[0]);
-        o.onMsg({from:m.from,fromAddr:m.fromAddr,to:o.user,subject:m.subject,text:(m.subject ? '['+m.subject+'] ' : '')+m.text.slice(0,2000),t:Date.now(),id:String(uid),kind:'mail'});
+        o.onMsg({from:m.from,fromAddr:m.fromAddr,to:o.user,subject:m.subject,thread:m.thread,atts:m.atts,
+          text:(m.subject ? '['+m.subject+'] ' : '')+m.text.slice(0,2000),t:Date.now(),id:String(uid),kind:'mail'});
       }
       cb();
     });
@@ -652,7 +700,7 @@ function mgSmtpClient(o){
   let buf='', st='greet', tlsDone=!!o.secure, exts='', ended=false, authStep=0;
   const w=s=>o.write(s+'\r\n');
   const end=err=>{ if(!ended){ ended=true; o.done(err); } };
-  const mail=mgMailCompose({from:o.from,to:o.to,subject:o.subject,body:o.body});
+  const mail=mgMailCompose({from:o.from,to:o.to,subject:o.subject,body:o.body,atts:o.atts});
   const addr=a=>(/<([^>]+)>/.exec(a)||[,a])[1];
   function reply(code,lines){
     const ok=code<400, text=lines.join(' ').slice(0,100);

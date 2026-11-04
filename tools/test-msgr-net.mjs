@@ -284,6 +284,21 @@ const PW = rnd(), TOK = rnd(), TG = rnd() + ':' + rnd(), IRC_PW = rnd(), BAD = r
   ok('email: subject and body survive', got.subject === 'Тема письма' && got.text === 'первая строка\nвторая', JSON.stringify(got));
   ok('email: own message echoed locally', A.msgs.at(-1).self === true);
   ok('email: bad address refused', await A.s.send('hello', 'nobody') === false);
+  // вложения и треды
+  const B = '----test-boundary';
+  const attBytes = Uint8Array.from([0, 1, 2, 250, 251, 252, 255]);
+  const base = A.msgs.length;
+  mails.push({uid: 7, raw: 'From: Bob <bob@ex.org>\r\nTo: me@ex.org\r\nSubject: файлы\r\nMessage-ID: <m1@ex.org>\r\nReferences: <root@ex.org> <x@ex.org>\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="' + B + '"\r\n\r\n--' + B + '\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nтекст с файлом\r\n--' + B + '\r\nContent-Type: application/pdf; name="rep.pdf"\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename="rep.pdf"\r\n\r\n' + Buffer.from(attBytes).toString('base64') + '\r\n--' + B + '--\r\n'});
+  await until(() => A.msgs.length > base);
+  const mm = A.msgs.at(-1);
+  ok('email: attachment parsed from multipart', !!mm.atts && mm.atts.length === 1 && mm.atts[0].name === 'rep.pdf' && mm.atts[0].size === attBytes.length && mm.atts[0].bytes[4] === 251 && mm.thread === 'root@ex.org', JSON.stringify(mm));
+  const composed = M.mgMailCompose({from: 'me@ex.org', to: 'you@ex.org', subject: 'отчёт', body: 'держи файл', atts: [{name: 'отчёт.bin', mime: 'application/octet-stream', bytes: attBytes}]});
+  const back = M.mgMailParse(composed);
+  ok('email: attachment survives compose→parse', back.atts.length === 1 && back.atts[0].name === 'отчёт.bin' && attBytes.every((b, i) => back.atts[0].bytes[i] === b) && back.text === 'держи файл' && back.subject === 'отчёт', JSON.stringify(back.atts));
+  ok('email: plain compose has no multipart', !M.mgMailCompose({from: 'a@b.c', to: 'd@e.f', subject: 's', body: 't'}).includes('multipart'));
+  ok('email: send with attachment', await A.s.send('@you@ex.org Отчёт\nфайл во вложении', undefined, [{name: 'data.bin', mime: 'application/octet-stream', bytes: attBytes}]) === true);
+  ok('email: attachment reaches the server', sentMail.length === 2 && sentMail[1].includes('multipart/mixed') && sentMail[1].includes('Content-Disposition: attachment') && M.mgMailParse(sentMail[1]).atts.length === 1, sentMail[1] && sentMail[1].slice(0, 160));
+  ok('contacts: alias resolves case-insensitively', M.mgAddrResolve([{name: 'Ваня', addr: 'ivan@example.org'}], 'вАня') === 'ivan@example.org' && M.mgAddrResolve([{name: 'Ваня', addr: 'ivan@example.org'}], 'unknown') === '' && M.mgAddrResolve(null, 'x') === '');
   A.s.close();
   const br = createMsgrBridge({port: 0}); const bp = (await br.listen()).port; servers.push({close: () => br.close()});
   const P = rig('email', {...cfg, bridge: 'ws://127.0.0.1:' + bp, via: 'auto', io: {}}); await until(() => P.state() === 'up', 5000);

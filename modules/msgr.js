@@ -9,6 +9,11 @@ const MG_KEEP=300;
 const MG_DEF_SERVER={nostr:'wss://relay.damus.io wss://nos.lol',ntfy:'https://ntfy.sh'};
 function mgNodeLog(n,dir,m){
   const row={t:m.t || Date.now(),proto:n.p.proto,dir,from:dir==='out' ? String(n.p.nick||'me') : String(m.from||''),to:m.to||'',text:String(m.text),id:m.id||''};
+  if(m.atts && m.atts.length){
+    row.atts=m.atts.map(a=>({name:a.name,mime:a.mime,size:a.size||((a.bytes||[]).length||0)}));
+    row.text=(row.text?row.text+' ':'')+row.atts.map(a=>'[file: '+a.name+(a.size?' · '+(a.size/1024).toFixed(0)+' KB':'')+']').join(' ');
+  }
+  if(m.thread) row.thread=m.thread;
   if(m.post) Object.assign(row,m.post);                                      // ленты: имя, ссылка, теги, язык, картинка, счётчики
   if(m.kind && m.kind!=='message'){ row.kind=m.kind; row.comment=m.comment||''; if(m.lat!=null){ row.lat=m.lat; row.lon=m.lon; row.symbol=m.symbol; row.name=row.id=row.from; } }   // APRS: станции — на Map
   n.log.push(row); if(n.log.length>MG_KEEP) n.log.shift();
@@ -27,6 +32,15 @@ function mgNodeStart(n){
   const bridge=gwUrl(rawBridge) + (p.bridgeToken && /^wss?:/i.test(rawBridge) ? '?token='+encodeURIComponent(p.bridgeToken) : '');      // bridgeToken — из старых патчей; новый путь — токен в Settings → Devices
   const cfg={server:(p.proto==='sms' ? gwUrl(rawServer) : rawServer) || MG_DEF_SERVER[proto] || '',channel:String(p.channel||'').trim(),user:String(p.user||'').trim(),pass:String(p.pass||''),
     nick:String(p.nick||'dsp').trim() || 'dsp',appKey:(()=>{ try{ return (window.DspApp && DspApp.appKey && DspApp.appKey()) || ''; }catch(e){ return ''; } })(),history:+p.history||0,retry:!!p.reconnect,via:p.via,proxyUrl:p.proxy && typeof Net!=='undefined' ? u=>Net.url(u) : null,smtp:String(p.smtp||'').trim(),pollMs:(+p.poll||30)*1000,bridge,insecure:!!p.plain,cache:n.mxCache};
+  const acct=String(p.account||'').trim();
+  if(acct){                                                          // учётка из Settings → Credentials: сервер + логин + пароль
+    const cr=(typeof Cred!=='undefined' && Cred.get(acct))||null;
+    if(!cr){ n.status='credential «'+acct+'» not found — add it in Settings → Credentials'; return; }
+    if(cr.server) cfg.server=cr.server;
+    if(cr.user) cfg.user=cr.user;
+    if(cr.pass) cfg.pass=cr.pass;
+    if(cr.smtp) cfg.smtp=cr.smtp;
+  }
   if(proto==='reticulum' && !cfg.pass.trim()){ try{ cfg.pass=mgHex(mgRandom(64)); p.pass=cfg.pass; n.status='new Reticulum identity made — it is kept in the «password» field'; }catch(e){ n.status='no secure random generator'; return; } }
   if(proto==='reticulum') cfg.key=cfg.pass;
   if(proto==='nostr'){ cfg.key=cfg.pass; if(!cfg.key){ try{ if(!n.eph) n.eph=mgHex(mgNostrGenKey()); cfg.key=n.eph; }catch(e){ n.status='no secure random generator'; return; } } }
@@ -34,27 +48,74 @@ function mgNodeStart(n){
   if(p.via==='auto' && inApp && !cfg.bridge) cfg.phone={url:'ws://127.0.0.1:8765',key:cfg.appKey};   // внутри приложения свои сокеты; чужой шлюз — только по явному адресу
   n.warn=netInsecure(cfg.server) || (cfg.bridge && netInsecure(cfg.bridge)) ? NET_INSECURE_MSG : '';
   n.sess=mgConnect(proto,cfg,{
-    msg:m=>{ if(m.delay && !cfg.history) return; mgNodeLog(n,m.self ? 'out' : 'in',m); },
+    msg:m=>{ if(m.delay && !cfg.history) return; mgNodeSaveAtts(n,m); mgNodeLog(n,m.self ? 'out' : 'in',m); },
     status:(t,s)=>{ n.status=t; n.ok=s==='up'; if(s==='fatal') n.sess=null; },
   });
 }
 function mgNodeSend(n,text,to){
   text=String(text||'').trim(); if(!text) return;
   if(!n.sess){ n.status='not connected — press Connect'; return; }
-  Promise.resolve(n.sess.send(text,to||undefined)).then(ok=>{ if(!ok && n.sess && !/not sent/.test(n.status)) n.status+=' · not sent'; });
+  (async()=>{
+    if(!to && n.book && n.book.length && text[0]==='@'){                     // адресная книга: @alias → @адрес из контактов
+      const m=/^@(\S+)\s?/.exec(text), addr=m ? mgAddrResolve(n.book,m[1]) : '';
+      if(addr) text='@'+addr+text.slice(m[0].length);
+    }
+    let atts=null;
+    const ref=String(n.p.attach||'').trim();
+    if(n.p.proto==='email' && ref){
+      atts=await mgLoadAtts(ref);
+      if(!atts) n.status='attachment «'+ref+'» not found in Files';
+    }
+    return n.sess.send(text,to||undefined,atts||undefined);
+  })().then(ok=>{ if(!ok && n.sess && !/not sent|not found/.test(n.status)) n.status+=' · not sent'; });
+}
+/* вложение из Files: имя или id файла → [{name, mime, bytes}] */
+async function mgLoadAtts(ref){
+  if(typeof FileStore==='undefined') return null;
+  let rec=null;
+  if(/^\d+$/.test(ref)) rec=await FileStore.get(+ref).catch(()=>null);
+  if(!rec){
+    const dirs=[null];
+    try{ for(const f of await FileStore.listFolders('files',null)) dirs.push(f.id); }catch(e){}
+    for(const d of dirs){
+      try{ rec=(await FileStore.list('files',d)).find(x=>x.name===ref)||null; }catch(e){}
+      if(rec) break;
+    }
+  }
+  if(!rec||!rec.blob) return null;
+  return [{name:rec.name,mime:rec.mime||'application/octet-stream',bytes:new Uint8Array(await rec.blob.arrayBuffer())}];
+}
+/* входящие вложения — в папку mail/ хранилища Files */
+function mgNodeSaveAtts(n,m){
+  if(!m.atts || !m.atts.length || typeof FileStore==='undefined') return;
+  (async()=>{
+    try{
+      let dir=(await FileStore.listFolders('files',null).catch(()=>[])).find(f=>f.name==='mail');
+      if(!dir) dir=await FileStore.addFolder('files','mail',null).catch(()=>null);
+      for(const a of m.atts){
+        const blob=new Blob([a.bytes],{type:a.mime});
+        await FileStore.put({space:'files',folderId:dir?dir.id:null,name:a.name,mime:a.mime,blob,
+          meta:{from:m.fromAddr||m.from||'',subject:m.subject||'',t:m.t||Date.now()}});
+      }
+      n.status='saved '+m.atts.length+' attachment(s) → Files/mail';
+    }catch(e){ n.status='attachment save failed: '+e.message; }
+  })();
 }
 
 def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · IRC · XMPP · APRS · Email · SMS · Reticulum · Mastodon · Bluesky · RSS)', cat:'Sources',
   kw:'messenger chat nostr ntfy matrix telegram bot irc xmpp jabber relay message channel push notify send receive internet',
-  ins:[{n:'send',t:'txt'},{n:'to',t:'txt'}], outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'from',t:'txt'},{n:'new',t:'num'},{n:'ok',t:'num'}],
+  ins:[{n:'send',t:'txt'},{n:'to',t:'txt'},{n:'rows',t:'bands'}], outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'from',t:'txt'},{n:'new',t:'num'},{n:'ok',t:'num'}],
   readout:true, tall:true,
   params:[
     {n:'proto',t:'select',opts:['nostr','ntfy','matrix','telegram','irc','xmpp','aprs','email','sms','reticulum','mastodon','bluesky','rss'],d:'nostr',label:'channel of communication'},
     {n:'server',t:'text',d:'',label:'server — nostr: relays wss://… (several, space-separated; empty: public ones) · ntfy: https://… (empty: ntfy.sh) · matrix: https://homeserver · irc: wss://host/path, or ircs://host:6697 / irc://… via the bridge · xmpp: xmpp://host:5222, empty — by the domain of the account (bridge) · aprs: aprs://host:14580 (empty — rotate.aprs2.net, bridge) · email: IMAP imaps://host:993 or imap://host:143 (to receive; bridge) · sms: the phone app, empty — ws://127.0.0.1:8765 · reticulum: rns://host:port — the TCP server interface of a Reticulum node (needs TCP) · mastodon: instance https://… (empty — mastodon.social) · bluesky: empty — public.api.bsky.app (bsky.social after a login) · rss: feed addresses https://… (RSS, Atom, JSON Feed — several, separated by a space)'},
     {n:'channel',t:'text',d:'dsp',label:'channel — nostr: hashtag · ntfy: topic · matrix: room (!id:server or #alias:server) · telegram: only to receive from ONE chat — its id or @name; leave empty for all chats (replies go to the last one) · irc: #channels · xmpp: room@conference.server (empty — direct messages only) · aprs: server filter (g/CALL, m/50, r/lat/lon/km, b/CALL*; empty — messages to you) · email: mailbox (empty — INBOX) · reticulum: the default recipient (32-digit address or a name heard in announces) · mastodon / bluesky: WHAT TO READ — #tags (several: any of them), -#tag drops posts with it, mastodon: «local» / «home» (token), empty — the public timeline; bluesky: @account, a feed link (bsky.app/profile/…/feed/…) or an at:// feed · rss: WORDS — any of them in the title / text / categories, -word drops an item; empty — everything'},
-    {n:'user',t:'text',d:'',label:'user — bluesky: your handle (needed only for the search by #tag) · matrix: login · xmpp: account user@domain · aprs: your callsign (N0CALL-7) · email: login, usually the address · irc / ntfy: optional'},
+    {n:'user',t:'text',d:'',label:'user — bluesky: your handle (needed only for the search by #tag) · matrix: login · xmpp: account user@domain · aprs: your callsign (N0CALL-7) · email: login, usually the address · irc / ntfy: optional. Filled by «account» when set'},
     {n:'pass',t:'text',d:'',label:'password / token (saved with the patch!) — nostr: nsec or hex key (empty — a new anonymous key each session) · matrix: password or access token · telegram: bot token from @BotFather · ntfy: token'},
+    {n:'account',t:'select',d:'',opts:()=>(typeof Cred!=='undefined' ? [''].concat(Cred.list().map(c=>c.name)) : ['']),label:'account — a credential from Settings → Credentials (server, user, password); empty — the params below'},
     {n:'smtp',t:'text',d:'',label:'email: SMTP smtps://host:465 or smtp://host:587 (STARTTLS) — to send; a message is «@name@host subject line⏎text» or the «to» input'},
+    {n:'attach',t:'text',d:'',label:'email: a file from Files (name or id) attached to what is sent'},
+    {n:'contacts',t:'text',d:'',label:'contacts — extra aliases «Name=address» (comma-separated); wire a Table with name/addr columns into «rows» for a full address book'},
     {n:'poll',t:'range',min:5,max:600,step:5,d:30,label:'email / mastodon / bluesky / rss: check every, s (mastodon, bluesky: at least 5; rss: at least 60)'},
     {n:'nick',t:'text',d:'dsp',label:'nick (shown to others; in Chat set «my name» the same)'},
     {n:'history',t:'range',min:0,max:2592000,step:60,d:0,label:'also fetch what was said in the last, s (nostr, ntfy, matrix, xmpp; feeds: how far back the first read goes — 0 shows only what comes later)'},
@@ -70,10 +131,19 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>mgNodeStop(n)},
   ],
   init:n=>{ n.sess=null; n.ok=false; n.status='not connected'; n.warn=''; n.log=[]; n.recQ=[]; n.lastRow=null; n.fresh=0; n.count=0; n.lastSend=''; n.lastTo='';
-            n.eph=''; n.mxCache={}; n.auto=false; },
+            n.eph=''; n.mxCache={}; n.auto=false; n.contacts=null; n.lastContacts=undefined; n.book=[]; },
   dispose:n=>mgNodeStop(n),
   process(n,I){
     if(n.p.autoConnect && !n.auto){ n.auto=true; mgNodeStart(n); }
+    if(Array.isArray(I.rows) && I.rows!==n.lastContacts){ n.lastContacts=I.rows; n.contacts=I.rows; }
+    const book=[];
+    for(const r of Array.isArray(n.contacts)?n.contacts:[]) if(r&&typeof r==='object') book.push(r);      // адресная книга: строки из «rows»…
+    for(const pair of String(n.p.contacts||'').split(/[,;]/)){                                            // …и «Name=address» из параметра
+      const i=pair.indexOf('='); if(i<1) continue;
+      const nm=pair.slice(0,i).trim(), ad=pair.slice(i+1).trim();
+      if(nm&&ad) book.push({name:nm,addr:ad});
+    }
+    n.book=book;
     const send=typeof I.send==='string' ? I.send : '';
     if(send && send!==n.lastSend) mgNodeSend(n,send,typeof I.to==='string' ? I.to : '');
     n.lastSend=send;
