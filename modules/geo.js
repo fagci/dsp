@@ -652,10 +652,11 @@ link: kind=call call=private from to | id={src}:{from}>{to}, from={src}:{from}, 
 // Последняя известная позиция — в GeoMe, её берут узлы, которым нужна точка приёма.
 const GeoMe={lat:null, lon:null, t:0};
 def({ id:'geoMe', title:'My Position', cat:'Geo',
+  ins:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'acc',t:'num'},{n:'alt',t:'num'},{n:'speed',t:'num'},{n:'heading',t:'num'}],
   outs:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'acc',t:'num'},{n:'alt',t:'num'},
         {n:'speed',t:'num'},{n:'heading',t:'num'},{n:'grid',t:'txt'},{n:'rec',t:'rec'}],
   readout:true,
-  params:[{n:'src',t:'select',opts:['manual','gps'],d:'manual',label:'source'},
+  params:[{n:'src',t:'select',opts:['manual','gps','wire'],d:'manual',label:'source (wire — lat / lon from the inputs, e.g. Phone sensors)'},
           {n:'lat',t:'num',d:55.7558,label:'lat, °'},
           {n:'lon',t:'num',d:37.6173,label:'lon, °'},
           {n:'grid',t:'text',d:'',label:'locator (sets lat/lon)'},
@@ -671,15 +672,26 @@ def({ id:'geoMe', title:'My Position', cat:'Geo',
   init:n=>{
     if(n.p.on===true) n.p.src='gps';               // старые патчи: галка «track position»
     delete n.p.on;
-    n.watch=null; n.fix=null; n.newFix=false; n.msg=''; n.wOn=false; n.lastGrid=n.p.grid; n.lastLL=''; n.hist=[]; n.raw=null; n.startAt=0;
+    n.watch=null; n.fix=null; n.newFix=false; n.msg=''; n.wOn=false; n.lastGrid=n.p.grid; n.lastLL=''; n.hist=[]; n.raw=null; n.startAt=0; n.lastWire='';
   },
   dispose:n=>geoMeStop(n),
-  process(n){
-    const gps=n.p.src==='gps';
+  process(n,I){
+    const gps=n.p.src==='gps', wire=n.p.src==='wire';
     if(gps && !n.wOn) geoMeStart(n);
     else if(!gps && n.wOn) geoMeStop(n);
     let f=null;
-    if(gps){ if(n.hist.length){ const sel=gfSelect(n.hist,Date.now(),{avg:+n.p.avg,maxAcc:+n.p.maxacc}); if(sel) n.fix=sel; } f=n.fix; }
+    if(wire){
+      // координаты с проводов (Phone sensors, Telemetry…): «мимо браузера»
+      const lat=recNum(I.lat), lon=recNum(I.lon);
+      if(lat!=null && lon!=null && Math.abs(lat)<=90 && Math.abs(lon)<=180){
+        const o=k=>{ const v=recNum(I[k]); return v!=null && isFinite(v) ? v : null; };
+        const hd=o('heading');
+        f={lat, lon, acc:o('acc'), alt:o('alt'), speed:o('speed'), heading:hd!=null && hd>=0 ? hd : null, t:Date.now()};
+        const key=lat+','+lon+','+f.acc+','+f.alt+','+f.speed+','+f.heading;
+        if(key!==n.lastWire){ n.lastWire=key; n.newFix=true; }
+        n.msg='wire';
+      } else n.msg='wire: waiting for lat / lon';
+    } else if(gps){ if(n.hist.length){ const sel=gfSelect(n.hist,Date.now(),{avg:+n.p.avg,maxAcc:+n.p.maxacc}); if(sel) n.fix=sel; } f=n.fix; }
     else {
       // локатор правят руками — пересчитать lat/lon; lat/lon правят — обновить локатор
       if(n.p.grid!==n.lastGrid){
@@ -702,6 +714,7 @@ def({ id:'geoMe', title:'My Position', cat:'Geo',
         n.msg='manual';
       } else n.msg='enter lat/lon or locator';
     }
+    if(wire){ n.wl=f?.lat ?? null; n.wn=f?.lon ?? null; }
     let rec=null;
     const vk=[n.p.look,n.p.fov,n.p.fovKm,n.p.rings].join('|');
     if(vk!==n.lastView){ n.lastView=vk; n.newFix=true; }
@@ -721,10 +734,10 @@ def({ id:'geoMe', title:'My Position', cat:'Geo',
                 grid:latLonToGrid(f.lat,f.lon,6), rec}
              : {rec};
   },
-  draw(n){ const gps=n.p.src==='gps', f=gps ? n.fix : null;
-    const lat=gps ? f?.lat ?? null : recNum(n.p.lat), lon=gps ? f?.lon ?? null : recNum(n.p.lon);
+  draw(n){ const gps=n.p.src==='gps', wire=n.p.src==='wire', f=gps ? n.fix : null;
+    const lat=gps ? f?.lat ?? null : wire ? n.wl ?? null : recNum(n.p.lat), lon=gps ? f?.lon ?? null : wire ? n.wn ?? null : recNum(n.p.lon);
     n.el.querySelector('.readout').textContent = n.msg+(lat!=null && lon!=null ?
-      '\n'+lat.toFixed(5)+', '+lon.toFixed(5)+(f?' ±'+Math.round(f.acc)+' m'+(f.n>1 ? ' (mean of '+f.n+')' : ''):'')+' · '+latLonToGrid(lat,lon,6) : '')+geoMeStatus(n,gps); }});
+      '\n'+lat.toFixed(5)+', '+lon.toFixed(5)+(f&&f.acc!=null?' ±'+Math.round(f.acc)+' m'+(f.n>1 ? ' (mean of '+f.n+')' : ''):'')+' · '+latLonToGrid(lat,lon,6) : '')+geoMeStatus(n,gps); }});
 // что происходит с точностью: сырой фикс, лучший за минуту, чем он получен; подсказка, если долго хуже 30 м
 function geoMeStatus(n,gps){
   if(!gps || !n.raw) return gps && n.wOn ? '\nno fix yet' : '';
