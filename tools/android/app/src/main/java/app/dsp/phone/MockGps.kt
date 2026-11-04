@@ -53,6 +53,16 @@ class MockGps(ctx: Context) {
         }
     }
 
+    companion object {
+        /** Тестовые провайдеры от прошлого процесса (убит без stop) могут «залипнуть» и мешать системе (разрешения, источник gps): снимаем при старте сервиса. */
+        fun clearStale(ctx: Context) {
+            val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+            for (p in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)) {
+                try { lm.removeTestProvider(p) } catch (e: Exception) { /* их нет, или приложение не выбрано для фиктивных местоположений */ }
+            }
+        }
+    }
+
     fun stop() {
         for (p in provs) {
             try { lm.setTestProviderEnabled(p, false) } catch (e: Exception) { }

@@ -68,7 +68,9 @@ class SysHub(private val ctx: Context, private val cfg: Config, private val emit
     private var ttsReady = false
     private val am = ctx.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val mock = MockGps(ctx)
-    fun stopMock() = mock.stop()
+    fun stopMock() { val was = mock.on; mock.stop(); if (was) note("warn", "") }
+    /** Сообщение клиентам (Phone sensors показывает warn в статусе узла; пустое снимает прежнее). */
+    var note: (String, String) -> Unit = { _, _ -> }
     private var bcastRx: BroadcastReceiver? = null
 
     private fun rec(ev: String, vararg kv: Pair<String, String?>) =
@@ -189,12 +191,14 @@ class SysHub(private val ctx: Context, private val cfg: Config, private val emit
                 if (arr != null) for (i in 0 until arr.length()) names.add(arr.optString(i))
                 try { mock.start(names) }
                 catch (e: SecurityException) { return Reply.done(c, id, cmd, "DSP is not the mock location app: Settings → Developer options → Select mock location app → DSP", "permission") }
+                note("warn", "mock location is ON (" + mock.names() + "): other apps and the gps source see the substituted point — stop it with gps.mock.stop")
                 Reply.done(c, id, cmd, null, extra = arrayOf("providers" to mock.names()))
             }
             "gps.mock" -> {                         // одна точка; без gps.mock.start запускает провайдер gps сама
                 if (!j.has("lat") || !j.has("lon")) return Reply.done(c, id, cmd, "lat and lon")
                 val lat = j.optDouble("lat"); val lon = j.optDouble("lon")
                 if (lat.isNaN() || lon.isNaN() || Math.abs(lat) > 90 || Math.abs(lon) > 180) return Reply.done(c, id, cmd, "lat −90…90, lon −180…180")
+                val wasOn = mock.on
                 if (!mock.on) {
                     try { mock.start(emptyList()) }
                     catch (e: SecurityException) { return Reply.done(c, id, cmd, "DSP is not the mock location app: Settings → Developer options → Select mock location app → DSP", "permission") }
@@ -202,10 +206,11 @@ class SysHub(private val ctx: Context, private val cfg: Config, private val emit
                 val alt = if (j.has("alt")) j.optDouble("alt") else Double.NaN
                 val sp = if (j.has("speed")) j.optDouble("speed") else Double.NaN
                 val br = if (j.has("bearing")) j.optDouble("bearing") else Double.NaN
+                if (!wasOn) note("warn", "mock location is ON (" + mock.names() + "): other apps and the gps source see the substituted point — stop it with gps.mock.stop")
                 mock.set(lat, lon, if (alt.isNaN()) null else alt, if (sp.isNaN()) null else sp.toFloat(), if (br.isNaN()) null else br.toFloat(), j.optDouble("acc", 5.0).toFloat())
                 Reply.done(c, id, cmd, null)
             }
-            "gps.mock.stop" -> { mock.stop(); Reply.done(c, id, cmd, null) }
+            "gps.mock.stop" -> { stopMock(); Reply.done(c, id, cmd, null) }
             "gps.mock.status" -> Reply.done(c, id, cmd, null, extra = arrayOf("on" to (if (mock.on) "1" else "0"), "providers" to mock.names()))
             "vol.ringer" -> {
                 val m = when (j.optString("mode")) { "normal" -> AudioManager.RINGER_MODE_NORMAL; "vibrate" -> AudioManager.RINGER_MODE_VIBRATE; "silent" -> AudioManager.RINGER_MODE_SILENT; else -> return Reply.done(c, id, cmd, "mode: normal, vibrate or silent") }

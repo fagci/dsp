@@ -95,7 +95,7 @@ class BridgeService : Service() {
         files = FileHub(this, needs)
         dial = DialHub(this, needs)
         screenrec = ScreenRecHub(this) { recorder.dir }; ScreenEvents.sink = emit; ScreenEvents.backlog = { server.backlog() }
-        net = NetHub(this, cfg, emit); sys = SysHub(this, cfg, emit, needs); tlsCmds = TlsCmds(this, server)
+        net = NetHub(this, cfg, emit); sys = SysHub(this, cfg, emit, needs); sys.note = server::note; MockGps.clearStale(this); tlsCmds = TlsCmds(this, server)
         server.onCommand = { c, j -> route(c, j) }
         tlsCmds.start()                                          // сертификат уже стоит — TLS поднимется вместе с сервером
         sensors = SensorHub(this) { s, j -> server.emit(s, j) }
