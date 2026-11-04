@@ -44,7 +44,7 @@ function mgPhoneTcp(ph){
       ns.call('tcp.connect',{host,port,timeout:15000,tls:!!tls,starttls:!tls},25000,r=>{ conn=r.conn; })
         .then(()=>{ if(!dead && h.open) h.open(); },e=>fail(e.reply && e.reply.err==='forbidden' ? 'the phone app refused the socket: open this page inside the app, or tick «Let any page use actions» in the app Settings' : e.message));
     };
-    ws.onmessage=e=>{ let r; try{ r=JSON.parse(String(e.data)); }catch(x){ return; } ns.feed(r); };
+    ws.onmessage=e=>{ let j; try{ j=JSON.parse(String(e.data)); }catch(x){ return; } for(const r of Array.isArray(j) ? j : [j]) ns.feed(r); };
     ws.onerror=()=>{};
     ws.onclose=()=>fail('phone app connection closed');
     return {
