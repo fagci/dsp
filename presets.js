@@ -605,6 +605,7 @@ const PRESET_CATS={
   'Phone App: Satellites, Bluetooth and Wi-Fi Scan':'Maps & Locating',
   'Phone App: Orientation and Environment Sensors':'Maps & Locating',
   'Phone App: Power, Heat and Events from Other Apps (Tasker)':'Maps & Locating',
+  'Phone App: Battery Current, Charge and App Usage':'Maps & Locating',
   'Phone App: Activity with the Screen Locked (Still, Walking, Pick-up)':'Maps & Locating',
   'Phone App: Microphone, Cell and Packets':'Maps & Locating',
   'Phone App: Wideband Microphone — Raw Source, up to 192 kHz, USB, Call Audio (root)':'Maps & Locating',
@@ -1664,6 +1665,27 @@ const lg=addNode('recLog',440,660,{});
 lg.size.w=360; applySize(lg);
 addEdge(tx.id,'batt',t1.id,'in'); addEdge(tx.id,'therm',t2.id,'in');
 addEdge(tx.id,'rec',rl.id,'rec'); addEdge(rl.id,'cmd',ph.id,'cmd'); addEdge(tx.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Battery Current, Charge and App Usage', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Android app (tools/android): where the charge goes, in real time. Tick Run in Phone sensors (the app asks nothing but the bridge): «battery electric» gives every second the current (mA — the sign depends on the phone, usually − when discharging), the voltage and the counted charge (µAh; «cur» «volt» «uah»); where the phone reports no current the app reads /sys/class/power_supply/battery through root («Allow root features» in the app Settings).\n'+
+  '«app usage today» lists the top-10 apps by time in the foreground (needs «Usage access»: Settings → Apps → Special app access — the bridge message names the screen) and, with DUMP granted once through adb (pm grant app.dsp.phone android.permission.DUMP) or with root, the mAh per app since the last charge. The usage record on rec carries the arrays top / fg / drain. Polling slows with the power policy (low battery, saver, heat) like everything else.'});
+nt.size.w=900; nt.size.h=220; applySize(nt);
+const tx=addNode('termux',40,290,{url:'ws://127.0.0.1:8765',gps:false,battery:false,power:true,bstat:true,usage:true});
+tx.size.w=380; tx.size.h=440; applySize(tx);
+const tk=addNode('tank',460,290,{min:0,max:100,lo:20,hi:95,unit:'%'});
+tk.size.w=360; applySize(tk);
+const t1=addNode('trend',460,470,{span:60,auto:true});
+t1.size.w=360; t1.size.h=170; applySize(t1);
+const t2=addNode('trend',880,290,{span:60,auto:true});
+t2.size.w=360; t2.size.h=170; applySize(t2);
+const lg=addNode('recLog',880,490,{});
+lg.size.w=360; lg.size.h=300; applySize(lg);
+addEdge(tx.id,'batt',tk.id,'in');
+addEdge(tx.id,'cur',t1.id,'in');
+addEdge(tx.id,'volt',t2.id,'in');
+addEdge(tx.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Phone App: Activity with the Screen Locked (Still, Walking, Pick-up)', function(){
