@@ -22,10 +22,23 @@ function fzDist(a,b,max){                           // расстояние Да
   return p[b.length];
 }
 const fzSubseq=(w,t)=>{ let i=0; for(const c of t) if(c===w[i] && ++i===w.length) return true; return w.length===0; };
-// слово против токенов: 0 — нет; иначе доля (0..1): опечатка в слове или его начале (1 правка до 6 букв, 2 — длиннее) или сокращение (буквы по порядку, не короче 3)
+// сокращение из начал слов: «phose» → PHone SEnsors, «phse» → PHone SEnsors. Запрос жадно покрывается префиксами слов по порядку;
+// считается только если участвуют начала минимум двух слов (однословные случаи — в fzWord)
+function fzAbbr(w,tokens){
+  if(w.length<3||!tokens.length) return 0;
+  let i=0,seg=0;
+  for(let ti=0;ti<tokens.length&&i<w.length;ti++){
+    const t=tokens[ti]; if(t.length<2) continue;
+    let j=0;
+    while(j<t.length&&i<w.length&&t[j]===w[i]){ i++; j++; }
+    if(j>=2) seg++;
+  }
+  return i===w.length&&seg>=2 ? .9 : 0;
+}
+// слово против токенов: 0 — нет; иначе доля (0..1): опечатка в слове или его начале (1 правка до 4 букв, 2 — длиннее: «phose»→«phone», «phse»→«phone») или сокращение (буквы по порядку, не короче 3)
 function fzWord(w,tokens){
   if(w.length<3) return 0;
-  const max=w.length>=7 ? 2 : 1;
+  const max=w.length>=4 ? 2 : 1;
   let best=0;
   for(const t of tokens){
     if(t.length<2) continue;
@@ -42,7 +55,8 @@ function fzScoreWords(words,tokens,text){
   for(const w of words){
     if(tokens.some(t=>t.startsWith(w))) sc+=3;
     else if(text.includes(w)) sc+=2;
-    else { const f=fzWord(w,tokens); if(!f) return 0; sc+=f; }
+    else { const a=fzAbbr(w,tokens); if(a>0) sc+=a+.3;          // сокращение из начал слов («phose» → Phone sensors)
+    else { const f=fzWord(w,tokens); if(!f) return 0; sc+=f; } }
   }
   return sc;
 }

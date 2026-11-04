@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const rd=p=>fs.readFileSync(path.join(root,p),'utf8');
 const ctx=vm.createContext({Math,Object,Array,Set,Map,Number,String,JSON,RegExp});
-vm.runInContext(rd('modules/help-kernels.js')+';globalThis.K={fzTokens,fzDist,fzWord,fzScoreWords,hlpMd,hlpSlug,hlpSections,hlpBullets,hlpToc,hlpResolve,hlpModCard,hlpUsage,hlpSearch,hlpSentences,hlpSummary};',ctx);
+vm.runInContext(rd('modules/help-kernels.js')+';globalThis.K={fzTokens,fzDist,fzWord,fzAbbr,fzScoreWords,hlpMd,hlpSlug,hlpSections,hlpBullets,hlpToc,hlpResolve,hlpModCard,hlpUsage,hlpSearch,hlpSentences,hlpSummary};',ctx);
 const K=ctx.K, J=x=>JSON.stringify(x);
 let bad=0; const ok=(c,m)=>{ if(!c){ bad++; console.error('FAIL: '+m); } };
 const eq=(a,b,m)=>ok(J(a)===J(b),m+' (получено '+J(a)+', ждали '+J(b)+')');
@@ -26,6 +26,13 @@ ok(score('graph view','Graph View')>0 && score('graph zzz','Graph View')===0,'в
 ok(score('граф','Граф связей')>0 && score('грфа','Граф связей')>0,'кириллица');
 eq(K.fzDist('kitten','sitting',3),3,'расстояние');
 eq(K.fzDist('abcd','abdc',1),1,'перестановка — одна правка');
+ok(score('phose','Phone sensors (Termux / DSP app)')>0,'сокращение из начал слов: phose → PHone SEnsors');
+ok(score('phse','Phone sensors (Termux / DSP app)')>0,'короткое сокращение: phse → PHone SEnsors');
+ok(score('phse','Phone sensors (Termux / DSP app)')>score('phse','Goniometer Polar Plot'),'сокращение в названии выше случайной опечатки');
+eq(K.fzAbbr('phose',K.fzTokens('Photometer')),0,'одно слово — не сокращение из начал слов');
+ok(score('phse','Phone sensors (Termux / DSP app)')>0,'две пропущенные буквы (2 правки)');
+ok(score('spetr','Spectrum Analyzer')>0,'опечатка с пропуском в слове от 4 букв (2 правки)');
+ok(score('phose','Phone sensors (Termux / DSP app)')>score('phose','Spectrum Analyzer'),'слово названия выше ключевого слова');
 
 // markdown
 let h=K.hlpMd('# Title\n\nA **bold** and `co<de>` and [x](a.md) and [bad](javascript:alert(1)).\n\n- one\n  - two\n- three\n\n1. a\n2. b\n\n| A | B |\n|---|---|\n| 1 | `x\\|y` |\n\n```\n<b>raw</b>\n```\n> quote');

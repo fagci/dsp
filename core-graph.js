@@ -1580,6 +1580,13 @@ setSideCollapsed(sideCollapsedPref);
 // ?readonly-tiles — только тайлы: без панелей и правки раскладки, граф и горячие клавиши отключены
 const ROTILES=(()=>{ const v=new URLSearchParams(location.search).get('readonly-tiles'); return v!==null && !/^(0|false|no|off)$/i.test(v); })();
 if(ROTILES) document.body.classList.add('rotiles');
+/* подсказка на пустом канвасе: что делать, когда модулей ещё нет */
+{ const cvHint=document.getElementById('cvHint');
+if(cvHint && !ROTILES){
+  const updHint=()=>{ cvHint.hidden = !!Graph.nodes.length || cv.classList.contains('dashboard'); };
+  new MutationObserver(updHint).observe(content,{childList:true});
+  updHint();
+} }
 function uiLocked(){ return dashMode && !dashGraphOn(); }   // в тайлах без панели графа холст закрыт
 /* ---- дашборд: тайловая раскладка закреплённых (📌) узлов, дерево произвольных сплитов (как в tiling WM) ---
    Graph.dashTree — либо null, либо {t:'leaf',id,node} с id узла или null (пустой слот),
@@ -2206,13 +2213,33 @@ stat.textContent='block size '+v+', engine restarting';
 await Eng.setBlock(v);
 stat.textContent='block size '+v+' · inputs need to be re-enabled '; };
 // горячие клавиши: Delete — удалить выбранное, Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y — отмена и повтор; остальное — кнопками в панели
+let nudgeUndoT=0;                                 // серия сдвигов стрелками — одна запись undo
 window.addEventListener('keydown',ev=>{
 const t=ev.target;
 if(ROTILES) return;
 if(t &&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
-if(ev.key==='Delete' &&!ev.ctrlKey &&!ev.metaKey &&!ev.altKey){ ev.preventDefault(); delSel(); }
+if(ev.key==='Delete' &&!ev.ctrlKey &&!ev.metaKey &&!ev.altKey){ ev.preventDefault(); delSel(); return; }
 const k=ev.key.toLowerCase();
-if((ev.ctrlKey||ev.metaKey) &&!ev.altKey &&(k==='z'||k==='y')){ ev.preventDefault(); (k==='y'||ev.shiftKey) ? Undo.redo() : Undo.undo(); }
+if((ev.ctrlKey||ev.metaKey) &&!ev.altKey &&(k==='z'||k==='y')){ ev.preventDefault(); (k==='y'||ev.shiftKey) ? Undo.redo() : Undo.undo(); return; }
+if((ev.ctrlKey||ev.metaKey) &&!ev.altKey &&!ev.shiftKey){
+  if(k==='s'){ ev.preventDefault(); document.getElementById('psave').click(); return; }
+  if(k==='a'){ ev.preventDefault(); Sel.clear(); for(const n of Graph.nodes) Sel.add(n.id); syncSel(); return; }
+  if(k==='k'){ ev.preventDefault(); cmdkOpen(); return; }
+}
+if(ev.ctrlKey||ev.metaKey||ev.altKey) return;
+if(ev.key===' ' && !(t&&(t.tagName==='BUTTON'||t.tagName==='SELECT'||t.tagName==='A'))){ ev.preventDefault(); runBtn.click(); return; }
+if(ev.key==='/'){ ev.preventDefault(); cmdkOpen(); return; }
+if(ev.key==='?'){ hpOpen(); if(typeof hpGo==='function') hpGo('page','help/shortcuts.md'); return; }
+if(ev.key==='+'||ev.key==='='||ev.key==='-'){ (ev.key==='-'?panzoom.zoomOut():panzoom.zoomIn()); return; }
+if(Sel.size && ev.key.indexOf('Arrow')===0){
+  const d=ev.shiftKey?40:8, dx=ev.key==='ArrowLeft'?-d:ev.key==='ArrowRight'?d:0, dy=ev.key==='ArrowUp'?-d:ev.key==='ArrowDown'?d:0;
+  if(!dx&&!dy) return;
+  ev.preventDefault();
+  for(const id of Sel){ const n=Graph.map[id]; if(!n||n.x==null) continue; n.x+=dx; n.y+=dy; posNode(n); }
+  markWiresDirty();
+  clearTimeout(nudgeUndoT); nudgeUndoT=setTimeout(()=>Undo.push(),700);   // одна запись undo на серию сдвигов
+  return;
+}
 });
 const side=document.getElementById('side'), scrim=document.getElementById('scrim');
 const closeSideBack=()=>{ side.classList.remove('open'); scrim.classList.remove('open'); };   // по жесту «назад» запись истории уже снята
@@ -2241,7 +2268,8 @@ const modSearchInfo=new WeakMap();                  // строки поиска
 function modInfo(m){
 let x=modSearchInfo.get(m);
 if(!x){ const title=m.title.toLocaleLowerCase('ru');     // «Wi-Fi» находится и по «wifi»: в строку названия добавлен вариант без дефисов
-x={title:title+(/[-_]/.test(title) ? ' '+title.replace(/[-_]/g,'') : ''), idl:m.id.toLocaleLowerCase('ru'), tokens:title.replace(/[-_]/g,'').split(/[^a-zа-яё0-9]+/), rest:`${m.id} ${m.cat} ${m.kw||''}`.toLocaleLowerCase('ru')}; x.all=fzTokens(x.title+' '+x.rest); modSearchInfo.set(m,x); }
+const rest=`${m.id} ${m.cat} ${m.kw||''}`.toLocaleLowerCase('ru');
+x={title:title+(/[-_]/.test(title) ? ' '+title.replace(/[-_]/g,'') : ''), idl:m.id.toLocaleLowerCase('ru'), tokens:title.replace(/[-_]/g,'').split(/[^a-zа-яё0-9]+/), rest, rtok:fzTokens(rest)}; x.all=fzTokens(x.title+' '+rest); modSearchInfo.set(m,x); }
 return x;
 }
 const queryWords=q=>q.trim().toLocaleLowerCase('ru').split(/\s+/).filter(Boolean);
@@ -2251,10 +2279,12 @@ const x=modInfo(m), {title,tokens,rest}=x;
 let sc=0;
 for(const w of words){
 if(tokens.some(t=>t.startsWith(w))) sc+=3+(tokens[0].startsWith(w)||tokens.some(t=>t===w) ? .3 : 0)+(x.idl.startsWith(w) ? .2 : 0)+(title===w||x.idl===w ? 1 : 0)-title.length*.002;     // слово названия целиком / первое / начало id / всё название — выше; при прочих равных — короче
-else if(x.idl.startsWith(w)) sc+=2.5;                           // начало id («alarmclock» → alarmclock)
+else if(x.idl.startsWith(w)) sc+=2.5+(x.idl===w ? 1 : 0)-x.idl.length*.002;   // начало id («alarmclock» → alarmclock); точное совпадение id — выше начала слова названия
 else if(title.includes(w)) sc+=2;
 else if(rest.includes(w)) sc+=1.5;                              // id / категория / ключевые слова
-else { const f=fzWord(w,x.all); if(!f) return 0; sc+=f; } }      // опечатка или сокращение («grph», «wfall»): <1.5 за слово
+else { const a=fzAbbr(w,x.tokens); if(a>0) sc+=a+.6;              // сокращение из начал слов названия («phose» → PHone SEnsors) — точное попадание, выше опечаток
+else { const f=fzWord(w,x.tokens); if(f>0) sc+=f+.6;            // опечатка в слове названия («phose» → Phone sensors) — выше, чем в id/категории/ключевых словах: название ближе к тому, что помнит пользователь
+else { const r=fzWord(w,x.rtok); if(!r) return 0; sc+=r; } } } }   // опечатка или сокращение («grph», «wfall»): <1.5 за слово
 return sc;
 }
 // Подходящие модули по убыванию релевантности. Есть точные совпадения (каждое слово — в названии / id / ключевых словах) —
@@ -2263,6 +2293,146 @@ function modRank(mods,words){
 const th=1.5*words.length, sc=[]; let strong=false;
 for(const m of mods){ const s=modScoreW(m,words); if(s>0){ sc.push([m,s]); if(s>=th) strong=true; } }
 return (strong ? sc.filter(x=>x[1]>=th) : sc).sort((a,b)=>b[1]-a[1]||a[0].title.localeCompare(b[0].title)).map(x=>x[0]);
+}
+/* ---- командная палитра (Ctrl+K или /): модули и патчи одним нечётким поиском; «mic>fft>sa» — цепочка с живым превью ---- */
+let cmdkEl=null, cmdkSel=0, cmdkRows=[], cmdkKeep=null, cmdkChain=false, cmdkPrevT=0;
+function cmdkOpen(){
+if(typeof dashMode!=='undefined' && dashMode) return;                    // палитра — для графа, в дашборде свои панели
+if(!cmdkEl){
+  cmdkEl=document.createElement('div'); cmdkEl.id='cmdk'; cmdkEl.hidden=true;
+  cmdkEl.innerHTML='<input type="search" placeholder="Module or patch — fuzzy («phose» finds Phone sensors) · chain: mic>fft>sa" autocomplete="off" spellcheck="false"><div class="cmdk-list"></div>';
+  document.body.append(cmdkEl);
+  cmdkEl.querySelector('input').addEventListener('input',()=>{ cmdkRender(); clearTimeout(cmdkPrevT); cmdkPrevT=setTimeout(cmdkPreview,140); });
+  cmdkEl.addEventListener('keydown',cmdkKeys);
+  cmdkEl.addEventListener('pointerdown',e=>e.stopPropagation());
+  document.addEventListener('pointerdown',e=>{ if(cmdkEl && !cmdkEl.hidden && !cmdkEl.contains(e.target)) cmdkClose(); });
+}
+cmdkEl.hidden=false; cmdkSel=0; cmdkChain=false; cmdkKeep=null;
+const q=cmdkEl.querySelector('input'); q.value=''; cmdkRender();
+setTimeout(()=>q.focus({preventScroll:true}),0);
+}
+/* превью цепочки: узлы настоящие, но история/автосохранение подавлены (Undo.busy) — до Enter или Esc */
+function cmdkPreview(){
+if(!cmdkEl || cmdkEl.hidden) return;
+cmdkTeardown();
+const v=cmdkEl.querySelector('input').value;
+if(!cmdkChain) return;
+const segs=v.split('>').map(s=>s.trim()).filter(Boolean).slice(0,12);
+if(!segs.length) return;
+const chain=segs.map(seg=>({seg,m:modRank(Object.values(MOD),queryWords(seg))[0]||null}));
+const stop=chain.findIndex(st=>!st.m);                       // строим непрерывный префикс: после пропуска — не строим
+const build=stop<0?chain:chain.slice(0,stop);
+if(!build.length) return;
+const was=Undo.busy; Undo.busy=true;
+try{
+  cmdkKeep=new Set(Graph.nodes.map(n=>n.id));
+  const rect=cv.getBoundingClientRect();
+  const cx=(rect.width/2)/view.k-view.x, cy=(rect.height/2.4)/view.k-view.y;
+  const W=n=>(n.el.offsetWidth||n.size.w||180);
+  const nodes=[];
+  let x=cx;
+  for(const st of build){
+    const n=addNodeUI(st.m.id,x,cy);
+    if(!n){ st.m=null; break; }
+    nodes.push(n); x+=W(n)+70;
+  }
+  let xx=cx-(x-cx-70)/2;                                     // центрируем готовую цепочку по видимой области
+  for(const n of nodes){ n.x=xx; posNode(n); xx+=W(n)+70; }
+  for(let i=1;i<nodes.length;i++){
+    const pin=chainPins(nodes[i-1],nodes[i]);
+    if(!pin) break;
+    connect(nodes[i-1].id,pin[0],nodes[i].id,pin[1]);        // автоадаптер iq↔sig ставится сам
+  }
+} finally { Undo.busy=was; }
+}
+function cmdkTeardown(){
+if(!cmdkKeep) return;
+const was=Undo.busy; Undo.busy=true;
+try{ for(const n of Graph.nodes.filter(n=>!cmdkKeep.has(n.id))) delNode(n); }
+finally { Undo.busy=was; }
+cmdkKeep=null;
+}
+/* лучшая пара пинов a→b: тот же тип выше всего, iq↔sig — через автоадаптер, универсальный val — в последнюю очередь */
+function chainPins(a,b){
+const ins=portsOf(b,'ins').filter(p=>MULTI_T.has(p.t)||!Graph.edges.some(e=>e.to===b.id&&e.tp===p.n));
+const outs=portsOf(a,'outs');
+let best=null,bs=0;
+for(const o of outs) for(const p of ins){
+  let s= o.t===p.t ? 3 : (o.t==='iq'&&p.t==='sig')||(o.t==='sig'&&p.t==='iq') ? 2 : (o.t==='val'||p.t==='val') ? 1 : 0;
+  if(s) s+= o.t==='sig' ? .3 : o.t==='spec' ? .2 : o.t==='iq' ? .15 : o.t==='num' ? .05 : 0;
+  if(s>bs){ bs=s; best=[o.n,p.n]; }
+}
+return best;
+}
+function cmdkChainDone(){
+clearTimeout(cmdkPrevT);
+const added=Graph.nodes.filter(n=>cmdkKeep && !cmdkKeep.has(n.id));
+cmdkKeep=null;
+Undo.push();                                                 // одна запись истории на всю цепочку
+Sel.clear(); added.forEach(n=>Sel.add(n.id)); syncSel();
+stat.textContent='chain: '+added.map(n=>shortLabel(MOD[n.type].title)).join(' → ');
+cmdkClose();
+}
+function cmdkClose(){ cmdkTeardown(); if(cmdkEl) cmdkEl.hidden=true; }
+function cmdkRender(){
+const q=cmdkEl.querySelector('input').value, words=queryWords(q), list=cmdkEl.querySelector('.cmdk-list');
+cmdkChain=q.includes('>');
+list.innerHTML='';
+if(cmdkChain){
+  const segs=q.split('>').map(s=>s.trim()).filter(Boolean).slice(0,12);
+  list.innerHTML='<div class="cmdk-chain"></div>';
+  const box=list.querySelector('.cmdk-chain');
+  if(!segs.length){ box.innerHTML='<div class="cmdk-hint">mic&gt;fft&gt;sa — каждый кусок ищется нечётко, на канвасе видно, что получится</div>'; return; }
+  segs.forEach((seg,i)=>{
+    const m=modRank(Object.values(MOD),queryWords(seg))[0];
+    const d=document.createElement('div'); d.className='cmdk-step';
+    d.innerHTML='<span class="cmdk-kind">'+ (i+1) +'</span><b>'+hlpEsc(seg)+'</b><span class="cmdk-arrow">→</span>'
+      + (m ? '<b>'+hlpEsc(m.title)+'</b>' : '<span class="cmdk-bad">no match — the chain stops here</span>');
+    box.append(d);
+  });
+  const ok=segs.every((seg,i)=>modRank(Object.values(MOD),queryWords(seg)).length);
+  box.insertAdjacentHTML('beforeend','<div class="cmdk-hint">'+(ok?'Enter — add the chain, Esc — cancel':'Enter — add the matched part before the gap, Esc — cancel')+'</div>');
+  return;
+}
+cmdkRows=[];
+for(const m of modRank(Object.values(MOD),words).slice(0,8)) cmdkRows.push({kind:'mod',m});
+try{
+  const p=readP(), names=Object.keys(p);
+  const sc=n=>{ let s=(typeof presetSub==='function'?presetSub(n)+' ':'')+n; if(/[-_]/.test(s)) s+=' '+s.replace(/[-_]/g,''); return fzScoreWords(words,fzTokens(s),s.toLocaleLowerCase('ru')); };
+  const th=2*words.length; let strong=false;
+  if(words.length) for(const n of names) if(sc(n)>=th){ strong=true; break; }
+  const hit=names.filter(n=>!words.length||(strong?sc(n)>=th:sc(n)>0));
+  hit.sort((a,b)=>sc(b)-sc(a)||a.localeCompare(b));
+  for(const n of hit.slice(0,5)) cmdkRows.push({kind:'patch',name:n});
+}catch(e){}
+if(cmdkSel>=cmdkRows.length) cmdkSel=0;
+cmdkRows.forEach((r,i)=>{
+  const b=document.createElement('button'); b.className='cmdk-row'+(i===cmdkSel?' on':'');
+  b.innerHTML= r.kind==='mod'
+    ? '<span class="cmdk-kind">module</span><b>'+hlpEsc(r.m.title)+'</b><span class="cmdk-dim">'+hlpEsc(r.m.id)+'</span>'
+    : '<span class="cmdk-kind">patch</span><b>'+hlpEsc(r.name)+'</b>';
+  b.addEventListener('pointerenter',()=>{ cmdkSel=i; cmdkPaint(); });
+  b.addEventListener('click',()=>cmdkRun(i));
+  list.append(b);
+});
+}
+function cmdkPaint(){ cmdkEl.querySelectorAll('.cmdk-row').forEach((b,i)=>b.classList.toggle('on',i===cmdkSel)); }
+function cmdkKeys(e){
+if(e.key==='Escape'){ e.preventDefault(); cmdkClose(); }
+else if(cmdkChain){
+  if(e.key==='Enter' && !e.isComposing){ e.preventDefault(); cmdkChainDone(); }
+}
+else if(e.key==='ArrowDown'||e.key==='ArrowUp'){ e.preventDefault(); cmdkSel=(cmdkSel+(e.key==='ArrowDown'?1:cmdkRows.length-1))%Math.max(1,cmdkRows.length); cmdkPaint(); }
+else if(e.key==='Enter'){ e.preventDefault(); cmdkRun(cmdkSel); }
+}
+function cmdkRun(i){
+const r=cmdkRows[i]; if(!r) return;
+cmdkClose();
+if(r.kind==='mod'){
+  const rect=cv.getBoundingClientRect();
+  const n=addNodeUI(r.m.id,(rect.width/2)/view.k-view.x-90,(rect.height/3)/view.k-view.y);
+  if(n){ Sel.clear(); Sel.add(n.id); syncSel(); Undo.push(); }
+} else openPatch(r.name);
 }
 /* Совместимость портов: тот же тип, val (универсальный) или iq ↔ sig через автоадаптер (см. connect) */
 function typeCompat(a,b){ return a===b || a==='val' || b==='val' || (a==='iq' && b==='sig') || (a==='sig' && b==='iq'); }
