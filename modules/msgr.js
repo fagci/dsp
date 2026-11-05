@@ -14,6 +14,10 @@ function mgNodeLog(n,dir,m){
     row.text=(row.text?row.text+' ':'')+row.atts.map(a=>'[file: '+a.name+(a.size?' · '+(a.size/1024).toFixed(0)+' KB':'')+']').join(' ');
   }
   if(m.thread) row.thread=m.thread;
+  if(m.fromAddr) row.fromAddr=m.fromAddr;
+  if(m.subject) row.subject=m.subject;
+  const room=(m.to && /^[#&]/.test(m.to)) ? m.to : (['nostr','ntfy','matrix'].includes(n.p.proto) ? String(n.p.channel||'') : (n.p.proto==='xmpp' && m.to && m.to===String(n.p.channel||'').split('/')[0] ? m.to : ''));
+  if(room) row.room=room;                                                  // комната / канал: Chat собирает такие сообщения в один разговор
   if(m.post) Object.assign(row,m.post);                                      // ленты: имя, ссылка, теги, язык, картинка, счётчики
   if(m.kind && m.kind!=='message'){ row.kind=m.kind; row.comment=m.comment||''; if(m.lat!=null){ row.lat=m.lat; row.lon=m.lon; row.symbol=m.symbol; row.name=row.id=row.from; } }   // APRS: станции — на Map
   n.log.push(row); if(n.log.length>MG_KEEP) n.log.shift();

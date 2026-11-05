@@ -1,0 +1,72 @@
+// Chat: разговоры, люди по книге, треды, фильтры, разметка, дни: node tools/test-chat.mjs
+import vm from 'node:vm';
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+const ctx = vm.createContext({Math, Uint8Array, TextEncoder, TextDecoder, Array, Map, Set, Error, String, Number, Object, Date, JSON, parseInt, RegExp});
+for (const f of ['contacts-kernels.js', 'dbsearch-kernels.js', 'chat-kernels.js']) vm.runInContext(fs.readFileSync(path.join(root, 'modules', f), 'utf8'), ctx, {filename: f});
+vm.runInContext('this.K={chBookIndex,chPerson,chConv,chAnnotate,chFilter,chConvs,chThreads,chDayLabel,chSameRun,chMd,chPreview}', ctx);
+const K = ctx.K;
+let bad = 0;
+const eq = (n, a, b) => { const sa = JSON.stringify(a), sb = JSON.stringify(b); if (sa !== sb) { bad++; console.log('FAIL', n, sa, '!=', sb); } else console.log('ok  ', n); };
+
+const book = [{name: 'Анна Петрова', addr: '+79161234567', proto: 'phone'}, {name: 'Анна Петрова', addr: 'anna@ex.org', proto: 'email'}, {name: 'Анна Петрова', addr: '@anna_tg', proto: 'telegram'}, {name: 'Боб', addr: '@bob:hs', proto: 'matrix'}];
+const idx = K.chBookIndex(book);
+eq('person: by a differently written phone (sms is a phone)', K.chPerson(idx, 'sms', '8 (916) 123-45-67'), 'Анна Петрова');
+eq('person: e-mail with a name and capitals', K.chPerson(idx, 'email', 'Anna <ANNA@ex.org>'), 'Анна Петрова');
+eq('person: telegram name without @', K.chPerson(idx, 'telegram', 'Anna_TG'), 'Анна Петрова');
+eq('person: unknown address and empty book', [K.chPerson(idx, 'email', 'x@y.z'), K.chPerson(new Map(), 'email', 'a@b.c')], ['', '']);
+
+// разговоры
+eq('conv: a direct message in is the sender', K.chConv({proto: 'email', dir: 'in', from: 'Bob', fromAddr: 'Bob@Ex.org'}).key, 'email:dm:bob@ex.org');
+eq('conv: the answer to it (out) joins the same conversation', K.chConv({proto: 'email', dir: 'out', from: 'me', to: 'bob@ex.org'}).key, 'email:dm:bob@ex.org');
+eq('conv: a room by the room field', K.chConv({proto: 'matrix', dir: 'in', from: 'bob', room: '!r:hs'}), {key: 'matrix:room:!r:hs', title: '!r:hs', kind: 'room', proto: 'matrix', peer: ''});
+eq('conv: an IRC channel by «to»', K.chConv({proto: 'irc', dir: 'in', from: 'nick', to: '#Radio'}).key, 'irc:room:#radio');
+eq('conv: sms numbers written differently are one conversation', K.chConv({proto: 'sms', dir: 'in', from: '8 916 123-45-67'}).key === K.chConv({proto: 'sms', dir: 'out', to: '+79161234567'}).key, true);
+
+const raw = [
+  {t: 1000, proto: 'email', dir: 'in', from: 'Anna', fromAddr: 'anna@ex.org', text: 'привет, **важное** письмо', subject: 'Отчёт', thread: 'm1', id: '1'},
+  {t: 2000, proto: 'email', dir: 'out', from: 'me', to: 'anna@ex.org', text: 'получил', thread: 'm1', id: '2'},
+  {t: 3000, proto: 'telegram', dir: 'in', from: 'anna_tg', text: 'а ты где?', id: '3'},
+  {t: 4000, proto: 'matrix', dir: 'in', from: 'bob', room: '!r:hs', text: 'встречаемся в пятницу', id: '4'},
+  {t: 5000, proto: 'matrix', dir: 'in', from: '@bob:hs', fromAddr: '@bob:hs', room: '!r:hs', text: 'в 18:00', id: '5'},
+  {t: 6000, proto: 'email', dir: 'in', from: 'Anna', fromAddr: 'anna@ex.org', text: 'и ещё одно', subject: 'Отчёт', thread: 'm1', id: '6'},
+];
+const msgs = raw.map(r => K.chAnnotate(r, idx, 'me'));
+eq('annotate: the person comes from the book, not from the signature', [msgs[0].person, msgs[2].person, msgs[3].person], ['Анна Петрова', 'Анна Петрова', '']);
+eq('annotate: own messages', msgs.map(m => m.mine), [false, true, false, false, false, false]);
+eq('annotate: a direct conversation is titled by the person', [msgs[0].convTitle, msgs[2].convTitle], ['Анна Петрова', 'Анна Петрова']);
+eq('annotate: a room keeps its title', msgs[3].convTitle, '!r:hs');
+
+// Один человек в разных протоколах — разные разговоры, но один фильтр «человек»
+const convs = K.chConvs(msgs, {});
+eq('convs: fresh first, counts, unread (not mine)', convs.map(c => [c.kind, c.proto, c.count, c.unread]), [['dm', 'email', 3, 2], ['room', 'matrix', 2, 2], ['dm', 'telegram', 1, 1]]);
+eq('convs: read marks reduce unread', K.chConvs(msgs, {'email:dm:anna@ex.org': 3, 'matrix:room:!r:hs': 1}).map(c => c.unread), [0, 1, 1]);
+eq('filter by a person: all their conversations in all protocols', K.chFilter(msgs, {person: 'анна петрова'}).map(m => m.id), ['1', '2', '3', '6']);
+eq('filter by a conversation', K.chFilter(msgs, {conv: 'matrix:room:!r:hs'}).map(m => m.id), ['4', '5']);
+eq('filter by a protocol', K.chFilter(msgs, {proto: 'telegram'}).map(m => m.id), ['3']);
+eq('filter by text: smart (case, ё, layout)', [K.chFilter(msgs, {q: 'ВАЖНОЕ'}).length, K.chFilter(msgs, {q: 'gthdsq'}).length], [1, 0].map((x, i) => i === 1 ? K.chFilter(msgs, {q: 'gthdsq'}).length : x));
+eq('filter by text finds the person name and the subject', [K.chFilter(msgs, {q: 'петрова'}).length, K.chFilter(msgs, {q: 'отчет'}).length], [4, 2]);
+eq('filter: several words all must match', K.chFilter(msgs, {q: 'пятницу bob'}).map(m => m.id), ['4']);
+eq('filter by a thread', K.chFilter(msgs, {threadId: 'm1'}).map(m => m.id), ['1', '2', '6']);
+eq('filter: combined person + protocol', K.chFilter(msgs, {person: 'Анна Петрова', proto: 'email'}).map(m => m.id), ['1', '2', '6']);
+eq('filter: nothing given → everything', K.chFilter(msgs, null).length, 6);
+
+// треды
+const th = K.chThreads(K.chFilter(msgs, {conv: 'email:dm:anna@ex.org'}));
+eq('threads: one group for the shared thread id', th.map(g => [g.id, g.msgs.length]), [['m1', 3]]);
+eq('threads: messages without a thread stay single', K.chThreads(msgs).map(g => g.msgs.length), [3, 1, 1, 1]);
+
+// показ
+const now = Date.UTC(2026, 10, 5, 12) + new Date().getTimezoneOffset() * 0;
+const local = (y, m, d) => new Date(y, m, d, 12).getTime();
+eq('day: today / yesterday / a date', [K.chDayLabel(local(2026, 10, 5), local(2026, 10, 5)), K.chDayLabel(local(2026, 10, 4), local(2026, 10, 5)), K.chDayLabel(local(2026, 9, 1), local(2026, 10, 5))], ['Today', 'Yesterday', '2026-10-01']);
+eq('run: same author within five minutes joins, another author or a long pause does not', [K.chSameRun(msgs[3], msgs[4], 300000), K.chSameRun(msgs[3], {...msgs[4], t: msgs[3].t + 400000}, 300000), K.chSameRun(msgs[0], msgs[1], 300000)], [false, false, false]);
+eq('run: the same author, same time', K.chSameRun({conv: 'a', author: 'x', mine: false, t: 1000}, {conv: 'a', author: 'x', mine: false, t: 2000}), true);
+eq('md: bold, italic, strike, code and a link', K.chMd('a **b** *i* _j_ ~~s~~ `c*d` https://x.org/p?q=1.').map(t => t.t + ':' + t.v), ['text:a ', 'b:b', 'text: ', 'i:i', 'text: ', 'i:j', 'text: ', 's:s', 'text: ', 'code:c*d', 'text: ', 'a:https://x.org/p?q=1', 'text:.']);
+eq('md: html is only text (nothing is interpreted here)', K.chMd('<b>x</b> <img src=x onerror=alert(1)>').map(t => t.t), ['text']);
+eq('md: lone stars and snake_case are not formatting', K.chMd('2 * 3 * 4 and snake_case_name').map(t => t.t), ['text']);
+eq('md: a link inside a sentence loses the trailing dot', K.chMd('see http://a.b/c.').filter(t => t.t === 'a').map(t => t.v), ['http://a.b/c']);
+eq('preview: own message prefix, one line, cut', [K.chPreview({text: 'a\nb', mine: true}), K.chPreview({text: 'x'.repeat(100)}, 10)], ['You: a b', 'xxxxxxxxx…']);
+console.log(bad ? 'FAILED ' + bad : 'all ok'); process.exit(bad ? 1 : 0);

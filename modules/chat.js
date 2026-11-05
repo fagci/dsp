@@ -73,6 +73,7 @@ function chMount(n){
   const bar=document.createElement('div'); bar.className='chat-bar'; bar.hidden=true;
   const typ=document.createElement('div'); typ.className='chat-typ'; typ.hidden=true;
   row.append(inp,btn); box.append(bar,log,typ,row); n.mid.append(box);
+  if(n.size && n.size.h>0) box.style.height=n.size.h+'px';
   n.chat=box; n.logEl=log; n.barEl=bar; n.typEl=typ; n.shown=0; n.full=true; n.shownSig=null; n.shownTyp=null;
 }
 function chRender(n){
@@ -85,15 +86,24 @@ function chRender(n){
   n.dirty=false;
 }
 
-def({ id:'chat', title:'Chat', cat:'Output', kw:'chat messages text terminal console send receive', resize:true, w:340, bare:true,
-  ins:[{n:'text',t:'txt'},{n:'send',t:'txt'},{n:'from',t:'txt'},{n:'rec',t:'rec'},{n:'rows',t:'bands'}],
-  outs:[{n:'text',t:'txt'},{n:'go',t:'num'}],
-  params:[{n:'echo',t:'check',d:true,label:'show sent messages'},
+def({ id:'chat', title:'Chat', cat:'Output', kw:'chat messages text terminal console send receive', resize:true, w:340, h:340, bare:true,
+  ins:[{n:'text',t:'txt'},{n:'send',t:'txt'},{n:'from',t:'txt'},{n:'rec',t:'rec'},{n:'rows',t:'bands'},{n:'book',t:'bands'}],
+  outs:[{n:'text',t:'txt'},{n:'to',t:'txt'},{n:'go',t:'num'},{n:'unread',t:'num'}],
+  params:[{n:'mode',t:'select',opts:['simple','conversations'],d:'simple',label:'view',tip:'simple — one log (as before). conversations — a list of chats (people and rooms of all protocols from a Messenger rec) with unread counts, threads, replies, filters by person (book ← Contacts), protocol and text; what you write goes to the open conversation: out text + to → Messenger send + to',fn:n=>{ n.full=true; n.dirty=true; n.cvDirty=true; if(n.chat){ n.chat.remove(); n.chat=null; n.cvEl=null; } }},
+          {n:'echo',t:'check',d:true,label:'show sent messages'},
           {n:'time',t:'check',d:false,label:'timestamps',fn:n=>{ n.full=true; n.dirty=true; }},
           {n:'me',t:'text',d:'',label:'my name (in rows)',fn:n=>{ n.full=true; n.dirty=true; n.peopleSig=null; }},
           {n:'clear',t:'button',label:'Clear',fn:n=>{ n.log=[]; n.full=true; n.dirty=true; }}],
-  init:n=>{ n.log=[]; n.outQ=[]; n.lastIn=undefined; n.lastSend=undefined; n.last=''; n.people=[]; n.typing=[]; n.peopleSig=''; n.typSig=''; n.lastRec=undefined; n.lastRows=undefined; n.dirty=false; n.full=true; n.chat=null; },
+  init:n=>{ chcInit(n); n.log=[]; n.outQ=[]; n.lastIn=undefined; n.lastSend=undefined; n.last=''; n.people=[]; n.typing=[]; n.peopleSig=''; n.typSig=''; n.lastRec=undefined; n.lastRows=undefined; n.dirty=false; n.full=true; n.chat=null; },
   process(n,I){
+    if(n.p.mode==='conversations'){
+      if(Array.isArray(I.book) && I.book!==n.lastBook){ n.lastBook=I.book; chcSetBook(n,I.book); }
+      if(I.rec && I.rec!==n.lastRec){ n.lastRec=I.rec; for(const r of Array.isArray(I.rec) ? I.rec : [I.rec]) chcAdd(n,r); }
+      if(typeof I.send==='string' && I.send!==n.lastSend){ n.lastSend=I.send; chcSend(n,I.send); }
+      if(n.msgs.some(m=>m.pending)) n.cvDirty=true;                       // статус «отправляется» → «⚠» по времени
+      let go=0; if(n.outQ.length){ n.last=n.outQ.shift(); go=1; }
+      return {text:n.last,to:n.outTo,go,unread:n.unreadN||0};
+    }
     if(Array.isArray(I.rows) && I.rows!==n.lastRows){ n.lastRows=I.rows; chSetPeople(n,I.rows); }
     if(typeof I.text==='string' && I.text!==n.lastIn){
       n.lastIn=I.text;
@@ -111,8 +121,13 @@ def({ id:'chat', title:'Chat', cat:'Output', kw:'chat messages text terminal con
     if(typeof I.send==='string' && I.send!==n.lastSend){ n.lastSend=I.send; chSend(n,I.send); }   // исходящее с провода
     let go=0;
     if(n.outQ.length){ n.last=n.outQ.shift(); go=1; }
-    return {text:n.last, go}; },
+    return {text:n.last, to:'', go, unread:0}; },
   draw(n){
+    if(n.p.mode==='conversations'){
+      if(!n.cvEl || !n.cvEl.isConnected) chcMount(n);
+      if(n.cvDirty) chcRender(n);
+      return;
+    }
     if(!n.chat || !n.chat.isConnected) chMount(n);
     if(n.dirty || n.full) chRender(n); }
 });
