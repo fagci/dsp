@@ -8,7 +8,7 @@
 const MG_KEEP=300;
 const MG_DEF_SERVER={nostr:'wss://relay.damus.io wss://nos.lol',ntfy:'https://ntfy.sh'};
 function mgNodeLog(n,dir,m){
-  const row={t:m.t || Date.now(),proto:n.p.proto,dir,from:dir==='out' ? String(n.p.nick||'me') : String(m.from||''),to:m.to||'',text:String(m.text),id:m.id||''};
+  const row={t:m.t || Date.now(),proto:n.p.proto,dir,from:dir==='out' ? String(n.p.nick||'me') : mgClean(m.from||''),to:m.to||'',text:mgClean(m.text),id:m.id||''};
   if(m.atts && m.atts.length){
     row.atts=m.atts.map(a=>({name:a.name,mime:a.mime,size:a.size||((a.bytes||[]).length||0)}));
     row.text=(row.text?row.text+' ':'')+row.atts.map(a=>'[file: '+a.name+(a.size?' · '+(a.size/1024).toFixed(0)+' KB':'')+']').join(' ');
@@ -24,12 +24,16 @@ function mgNodeLog(n,dir,m){
   n.recQ.push(row); if(n.recQ.length>2000) n.recQ.shift();
   n.lastRow=row; n.fresh++; n.count++;
 }
+// журнал и счётчики узла: сообщения прежнего протокола / канала в новом соединении — мусор
+function mgNodeReset(n){ n.log=[]; n.recQ=[]; n.count=0; n.lastRow=null; n.fresh=0; }
+const mgNodeSig=n=>[n.p.proto,n.p.account,n.p.channel,n.p.bridge].map(x=>String(x||'')).join('\u0001');
 function mgNodeStop(n){
   if(n.sess){ try{ n.sess.close(); }catch(e){} n.sess=null; }
   n.ok=false; n.status='disconnected';
 }
 function mgNodeStart(n){
   mgNodeStop(n);
+  const sig=mgNodeSig(n); if(n.sig!==undefined && n.sig!==sig) mgNodeReset(n); n.sig=sig;      // другой протокол / канал / учётка — журнал с нуля; переподключение к тому же — журнал остаётся
   const p=n.p, proto=p.proto;
   const rawBridge=String(p.bridge||'').trim();
   if(rawBridge[0]==='@' && gwErr(rawBridge)){ n.status=gwErr(rawBridge); return; }
@@ -135,7 +139,7 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
   ins:[{n:'send',t:'txt'},{n:'to',t:'txt'},{n:'rows',t:'bands'}], outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'from',t:'txt'},{n:'new',t:'num'},{n:'ok',t:'num'}],
   readout:true, tall:true,
   params:[
-    {n:'proto',t:'select',opts:['nostr','ntfy','matrix','telegram','irc','xmpp','aprs','email','sms','reticulum','mastodon','bluesky','rss'],d:'nostr',label:'protocol'},
+    {n:'proto',t:'select',opts:['nostr','ntfy','matrix','telegram','irc','xmpp','aprs','email','sms','reticulum','mastodon','bluesky','rss'],d:'nostr',fn:n=>{ mgNodeStop(n); mgNodeReset(n); n.sig=undefined; n.status='not connected'; },label:'protocol'},
     {n:'pxcred',t:'text',d:'',cred:true,credType:'proxy',label:'proxy',tip:'proxy — a credential of type «proxy» (socks5://… or http://…): the Node bridge opens everything through it (IRC, XMPP, e-mail, Matrix, Nostr, feeds…). Empty — the proxy of the gateway in Settings → Devices, or the bridge\'s own --proxy',adv:true,if:n=>n.p.proto!=='sms'},
     {n:'account',t:'text',d:'',cred:true,label:'account',tip:'account — a credential (Settings → Credentials) or «＋ new…» right here: it IS the server, the login and the password of the channel. Empty — no auth (Nostr anonymous, ntfy, public feeds; defaults: public relays, ntfy.sh, …)',if:n=>!['sms','rss'].includes(n.p.proto)},
     {n:'channel',t:'text',d:'dsp',label:'channel / room / topic',tip:'channel — nostr: hashtag · ntfy: topic · matrix: room (!id:server or #alias:server) · telegram: only to receive from ONE chat — its id or @name; leave empty for all chats (replies go to the last one) · irc: #channels · xmpp: room@conference.server (empty — direct messages only) · aprs: server filter (g/CALL, m/50, r/lat/lon/km, b/CALL*; empty — messages to you) · email: mailbox (empty — INBOX) · reticulum: the default recipient (32-digit address or a name heard in announces) · mastodon / bluesky: WHAT TO READ — #tags (several: any of them), -#tag drops posts with it, mastodon: «local» / «home» (token), empty — the public timeline; bluesky: @account, a feed link (bsky.app/profile/…/feed/…) or an at:// feed · rss: WORDS — any of them in the title / text / categories, -word drops an item; empty — everything',if:n=>n.p.proto!=='sms'},
@@ -156,6 +160,7 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
     {n:'go',t:'button',label:'Send',fn:n=>mgNodeSend(n,n.p.text)},
     {n:'connect',t:'button',label:'Connect',fn:n=>mgNodeStart(n)},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>mgNodeStop(n)},
+    {n:'clear',t:'button',label:'Clear log',fn:n=>{ mgNodeReset(n); }},
   ],
   init:n=>{ n.regNext=false; n.sess=null; n.ok=false; n.status='not connected'; n.warn=''; n.log=[]; n.recQ=[]; n.lastRow=null; n.fresh=0; n.count=0; n.lastSend=''; n.lastTo='';
             n.eph=''; n.mxCache={}; n.auto=false; n.contacts=null; n.lastContacts=undefined; n.book=[]; },
