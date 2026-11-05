@@ -243,6 +243,8 @@ export function createMsgrBridge(opt) {
           Promise.resolve(c.ses.react(m.r)).catch(() => {});
         } else if (m.op === 'modify' && c.ses && c.ses.modify && m.r && typeof m.r === 'object') {
           Promise.resolve(c.ses.modify(m.r)).catch(() => {});
+        } else if (m.op === 'ack' && c.ses && c.ses.ack && m.r && typeof m.r === 'object') {
+          Promise.resolve(c.ses.ack(m.r)).catch(() => {});
         } else if (m.op === 'close') stop();
       },
       onClose: () => { try { sock.end(wsFrame('', 8)); } catch (e) { /* закрыт */ } bye(); },

@@ -45,9 +45,9 @@ const PW = rnd(), TOK = rnd(), TG = rnd() + ':' + rnd(), IRC_PW = rnd(), BAD = r
   ok('nostr connected', A.state() === 'up' && B.state() === 'up', JSON.stringify(A.st));
   await sleep(100);
   ok('nostr send', A.s.send('привет 👋') === true);
-  await until(() => A.msgs.length && B.msgs.length);
+  await until(() => A.msgs.some(m => !m.kind) && B.msgs.length);      // у A раньше эха приходит событие статуса (relays: 1/1) — оно не сообщение
   ok('nostr peer gets it', B.msgs[0]?.text === 'привет 👋' && B.msgs[0].from === 'аня' && !B.msgs[0].self, JSON.stringify(B.msgs));
-  ok('nostr own message comes back as self', A.msgs[0]?.self === true);
+  ok('nostr own message comes back as self', A.msgs.find(m => !m.kind)?.self === true);
   // подделка: событие с чужой подписью не должно дойти
   const forged = M.mgNostrSign(M.mgNostrGenKey(), {created_at: 1, kind: 1, tags: [['t', 'dsp-test']], content: 'forged'});
   forged.content = 'tampered';

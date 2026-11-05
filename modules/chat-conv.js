@@ -10,9 +10,9 @@ const chcEl=(tag,cls,txt)=>{ const e=document.createElement(tag); if(cls) e.clas
 
 function chcInit(n){
   n.msgs=[]; n.read={}; n.seen=new Set(); n.pid=0; n.bookIdx=new Map(); n.bookSig='';
-  n.cs={open:'',q:'',person:'',proto:'',unread:false,reply:null,fo:false,fold:new Set(),edit:null,pick:''};
+  n.cs={open:'',q:'',person:'',proto:'',unread:false,reply:null,fo:false,fold:new Set(),edit:null,pick:'',acked:{}};
   n.outTo=''; n.cvEl=null; n.cvDirty=true; n.unreadN=0; n.lastBook=undefined;
-  n.react=new Map(); n.reactQ=[]; n.editQ=[]; n.mods=new Map();
+  n.react=new Map(); n.reactQ=[]; n.editQ=[]; n.mods=new Map(); n.sts=new Map();
   n.hist={loaded:false,loading:false,queue:[],early:[],timer:null,name:'',err:''};
 }
 // записи книги (Contacts → book): имена людей по адресам; при смене книги сообщения переразмечаются
@@ -24,6 +24,13 @@ function chcSetBook(n,rows){
 }
 function chcAdd(n,r,quiet){
   if(!r || typeof r!=='object' || r.kind==='roster') return;
+  if(r.kind==='status'){                                                          // доставлено / прочитано — событие над своим сообщением
+    const ev={...r,t:+r.t||Date.now(),proto:r.proto||'chat'}, k=chHistKey(ev)+':'+ev.state+':'+chHash(chStr(ev.author));
+    if(n.seen.has(k)) return; n.seen.add(k);
+    chStatusApply(n.sts,ev); n.cvDirty=true;
+    if(!quiet && chcStore(n)){ n.hist.queue.push(chToItem(ev)); chcSchedule(n); }
+    return;
+  }
   if(r.kind==='edit' || r.kind==='delete'){                                      // правка / удаление — событие над сообщением
     const ev={...r,t:+r.t||Date.now(),proto:r.proto||'chat'}, k=chHistKey(ev);
     if(n.seen.has(k)) return; n.seen.add(k);
@@ -116,6 +123,18 @@ function chcSend(n,text){
 const chcStore=n=>String(n.p.store||'').trim();
 const chcReadKey=n=>'dsp-chat-read:'+chcStore(n);
 function chcReadT(n){ try{ return JSON.parse(localStorage.getItem(chcReadKey(n))||'{}')||{}; }catch(e){ return {}; } }
+// сообщить собеседнику «прочитано»: последнее входящее сообщение открытого разговора (Matrix, XMPP); Messenger отправит, если его настройка receipts разрешает
+function chcAcked(n){ try{ return JSON.parse(localStorage.getItem('dsp-chat-acked:'+chcStore(n))||'{}')||{}; }catch(e){ return {}; } }
+function chcAck(n,key){
+  const last=[...n.msgs].reverse().find(m=>m.conv===key && !m.mine && !m.deleted && !m.pending && chcRef(m) && CH_READ_PROTOS.includes(m.proto));
+  if(!last) return;
+  const ref=chcRef(last), a=n.cs.acked;
+  if(a[key]===undefined && chcStore(n)) a[key]=chcAcked(n)[key]||'';                // после перезагрузки уже сообщённое повторно не шлём
+  if(a[key]===ref) return;
+  a[key]=ref;
+  if(chcStore(n)){ try{ const all=chcAcked(n); all[key]=ref; localStorage.setItem('dsp-chat-acked:'+chcStore(n),JSON.stringify(all)); }catch(e){ /* без хранилища */ } }
+  const d=chcDest(last); n.editQ.push({op:'read',target:ref,room:d.room,to:d.to});
+}
 function chcMarkRead(n,key){
   const list=n.msgs.filter(m=>m.conv===key);
   if(n.read[key]===list.length) return;
@@ -184,7 +203,7 @@ function chcMsgEl(n,m,run,showWho){
   }
   const foot=chcEl('div','cv-foot'); if(m.edited && !m.deleted) foot.append(chcEl('span','cv-edited','edited')); foot.append(chcEl('span','cv-time',chcTime(m.t)));
   if(can){ const rb=chcEl('button','cv-re cv-rb','☺'); rb.type='button'; rb.title='react'; rb.addEventListener('click',ev=>{ ev.stopPropagation(); n.cs.pick=n.cs.pick===ref ? '' : ref; n.cvDirty=true; }); foot.append(rb); }
-  if(mine){ const st=m.pending ? (Date.now()-m.sentAt>CHC_PENDING_MS ? '⚠' : '…') : '✓'; foot.append(chcEl('span','cv-st'+(m.pending ? ' wait' : ''),st)); foot.lastChild.title=m.pending ? (st==='⚠' ? 'no confirmation from the channel' : 'sending') : 'sent'; }
+  if(mine && !m.deleted){ const tk=chTick(m,ref ? chStatusOf(n.sts,ref) : null,Date.now(),CHC_PENDING_MS), sp=chcEl('span','cv-st'+(tk.cls ? ' '+tk.cls : ''),tk.sym); sp.title=tk.title; foot.append(sp); }
   if(chcEditable(m)){ const eb=chcEl('button','cv-re','✎'); eb.type='button'; eb.title='edit'; eb.addEventListener('click',ev=>{ ev.stopPropagation(); chcEditStart(n,m); }); foot.append(eb); }
   if(chcDeletable(m)){ const db=chcEl('button','cv-re','🗑'); db.type='button'; db.title='delete'; db.addEventListener('click',ev=>{ ev.stopPropagation(); chcDelete(n,m); }); foot.append(db); }
   const re=chcEl('button','cv-re','↩'); re.title='reply'; re.type='button';
@@ -293,7 +312,7 @@ function chcRender(n){
   n.cvTitle.textContent=cur ? cur.title+(cur.kind==='room' ? '' : '') : (chcActive(n) ? 'Search' : 'Chats');
   n.cvTitle.title=cur ? cur.proto+(cur.kind==='room' ? ' · room' : '') : '';
   body.textContent='';
-  if(cv.open){ chcThread(n,body); chcMarkRead(n,cv.open); }       // открытый разговор читается
+  if(cv.open){ chcThread(n,body); chcMarkRead(n,cv.open); chcAck(n,cv.open); }       // открытый разговор читается
   else if(chcActive(n) && (cv.q || cv.person) ) chcResults(n,body);
   else chcList(n,body);
   n.cvRep.textContent=''; if(cv.edit){ n.cvRep.hidden=false; n.cvRep.append(chcEl('span',null,'✎ editing: '+chPreview(cv.edit.m,60))); const xe=chcEl('button',null,'✕'); xe.type='button'; xe.title='cancel (Esc)'; xe.addEventListener('click',()=>chcEditCancel(n)); n.cvRep.append(xe); }

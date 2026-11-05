@@ -1073,6 +1073,8 @@ select.aed-b{padding:0 6px}
 .cv-time{font-size:10px;color:var(--dim)}
 .cv-st{font-size:10px;color:var(--acc2)}
 .cv-st.wait{color:var(--dim)}
+.cv-st.rd{color:#4fc3f7}
+.cv-st.bad{color:#e0a030}
 .cv-re{border:0;background:none;color:var(--dim);cursor:pointer;font-size:12px;padding:0 2px;opacity:.35}
 .cv-msg:hover .cv-re,.cv-re:focus{opacity:1;color:var(--acc2)}
 .cv-thr{margin:6px 0 2px;border-left:2px solid var(--acc2);padding-left:6px;display:flex;flex-direction:column;gap:2px}
