@@ -44,7 +44,7 @@ const TBL_TEMPLATES=[
    types:{photo:{t:'photo'},category:{t:'choice',opts:['A','B','C']},rating:{t:'num'},date:{t:'date'},owned:{t:'bool'},note:{t:'long'}},
    desc:'A hand-kept catalogue (like Memento): photo, category (a choice), number, date, checkbox, long note. Shown as cards; add fields and links to other lists in ▦ view → Fields.'},
   {id:'people', title:'Contacts (people)', dir:'contacts', cols:['name','phones','emails','org','birthday','tags','note','photo'],
-   types:{photo:{t:'photo'},birthday:{t:'date'},note:{t:'long'}},
+   types:{phones:{t:'phone'},emails:{t:'email'},photo:{t:'photo'},birthday:{t:'date'},note:{t:'long'}},
    desc:'A person: several phones and e-mails in one field (separated by « | »), organisation, birthday, tags, a photo. Filled by the Contacts node (vCard, phone, messages); search by phone or name in the filter.'},
   {id:'idents', title:'Contact addresses (protocol + address → person)', dir:'contacts', cols:['proto','addr','name','contact','seen','key'],
    types:{proto:{t:'choice',opts:['phone','email','telegram','matrix','xmpp','irc','nostr','ntfy','aprs','reticulum','bluesky','mastodon']},contact:{t:'link',to:'contacts/people',multi:false},seen:{t:'date'}},
