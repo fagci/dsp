@@ -25,10 +25,10 @@
  * Values that cannot be real (the Zigbee "invalid" 0x8000 = -327.68, a reading
  * outside the sensor range, NaN) are not passed on as measurements:
  *   {"zb":"bad","kind":"temp","addr":"0x1234","ep":1,"v":-327.68}
- * Temperature is accepted strictly between -40 and 125 C and humidity from 0 up to (not including) 100 %: a real sensor sends the sentinels 125.00 C, -40.00 C and 100.00 % together after a pause.
+ * Temperature is accepted only inside the sensor's own range (TEMP_MIN_C..TEMP_MAX_C, -10..50 C for the test sensor: below that it showed -35..-20 C at -7 C outside), humidity from 0 up to (not including) 100 % - the sensor sends 125.00 C and 100.00 % together after a pause.
  * Hardware status: tested on an ESP32-C5 with one sensor - network forming,
- * join, INFO, REPORT and POLLALL commands. Measurements seen on hardware (temp -35..+13 C, hum ~58 %, over
- * ser2net); the "bad" filter itself is not yet seen running.
+ * join, INFO, REPORT and POLLALL commands. Measurements seen on hardware over ser2net
+ * (readings outside the sensor range were wrong); the "bad" filter itself is not yet seen running.
  */
 #include <Arduino.h>
 #ifndef ZIGBEE_MODE_ZCZR
@@ -41,6 +41,10 @@
 #define OPEN_ON_BOOT  180  // seconds the network stays open after boot
 #define OPEN_REPEAT_S 300  // reopen for joining this often (0 = only OPEN cmd)
 #define POLL_ALL_S    60   // poll every bound sensor this often (0 = off)
+// Паспортный диапазон датчика, °C: что за его пределами, датчик не измеряет, а выдаёт мусор (проверено: при -7 на улице он показывал -35...-20).
+// Поставьте диапазон своей модели; для датчика с запасом можно расширить.
+#define TEMP_MIN_C    -10.0f
+#define TEMP_MAX_C    50.0f
 
 static uint16_t repMinS = 10, repMaxS = 300;  // reporting: min / max interval, seconds
 static float repDeltaT = 0.5, repDeltaH = 1.0;  // report on change: °C / %
@@ -67,8 +71,8 @@ static void fmtIeee(const uint8_t *e, char *buf, size_t n) {
 }
 
 /********************* sensor reports -> JSON lines *********************/
-// Границы исключают значения-заглушки датчика (на живом датчике: 125.00 °C, -40.00 °C и 100.00 % приходят пачкой после паузы)
-static bool tempOk(float v) { return v > -40.0f && v < 125.0f; }   // NaN fails both comparisons
+// Температура — по паспорту датчика (TEMP_MIN_C / TEMP_MAX_C); влажность 100.00 % приходит заглушкой вместе с 125.00 °C после паузы
+static bool tempOk(float v) { return v >= TEMP_MIN_C && v <= TEMP_MAX_C; }   // NaN fails both comparisons
 static bool humOk(float v) { return v >= 0.0f && v < 100.0f; }
 
 static void onTemp(float v, uint8_t ep, esp_zb_zcl_addr_t src) {
