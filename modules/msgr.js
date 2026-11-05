@@ -59,6 +59,8 @@ function mgNodeStart(n){
     if(cr.pass) cfg.pass=cr.pass;
     if(cr.smtp) cfg.smtp=cr.smtp;
   }
+  const own=String(p.server||'').trim();
+  if(own) cfg.server=own;                                            // адрес, набранный в самом узле, главнее адреса из учётки (учётка тогда даёт только логин и пароль)
   if(!cfg.server) cfg.server=MG_DEF_SERVER[proto]||'';
   if(proto==='reticulum' && !cfg.pass.trim()){
     try{ cfg.pass=mgHex(mgRandom(64));
@@ -146,6 +148,7 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
   readout:true, tall:true,
   params:[
     {n:'proto',t:'select',opts:['nostr','ntfy','matrix','telegram','irc','xmpp','aprs','email','sms','reticulum','mastodon','bluesky','rss'],d:'nostr',fn:n=>{ mgNodeStop(n); mgNodeReset(n); n.sig=undefined; n.status='not connected'; },label:'protocol'},
+    {n:'server',t:'text',d:'',label:'server',tip:'where to connect — nostr: relays wss://… (several, separated by a space; empty — public ones) · ntfy: https://ntfy.sh (empty — that one) · matrix: https://matrix.org · telegram: empty · irc: ircs://irc.libera.chat:6697 or wss://… · xmpp: xmpp://host:5222 (empty — the domain of the login) · aprs: aprs://rotate.aprs2.net:14580 · email: imaps://imap.gmail.com:993 (SMTP — in the account) · mastodon: https://mastodon.social · bluesky: https://public.api.bsky.app · rss: feed addresses https://…, several separated by a space · reticulum: rns://host:port. Typed here it wins over the server of the account (the account then gives only the login and password)',if:n=>n.p.proto!=='sms'},
     {n:'pxcred',t:'text',d:'',cred:true,credType:'proxy',label:'proxy',tip:'proxy — a credential of type «proxy» (socks5://… or http://…): the Node bridge opens everything through it (IRC, XMPP, e-mail, Matrix, Nostr, feeds…). Empty — the proxy of the gateway in Settings → Devices, or the bridge\'s own --proxy',adv:true,if:n=>n.p.proto!=='sms'},
     {n:'account',t:'text',d:'',cred:true,label:'account',tip:'account — a credential (Settings → Credentials) or «＋ new…» right here: it IS the server, the login and the password of the channel. Empty — no auth (Nostr anonymous, ntfy, public feeds; defaults: public relays, ntfy.sh, …)',if:n=>!['sms','rss'].includes(n.p.proto)},
     {n:'channel',t:'text',d:'dsp',label:'channel / room / topic',tip:'channel — nostr: hashtag · ntfy: topic · matrix: room (!id:server or #alias:server) · telegram: only to receive from ONE chat — its id or @name; leave empty for all chats (replies go to the last one) · irc: #channels · xmpp: room@conference.server (empty — direct messages only) · aprs: server filter (g/CALL, m/50, r/lat/lon/km, b/CALL*; empty — messages to you) · email: mailbox (empty — INBOX) · reticulum: the default recipient (32-digit address or a name heard in announces) · mastodon / bluesky: WHAT TO READ — #tags (several: any of them), -#tag drops posts with it, mastodon: «local» / «home» (token), empty — the public timeline; bluesky: @account, a feed link (bsky.app/profile/…/feed/…) or an at:// feed · rss: WORDS — any of them in the title / text / categories, -word drops an item; empty — everything',if:n=>n.p.proto!=='sms'},
