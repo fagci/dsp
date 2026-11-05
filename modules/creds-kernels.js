@@ -19,6 +19,29 @@ const CR_EXAMPLE={
   proxy:   {server:'socks5://127.0.0.1:9050 · http://proxy.lan:3128', smtp:''},
   custom:  {server:'imaps://… · https://… · ircs://…',    smtp:''},
 };
+// подсказки к полям формы по типу: что писать в «login» и «password» (то, как это понимает узел)
+const CR_HINT={
+  email:   {user:'you@gmail.com',                 pass:'password (for Gmail — an app password)'},
+  matrix:  {user:'username (without @ and :server)', pass:'password — or an access token with the login left empty'},
+  xmpp:    {user:'you@example.org (full address)',  pass:'password'},
+  irc:     {user:'nick (or the login of the server)', pass:'server / NickServ password, if any'},
+  ntfy:    {user:'login — or empty',               pass:'password, or the access token (tk_…)'},
+  telegram:{user:'empty',                          pass:'bot token from @BotFather'},
+  nostr:   {user:'empty',                          pass:'private key (nsec… or hex); empty — a new anonymous key per session'},
+  aprs:    {user:'your callsign (N0CALL-7)',        pass:'APRS-IS passcode (empty — receive only)'},
+  mastodon:{user:'empty',                          pass:'access token'},
+  bluesky: {user:'handle.bsky.social',              pass:'app password'},
+  proxy:   {user:'login (if the proxy asks)',       pass:'password (if the proxy asks)'},
+  custom:  {user:'login',                          pass:'password / token'},
+};
+const CR_REGISTER=['xmpp','matrix'];                              // где аккаунт можно создать прямо из узла (открытая регистрация)
+// тип учётки для узла: явный credType параметра, иначе по протоколу узла (xmpp → xmpp), иначе custom
+const crTypeFor=(credType,proto)=>CR_TYPES.includes(credType) ? credType : CR_TYPES.includes(proto) && proto!=='proxy' ? proto : 'custom';
+// свободное имя учётки: xmpp1, xmpp2…
+function crFreeName(list,base){
+  const used=new Set((Array.isArray(list)?list:[]).map(c=>String(c.name||'').toLowerCase())), b=String(base||'acct').replace(/[^A-Za-z0-9_.-]/g,'').slice(0,20)||'acct';
+  for(let i=1;;i++){ const n=b+i; if(!used.has(n.toLowerCase())) return n; }
+}
 function crGuess(server){
   const s=String(server||'').trim().toLowerCase();
   if(/^imaps?:/.test(s)||/^smtps?:/.test(s)) return 'email';

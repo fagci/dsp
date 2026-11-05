@@ -162,6 +162,19 @@ function mgOpenMatrix(cfg,c){
   };
   (async()=>{
     try{
+      if(!token && cfg.register && cfg.user && cfg.pass){            // создать учётку на сервере (открытая регистрация без капчи / почты)
+        c.status('registering '+cfg.user+'…','connecting');
+        const body={username:cfg.user,password:cfg.pass,initial_device_display_name:'DSP workbench'};
+        let r=await call('POST','/register',body);
+        if(r.status===401 && r.j.flows){
+          const dummy=r.j.flows.some(f=>(f.stages||[]).length===1 && f.stages[0]==='m.login.dummy');
+          if(!dummy){ c.down('Matrix: this server wants more than a login and password ('+[...new Set(r.j.flows.flatMap(f=>f.stages||[]))].map(x=>x.replace('m.login.','')).join(', ')+') — register on its website, then use that account',true); return; }
+          r=await call('POST','/register',{...body,auth:{type:'m.login.dummy',session:r.j.session}});
+        }
+        if(!r.ok){ c.down('Matrix: registration refused — '+(r.j.errcode==='M_USER_IN_USE' ? 'this name is taken' : r.j.errcode==='M_INVALID_USERNAME' ? 'invalid name (lower case letters, digits, . _ = - /)' : r.j.errcode==='M_WEAK_PASSWORD' ? 'the password is too weak' : r.j.error||r.status),r.status!==429 && r.status<500); return; }
+        token=r.j.access_token; me=r.j.user_id||''; cache.token=token; cache.userId=me;
+        c.status('registered '+me,'connecting');
+      }
       if(!token){
         if(!cfg.user || !cfg.pass){ c.down('Matrix: enter a user and password, or an access token in the password field',true); return; }
         c.status('logging in…','connecting');
@@ -295,7 +308,7 @@ function mgOpenXmpp(cfg,c){
   let closed=false, link=null, cl=null;
   link=io.tcp(m[2],+m[3] || (secure ? 5223 : 5222),secure,{
     open:()=>cl.start(),data:s=>cl.feed(s),close:err=>{ if(!closed) c.down('XMPP: '+(err || 'connection closed'),false); }});
-  cl=mgXmppClient({domain,user,pass:cfg.pass,resource:cfg.resource||'dsp',room,nick,secure,insecure:!!cfg.insecure,
+  cl=mgXmppClient({domain,user,pass:cfg.pass,register:!!cfg.register,onRegistered:()=>{ cfg.register=false; },resource:cfg.resource||'dsp',room,nick,secure,insecure:!!cfg.insecure,
     write:s=>{ try{ link.write(s); }catch(e){} },tls:done=>link.upgrade(done),onMsg:x=>{ if(!x.delay || cfg.history) c.msg(x); },
     onRoster:cfg.roster===false ? null : list=>c.msg({kind:'roster',t:Date.now(),contacts:list,text:''}),
     onStatus:(t,s)=>{ if(s==='fatal'){ c.down(t,true); try{ link.close(); }catch(e){} } else if(s==='down') c.down(t,false); else c.status(t,s); }});

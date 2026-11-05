@@ -747,6 +747,30 @@ canvas.view.fs-fb{position:fixed!important;inset:0;width:100vw!important;height:
 #setPanel code{font:11px var(--mono)}
 /* выбор устройства в параметре узла: список из Settings → Devices или свой адрес */
 .devpick{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0;align-items:stretch}
+/* учётка в узле: список + правка, форма на всю ширину узла (поля крупнее, подписи слева, с отступом от пинов) */
+.prm.pr-cred{flex-wrap:wrap}
+.prm.pr-cred>.credform{flex:1 0 100%;order:3}
+.credpick{display:flex;flex-direction:column;gap:6px;flex:1;min-width:0;align-items:stretch}
+.credpick .cr-top{display:flex;gap:6px;align-items:center}
+.credpick .cr-top select{flex:1 1 auto;min-width:0;width:auto;height:24px;padding:0 6px;border:0;border-radius:3px;background:var(--panel2);box-shadow:inset 0 0 0 1px var(--line);color:var(--txt);font-size:12px;text-overflow:ellipsis}
+.credpick .cr-edit{flex:none;height:24px;padding:0 9px;font-size:13px}
+.credform{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 12px;align-items:center;padding:12px 14px;margin:4px 8px 6px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;box-sizing:border-box;min-width:0}
+.credform[hidden]{display:none}
+.credform label{font-size:11px;color:var(--dim);white-space:normal;overflow:visible;text-overflow:clip;height:auto;width:auto;max-width:none;flex:none}
+.credform [hidden]{display:none!important}
+.credform input[type=text],.credform select{width:100%;min-width:0;box-sizing:border-box;height:28px;padding:2px 8px;border:0;border-radius:4px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);color:var(--txt);font-size:13px}
+.credform input:focus,.credform select:focus{outline:none;box-shadow:inset 0 0 0 1px var(--acc)}
+.credform input[readonly]{opacity:.65}
+.credform .cr-wide{grid-column:1/-1}
+.credform .cr-reg{display:flex;gap:8px;align-items:flex-start;line-height:1.4;color:var(--txt);font-size:12px}
+.credform .cr-reg span{white-space:normal;min-width:0}
+.credform .cr-reg input[type=checkbox]{margin-top:1px;flex:none;order:0;width:16px;height:16px;border:1px solid var(--dim);background:var(--panel)}
+.credform .cr-reg input[type=checkbox]:checked{background:var(--acc);border-color:var(--acc)}
+.credform .cr-btns{display:flex;gap:8px;justify-content:flex-end}
+.credform .cr-btns button{height:28px;padding:0 14px;font-size:12px}
+.credform .cr-del{margin-right:auto;color:var(--err,#e05c5c)}
+.credform .cr-res{font-size:11px;color:#d9822b;min-height:0}
+.credform .cr-res:empty{display:none}
 .devpick select,.devpick input{width:100%;min-width:0;box-sizing:border-box;text-overflow:ellipsis}
 .devpick input[hidden],.devpick select[hidden]{display:none}
 .devpick select.warn{outline:1px solid #d9822b}
