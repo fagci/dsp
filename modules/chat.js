@@ -15,6 +15,12 @@ function chSend(n,text){
   text=String(text).trim(); if(!text) return;
   n.outQ.push(text); if(n.p.echo) chPush(n,'out',text);
 }
+// убрать вид, не подходящий режиму: журнал (simple) или список разговоров (conversations)
+function chDropViews(n){
+  const conv=n.p.mode==='conversations';
+  if(conv && n.chat){ n.chat.remove(); n.chat=null; n.full=true; }
+  if(!conv && n.cvEl){ n.cvEl.remove(); n.cvEl=null; n.cvDirty=true; }
+}
 const chPeople=n=>n.people||[];
 const chFind=(n,name)=>chPeople(n).find(p=>p.name===name);
 function chMsgEl(n,m){
@@ -89,7 +95,9 @@ function chRender(n){
 def({ id:'chat', title:'Chat', cat:'Output', kw:'chat messages text terminal console send receive', resize:true, w:340, h:340, bare:true,
   ins:[{n:'text',t:'txt'},{n:'send',t:'txt'},{n:'from',t:'txt'},{n:'rec',t:'rec'},{n:'rows',t:'bands'},{n:'book',t:'bands'}],
   outs:[{n:'text',t:'txt'},{n:'to',t:'txt'},{n:'go',t:'num'},{n:'unread',t:'num'}],
-  params:[{n:'mode',t:'select',opts:['simple','conversations'],d:'simple',label:'view',tip:'simple — one log (as before). conversations — a list of chats (people and rooms of all protocols from a Messenger rec) with unread counts, threads, replies, filters by person (book ← Contacts), protocol and text; what you write goes to the open conversation: out text + to → Messenger send + to',fn:n=>{ n.full=true; n.dirty=true; n.cvDirty=true; if(n.chat){ n.chat.remove(); n.chat=null; n.cvEl=null; } }},
+  params:[{n:'mode',t:'select',opts:['simple','conversations'],d:'simple',label:'view',tip:'simple — one log (as before). conversations — a list of chats (people and rooms of all protocols from a Messenger rec) with unread counts, threads, replies, filters by person (book ← Contacts), protocol and text; what you write goes to the open conversation: out text + to → Messenger send + to',fn:n=>{ n.full=true; n.dirty=true; n.cvDirty=true; chDropViews(n); }},
+          {n:'store',t:'text',d:'chat/history',label:'history list',tip:'conversations view: every message is kept in this Table list (open it in a Table to browse and search all of it) and loaded back when the patch starts, so chats survive a reload; unread marks are remembered too. Empty — no history, chats live until reload',adv:true},
+          {n:'delhist',t:'button',label:'Delete history…',fn:n=>chcWipe(n)},
           {n:'echo',t:'check',d:true,label:'show sent messages'},
           {n:'time',t:'check',d:false,label:'timestamps',fn:n=>{ n.full=true; n.dirty=true; }},
           {n:'me',t:'text',d:'',label:'my name (in rows)',fn:n=>{ n.full=true; n.dirty=true; n.peopleSig=null; }},
@@ -98,7 +106,8 @@ def({ id:'chat', title:'Chat', cat:'Output', kw:'chat messages text terminal con
   process(n,I){
     if(n.p.mode==='conversations'){
       if(Array.isArray(I.book) && I.book!==n.lastBook){ n.lastBook=I.book; chcSetBook(n,I.book); }
-      if(I.rec && I.rec!==n.lastRec){ n.lastRec=I.rec; for(const r of Array.isArray(I.rec) ? I.rec : [I.rec]) chcAdd(n,r); }
+      if(chcStore(n) && !n.hist.loaded && !n.hist.loading && typeof ListDB!=='undefined') chcLoad(n);
+      if(I.rec && I.rec!==n.lastRec){ n.lastRec=I.rec; for(const r of Array.isArray(I.rec) ? I.rec : [I.rec]){ if(chcStore(n) && !n.hist.loaded && typeof ListDB!=='undefined') n.hist.early.push(r); else chcAdd(n,r); } }
       if(typeof I.send==='string' && I.send!==n.lastSend){ n.lastSend=I.send; chcSend(n,I.send); }
       if(n.msgs.some(m=>m.pending)) n.cvDirty=true;                       // статус «отправляется» → «⚠» по времени
       let go=0; if(n.outQ.length){ n.last=n.outQ.shift(); go=1; }
@@ -122,7 +131,9 @@ def({ id:'chat', title:'Chat', cat:'Output', kw:'chat messages text terminal con
     let go=0;
     if(n.outQ.length){ n.last=n.outQ.shift(); go=1; }
     return {text:n.last, to:'', go, unread:0}; },
+  dispose:n=>{ if(n.hist && n.hist.queue && n.hist.queue.length) chcFlush(n); },
   draw(n){
+    chDropViews(n);                                                         // виден только вид текущего режима: прежний убираем (иначе при переключении view панели копились)
     if(n.p.mode==='conversations'){
       if(!n.cvEl || !n.cvEl.isConnected) chcMount(n);
       if(n.cvDirty) chcRender(n);
