@@ -1038,49 +1038,10 @@ box._render=render;
 const wr=new WeakRef(box), h=()=>{ const b=wr.deref(); if(!b) window.removeEventListener('gw-changed',h); else b._render(); };
 window.addEventListener('gw-changed',h);                 // список устройств изменили в Settings — выбор в открытых узлах обновляется
 box.append(sel,inp); row.append(box);
-} else if(s.cred && typeof Cred!=='undefined'){
-// учётка: выбор из Settings → Credentials или создание прямо здесь («＋ new…» — форма под селектом, тип с примерами)
-row.classList.add('pr-dev');
-const box=document.createElement('div'); box.className='devpick credpick';
-const sel=document.createElement('select'), form=document.createElement('div'); form.className='credform'; form.hidden=true;
-const NONE='\u0000none', NEW='\u0000new';
-const type=()=>{ const t=document.createElement('select'); for(const x of CR_TYPES){ const o=document.createElement('option'); o.value=o.textContent=x; t.append(o); } return t; };
-const fType=type(), fName=document.createElement('input'), fSrv=document.createElement('input'), fUser=document.createElement('input'), fPass=document.createElement('input'), fSmtp=document.createElement('input'), fRes=document.createElement('div');
-fName.placeholder='name'; fName.maxLength=24;
-const fHint=()=>{ const ex=CR_EXAMPLE[fType.value]||CR_EXAMPLE.custom;
-  fSrv.placeholder=ex.server?'server — '+ex.server:'server — empty (the token goes to password)';
-  fSmtp.hidden=fType.value!=='email'; if(fType.value==='email') fSmtp.placeholder='SMTP — '+(ex.smtp||'smtps://smtp.example.org:465'); };
-if(s.credType && CR_TYPES.includes(s.credType)) fType.value=s.credType;
-fType.onchange=fHint; fHint();
-fUser.placeholder='login / user'; fPass.placeholder='password / token'; fPass.className='gwTok'; fPass.name='dsp-credential-password'; fPass.setAttribute('data-lpignore','true'); fPass.setAttribute('data-1p-ignore','true');
-fSmtp.placeholder='SMTP — smtps://smtp.example.org:465';
-const fSave=document.createElement('button'); fSave.textContent='Save credential'; fSave.className='credsave';
-fSave.addEventListener('click',e=>{ e.stopPropagation();
-  const rec={name:fName.value.trim(), type:fType.value, server:fSrv.value.trim(), user:fUser.value.trim(), pass:fPass.value, smtp:fSmtp.value.trim()};
-  if(!CR_NAME.test(rec.name)){ fRes.textContent='⚠ the name: letters, digits, _ . - (up to 24)'; return; }
-  if(!rec.server && !rec.user && !rec.pass){ fRes.textContent='⚠ fill at least a server, a login or a password'; return; }
-  Cred.upsert(rec); fRes.textContent='';
-  n.p[s.n]=rec.name; form.hidden=true; s.fn && s.fn(n); render(); });
-form.append(fType,fName,fSrv,fUser,fPass,fSmtp,fSave,fRes);
-const render=()=>{
-  const v=String(n.p[s.n]??''), list=Cred.list().filter(c=>s.credType ? c.type===s.credType : c.type!=='proxy'), hit=v && crFind(list,v);      // credType — только учётки этого типа; без него прокси в списке не показываем
-  sel.textContent='';
-  const add=(val,txt)=>{ const o=document.createElement('option'); o.value=val; o.textContent=txt; sel.append(o); };
-  add(NONE,'— (params below)');
-  for(const c of list) add(c.name,c.name+'  ·  '+(c.server||c.user||'no server'));
-  if(v && !hit) add(v,v+' ?');
-  add(NEW,'＋ new…');
-  sel.value=hit ? hit.name : v===NEW ? NEW : NONE;
-  form.hidden=sel.value!==NEW;
-};
-render();
-sel.addEventListener('change',()=>{ if(sel.value===NEW){ form.hidden=false; fName.focus(); }
-  else { form.hidden=true; n.p[s.n]=sel.value===NONE ? '' : sel.value; s.fn && s.fn(n); } });
-(n.set||(n.set={}))[s.n]=v=>{ if(v!=null) n.p[s.n]=v; render(); };
-box._render=render;
-const wr2=new WeakRef(box), h2=()=>{ const b=wr2.deref(); if(!b) window.removeEventListener('cred-changed',h2); else b._render(); };
-window.addEventListener('cred-changed',h2);               // список учёток изменили в Settings — выбор в открытых узлах обновляется
-box.append(sel,form); row.append(box);
+} else if(s.cred && typeof Cred!=='undefined' && typeof crPickEl==='function'){
+// учётка: выбор из Settings → Credentials, правка на месте, создание и регистрация (modules/creds.js, crPickEl)
+row.classList.add('pr-dev','pr-cred');
+{ const {box,form}=crPickEl(n,s); row.append(box,form); }
 } else {
 const i=document.createElement('input'); i.type='text'; i.value=n.p[s.n];
 i.addEventListener('input',()=>n.p[s.n]=i.value);

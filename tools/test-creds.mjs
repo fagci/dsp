@@ -1,0 +1,23 @@
+// Учётки: тип по протоколу узла, подсказки, свободное имя, очистка списка: node tools/test-creds.mjs
+import vm from 'node:vm';
+import fs from 'node:fs';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+const ctx = vm.createContext({String, Array, Object, RegExp, Set, Map});
+vm.runInContext(fs.readFileSync(path.join(root, 'modules/creds-kernels.js'), 'utf8'), ctx, {filename: 'creds-kernels.js'});
+vm.runInContext('this.K={CR_TYPES,CR_EXAMPLE,CR_HINT,CR_REGISTER,crTypeFor,crFreeName,crGuess,crClean,crFind}', ctx);
+const K = ctx.K;
+let bad = 0;
+const eq = (n, a, b) => { const sa = JSON.stringify(a), sb = JSON.stringify(b); if (sa !== sb) { bad++; console.log('FAIL', n, sa, '!=', sb); } else console.log('ok  ', n); };
+eq('type follows the node protocol', ['xmpp', 'matrix', 'irc', 'email', 'telegram'].map(p => K.crTypeFor(undefined, p)), ['xmpp', 'matrix', 'irc', 'email', 'telegram']);
+eq('type: protocols without their own type → custom', ['sms', 'rss', 'reticulum', undefined].map(p => K.crTypeFor(undefined, p)), ['custom', 'custom', 'custom', 'custom']);
+eq('type: the node param wins (proxy field)', K.crTypeFor('proxy', 'xmpp'), 'proxy');
+eq('type: a node protocol «proxy» never selects the proxy type', K.crTypeFor(undefined, 'proxy'), 'custom');
+eq('every credential type has an example and a hint', K.CR_TYPES.every(t => K.CR_EXAMPLE[t] && K.CR_HINT[t] && K.CR_HINT[t].user && K.CR_HINT[t].pass), true);
+eq('registration is offered where the protocols support it', K.CR_REGISTER, ['xmpp', 'matrix']);
+eq('free name: first, then the next', [K.crFreeName([], 'xmpp'), K.crFreeName([{name: 'xmpp1'}], 'xmpp'), K.crFreeName([{name: 'XMPP1'}, {name: 'xmpp2'}], 'xmpp')], ['xmpp1', 'xmpp3'.replace('3', '2'), 'xmpp3']);
+eq('free name: odd base is cleaned', K.crFreeName([], 'a b/c!'), 'abc1');
+eq('guess: socks → proxy', [K.crGuess('socks5://h:1'), K.crGuess('xmpp://h'), K.crGuess('imaps://h')], ['proxy', 'xmpp', 'email']);
+eq('clean: a record keeps its fields', K.crClean([{name: 'a', type: 'xmpp', server: 'xmpp://h', user: 'u@h', pass: 'p'}]), [{name: 'a', type: 'xmpp', server: 'xmpp://h', user: 'u@h', pass: 'p', smtp: ''}]);
+console.log(bad ? 'FAILED ' + bad : 'all ok'); process.exit(bad ? 1 : 0);

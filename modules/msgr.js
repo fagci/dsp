@@ -33,13 +33,14 @@ function mgNodeStart(n){
   const cfg={server:'',channel:String(p.channel||'').trim(),user:'',pass:'',
     nick:String(p.nick||'dsp').trim() || 'dsp',appKey:(()=>{ try{ return (window.DspApp && DspApp.appKey && DspApp.appKey()) || ''; }catch(e){ return ''; } })(),history:+p.history||0,retry:!!p.reconnect,via:p.via,proxyUrl:p.proxy && typeof Net!=='undefined' ? u=>Net.url(u) : null,smtp:'',pollMs:(+p.poll||30)*1000,bridge,insecure:!!p.plain,cache:n.mxCache};
   // прокси: свой (учётка типа proxy) или прокси устройства-моста из Settings → Devices; открывает его только Node-мост — без моста прямой выход не делаем молча
-  const pxName=String(p.proxy||'').trim() || (rawBridge[0]==='@' ? Gw.proxyOf(rawBridge) : '');
+  const pxName=String(p.pxcred||'').trim() || (rawBridge[0]==='@' ? Gw.proxyOf(rawBridge) : '');
   if(pxName){
     const pc=(typeof Cred!=='undefined' && Cred.get(pxName))||null;
     if(!pc || !pc.server){ n.status='proxy «'+pxName+'» not found — add a credential of type «proxy» in Settings → Credentials'; return; }
     if(!bridge){ n.status='a proxy works through the Node bridge: set the gateway (Settings → Devices) — not connecting directly'; return; }
     cfg.proxy={server:pc.server,user:pc.user||'',pass:pc.pass||''}; cfg.via='bridge';
   }
+  if(n.regNext) cfg.register=true;                                     // «register this account» в форме учётки: при первом подключении создаём её на сервере
   const acct=String(p.account||'').trim();
   if(acct){                                                          // учётка — единственный источник сервера, логина и пароля
     const cr=(typeof Cred!=='undefined' && Cred.get(acct))||null;
@@ -66,7 +67,7 @@ function mgNodeStart(n){
       if(m.kind==='roster'){ n.recQ.push({t:m.t||Date.now(),proto:p.proto,dir:'in',kind:'roster',contacts:m.contacts||[],text:'',from:''}); n.status='roster: '+(m.contacts||[]).length+' contact(s)'; return; }     // список контактов — в rec (для Contacts), не в чат
       if(m.delay && !cfg.history) return; mgNodeSaveAtts(n,m); mgNodeLog(n,m.self ? 'out' : 'in',m);
     },
-    status:(t,s)=>{ n.status=t; n.ok=s==='up'; if(s==='fatal') n.sess=null; },
+    status:(t,s)=>{ n.status=t; n.ok=s==='up'; if(/^registered\b|already registered/.test(t)) n.regNext=false; if(s==='fatal') n.sess=null; },
   });
 }
 function mgNodeSend(n,text,to){
@@ -130,29 +131,29 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
   ins:[{n:'send',t:'txt'},{n:'to',t:'txt'},{n:'rows',t:'bands'}], outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'from',t:'txt'},{n:'new',t:'num'},{n:'ok',t:'num'}],
   readout:true, tall:true,
   params:[
-    {n:'proto',t:'select',opts:['nostr','ntfy','matrix','telegram','irc','xmpp','aprs','email','sms','reticulum','mastodon','bluesky','rss'],d:'nostr',label:'channel of communication'},
-    {n:'proxy',t:'text',d:'',cred:true,credType:'proxy',label:'proxy — a credential of type «proxy» (socks5://… or http://…): the Node bridge opens everything through it (IRC, XMPP, e-mail, Matrix, Nostr, feeds…). Empty — the proxy of the gateway in Settings → Devices, or the bridge\'s own --proxy',adv:true},
-    {n:'account',t:'text',d:'',cred:true,label:'account — a credential (Settings → Credentials) or «＋ new…» right here: it IS the server, the login and the password of the channel. Empty — no auth (Nostr anonymous, ntfy, public feeds; defaults: public relays, ntfy.sh, …)'},
-    {n:'channel',t:'text',d:'dsp',label:'channel — nostr: hashtag · ntfy: topic · matrix: room (!id:server or #alias:server) · telegram: only to receive from ONE chat — its id or @name; leave empty for all chats (replies go to the last one) · irc: #channels · xmpp: room@conference.server (empty — direct messages only) · aprs: server filter (g/CALL, m/50, r/lat/lon/km, b/CALL*; empty — messages to you) · email: mailbox (empty — INBOX) · reticulum: the default recipient (32-digit address or a name heard in announces) · mastodon / bluesky: WHAT TO READ — #tags (several: any of them), -#tag drops posts with it, mastodon: «local» / «home» (token), empty — the public timeline; bluesky: @account, a feed link (bsky.app/profile/…/feed/…) or an at:// feed · rss: WORDS — any of them in the title / text / categories, -word drops an item; empty — everything'},
-    {n:'attach',t:'text',d:'',label:'email: a file from Files (name or id) attached to what is sent'},
-    {n:'attPath',t:'text',d:'mail/{from}',label:'email: folder in Files for incoming attachments — «/» makes subfolders; {from} address, {name}, {subject}, {date}, {year}, {month}, {thread}, {proto}',adv:true},
-    {n:'contacts',t:'text',d:'',label:'contacts — extra aliases «Name=address» (comma-separated); wire a Table with name/addr columns into «rows» for a full address book'},
-    {n:'poll',t:'range',min:5,max:600,step:5,d:30,label:'email / mastodon / bluesky / rss: check every, s (mastodon, bluesky: at least 5; rss: at least 60)'},
-    {n:'nick',t:'text',d:'dsp',label:'nick (shown to others; in Chat set «my name» the same)'},
-    {n:'font',t:'range',min:8,max:16,step:1,d:10,label:'font size of the messages in the node, px',adv:true},
-    {n:'history',t:'range',min:0,max:2592000,step:60,d:0,label:'also fetch what was said in the last, s (nostr, ntfy, matrix, xmpp; feeds: how far back the first read goes — 0 shows only what comes later)'},
-    {n:'via',t:'select',opts:['auto','page','bridge'],d:'auto',label:'where TCP comes from (IRC ircs://, XMPP, APRS-IS, email): auto — the phone itself inside the DSP app, else the gateway below; bridge — always the gateway'},
-    {n:'bridge',t:'text',d:'',dev:true,label:'TCP gateway — @name from Settings → Devices (the token stays there), or one address for either: the DSP app on a phone (ws://192.168.0.5:8765; the app must allow other pages) or the Node bridge (ws://127.0.0.1:8777); the type is detected'},
-    {n:'plain',t:'check',d:false,label:'xmpp: allow a password without TLS (only for a server on your own network)'},
-    {n:'proxy',t:'check',d:false,label:'rss: through the CORS proxy from Settings (a Node bridge in the gateway field needs none)'},
-    {n:'reconnect',t:'check',d:true,label:'reconnect'},
-    {n:'autoConnect',t:'check',d:false,label:'connect when the patch starts'},
+    {n:'proto',t:'select',opts:['nostr','ntfy','matrix','telegram','irc','xmpp','aprs','email','sms','reticulum','mastodon','bluesky','rss'],d:'nostr',label:'protocol'},
+    {n:'pxcred',t:'text',d:'',cred:true,credType:'proxy',label:'proxy',tip:'proxy — a credential of type «proxy» (socks5://… or http://…): the Node bridge opens everything through it (IRC, XMPP, e-mail, Matrix, Nostr, feeds…). Empty — the proxy of the gateway in Settings → Devices, or the bridge\'s own --proxy',adv:true,if:n=>n.p.proto!=='sms'},
+    {n:'account',t:'text',d:'',cred:true,label:'account',tip:'account — a credential (Settings → Credentials) or «＋ new…» right here: it IS the server, the login and the password of the channel. Empty — no auth (Nostr anonymous, ntfy, public feeds; defaults: public relays, ntfy.sh, …)',if:n=>!['sms','rss'].includes(n.p.proto)},
+    {n:'channel',t:'text',d:'dsp',label:'channel / room / topic',tip:'channel — nostr: hashtag · ntfy: topic · matrix: room (!id:server or #alias:server) · telegram: only to receive from ONE chat — its id or @name; leave empty for all chats (replies go to the last one) · irc: #channels · xmpp: room@conference.server (empty — direct messages only) · aprs: server filter (g/CALL, m/50, r/lat/lon/km, b/CALL*; empty — messages to you) · email: mailbox (empty — INBOX) · reticulum: the default recipient (32-digit address or a name heard in announces) · mastodon / bluesky: WHAT TO READ — #tags (several: any of them), -#tag drops posts with it, mastodon: «local» / «home» (token), empty — the public timeline; bluesky: @account, a feed link (bsky.app/profile/…/feed/…) or an at:// feed · rss: WORDS — any of them in the title / text / categories, -word drops an item; empty — everything',if:n=>n.p.proto!=='sms'},
+    {n:'attach',t:'text',d:'',label:'attach file (email)',tip:'email: a file from Files (name or id) attached to what is sent',if:n=>n.p.proto==='email'},
+    {n:'attPath',t:'text',d:'mail/{from}',label:'attachments folder',tip:'email: folder in Files for incoming attachments — «/» makes subfolders; {from} address, {name}, {subject}, {date}, {year}, {month}, {thread}, {proto}',adv:true,if:n=>n.p.proto==='email'},
+    {n:'contacts',t:'text',d:'',label:'aliases (Name=addr)',tip:'contacts — extra aliases «Name=address» (comma-separated); wire a Table with name/addr columns into «rows» for a full address book',if:n=>!['mastodon','bluesky','rss'].includes(n.p.proto)},
+    {n:'poll',t:'range',min:5,max:600,step:5,d:30,label:'check every, s',tip:'email / mastodon / bluesky / rss: check every, s (mastodon, bluesky: at least 5; rss: at least 60)',if:n=>['email','mastodon','bluesky','rss'].includes(n.p.proto)},
+    {n:'nick',t:'text',d:'dsp',label:'nick',tip:'nick (shown to others; in Chat set «my name» the same)',if:n=>['nostr','ntfy','matrix','telegram','irc','xmpp','reticulum'].includes(n.p.proto)},
+    {n:'font',t:'range',min:8,max:16,step:1,d:10,label:'font size',tip:'font size of the messages in the node, px',adv:true},
+    {n:'history',t:'range',min:0,max:2592000,step:60,d:0,label:'fetch history, s',tip:'also fetch what was said in the last, s (nostr, ntfy, matrix, xmpp; feeds: how far back the first read goes — 0 shows only what comes later)',adv:true,if:n=>['nostr','ntfy','matrix','xmpp','mastodon','bluesky','rss'].includes(n.p.proto)},
+    {n:'via',t:'select',opts:['auto','page','bridge'],d:'auto',label:'connection',tip:'where TCP comes from (IRC ircs://, XMPP, APRS-IS, email): auto — the phone itself inside the DSP app, else the gateway below; bridge — always the gateway',adv:true,if:n=>n.p.proto!=='sms'},
+    {n:'bridge',t:'text',d:'',dev:true,label:'gateway',tip:'TCP gateway — @name from Settings → Devices (the token stays there), or one address for either: the DSP app on a phone (ws://192.168.0.5:8765; the app must allow other pages) or the Node bridge (ws://127.0.0.1:8777); the type is detected',if:n=>['irc','xmpp','aprs','email','reticulum','rss'].includes(n.p.proto) || n.p.via==='bridge' || !!n.p.bridge || !!n.p.pxcred},
+    {n:'plain',t:'check',d:false,label:'plain password (xmpp)',tip:'xmpp: allow a password without TLS (only for a server on your own network)',adv:true,if:n=>n.p.proto==='xmpp'},
+    {n:'proxy',t:'check',d:false,label:'rss via CORS proxy',tip:'rss: through the CORS proxy from Settings (a Node bridge in the gateway field needs none)',adv:true,if:n=>n.p.proto==='rss'},
+    {n:'reconnect',t:'check',d:true,label:'reconnect',adv:true},
+    {n:'autoConnect',t:'check',d:false,label:'connect at start',tip:'connect when the patch starts',adv:true},
     {n:'text',t:'text',d:'',label:'message'},
     {n:'go',t:'button',label:'Send',fn:n=>mgNodeSend(n,n.p.text)},
     {n:'connect',t:'button',label:'Connect',fn:n=>mgNodeStart(n)},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>mgNodeStop(n)},
   ],
-  init:n=>{ n.sess=null; n.ok=false; n.status='not connected'; n.warn=''; n.log=[]; n.recQ=[]; n.lastRow=null; n.fresh=0; n.count=0; n.lastSend=''; n.lastTo='';
+  init:n=>{ n.regNext=false; n.sess=null; n.ok=false; n.status='not connected'; n.warn=''; n.log=[]; n.recQ=[]; n.lastRow=null; n.fresh=0; n.count=0; n.lastSend=''; n.lastTo='';
             n.eph=''; n.mxCache={}; n.auto=false; n.contacts=null; n.lastContacts=undefined; n.book=[]; },
   dispose:n=>mgNodeStop(n),
   process(n,I){

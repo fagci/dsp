@@ -642,6 +642,7 @@ const PRESET_CATS={
   'Serial Port on a Router or Another PC (Node bridge, OpenWrt ser2net)':'Network & IoT',
   'Contacts: People and Addresses from vCard, Phone and Messages (Tables)':'Network & IoT',
   'Messenger through a Proxy (SOCKS5 / Tor / HTTP CONNECT via the Node bridge)':'Network & IoT',
+  'Messenger: Create an XMPP or Matrix Account Right in the Node':'Network & IoT',
   'Table as a Database: Contacts with Smart Search (phone, name) and Skins':'Network & IoT',
   'Bridge: BLE UART ↔ Network (TCP/WS Gateway)':'Network & IoT',
   'Bridge: BLE GATT ↔ Network (Phone App)':'Network & IoT',
@@ -2227,6 +2228,17 @@ const t1=addNode('table',40,260,{list:'demo/contacts-db',vmode:'cards'});
 t1.size.w=520; t1.size.h=420; applySize(t1);
 const t2=addNode('table',600,260,{list:'demo/contacts-db',vmode:'icons'});
 t2.size.w=420; t2.size.h=420; applySize(t2);
+markWiresDirty();
+});
+preset('Messenger: Create an XMPP or Matrix Account Right in the Node', function(){
+clearAll();
+const nt=addNode('note',40,30,{text:'An account made where it is used. 1) Pick the protocol (xmpp or matrix) in the Messenger. 2) «account» → «＋ new…»: the form already has the right type, a free name and the examples for this protocol; fill the server (xmpp://conversations.im:5222, https://matrix.org), the login (xmpp: you@example.org, matrix: just the name) and the password, tick «create this account on the server when connecting» and Save. 3) Connect: the node first registers the account (XMPP in-band registration, XEP-0077; Matrix with open registration), then logs in with it. A server that asks for an e-mail or a captcha is named in the status — register on its website once, then use «account» as usual without the tick. The ✎ button next to the list edits the account right here (server, login, password); Delete removes it from this browser. XMPP and the Node bridge: IRC / XMPP / e-mail need TCP — set the gateway (Settings → Devices, tools/node/bridge.mjs). The fields shown in the node depend on the protocol; the rest (gateway, proxy, font, reconnect…) is under «advanced».'});
+nt.size.w=900; nt.size.h=210; applySize(nt);
+const ms=addNode('messenger',40,270,{proto:'xmpp',channel:''});
+ms.size.w=420; ms.size.h=520; applySize(ms);
+const ch=addNode('chat',500,270,{});
+ch.size.w=360; ch.size.h=320; applySize(ch);
+addEdge(ms.id,'rec',ch.id,'rec');
 markWiresDirty();
 });
 preset('Messenger through a Proxy (SOCKS5 / Tor / HTTP CONNECT via the Node bridge)', function(){

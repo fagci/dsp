@@ -333,7 +333,7 @@ const mgKids=(n,name)=>n.kids.filter(k=>mgLocal(k.name)===name);
 // o: {domain,user (локальная часть),pass,resource,room (МUC, необязательно),nick,secure (канал уже TLS),insecure (разрешить пароль без TLS),
 //     write(str),tls(done) — перейти на TLS и вызвать done(),onMsg(m),onStatus(text,state)}
 function mgXmppClient(o){
-  let px, tlsDone=!!o.secure, authed=false, jid='', iq=0, ready=false, closed=false;
+  let px, tlsDone=!!o.secure, authed=false, jid='', iq=0, ready=false, closed=false, regDone=!o.register, lastF=null;
   const nick=mgLine(o.nick||o.user||'dsp'), room=o.room ? String(o.room).trim() : '';
   const w=s=>{ if(!closed) o.write(s); };
   const stream=()=>{
@@ -344,6 +344,11 @@ function mgXmppClient(o){
     if(!tlsDone){
       if(mgKid(f,'starttls')){ w("<starttls xmlns='urn:ietf:params:xml:ns:xmpp-tls'/>"); return; }
       if(!o.insecure){ o.onStatus('server offers no STARTTLS — the password would travel in clear text','fatal'); closed=true; return; }
+    }
+    lastF=f;
+    if(!authed && !regDone){                                   // регистрация учётки на сервере (XEP-0077) — до входа, уже по TLS
+      if(!mgKid(f,'register')){ o.onStatus('this server does not offer registration in the client — register on its website, then use that account','fatal'); closed=true; return; }
+      w("<iq type='get' id='reg1'><query xmlns='jabber:iq:register'/></iq>"); return;
     }
     if(!authed){
       const mech=mgKid(f,'mechanisms'), has=mech && mgKids(mech,'mechanism').some(m=>m.text.trim()==='PLAIN');
@@ -378,6 +383,17 @@ function mgXmppClient(o){
           if(room) w("<presence to='"+mgXmlEsc(room+'/'+nick)+"'><x xmlns='http://jabber.org/protocol/muc'><history maxstanzas='0'/></x></presence>");
           ready=true; o.onStatus('connected as '+jid+(room ? ', room '+room : ''),'up');
         } else { o.onStatus('could not bind a resource','fatal'); closed=true; }
+      } else if(node.attrs.id==='reg1'){
+        const q=t==='result' ? mgKid(node,'query') : null, names=q ? q.kids.map(k=>mgLocal(k.name)) : [];
+        if(!q){ o.onStatus('registration is not available on this server','fatal'); closed=true; return; }
+        if(names.includes('registered')){ regDone=true; o.onStatus('this account is already registered — logging in','connecting'); features(lastF); return; }
+        const extra=names.filter(x=>!['instructions','username','password','registered'].includes(x));
+        if(extra.length){ o.onStatus('the server wants more than a login and password ('+extra.filter(x=>x!=='x').join(', ')+(extra.includes('x') ? ' captcha / form' : '')+') — register on its website, then use that account','fatal'); closed=true; return; }
+        w("<iq type='set' id='reg2'><query xmlns='jabber:iq:register'><username>"+mgXmlEsc(o.user)+'</username><password>'+mgXmlEsc(o.pass)+'</password></query></iq>');
+      } else if(node.attrs.id==='reg2'){
+        if(t==='result'){ regDone=true; if(o.onRegistered) o.onRegistered(); o.onStatus('registered '+o.user+'@'+o.domain+' — logging in','connecting'); features(lastF); return; }
+        const e=mgKid(node,'error'), why=e && e.kids[0] ? mgLocal(e.kids[0].name) : 'error';
+        o.onStatus('registration refused: '+(why==='conflict' ? 'this name is taken' : why==='not-acceptable' ? 'the name or password is not acceptable (too short, forbidden characters)' : why==='not-allowed' ? 'registration is closed' : why),'fatal'); closed=true;
       } else if(node.attrs.id==='roster1'){
         const q=t==='result' ? mgKid(node,'query') : null, list=[];
         for(const it of q ? q.kids : []){ if(mgLocal(it.name)!=='item' || it.attrs.subscription==='remove') continue; const j=(it.attrs.jid||'').trim(); if(j) list.push({proto:'xmpp',addr:j,name:(it.attrs.name||'').trim()||j}); }
