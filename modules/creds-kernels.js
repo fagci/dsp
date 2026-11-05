@@ -4,7 +4,7 @@
    Тип (CR_TYPES) переключает примеры полей (CR_EXAMPLE); crGuess(server) угадывает тип по схеме адреса. */
 
 const CR_NAME=/^[A-Za-z0-9_.-]{1,24}$/;
-const CR_TYPES=['email','matrix','xmpp','irc','ntfy','telegram','nostr','aprs','mastodon','bluesky','custom'];
+const CR_TYPES=['email','matrix','xmpp','irc','ntfy','telegram','nostr','aprs','mastodon','bluesky','proxy','custom'];
 const CR_EXAMPLE={
   email:   {server:'imaps://imap.gmail.com:993',          smtp:'smtps://smtp.gmail.com:465'},
   matrix:  {server:'https://matrix.org',                  smtp:''},
@@ -16,6 +16,7 @@ const CR_EXAMPLE={
   aprs:    {server:'aprs://rotate.aprs2.net:14580',       smtp:''},
   mastodon:{server:'https://mastodon.social',             smtp:''},
   bluesky: {server:'https://public.api.bsky.app',         smtp:''},
+  proxy:   {server:'socks5://127.0.0.1:9050 · http://proxy.lan:3128', smtp:''},
   custom:  {server:'imaps://… · https://… · ircs://…',    smtp:''},
 };
 function crGuess(server){
@@ -24,6 +25,7 @@ function crGuess(server){
   if(/^xmpp/.test(s)) return 'xmpp';
   if(/^ircs?:/.test(s)) return 'irc';
   if(/^aprs/.test(s)) return 'aprs';
+  if(/^socks[45]h?:/.test(s)) return 'proxy';
   if(/^wss:/.test(s)) return 'nostr';
   if(/^https?:/.test(s)) return 'ntfy';
   return 'custom';

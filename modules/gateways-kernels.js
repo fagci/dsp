@@ -39,7 +39,9 @@ function gwClean(list){                                           // из хра
   for(const d of Array.isArray(list) ? list : []){
     if(!d || typeof d.name!=='string' || typeof d.url!=='string') continue;
     const name=d.name.trim(); if(!GW_NAME.test(name) || seen.has(name.toLowerCase())) continue;
-    seen.add(name.toLowerCase()); out.push({name,url:d.url.trim()});
+    seen.add(name.toLowerCase());
+    const px=typeof d.proxy==='string' && GW_NAME.test(d.proxy.trim()) ? d.proxy.trim() : '';          // учётка-прокси (тип proxy), через которую это устройство ходит наружу
+    out.push(px ? {name,url:d.url.trim(),proxy:px} : {name,url:d.url.trim()});
   }
   return out;
 }

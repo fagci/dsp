@@ -41,7 +41,10 @@ async function ctImportCards(n,cards){
       const e=E.find(x=>ctStr(x.row.name)===found), m=ctMergeTwo(e.row,ctPersonRow(c));
       if(JSON.stringify(m)!==JSON.stringify(e.row)){ e.row=m; if(!e.isNew){ e.dirty=true; merged++; } }
       who=found;
-    } else { const row=ctPersonRow(c); E.push({id:null,row,dirty:false,isNew:true}); added++; who=row.name; }
+    } else {
+      const row=ctPersonRow(c); row.name=ctUniqueName(new Set(E.map(e=>ctStr(e.row.name))),row.name,'vcard');
+      E.push({id:null,row,dirty:false,isNew:true}); added++; who=row.name;
+    }
     for(const r of ctIdentRows({...c,name:who})) if(!known.has(r.key)){ known.add(r.key); newI.push(r); }
   }
   for(const e of E) if(e.dirty){ const it=ctItem(e.row,CT_PEOPLE_COLS); await ListDB.update(e.id,{name:it.name,fields:it.fields,value:''}); }
@@ -51,18 +54,19 @@ async function ctImportCards(n,cards){
   n.book=null;
   return {added,merged,idents:newI.length};
 }
-// собеседники из сообщений: неизвестный адрес → новая идентичность (и человек с таким именем, если ещё нет)
+// собеседники из сообщений: неизвестный адрес → новый человек с этим адресом (имя уникально; по имени люди не сливаются)
 async function ctLearn(n,recs){
   const L=await ctEnsure(n);
   const idents=await ctRead(L.idents), people=await ctRead(L.people);
   const known=new Set(idents.map(x=>ctStr(x.row.key)||ctKey(x.row.proto,x.row.addr)));
   const names=new Set(people.map(p=>ctStr(p.row.name))), newP=[], newI=[];
-  for(const r of recs){
-    const w=ctFromRec(r); if(!w || known.has(w.key)) continue;
+  const who_=[];                                                       // отправители сообщений и люди из ростеров — одним списком
+  for(const r of recs){ if(r&&r.kind==='roster') who_.push(...ctFromRoster(r)); else { const w=ctFromRec(r); if(w) who_.push(w); } }
+  for(const w of who_){
+    if(known.has(w.key)) continue;
     known.add(w.key);
-    let who=w.name;
-    if(!names.has(who)){ names.add(who); newP.push(ctItem({name:who,note:'from '+w.proto},CT_PEOPLE_COLS)); }
-    else if(n.p.byName===false){ who=w.name+' ('+w.proto+')'; if(!names.has(who)){ names.add(who); newP.push(ctItem({name:who},CT_PEOPLE_COLS)); } }
+    const who=ctUniqueName(names,w.name,w.proto); names.add(who);                // каждый новый адрес — отдельный человек; сливать — только по общему телефону / адресу кнопкой
+    newP.push(ctItem({name:who,note:'from '+w.proto},CT_PEOPLE_COLS));
     newI.push(ctItem({proto:w.proto,addr:w.addr,name:w.name,contact:who,seen:ctToday(),key:w.key},CT_IDENT_COLS));
   }
   if(newP.length) await ListDB.addMany(L.people,newP);
@@ -119,8 +123,7 @@ def({ id:'contacts', title:'Contacts (people · addresses in Tables)', cat:'Sour
   params:[
     {n:'people',t:'text',d:CT_LISTS.people,label:'Table list with people (name, phones, emails, org, birthday, tags, note, photo)',adv:true},
     {n:'idents',t:'text',d:CT_LISTS.idents,label:'Table list with addresses (proto, addr, name, contact → people)',adv:true},
-    {n:'learn',t:'check',d:true,label:'learn people from incoming messages (rec ← Messenger): an unknown address becomes a new entry'},
-    {n:'byName',t:'check',d:true,label:'the same display name in different protocols is one person'},
+    {n:'learn',t:'check',d:true,label:'learn people from incoming messages and rosters (rec ← Messenger; XMPP and Matrix contact lists): an unknown address becomes a new person'},
     {n:'imp',t:'button',label:'Import vCard…',fn:n=>ctPickFile((t,name)=>ctImportText(n,t,name))},
     {n:'dup',t:'button',label:'Find duplicates',fn:n=>ctQueue(n,async()=>{ const r=await ctDupes(n,false); n.status=r.groups.length ? r.groups.length+' duplicate group(s): '+r.groups.slice(0,5).map(g=>g.join(' = ')).join('; ') : 'no duplicates'; })},
     {n:'merge',t:'button',label:'Merge duplicates',fn:n=>ctQueue(n,async()=>{ const r=await ctDupes(n,true); n.status=r.merged ? 'merged '+r.merged+' group(s)' : 'no duplicates'; })},

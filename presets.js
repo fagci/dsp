@@ -641,6 +641,7 @@ const PRESET_CATS={
   'Bridge: Serial Port ↔ Network (TCP/WS Gateway)':'Network & IoT',
   'Serial Port on a Router or Another PC (Node bridge, OpenWrt ser2net)':'Network & IoT',
   'Contacts: People and Addresses from vCard, Phone and Messages (Tables)':'Network & IoT',
+  'Messenger through a Proxy (SOCKS5 / Tor / HTTP CONNECT via the Node bridge)':'Network & IoT',
   'Bridge: BLE UART ↔ Network (TCP/WS Gateway)':'Network & IoT',
   'Bridge: BLE GATT ↔ Network (Phone App)':'Network & IoT',
   'Phone App: BLE Auto-Discover Devices and Services (GATT)':'Network & IoT',
@@ -2201,9 +2202,20 @@ ws.size.w=360; ws.size.h=300; applySize(ws);
 addEdge(c.id,'text',ws.id,'text');
 markWiresDirty();
 });
+preset('Messenger through a Proxy (SOCKS5 / Tor / HTTP CONNECT via the Node bridge)', function(){
+clearAll();
+const nt=addNode('note',40,30,{text:'Chat channels that leave through a proxy, so the server sees the proxy and not your address. 1) Run the Node bridge (node tools/node/bridge.mjs; add --proxy socks5://127.0.0.1:9050 to make it the default for everything the bridge opens, the CORS proxy included). 2) Settings → Devices: add the bridge as a device (e.g. «bridge» = ws://127.0.0.1:8777) — and, if you want, choose a proxy for the whole device there. 3) Settings → Credentials: a credential of type «proxy» (server socks5://127.0.0.1:9050 for Tor, or http://proxy.lan:3128; login and password if it asks). 4) In the Messenger below set «gateway» = @bridge and pick the credential in «proxy» (advanced), press Connect. The Node bridge opens the connection (TCP for IRC, XMPP, e-mail; HTTP for Matrix, ntfy, Telegram, feeds; WebSocket for Nostr) — with SOCKS5 the proxy resolves the host name, so Tor works. A proxy needs the bridge: without it the node refuses to connect instead of leaking your address, and a phone gateway cannot do it.'});
+nt.size.w=900; nt.size.h=200; applySize(nt);
+const ms=addNode('messenger',40,260,{proto:'irc',channel:'#dsp',bridge:'@bridge',via:'bridge'});
+ms.size.w=380; ms.size.h=360; applySize(ms);
+const ch=addNode('chat',460,260,{});
+ch.size.w=360; ch.size.h=300; applySize(ch);
+addEdge(ms.id,'rec',ch.id,'rec');
+markWiresDirty();
+});
 preset('Contacts: People and Addresses from vCard, Phone and Messages (Tables)', function(){
 clearAll();
-const nt=addNode('note',40,30,{text:'One address book for every channel. A person is a row in the Table «contacts/people» (name, several phones and e-mails, organisation, birthday, tags, note, photo); how to reach them is a row in «contacts/identities» (protocol + address, «contact» links to the person) — so one person has a phone, an e-mail, a Telegram and a Matrix address at once. Contacts fills both: «Import vCard…» (a .vcf exported from the phone, Google, Outlook), the phone itself (Phone Actions → contacts.find, wire its rec to Contacts), and everyone who writes to the Messenger below becomes an entry (an unknown address = a new one; the same display name in another protocol joins the same person — untick «the same display name» to keep them apart). «Find duplicates» / «Merge duplicates» look for people who share a phone or an address (+7 (916) 123-45-67 and 89161234567 are the same number) and join them: fields are united, addresses move to one person. To split or join by hand, change the «contact» link of an address in the right table. The book output feeds Messenger «rows»: «@Name text» sends to the address of the contact. Search: type part of a name or number in the Table filter (phones contains 4567).'});
+const nt=addNode('note',40,30,{text:'One address book for every channel. A person is a row in the Table «contacts/people» (name, several phones and e-mails, organisation, birthday, tags, note, photo); how to reach them is a row in «contacts/identities» (protocol + address, «contact» links to the person) — so one person has a phone, an e-mail, a Telegram and a Matrix address at once. Contacts fills both: «Import vCard…» (a .vcf exported from the phone, Google, Outlook), the phone itself (Phone Actions → contacts.find, wire its rec to Contacts), and everyone who writes to the Messenger below becomes an entry (an unknown address = a new person; people are never joined by name — the same display name in another protocol gives «Name (protocol)»). «Find duplicates» / «Merge duplicates» look for people who share a phone or an address (+7 (916) 123-45-67 and 89161234567 are the same number) and join them: fields are united, addresses move to one person. To split or join by hand, change the «contact» link of an address in the right table. The book output feeds Messenger «rows»: «@Name text» sends to the address of the contact. Search: type part of a name or number in the Table filter (phones contains 4567).'});
 nt.size.w=1000; nt.size.h=230; applySize(nt);
 const ms=addNode('messenger',40,290,{proto:'nostr',channel:'dsp'});
 ms.size.w=360; ms.size.h=360; applySize(ms);

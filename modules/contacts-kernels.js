@@ -109,6 +109,13 @@ function ctFromRec(r){
   const key=ctKey(proto,addr); if(!key) return null;
   return {proto,addr:ctAddr(proto,addr),name:ctStr(r.fromName||r.from)||ctAddr(proto,addr),key};
 }
+// ростер (XMPP, Matrix…): запись Messenger {kind:'roster', contacts:[{proto,addr,name}]} → список {proto,addr,name,key}
+function ctFromRoster(r){
+  if(!r || r.kind!=='roster' || !Array.isArray(r.contacts)) return [];
+  const out=[];
+  for(const c of r.contacts){ const proto=ctStr(c&&c.proto||r.proto).toLowerCase(), key=ctKey(proto,c&&c.addr); if(key) out.push({proto,addr:ctAddr(proto,c.addr),name:ctStr(c.name)||ctAddr(proto,c.addr),key}); }
+  return out;
+}
 // строка контактов с телефона (Phone Actions → contacts.find): {src:'contact', name, phones:[…]|'a|b'}
 function ctFromPhoneRec(r){
   if(!r || r.src!=='contact') return null;
@@ -116,6 +123,17 @@ function ctFromPhoneRec(r){
   const phones=[...new Set(ph.map(ctPhone).filter(Boolean))];
   if(!ctStr(r.name) && !phones.length) return null;
   return {name:ctStr(r.name)||phones[0],phones,emails:[],org:'',note:'',birthday:'',tags:[]};
+}
+
+// Имя нового человека, которого ещё нет среди names: «Боб», при занятом — «Боб (matrix)», потом «Боб (matrix 2)»…
+// Люди никогда не сливаются по имени: одинаковые подписи в разных протоколах — разные люди, пока нет общего телефона или адреса.
+function ctUniqueName(names,base,proto){
+  base=ctStr(base)||ctStr(proto)||'?';
+  if(!names.has(base)) return base;
+  const tag=ctStr(proto);
+  const first=tag ? base+' ('+tag+')' : base+' (2)';
+  if(!names.has(first)) return first;
+  for(let i=2;;i++){ const nm=tag ? base+' ('+tag+' '+i+')' : base+' ('+(i+1)+')'; if(!names.has(nm)) return nm; }
 }
 
 /* ---------- слияние ---------- */

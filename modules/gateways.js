@@ -17,6 +17,7 @@ const Gw={
   resolve(s){ return gwResolve(this.list(),this.tokens(),s).url; },
   err(s){ return gwResolve(this.list(),this.tokens(),s).err||''; },
   // «@имя» в поле CORS proxy → шаблон адреса прокси этого устройства (должно быть Node-мост)
+  proxyOf(s){ const n=gwRef(s), d=n!==null && gwFind(this.list(),n); return d && d.proxy ? d.proxy : ''; },      // «@имя» → имя учётки-прокси устройства
   proxyTemplate(s){ const n=gwRef(s), d=n!==null && gwFind(this.list(),n); return d ? gwProxyTemplate(d,this.tokens()[d.name.toLowerCase()]) : ''; },
   names(){                                                           // подсказки для полей адреса
     let dl=document.getElementById('gwNames'); if(!dl){ dl=document.createElement('datalist'); dl.id='gwNames'; document.body.append(dl); }
@@ -46,7 +47,7 @@ const gwErr=s=>{ const t=String(s||'').trim(); return t[0]==='@' ? Gw.err(t) : '
   const listEl=box.querySelector('.gwList'), mk=(tag,cls,txt)=>{ const e=document.createElement(tag); if(cls) e.className=cls; if(txt!=null) e.textContent=txt; return e; };
   let rows=[];                                                       // [{name,url,token}]
   const load=()=>{ const tk=Gw.tokens(); rows=Gw.list().map(d=>({...d,token:tk[d.name.toLowerCase()]||''})); };
-  const store=()=>{ const tk={}; for(const r of rows) if(r.token) tk[r.name.toLowerCase()]=r.token; Gw.save(rows.map(({name,url})=>({name,url})),tk); };
+  const store=()=>{ const tk={}; for(const r of rows) if(r.token) tk[r.name.toLowerCase()]=r.token; Gw.save(rows.map(({name,url,proxy})=>({name,url,proxy})),tk); };
   function draw(){
     listEl.textContent='';
     rows.forEach((r,i)=>{
@@ -61,12 +62,17 @@ const gwErr=s=>{ const t=String(s||'').trim(); return t[0]==='@' ? Gw.err(t) : '
       tok.onchange=()=>{ r.token=tok.value.trim(); store(); };
       del.onclick=()=>{ rows.splice(i,1); store(); draw(); };
       test.onclick=async()=>{ res.textContent='…'; const x=await Gw.probe(r,r.token); res.textContent=(x.ok ? '✓ ' : '⚠ ')+x.text; };
-      top.append(name,test,del); card.append(top,url,tok,res); listEl.append(card);
+      const px=mk('select','gwProxy'); px.title='outgoing proxy of this device: everything its nodes open (IRC, XMPP, e-mail, Matrix, Nostr, feeds…) goes through it. Add a credential of type «proxy» in Credentials';
+      const pxs=(typeof Cred!=='undefined' ? Cred.list() : []).filter(c=>c.type==='proxy');
+      for(const [v,t] of [['','no proxy (direct)'],...pxs.map(c=>[c.name,'proxy: '+c.name+'  ·  '+c.server]),...(r.proxy && !pxs.some(c=>c.name===r.proxy) ? [[r.proxy,r.proxy+' ?']] : [])]){ const o=mk('option',null,t); o.value=v; px.append(o); }
+      px.value=r.proxy||''; px.onchange=()=>{ r.proxy=px.value; store(); };
+      top.append(name,test,del); card.append(top,url,tok,px,res); listEl.append(card);
     });
     if(!rows.length) listEl.append(mk('p',null,'No devices yet. Add a phone (the DSP app), a Raspberry Pi or a PC with the Node bridge — then any node takes «@name» in its address field.'));
   }
   box.querySelector('.gwAdd').onclick=()=>{ let k=rows.length+1; while(rows.some(r=>r.name==='device'+k)) k++; rows.push({name:'device'+k,url:'ws://',token:''}); store(); draw(); };
   load(); draw(); Gw.names();
+  window.addEventListener('cred-changed',()=>{ load(); draw(); });                  // добавили / убрали учётку-прокси — выбор обновится
 })();
 
 // сертификаты: свой центр (ключ — в IndexedDB и не извлекается) и серверные сертификаты для мостов (cert-kernels.js)

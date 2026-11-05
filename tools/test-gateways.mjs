@@ -23,6 +23,7 @@ eq('proxy template: ws → http, wss → https, token encoded', [G.gwProxyTempla
 eq('proxy template: not a ws address', G.gwProxyTemplate({url: 'http://x'}, ''), '');
 eq('hello classification', [G.gwKind({ev: 'hello'}), G.gwKind({src: 'bridge', level: 'hello', app: 'dsp-android'}), G.gwKind({src: 'bridge', level: 'hello', ver: 1}), G.gwKind({src: 'gps'}), G.gwKind(null)], ['node', 'phone', 'termux', '', '']);
 eq('clean: bad names, duplicates (any case) and junk are dropped', G.gwClean([{name: 'a', url: 'ws://1'}, {name: 'A', url: 'ws://2'}, {name: 'bad name', url: 'ws://3'}, {name: '', url: 'x'}, null, {name: 'b'}, {name: ' c ', url: ' ws://4 '}]), [{name: 'a', url: 'ws://1'}, {name: 'c', url: 'ws://4'}]);
+eq('clean: proxy credential name kept, junk dropped', G.gwClean([{name: 'a', url: 'ws://1', proxy: 'tor'}, {name: 'b', url: 'ws://2', proxy: 'bad name!'}, {name: 'c', url: 'ws://3', proxy: 5}]), [{name: 'a', url: 'ws://1', proxy: 'tor'}, {name: 'b', url: 'ws://2'}, {name: 'c', url: 'ws://3'}]);
 eq('clean: not a list', G.gwClean('x'), []);
 
 // токены не должны уезжать в бэкап
