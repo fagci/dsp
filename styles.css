@@ -1080,6 +1080,8 @@ select.aed-b{padding:0 6px}
 .cv-hit{padding:6px;border-bottom:1px solid color-mix(in srgb,var(--line) 40%,transparent);cursor:pointer;border-radius:4px}
 .cv-hit:hover{background:color-mix(in srgb,var(--acc2) 12%,transparent)}
 .cv-hit-h{font-size:10px;color:var(--dim);margin-bottom:2px}
+.cv-text.gone{font-style:italic;color:var(--dim)}
+.cv-edited{font-size:10px;color:var(--dim);font-style:italic}
 .cv-rx{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
 .cv-chip{height:20px;padding:0 7px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--txt);font-size:12px;line-height:18px;cursor:pointer}
 .cv-chip.mine{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 28%,var(--bg))}

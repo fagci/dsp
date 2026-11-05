@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ctx = vm.createContext({Math, Uint8Array, TextEncoder, TextDecoder, Array, Map, Set, Error, String, Number, Object, Date, JSON, parseInt, RegExp});
 for (const f of ['contacts-kernels.js', 'dbsearch-kernels.js', 'chat-kernels.js']) vm.runInContext(fs.readFileSync(path.join(root, 'modules', f), 'utf8'), ctx, {filename: f});
-vm.runInContext('this.K={chBookIndex,chPerson,chConv,chAnnotate,chFilter,chConvs,chThreads,chDayLabel,chSameRun,chMd,chPreview,chHash,chHistKey,chToItem,chFromItem,chHistTail,chReadCounts,CH_HIST_COLS,CH_ME,CH_EMOJI,CH_REACT_PROTOS,chReactApply,chReactSummary,chReactMine}', ctx);
+vm.runInContext('this.K={chBookIndex,chPerson,chConv,chAnnotate,chFilter,chConvs,chThreads,chDayLabel,chSameRun,chMd,chPreview,chHash,chHistKey,chToItem,chFromItem,chHistTail,chReadCounts,CH_HIST_COLS,CH_ME,CH_EMOJI,CH_REACT_PROTOS,chReactApply,chReactSummary,chReactMine,CH_EDIT_PROTOS,CH_DELETE_PROTOS,chCanModify,chApplyMod}', ctx);
 const K = ctx.K;
 let bad = 0;
 const eq = (n, a, b) => { const sa = JSON.stringify(a), sb = JSON.stringify(b); if (sa !== sb) { bad++; console.log('FAIL', n, sa, '!=', sb); } else console.log('ok  ', n); };
@@ -112,4 +112,26 @@ eq('read counts: nothing saved → everything unread', K.chReadCounts([{conv: 'a
   eq('history: a reaction without an id keeps a stable key', K.chHistKey(K.chFromItem(rm)), rm.name);
   eq('history: a message keeps its reference', K.chFromItem(K.chToItem({t: 11, proto: 'telegram', dir: 'in', from: 'ivan', text: 'hi', id: '5', ref: '7:41'})).ref, '7:41');
   eq('history: all columns of a reaction are known', Object.keys(it.fields).every(k => K.CH_HIST_COLS.includes(k)), true); }
+// правка и удаление
+{ const mineM = K.chAnnotate({t: 1, proto: 'matrix', dir: 'out', from: 'me', room: '!r:hs', id: '$a', text: 'мой'}, new Map(), 'me');
+  const bobM = K.chAnnotate({t: 2, proto: 'matrix', dir: 'in', from: 'bob', room: '!r:hs', id: '$b', text: 'bob text'}, new Map(), 'me');
+  const xm = K.chAnnotate({t: 3, proto: 'xmpp', dir: 'in', from: 'anna@ex.org', fromAddr: 'anna@ex.org', id: 'x1', text: 'xmpp'}, new Map(), 'me');
+  eq('modify: my own event applies to my message only', [K.chCanModify(mineM, {dir: 'out'}), K.chCanModify(bobM, {dir: 'out'})], [true, false]);
+  eq('modify: an incoming event applies when the author is the author of the message', [K.chCanModify(bobM, {dir: 'in', author: 'bob'}), K.chCanModify(bobM, {dir: 'in', author: 'eve'}), K.chCanModify(mineM, {dir: 'in', author: 'me'}), K.chCanModify(bobM, {dir: 'in', author: ''})], [true, false, false, false]);
+  eq('modify: a JID with a resource and capitals matches the sender', K.chCanModify(xm, {dir: 'in', author: 'Anna@Ex.org/phone'}), true);
+  eq('modify: a server-checked event (force) always applies', K.chCanModify(bobM, {dir: 'in', author: '', force: true}), true);
+  eq('modify: junk', [K.chCanModify(null, {}), K.chCanModify(bobM, null)], [false, false]);
+  const ed = K.chApplyMod(bobM, {kind: 'edit', text: 'исправлено'});
+  eq('apply edit: text, flag and raw follow; the original is untouched', [ed.text, ed.edited, ed.raw.text, bobM.text], ['исправлено', true, 'исправлено', 'bob text']);
+  const dl = K.chApplyMod({...bobM, subject: 's', atts: [{name: 'a'}]}, {kind: 'delete'});
+  eq('apply delete: text, subject and attachments are gone', [dl.text, dl.deleted, dl.subject, dl.atts, dl.raw.text], ['', true, '', null, '']);
+  eq('preview of a deleted message', K.chPreview(dl), 'message deleted');
+  eq('protocols that take edits and deletes', [K.CH_EDIT_PROTOS, K.CH_DELETE_PROTOS], [['matrix', 'xmpp', 'telegram'], ['matrix', 'xmpp', 'telegram', 'nostr']]);
+  const eIt = K.chToItem({t: 20, proto: 'matrix', dir: 'in', kind: 'edit', target: '$b', author: 'bob', text: 'новый', id: '$e1', room: '!r:hs'});
+  const eBack = K.chFromItem(eIt);
+  eq('history: an edit is a row (kind, ref, the new text)', [eIt.name, eIt.fields.kind, eIt.fields.ref, eIt.fields.text], ['matrix:edit:$e1', 'edit', '$b', 'новый']);
+  eq('history: an edit survives the round trip with the same key', [eBack.kind, eBack.target, eBack.author, eBack.text, eBack.id, K.chHistKey(eBack) === eIt.name], ['edit', '$b', 'bob', 'новый', '$e1', true]);
+  const dIt = K.chToItem({t: 21, proto: 'matrix', dir: 'in', kind: 'delete', target: '$b', author: '', force: true, id: ''}), dBack = K.chFromItem(dIt);
+  eq('history: a delete keeps «force» and a stable key without an id', [dBack.kind, dBack.target, dBack.force === true, K.chHistKey(dBack) === dIt.name, dIt.fields.text], ['delete', '$b', true, true, '']);
+  eq('history: new columns are known', Object.keys(eIt.fields).every(k => K.CH_HIST_COLS.includes(k)) && Object.keys(dIt.fields).every(k => K.CH_HIST_COLS.includes(k)), true); }
 console.log(bad ? 'FAILED ' + bad : 'all ok'); process.exit(bad ? 1 : 0);
