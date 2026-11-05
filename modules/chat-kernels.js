@@ -114,3 +114,35 @@ function chMd(text){
 }
 // первая строка превью для списка разговоров
 const chPreview=(m,n)=>{ const t=chStr(m&&m.text).replace(/\s+/g,' '); const s=(m&&m.mine ? 'You: ' : '')+t; return s.length>(n||60) ? s.slice(0,(n||60)-1)+'…' : s; };
+
+/* ---------- история в списке Table ---------- */
+const CH_HIST_COLS=['time','proto','dir','from','from_addr','to','room','subject','thread','text','atts','conv','t'];
+// короткая свёртка строки (для ключа сообщения без id)
+function chHash(s){ let h=2166136261>>>0; s=String(s); for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619)>>>0; } return h.toString(36); }
+// ключ сообщения: протокол + id, а без id — время, автор и свёртка текста (повторная выдача истории не плодит дубли)
+const chHistKey=r=>chStr(r.proto||'chat').toLowerCase()+':'+(chStr(r.id) ? 'id:'+chStr(r.id) : (+r.t||0)+':'+chHash(chStr(r.from)+'\u0000'+chStr(r.fromAddr)+'\u0000'+chStr(r.text)));
+// сообщение → запись списка {name, fields}; name — ключ, поля — читаемые колонки (список можно листать и искать в Table)
+function chToItem(r){
+  const t=+r.t||Date.now(), d=new Date(t), p2=x=>String(x).padStart(2,'0');
+  return {name:chHistKey(r),fields:{
+    time:d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+' '+p2(d.getHours())+':'+p2(d.getMinutes())+':'+p2(d.getSeconds()),
+    proto:chStr(r.proto),dir:chStr(r.dir),from:chStr(r.from),from_addr:chStr(r.fromAddr),to:chStr(r.to),room:chStr(r.room),subject:chStr(r.subject),thread:chStr(r.thread),
+    text:String(r.text==null?'':r.text),atts:(r.atts||[]).map(a=>a&&a.name).filter(Boolean).join(' | '),conv:chConv(r).key,t:t}};
+}
+// запись списка → сообщение (то, что пришло бы в rec); вложения — только имена (файлы лежат в Files)
+function chFromItem(it){
+  const f=(it&&it.fields)||{}, id=chStr(it&&it.name).startsWith(chStr(f.proto).toLowerCase()+':id:') ? chStr(it.name).slice(chStr(f.proto).length+4) : '';
+  const r={t:+f.t||0,proto:chStr(f.proto)||'chat',dir:chStr(f.dir)==='out' ? 'out' : 'in',from:chStr(f.from),text:String(f.text==null?'':f.text)};
+  if(chStr(f.from_addr)) r.fromAddr=chStr(f.from_addr); if(chStr(f.to)) r.to=chStr(f.to); if(chStr(f.room)) r.room=chStr(f.room);
+  if(chStr(f.subject)) r.subject=chStr(f.subject); if(chStr(f.thread)) r.thread=chStr(f.thread); if(id) r.id=id;
+  if(chStr(f.atts)) r.atts=chStr(f.atts).split('|').map(s=>({name:s.trim(),mime:'',size:0})).filter(a=>a.name);
+  return r;
+}
+// последние max сообщений списка по времени (старые идут на выброс при trim)
+const chHistTail=(items,max)=>items.map(chFromItem).filter(r=>r.t).sort((a,b)=>a.t-b.t).slice(-max);
+// метки «прочитано до» по разговорам → сколько сообщений каждого разговора уже прочитано
+function chReadCounts(msgs,readT){
+  const out={}; readT=readT||{};
+  for(const m of msgs){ if(m.t<=(readT[m.conv]||0)) out[m.conv]=(out[m.conv]||0)+1; else out[m.conv]=out[m.conv]||0; }
+  return out;
+}

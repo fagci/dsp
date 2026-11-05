@@ -12,6 +12,7 @@ function chcInit(n){
   n.msgs=[]; n.read={}; n.seen=new Set(); n.pid=0; n.bookIdx=new Map(); n.bookSig='';
   n.cs={open:'',q:'',person:'',proto:'',unread:false,reply:null,fo:false,fold:new Set()};
   n.outTo=''; n.cvEl=null; n.cvDirty=true; n.unreadN=0; n.lastBook=undefined;
+  n.hist={loaded:false,loading:false,queue:[],early:[],timer:null,name:'',err:''};
 }
 // записи книги (Contacts → book): имена людей по адресам; при смене книги сообщения переразмечаются
 function chcSetBook(n,rows){
@@ -20,12 +21,12 @@ function chcSetBook(n,rows){
   n.bookIdx=chBookIndex(rows);
   n.msgs=n.msgs.map(m=>({...chAnnotate(m.raw,n.bookIdx,n.p.me),pending:m.pending,pid:m.pid,thread:m.thread||m.raw.thread})); n.cvDirty=true;
 }
-function chcAdd(n,r){
+function chcAdd(n,r,quiet){
   if(!r || typeof r!=='object' || r.kind==='roster') return;
   const text=r.text ?? r.msg ?? r.message; if(text==null || text==='') return;
   const raw={...r,text:String(text),t:+r.t||Date.now(),dir:r.dir||(String(r.from||'')===String(n.p.me||'') && n.p.me ? 'out' : 'in'),proto:r.proto||'chat'};
-  const key=raw.id ? raw.proto+'\u0000'+raw.id : '';
-  if(key){ if(n.seen.has(key)) return; n.seen.add(key); if(n.seen.size>20000) n.seen.delete(n.seen.values().next().value); }
+  const key=chHistKey(raw);                                                     // тот же ключ, что у записи истории: повторная выдача сервера и перезагрузка не плодят дубли
+  if(n.seen.has(key)) return; n.seen.add(key); if(n.seen.size>50000) n.seen.delete(n.seen.values().next().value);
   const m={...chAnnotate(raw,n.bookIdx,n.p.me),raw};
   if(m.mine){                                                                     // своё сообщение с сервера заменяет «отправляется»
     const i=n.msgs.findIndex(x=>x.pending && x.conv===m.conv && x.text===m.text);
@@ -33,6 +34,7 @@ function chcAdd(n,r){
   }
   n.msgs.push(m); if(n.msgs.length>CHC_KEEP) n.msgs.splice(0,n.msgs.length-CHC_KEEP);
   n.cvDirty=true;
+  if(!quiet && chcStore(n)){ n.hist.queue.push(chToItem(raw)); chcSchedule(n); }
 }
 function chcSend(n,text){
   text=String(text).trim(); if(!text) return;
@@ -44,8 +46,47 @@ function chcSend(n,text){
   const raw={t:Date.now(),proto:c.proto,dir:'out',from:String(n.p.me||'me'),to,room:c.kind==='room' ? c.title : '',text,id:'',thread:re ? (re.thread||re.id||'') : ''};
   const m={...chAnnotate(raw,n.bookIdx,n.p.me),raw,pending:true,pid:++n.pid,sentAt:Date.now()};
   if(n.p.echo!==false) n.msgs.push(m);
-  n.outQ.push(text); n.outTo=to; cv.reply=null; n.read[c.key]=n.msgs.filter(x=>x.conv===c.key).length; n.cvDirty=true;
+  n.outQ.push(text); n.outTo=to; cv.reply=null; chcMarkRead(n,c.key); n.cvDirty=true;
 }
+
+// ---------- история в списке Table (store) ----------
+const chcStore=n=>String(n.p.store||'').trim();
+const chcReadKey=n=>'dsp-chat-read:'+chcStore(n);
+function chcReadT(n){ try{ return JSON.parse(localStorage.getItem(chcReadKey(n))||'{}')||{}; }catch(e){ return {}; } }
+function chcMarkRead(n,key){
+  const list=n.msgs.filter(m=>m.conv===key);
+  if(n.read[key]===list.length) return;
+  n.read[key]=list.length;
+  if(!chcStore(n) || !list.length) return;
+  try{ const t=chcReadT(n); t[key]=list[list.length-1].t; localStorage.setItem(chcReadKey(n),JSON.stringify(t)); }catch(e){ /* без хранилища — прочитанное живёт до перезагрузки */ }
+}
+function chcSchedule(n){ if(n.hist.timer) return; n.hist.timer=setTimeout(()=>{ n.hist.timer=null; chcFlush(n); },600); }
+async function chcFlush(n){                                               // записи пачкой: одна транзакция вместо десятков
+  const h=n.hist, name=chcStore(n), items=h.queue.splice(0);
+  if(!items.length || !name || typeof ListDB==='undefined') return;
+  try{ await ListDB.addMany(name,items); h.err=''; }
+  catch(e){ h.err='history not saved: '+(e&&e.message||e); n.cs.hint=h.err; n.cvDirty=true; }
+}
+async function chcLoad(n){
+  const h=n.hist, name=chcStore(n); h.loading=true;
+  try{
+    if(!(await ListDB.listNames()).includes(name)) await ListDB.setMeta(name,{cols:['name',...CH_HIST_COLS],types:{text:{t:'long'}}});
+    const items=await ListDB.list(name);
+    for(const r of chHistTail(items,CHC_KEEP)) chcAdd(n,r,true);              // последние — в память (chcAdd сам отмечает ключи)
+    for(const it of items) n.seen.add(String(it.name));                       // …а всё сохранённое, даже не влезшее в память, — «уже видели»
+    n.msgs.sort((a,b)=>a.t-b.t);
+    n.read=chReadCounts(n.msgs,chcReadT(n));                                   // непрочитанное — по сохранённому времени
+  }catch(e){ h.err='history not loaded: '+(e&&e.message||e); n.cs.hint=h.err; }
+  h.loaded=true; h.loading=false; n.cvDirty=true;
+  const early=h.early.splice(0); for(const r of early) chcAdd(n,r);          // что пришло, пока грузилась история
+}
+async function chcWipe(n){
+  const name=chcStore(n); if(!name) return;
+  if(!confirm('Delete the whole chat history from the list «'+name+'»? Messages already shown stay until reload.')) return;
+  try{ await chcFlush(n); await ListDB.replaceList(name,[]); n.seen.clear(); n.msgs=[]; n.read={}; try{ localStorage.removeItem(chcReadKey(n)); }catch(e){} n.cvDirty=true; n.cs.hint='history deleted'; }
+  catch(e){ n.cs.hint='cannot delete: '+(e&&e.message||e); n.cvDirty=true; }
+}
+
 // ---------- разметка ----------
 function chcMd(text,into){
   for(const t of chMd(text)){
@@ -97,7 +138,7 @@ function chcList(n,body){
     const side=chcEl('div','cv-side'); side.append(chcEl('div','cv-when',chcTime(c.last.t)));
     if(c.unread) side.append(chcEl('span','cv-badge',String(c.unread)));
     row.append(mid,side);
-    row.addEventListener('click',()=>{ cv.open=c.key; n.read[c.key]=all.get(c.key)?.count||0; cv.reply=null; n.cvDirty=true; n.cvStick=true; });
+    row.addEventListener('click',()=>{ cv.open=c.key; chcMarkRead(n,c.key); cv.reply=null; n.cvDirty=true; n.cvStick=true; });
     body.append(row);
   }
 }
@@ -131,7 +172,7 @@ function chcResults(n,body){                                            // фи�
   for(const m of list.reverse()){
     const row=chcEl('div','cv-hit'); row.append(chcEl('div','cv-hit-h',m.convTitle+' · '+m.proto+' · '+new Date(m.t).toLocaleString()));
     const t=chcEl('div','cv-text'); chcMd(m.text,t); row.append(t);
-    row.addEventListener('click',()=>{ n.cs.open=m.conv; n.cs.q=''; n.cs.person=''; n.cs.proto=''; n.cs.unread=false; n.read[m.conv]=n.msgs.filter(x=>x.conv===m.conv).length; n.cvDirty=true; n.cvStick=true; });
+    row.addEventListener('click',()=>{ n.cs.open=m.conv; n.cs.q=''; n.cs.person=''; n.cs.proto=''; n.cs.unread=false; chcMarkRead(n,m.conv); n.cvDirty=true; n.cvStick=true; });
     body.append(row);
   }
 }
@@ -175,7 +216,7 @@ function chcRender(n){
   n.cvTitle.textContent=cur ? cur.title+(cur.kind==='room' ? '' : '') : (chcActive(n) ? 'Search' : 'Chats');
   n.cvTitle.title=cur ? cur.proto+(cur.kind==='room' ? ' · room' : '') : '';
   body.textContent='';
-  if(cv.open){ chcThread(n,body); n.read[cv.open]=n.msgs.filter(m=>m.conv===cv.open).length; }       // открытый разговор читается
+  if(cv.open){ chcThread(n,body); chcMarkRead(n,cv.open); }       // открытый разговор читается
   else if(chcActive(n) && (cv.q || cv.person) ) chcResults(n,body);
   else chcList(n,body);
   n.cvRep.textContent=''; if(cv.reply){ n.cvRep.append(chcEl('span',null,'↪ '+cv.reply.author+': '+cv.reply.text)); const x=chcEl('button',null,'✕'); x.type='button'; x.addEventListener('click',()=>{ cv.reply=null; n.cvDirty=true; }); n.cvRep.append(x); }
