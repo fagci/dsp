@@ -32,6 +32,14 @@ function mgNodeStart(n){
   const bridge=gwUrl(rawBridge) + (p.bridgeToken && /^wss?:/i.test(rawBridge) ? '?token='+encodeURIComponent(p.bridgeToken) : '');      // bridgeToken — из старых патчей; новый путь — токен в Settings → Devices
   const cfg={server:'',channel:String(p.channel||'').trim(),user:'',pass:'',
     nick:String(p.nick||'dsp').trim() || 'dsp',appKey:(()=>{ try{ return (window.DspApp && DspApp.appKey && DspApp.appKey()) || ''; }catch(e){ return ''; } })(),history:+p.history||0,retry:!!p.reconnect,via:p.via,proxyUrl:p.proxy && typeof Net!=='undefined' ? u=>Net.url(u) : null,smtp:'',pollMs:(+p.poll||30)*1000,bridge,insecure:!!p.plain,cache:n.mxCache};
+  // прокси: свой (учётка типа proxy) или прокси устройства-моста из Settings → Devices; открывает его только Node-мост — без моста прямой выход не делаем молча
+  const pxName=String(p.proxy||'').trim() || (rawBridge[0]==='@' ? Gw.proxyOf(rawBridge) : '');
+  if(pxName){
+    const pc=(typeof Cred!=='undefined' && Cred.get(pxName))||null;
+    if(!pc || !pc.server){ n.status='proxy «'+pxName+'» not found — add a credential of type «proxy» in Settings → Credentials'; return; }
+    if(!bridge){ n.status='a proxy works through the Node bridge: set the gateway (Settings → Devices) — not connecting directly'; return; }
+    cfg.proxy={server:pc.server,user:pc.user||'',pass:pc.pass||''}; cfg.via='bridge';
+  }
   const acct=String(p.account||'').trim();
   if(acct){                                                          // учётка — единственный источник сервера, логина и пароля
     const cr=(typeof Cred!=='undefined' && Cred.get(acct))||null;
@@ -54,7 +62,10 @@ function mgNodeStart(n){
   if(p.via==='auto' && inApp && !cfg.bridge) cfg.phone={url:'ws://127.0.0.1:8765',key:cfg.appKey};   // внутри приложения свои сокеты; чужой шлюз — только по явному адресу
   n.warn=netInsecure(cfg.server) || (cfg.bridge && netInsecure(cfg.bridge)) ? NET_INSECURE_MSG : '';
   n.sess=mgConnect(proto,cfg,{
-    msg:m=>{ if(m.delay && !cfg.history) return; mgNodeSaveAtts(n,m); mgNodeLog(n,m.self ? 'out' : 'in',m); },
+    msg:m=>{
+      if(m.kind==='roster'){ n.recQ.push({t:m.t||Date.now(),proto:p.proto,dir:'in',kind:'roster',contacts:m.contacts||[],text:'',from:''}); n.status='roster: '+(m.contacts||[]).length+' contact(s)'; return; }     // список контактов — в rec (для Contacts), не в чат
+      if(m.delay && !cfg.history) return; mgNodeSaveAtts(n,m); mgNodeLog(n,m.self ? 'out' : 'in',m);
+    },
     status:(t,s)=>{ n.status=t; n.ok=s==='up'; if(s==='fatal') n.sess=null; },
   });
 }
@@ -120,6 +131,7 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
   readout:true, tall:true,
   params:[
     {n:'proto',t:'select',opts:['nostr','ntfy','matrix','telegram','irc','xmpp','aprs','email','sms','reticulum','mastodon','bluesky','rss'],d:'nostr',label:'channel of communication'},
+    {n:'proxy',t:'text',d:'',cred:true,credType:'proxy',label:'proxy — a credential of type «proxy» (socks5://… or http://…): the Node bridge opens everything through it (IRC, XMPP, e-mail, Matrix, Nostr, feeds…). Empty — the proxy of the gateway in Settings → Devices, or the bridge\'s own --proxy',adv:true},
     {n:'account',t:'text',d:'',cred:true,label:'account — a credential (Settings → Credentials) or «＋ new…» right here: it IS the server, the login and the password of the channel. Empty — no auth (Nostr anonymous, ntfy, public feeds; defaults: public relays, ntfy.sh, …)'},
     {n:'channel',t:'text',d:'dsp',label:'channel — nostr: hashtag · ntfy: topic · matrix: room (!id:server or #alias:server) · telegram: only to receive from ONE chat — its id or @name; leave empty for all chats (replies go to the last one) · irc: #channels · xmpp: room@conference.server (empty — direct messages only) · aprs: server filter (g/CALL, m/50, r/lat/lon/km, b/CALL*; empty — messages to you) · email: mailbox (empty — INBOX) · reticulum: the default recipient (32-digit address or a name heard in announces) · mastodon / bluesky: WHAT TO READ — #tags (several: any of them), -#tag drops posts with it, mastodon: «local» / «home» (token), empty — the public timeline; bluesky: @account, a feed link (bsky.app/profile/…/feed/…) or an at:// feed · rss: WORDS — any of them in the title / text / categories, -word drops an item; empty — everything'},
     {n:'attach',t:'text',d:'',label:'email: a file from Files (name or id) attached to what is sent'},

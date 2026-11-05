@@ -91,6 +91,8 @@ const PW = rnd(), TOK = rnd(), TG = rnd() + ':' + rnd(), IRC_PW = rnd(), BAD = r
     if (!auth) { res.writeHead(401); return res.end('{"errcode":"M_UNKNOWN_TOKEN","error":"nope"}'); }
     if (u.pathname.endsWith('/join/!r%3Ahs') || u.pathname.includes('/join/')) { await body(req); return js({room_id: '!r:hs'}); }
     if (u.pathname.endsWith('/account/whoami')) return js({user_id: '@me:hs'});
+    if (u.pathname.endsWith('/joined_rooms')) return js({joined_rooms: ['!r:hs', '!r2:hs']});
+    if (u.pathname.endsWith('/joined_members')) return js({joined: u.pathname.includes('r2') ? {'@me:hs': {}, '@bob:hs': {display_name: 'Bob (other room)'}, '@eve:hs': {display_name: ''}} : {'@me:hs': {display_name: 'Me'}, '@bob:hs': {display_name: 'Bob'}}});
     if (u.pathname.endsWith('/sync')) {
       syncs++;
       if (!u.searchParams.get('since')) return js({next_batch: 'b0', rooms: {join: {'!r:hs': {timeline: {events: [{type: 'm.room.message', event_id: '$old', sender: '@old:hs', content: {msgtype: 'm.text', body: 'history'}}]}}}}});
@@ -111,7 +113,10 @@ const PW = rnd(), TOK = rnd(), TG = rnd() + ':' + rnd(), IRC_PW = rnd(), BAD = r
   ok('matrix login + join', A.state() === 'up' && logins === 1, JSON.stringify(A.st));
   await sleep(100);
   pending.push({type: 'm.room.message', event_id: '$1', sender: '@bob:hs', origin_server_ts: 2, content: {msgtype: 'm.text', body: 'hi from bob'}});
-  await until(() => A.msgs.length);
+  await until(() => A.msgs.some(m => m.kind !== 'roster'));
+  const roster = await until(() => A.msgs.find(m => m.kind === 'roster'));
+  ok('matrix roster: people of our rooms, without ourselves, once each', !!roster && JSON.stringify(roster.contacts) === JSON.stringify([{proto: 'matrix', addr: '@bob:hs', name: 'Bob'}, {proto: 'matrix', addr: '@eve:hs', name: '@eve:hs'}]), JSON.stringify(roster));
+  A.msgs.splice(0, A.msgs.length, ...A.msgs.filter(m => m.kind !== 'roster'));
   ok('matrix incoming (history skipped)', A.msgs.length === 1 && A.msgs[0].text === 'hi from bob' && A.msgs[0].from === 'bob', JSON.stringify(A.msgs));
   ok('matrix send', await A.s.send('мой ответ') === true && sent[0].body === 'мой ответ');
   await until(() => A.msgs.length === 2);
@@ -416,10 +421,11 @@ const PW = rnd(), TOK = rnd(), TG = rnd() + ':' + rnd(), IRC_PW = rnd(), BAD = r
     const hdr = f => "<?xml version='1.0'?><stream:stream from='ex.org' id='s" + streams + "' version='1.0' xmlns='jabber:client' xmlns:stream='http://etherx.jabber.org/streams'>" + f;
     sock.on('data', d => { acc += d; rx.push(d);
       for (;;) {
-        const m = /<stream:stream[^>]*>|<auth[^>]*>[^<]*<\/auth>|<iq[^>]*id='bind1'[\s\S]*?<\/iq>|<message[\s\S]*?<\/message>/.exec(acc);
+        const m = /<stream:stream[^>]*>|<auth[^>]*>[^<]*<\/auth>|<iq[^>]*id='bind1'[\s\S]*?<\/iq>|<iq[^>]*id='roster1'[\s\S]*?<\/iq>|<message[\s\S]*?<\/message>/.exec(acc);
         if (!m) break; acc = acc.slice(m.index + m[0].length);
         if (m[0].startsWith('<stream:stream')) { streams++; sock.write(hdr(streams === 1 ? "<stream:features><mechanisms xmlns='urn:ietf:params:xml:ns:xmpp-sasl'><mechanism>PLAIN</mechanism></mechanisms></stream:features>" : "<stream:features><bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'/></stream:features>")); }
         else if (m[0].startsWith('<auth')) sock.write("<success xmlns='urn:ietf:params:xml:ns:xmpp-sasl'/>");
+        else if (m[0].includes("id='roster1'")) sock.write("<iq type='result' id='roster1'><query xmlns='jabber:iq:roster'><item jid='ann@ex.org' name='Ann' subscription='both'/><item jid='old@ex.org' subscription='remove'/><item jid='zed@ex.org' subscription='to'/></query></iq>");
         else if (m[0].startsWith('<iq')) sock.write("<iq type='result' id='bind1'><bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'><jid>bob@ex.org/dsp</jid></bind></iq>");
         else if (m[0].startsWith('<message')) sock.write(m[0].replace("type='groupchat'", "type='groupchat' from='room@conf.ex.org/bobby'").replace(/ to='[^']*'/, ''));
       } });
@@ -432,6 +438,9 @@ const PW = rnd(), TOK = rnd(), TG = rnd() + ':' + rnd(), IRC_PW = rnd(), BAD = r
   ok('xmpp refuses a plaintext password without STARTTLS', refuse.state() === 'fatal' && /STARTTLS/.test(refuse.st.at(-1)[1]) && !rx.join('').includes('<auth'), JSON.stringify(refuse.st));
   const A = rig('xmpp', {user: 'bob@ex.org', pass: PW, server: 'xmpp://127.0.0.1:' + port, channel: 'room@conf.ex.org', nick: 'bobby', insecure: true});
   await until(() => A.state() === 'up');
+  const xr = await until(() => A.msgs.find(m => m.kind === 'roster'));
+  ok('xmpp roster: contacts with names, removed ones skipped', !!xr && JSON.stringify(xr.contacts) === JSON.stringify([{proto: 'xmpp', addr: 'ann@ex.org', name: 'Ann'}, {proto: 'xmpp', addr: 'zed@ex.org', name: 'zed@ex.org'}]), JSON.stringify(xr));
+  A.msgs.splice(0, A.msgs.length, ...A.msgs.filter(m => m.kind !== 'roster'));
   ok('xmpp login + bind', A.state() === 'up' && /bob@ex\.org\/dsp/.test(A.st.at(-1)[1]), JSON.stringify(A.st));
   ok('xmpp send to the room', A.s.send('hi & <all>') === true);
   await until(() => A.msgs.length);

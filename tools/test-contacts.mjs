@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ctx = vm.createContext({Math, Uint8Array, TextEncoder, TextDecoder, Array, Map, Set, Error, String, Number, Object, Date, JSON, parseInt, RegExp});
 vm.runInContext(fs.readFileSync(path.join(root, 'modules/contacts-kernels.js'), 'utf8'), ctx, {filename: 'contacts-kernels.js'});
-vm.runInContext('this.K={ctPhone,ctAddr,ctKey,ctVcardParse,ctPersonRow,ctIdentRows,ctFromRec,ctFromPhoneRec,ctMergeTwo,ctDupGroups,ctMergePlan,ctBook,ctWho,ctFindPerson}', ctx);
+vm.runInContext('this.K={ctPhone,ctAddr,ctKey,ctVcardParse,ctPersonRow,ctIdentRows,ctFromRec,ctFromRoster,ctFromPhoneRec,ctMergeTwo,ctDupGroups,ctMergePlan,ctBook,ctWho,ctFindPerson,ctUniqueName}', ctx);
 const K = ctx.K;
 let bad = 0;
 const eq = (n, a, b) => { const sa = JSON.stringify(a), sb = JSON.stringify(b); if (sa !== sb) { bad++; console.log('FAIL', n, sa, '!=', sb); } else console.log('ok  ', n); };
@@ -68,6 +68,10 @@ eq('rec: no sender', K.ctFromRec({proto: 'irc', dir: 'in', from: ''}), null);
 eq('phone rec: contacts.find row', K.ctFromPhoneRec({src: 'contact', id: '5', name: 'Мама', phones: ['8 916 000-00-01', '+7 916 000 00 01']}), {name: 'Мама', phones: ['+79160000001'], emails: [], org: '', note: '', birthday: '', tags: []});
 eq('phone rec: other rows ignored', K.ctFromPhoneRec({src: 'sms', name: 'x'}), null);
 
+// ростер
+eq('roster: rows with canonical keys', K.ctFromRoster({kind: 'roster', proto: 'xmpp', contacts: [{proto: 'xmpp', addr: 'Ann@Ex.org/phone', name: 'Ann'}, {proto: 'matrix', addr: '@Bob:HS'}, {addr: ''}]}).map(x => [x.key, x.name]), [['xmpp:ann@ex.org', 'Ann'], ['matrix:@bob:hs', '@bob:hs']]);
+eq('roster: not a roster', K.ctFromRoster({kind: 'message'}), []);
+
 // слияние
 const people = [
   {name: 'Аня', phones: '+79161234567', emails: '', org: '', note: 'коллега', tags: 'работа'},
@@ -106,5 +110,15 @@ eq('who: key → first person', K.ctWho(idents).get('email:anna@ex.org'), 'Ан�
 eq('import: existing person found by a differently written phone', K.ctFindPerson(people, {phones: ['+7 (495) 111-22-33'], emails: []}), 'Анна Петрова');
 eq('import: found by email case-insensitive', K.ctFindPerson(people, {phones: [], emails: ['ANNA@EX.ORG']}), 'Анна Петрова');
 eq('import: a new person is not found', K.ctFindPerson(people, {phones: ['+7 900 000 00 00'], emails: []}), '');
+
+// уникальные имена: по имени никого не сливаем
+{ const used = new Set(['Боб']);
+  eq('name: free name kept', K.ctUniqueName(used, 'Анна', 'telegram'), 'Анна');
+  eq('name: taken → with protocol', K.ctUniqueName(used, 'Боб', 'matrix'), 'Боб (matrix)');
+  used.add('Боб (matrix)');
+  eq('name: still taken → numbered', K.ctUniqueName(used, 'Боб', 'matrix'), 'Боб (matrix 2)');
+  eq('name: without protocol', K.ctUniqueName(new Set(['X']), 'X', ''), 'X (2)');
+  eq('name: empty falls back to the protocol', K.ctUniqueName(new Set(), '', 'irc'), 'irc'); }
+eq('duplicates: the same name alone is not a reason', K.ctDupGroups([{name: 'Боб', phones: '+79990001122'}, {name: 'Боб (matrix)', phones: ''}], [{proto: 'matrix', addr: '@bob:ex.org', contact: 'Боб (matrix)', key: 'matrix:@bob:ex.org'}]), []);
 
 console.log(bad ? 'FAILED ' + bad : 'all ok'); process.exit(bad ? 1 : 0);

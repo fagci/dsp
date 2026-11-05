@@ -30,6 +30,7 @@ import {wsAccept, wsFrame, wsParser, originOk, DEFAULT_ORIGINS} from '../termux/
 import {loadMsgr} from './load.mjs';
 import {prepareTls} from './tlsdir.mjs';
 import {createSerialHub, parseSerialSpec} from './serial.mjs';
+import {parseProxy, proxyTcp, makeProxyFetch, makeProxyWs, proxyStream} from './proxy.mjs';
 
 export function hostOk(host, allowed) {
   if (!allowed || !allowed.length) return true;
@@ -38,9 +39,11 @@ export function hostOk(host, allowed) {
 }
 
 // транспорты Node для сессий: ws / fetch — глобальные, tcp — net / tls (с переходом STARTTLS)
-export function nodeIo(allowed = []) {
+export function nodeIo(allowed = [], proxy = null) {
   const guard = h => { if (!hostOk(h, allowed)) throw new Error('host ' + h + ' is not in --hosts'); };
   const hostOf = u => new URL(u).hostname;
+  const px = parseProxy(proxy);                                // прокси (SOCKS5 / HTTP CONNECT): всё, что открывает сессия, идёт через него
+  if (px) return {ws: makeProxyWs(px, guard), fetch: makeProxyFetch(px, guard), tcp: (host, port, useTls, h, o = {}) => { guard(host); return proxyTcp(px, host, port, useTls, h, o); }, proxy: px};
   return {
     ws: u => { guard(hostOf(u)); if (typeof WebSocket === 'undefined') throw new Error('Node 22+ is required (global WebSocket)'); return new WebSocket(u); },
     fetch: (u, o) => { guard(hostOf(String(u))); return fetch(u, o); },
@@ -131,7 +134,9 @@ function makeProxy(o) {
       if (!hostOk(host, o.hosts)) return fail(res, 403, 'host ' + host + ' is not in --hosts');
       if (net.isIP(host) && !classOk(ipClass(host), host)) return fail(res, 403, 'the address ' + host + ' is not allowed for the proxy (' + ipClass(host) + ')');
       const lib = t.protocol === 'https:' ? https : http;
-      const ureq = lib.request({host, port: t.port || (t.protocol === 'https:' ? 443 : 80), path: t.pathname + t.search, method: req.method, headers: {...hdrs, host: t.host}, lookup, timeout: 30000});
+      const tport = +t.port || (t.protocol === 'https:' ? 443 : 80);
+      const via = o.outProxy ? {createConnection: (opt, cb) => { proxyStream(o.outProxy, host, tport, t.protocol === 'https:').then(s => cb(null, s), cb); }} : {lookup};     // с прокси имя хоста резолвит он
+      const ureq = lib.request({host, port: tport, path: t.pathname + t.search, method: req.method, headers: {...hdrs, host: t.host}, ...via, timeout: 30000});
       res.on('close', () => ureq.destroy());
       ureq.on('timeout', () => ureq.destroy(new Error('the server does not answer')));
       ureq.on('error', e => fail(res, 502, 'proxy: ' + (e.message || e.code)));
@@ -154,10 +159,11 @@ function makeProxy(o) {
 }
 
 export function createMsgrBridge(opt) {
+  opt = {...opt, outProxy: opt && opt.outProxy ? parseProxy(opt.outProxy) : null};     // исходящий прокси (--proxy): строка → разобранный; ошибка адреса — сразу. Не путать с proxy — флагом CORS-прокси моста
   const o = {host: '127.0.0.1', port: 8777, token: '', origins: DEFAULT_ORIGINS, hosts: [], proxy: true, proxyLoopback: false, proxyPrivate: true, log: () => {}, ...opt};
   const proxy = o.proxy ? makeProxy(o) : null;
   const M = loadMsgr();
-  const io = o.io || nodeIo(o.hosts);
+  const io = o.io || nodeIo(o.hosts, o.outProxy);                 // o.outProxy — прокси по умолчанию (--proxy); сессия может прислать свой
   const clients = new Set();
   const serial = createSerialHub((o.serial || []).map(x => typeof x === 'string' ? parseSerialSpec(x) : x), o.log);
 
@@ -223,9 +229,11 @@ export function createMsgrBridge(opt) {
         if (m.op === 'open' && typeof m.proto === 'string' && m.cfg && typeof m.cfg === 'object') {
           stop();
           // мост сам переподключается; io и via задаём сами — страница не может подсунуть чужой транспорт
-          const {io: _i, cache: _c, bridge: _b, ...cfg} = m.cfg;
+          const {io: _i, cache: _c, bridge: _b, proxy: pxCfg, ...cfg} = m.cfg;
+          let ioS = io;
+          if (pxCfg && !o.io) { try { ioS = nodeIo(o.hosts, pxCfg); } catch (e) { send({ev: 'status', text: e.message, state: 'fatal'}); return; } }
           o.log('open ' + m.proto + ' ' + String(cfg.server || '') + (cfg.channel ? ' ' + cfg.channel : ''));
-          c.ses = M.mgConnect(m.proto, {...cfg, io, via: 'page', retry: true}, {
+          c.ses = M.mgConnect(m.proto, {...cfg, io: ioS, via: 'page', retry: true}, {
             msg: x => send({ev: 'msg', m: x}),
             status: (text, state) => { o.log(m.proto + ': ' + text); send({ev: 'status', text, state}); },
           });
@@ -262,15 +270,15 @@ export function createMsgrBridge(opt) {
 if (process.argv[1] && fileURLToPath(import.meta.url) === fs.realpathSync(process.argv[1])) {
   const {values: a} = parseArgs({options: {
     host: {type: 'string', default: '127.0.0.1'}, port: {type: 'string', default: '8777'}, token: {type: 'string', default: ''},
-    origin: {type: 'string', multiple: true, default: []}, 'no-proxy': {type: 'boolean', default: false}, tls: {type: 'boolean', default: false}, 'tls-dir': {type: 'string', default: ''}, 'tls-name': {type: 'string', multiple: true, default: []}, cert: {type: 'string', default: ''}, key: {type: 'string', default: ''}, 'proxy-loopback': {type: 'boolean', default: false}, 'proxy-no-private': {type: 'boolean', default: false}, hosts: {type: 'string', default: ''}, serial: {type: 'string', multiple: true, default: []}, help: {type: 'boolean', short: 'h', default: false},
+    origin: {type: 'string', multiple: true, default: []}, 'no-proxy': {type: 'boolean', default: false}, tls: {type: 'boolean', default: false}, 'tls-dir': {type: 'string', default: ''}, 'tls-name': {type: 'string', multiple: true, default: []}, cert: {type: 'string', default: ''}, key: {type: 'string', default: ''}, 'proxy-loopback': {type: 'boolean', default: false}, 'proxy-no-private': {type: 'boolean', default: false}, hosts: {type: 'string', default: ''}, serial: {type: 'string', multiple: true, default: []}, proxy: {type: 'string', default: ''}, help: {type: 'boolean', short: 'h', default: false},
   }});
   if (a.help) {
-    console.log('node tools/node/bridge.mjs [--host 127.0.0.1] [--port 8777] [--token T] [--origin URL]… [--hosts irc.example.org,*.example.net] [--no-proxy] [--proxy-loopback] [--proxy-no-private] [--tls [--tls-dir DIR] [--tls-name name-or-ip]…] [--cert FILE --key FILE] [--serial name=/dev/ttyACM0@115200 | name=tcp://router:2000]…');
+    console.log('node tools/node/bridge.mjs [--host 127.0.0.1] [--port 8777] [--token T] [--origin URL]… [--hosts irc.example.org,*.example.net] [--no-proxy] [--proxy-loopback] [--proxy-no-private] [--tls [--tls-dir DIR] [--tls-name name-or-ip]…] [--cert FILE --key FILE] [--serial name=/dev/ttyACM0@115200 | name=tcp://router:2000]… [--proxy socks5://user:pass@host:1080 | http://host:3128]');
     process.exit(0);
   }
   if (a.host !== '127.0.0.1' && a.host !== 'localhost' && !a.token) console.error('warning: open to the network without --token — anyone on it can use your accounts through this bridge');
   const b = createMsgrBridge({host: a.host, port: +a.port, token: a.token, origins: [...DEFAULT_ORIGINS, ...a.origin],
-    hosts: a.hosts.split(',').map(s => s.trim().toLowerCase()).filter(Boolean), proxy: !a['no-proxy'], tls: a.tls, tlsDir: a['tls-dir'], tlsNames: a['tls-name'], cert: a.cert, key: a.key, proxyLoopback: a['proxy-loopback'], proxyPrivate: !a['proxy-no-private'], serial: a.serial,
+    hosts: a.hosts.split(',').map(s => s.trim().toLowerCase()).filter(Boolean), proxy: !a['no-proxy'], tls: a.tls, tlsDir: a['tls-dir'], tlsNames: a['tls-name'], cert: a.cert, key: a.key, proxyLoopback: a['proxy-loopback'], proxyPrivate: !a['proxy-no-private'], serial: a.serial, outProxy: a.proxy,
     log: m => console.error(new Date().toISOString().slice(11, 19) + ' ' + m)});
   b.listen().then(ad => {
     for (const x of b.serialPorts) console.error('serial: ws://' + ad.address + ':' + ad.port + '/serial/' + x.name + (a.token ? '?token=…' : '') + '  ←  ' + x.target);

@@ -1050,6 +1050,7 @@ fName.placeholder='name'; fName.maxLength=24;
 const fHint=()=>{ const ex=CR_EXAMPLE[fType.value]||CR_EXAMPLE.custom;
   fSrv.placeholder=ex.server?'server — '+ex.server:'server — empty (the token goes to password)';
   fSmtp.hidden=fType.value!=='email'; if(fType.value==='email') fSmtp.placeholder='SMTP — '+(ex.smtp||'smtps://smtp.example.org:465'); };
+if(s.credType && CR_TYPES.includes(s.credType)) fType.value=s.credType;
 fType.onchange=fHint; fHint();
 fUser.placeholder='login / user'; fPass.placeholder='password / token'; fPass.className='gwTok'; fPass.name='dsp-credential-password'; fPass.setAttribute('data-lpignore','true'); fPass.setAttribute('data-1p-ignore','true');
 fSmtp.placeholder='SMTP — smtps://smtp.example.org:465';
@@ -1062,7 +1063,7 @@ fSave.addEventListener('click',e=>{ e.stopPropagation();
   n.p[s.n]=rec.name; form.hidden=true; s.fn && s.fn(n); render(); });
 form.append(fType,fName,fSrv,fUser,fPass,fSmtp,fSave,fRes);
 const render=()=>{
-  const v=String(n.p[s.n]??''), list=Cred.list(), hit=v && crFind(list,v);
+  const v=String(n.p[s.n]??''), list=Cred.list().filter(c=>s.credType ? c.type===s.credType : c.type!=='proxy'), hit=v && crFind(list,v);      // credType — только учётки этого типа; без него прокси в списке не показываем
   sel.textContent='';
   const add=(val,txt)=>{ const o=document.createElement('option'); o.value=val; o.textContent=txt; sel.append(o); };
   add(NONE,'— (params below)');

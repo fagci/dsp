@@ -140,6 +140,16 @@ function mgOpenNtfy(cfg,c){
 }
 
 /* ---------- Matrix: /sync (long poll) и send ---------- */
+// Люди из комнат, в которых мы состоим: [{proto:'matrix', addr:'@user:server', name}] (без нас самих; не больше 40 комнат)
+async function mgMatrixRoster(call,me){
+  const jr=await call('GET','/joined_rooms'); if(!jr.ok) return [];
+  const seen=new Map();
+  for(const id of (jr.j.joined_rooms||[]).slice(0,40)){
+    const r=await call('GET','/rooms/'+encodeURIComponent(id)+'/joined_members'); if(!r.ok) continue;
+    for(const [uid,v] of Object.entries(r.j.joined||{})){ if(uid===me || seen.has(uid)) continue; seen.set(uid,String((v&&v.display_name)||'').trim()||uid); }
+  }
+  return [...seen].map(([addr,name])=>({proto:'matrix',addr,name}));
+}
 function mgOpenMatrix(cfg,c){
   const io=mgIo(cfg), hs=mgTrim(cfg.server), ac=new AbortController(), cache=cfg.cache||{};
   if(!/^https?:\/\//i.test(hs)){ c.down('Matrix: enter the homeserver address https://…',true); return mgNone; }
@@ -170,6 +180,7 @@ function mgOpenMatrix(cfg,c){
         room=r.j.room_id||room;
       }
       c.status('connected as '+me+(room ? ', room '+room : ''),'up');
+      if(cfg.roster!==false) mgMatrixRoster(call,me).then(list=>{ if(list.length && !closed) c.msg({kind:'roster',t:Date.now(),contacts:list,text:''}); }).catch(()=>{});     // не мешает синхронизации
       const filter=encodeURIComponent(JSON.stringify({room:{...(room ? {rooms:[room]} : {}),timeline:{limit:50,types:['m.room.message']},state:{types:[]},ephemeral:{types:[]},account_data:{types:[]}},presence:{types:[]},account_data:{types:[]}}));
       let next=null, first=true;
       while(!closed){
@@ -286,6 +297,7 @@ function mgOpenXmpp(cfg,c){
     open:()=>cl.start(),data:s=>cl.feed(s),close:err=>{ if(!closed) c.down('XMPP: '+(err || 'connection closed'),false); }});
   cl=mgXmppClient({domain,user,pass:cfg.pass,resource:cfg.resource||'dsp',room,nick,secure,insecure:!!cfg.insecure,
     write:s=>{ try{ link.write(s); }catch(e){} },tls:done=>link.upgrade(done),onMsg:x=>{ if(!x.delay || cfg.history) c.msg(x); },
+    onRoster:cfg.roster===false ? null : list=>c.msg({kind:'roster',t:Date.now(),contacts:list,text:''}),
     onStatus:(t,s)=>{ if(s==='fatal'){ c.down(t,true); try{ link.close(); }catch(e){} } else if(s==='down') c.down(t,false); else c.status(t,s); }});
   return {
     send(text,to){
@@ -429,6 +441,7 @@ function mgOpenGateway(proto,cfg,c){
     if(!kind) return;
     clearTimeout(timer); stop();
     if(kind==='node') inner=mgOpenRemote(proto,cfg,c);
+    else if(cfg.proxy){ c.down('a proxy works through the Node bridge (tools/node/bridge.mjs) — this gateway is not one',true); return; }
     else { c.status('gateway: DSP app on '+(j.host||'a phone'),'connecting'); inner=MG_OPEN[proto]({...cfg,phone:{url,key:cfg.appKey,io:cfg.io}},c); }
   };
   return {

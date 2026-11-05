@@ -374,9 +374,14 @@ function mgXmppClient(o){
         if(t==='result'){
           const b=mgKid(node,'bind'), j=b && mgKid(b,'jid'); jid=j ? j.text.trim() : o.user+'@'+o.domain;
           w('<presence/>');
+          if(o.onRoster) w("<iq type='get' id='roster1'><query xmlns='jabber:iq:roster'/></iq>");
           if(room) w("<presence to='"+mgXmlEsc(room+'/'+nick)+"'><x xmlns='http://jabber.org/protocol/muc'><history maxstanzas='0'/></x></presence>");
           ready=true; o.onStatus('connected as '+jid+(room ? ', room '+room : ''),'up');
         } else { o.onStatus('could not bind a resource','fatal'); closed=true; }
+      } else if(node.attrs.id==='roster1'){
+        const q=t==='result' ? mgKid(node,'query') : null, list=[];
+        for(const it of q ? q.kids : []){ if(mgLocal(it.name)!=='item' || it.attrs.subscription==='remove') continue; const j=(it.attrs.jid||'').trim(); if(j) list.push({proto:'xmpp',addr:j,name:(it.attrs.name||'').trim()||j}); }
+        if(o.onRoster && list.length) o.onRoster(list);
       } else if(t==='get' || t==='set'){
         if(node.kids.some(k=>mgLocal(k.name)==='ping')) w("<iq type='result' id='"+mgXmlEsc(node.attrs.id||'')+"' to='"+mgXmlEsc(node.attrs.from||o.domain)+"'/>");
         else w("<iq type='error' id='"+mgXmlEsc(node.attrs.id||'')+"' to='"+mgXmlEsc(node.attrs.from||o.domain)+"'><error type='cancel'><service-unavailable xmlns='urn:ietf:params:xml:ns:xmpp-stanzas'/></error></iq>");
