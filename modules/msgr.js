@@ -127,6 +127,7 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
     {n:'contacts',t:'text',d:'',label:'contacts — extra aliases «Name=address» (comma-separated); wire a Table with name/addr columns into «rows» for a full address book'},
     {n:'poll',t:'range',min:5,max:600,step:5,d:30,label:'email / mastodon / bluesky / rss: check every, s (mastodon, bluesky: at least 5; rss: at least 60)'},
     {n:'nick',t:'text',d:'dsp',label:'nick (shown to others; in Chat set «my name» the same)'},
+    {n:'font',t:'range',min:8,max:16,step:1,d:10,label:'font size of the messages in the node, px',adv:true},
     {n:'history',t:'range',min:0,max:2592000,step:60,d:0,label:'also fetch what was said in the last, s (nostr, ntfy, matrix, xmpp; feeds: how far back the first read goes — 0 shows only what comes later)'},
     {n:'via',t:'select',opts:['auto','page','bridge'],d:'auto',label:'where TCP comes from (IRC ircs://, XMPP, APRS-IS, email): auto — the phone itself inside the DSP app, else the gateway below; bridge — always the gateway'},
     {n:'bridge',t:'text',d:'',dev:true,label:'TCP gateway — @name from Settings → Devices (the token stays there), or one address for either: the DSP app on a phone (ws://192.168.0.5:8765; the app must allow other pages) or the Node bridge (ws://127.0.0.1:8777); the type is detected'},
@@ -164,5 +165,6 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
     let t=(n.warn && !n.ok ? '⚠ '+n.warn+'\n' : '')+n.p.proto+' · '+n.status+' · messages '+n.count;
     for(const row of n.log.slice(-8)){ const who=(row.dir==='out' && row.to) ? row.to : row.from;      // исходящее — с адресатом, не с собой
       t+='\n'+(row.dir==='out' ? '→ ' : '')+(who ? who+': ' : '')+((row.kind==='position' || row.kind==='status' ? (row.lat!=null ? '📍 '+row.lat.toFixed(4)+','+row.lon.toFixed(4)+' ' : '')+row.comment : row.text).slice(0,200)); }
+    const fs=Math.max(8,Math.min(16,+n.p.font||10))+'px'; if(r.style.fontSize!==fs) r.style.fontSize=fs;      // 12 px у общего .readout.tall — для сообщений крупно
     if(r.textContent!==t) r.textContent=t; }
 });

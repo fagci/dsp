@@ -640,6 +640,7 @@ const PRESET_CATS={
   'Bridge: Serial Port ↔ BLE UART (USB Radio to a BLE Device)':'Network & IoT',
   'Bridge: Serial Port ↔ Network (TCP/WS Gateway)':'Network & IoT',
   'Serial Port on a Router or Another PC (Node bridge, OpenWrt ser2net)':'Network & IoT',
+  'Contacts: People and Addresses from vCard, Phone and Messages (Tables)':'Network & IoT',
   'Bridge: BLE UART ↔ Network (TCP/WS Gateway)':'Network & IoT',
   'Bridge: BLE GATT ↔ Network (Phone App)':'Network & IoT',
   'Phone App: BLE Auto-Discover Devices and Services (GATT)':'Network & IoT',
@@ -2198,6 +2199,21 @@ c.size.w=340; c.size.h=220; applySize(c);
 const ws=addNode('webserial',480,190,{baud:'115200'});
 ws.size.w=360; ws.size.h=300; applySize(ws);
 addEdge(c.id,'text',ws.id,'text');
+markWiresDirty();
+});
+preset('Contacts: People and Addresses from vCard, Phone and Messages (Tables)', function(){
+clearAll();
+const nt=addNode('note',40,30,{text:'One address book for every channel. A person is a row in the Table «contacts/people» (name, several phones and e-mails, organisation, birthday, tags, note, photo); how to reach them is a row in «contacts/identities» (protocol + address, «contact» links to the person) — so one person has a phone, an e-mail, a Telegram and a Matrix address at once. Contacts fills both: «Import vCard…» (a .vcf exported from the phone, Google, Outlook), the phone itself (Phone Actions → contacts.find, wire its rec to Contacts), and everyone who writes to the Messenger below becomes an entry (an unknown address = a new one; the same display name in another protocol joins the same person — untick «the same display name» to keep them apart). «Find duplicates» / «Merge duplicates» look for people who share a phone or an address (+7 (916) 123-45-67 and 89161234567 are the same number) and join them: fields are united, addresses move to one person. To split or join by hand, change the «contact» link of an address in the right table. The book output feeds Messenger «rows»: «@Name text» sends to the address of the contact. Search: type part of a name or number in the Table filter (phones contains 4567).'});
+nt.size.w=1000; nt.size.h=230; applySize(nt);
+const ms=addNode('messenger',40,290,{proto:'nostr',channel:'dsp'});
+ms.size.w=360; ms.size.h=360; applySize(ms);
+const ct=addNode('contacts',460,290);
+ct.size.w=300; ct.size.h=240; applySize(ct);
+const t1=addNode('table',820,290,{list:'contacts/people',vmode:'cards'});
+t1.size.w=420; t1.size.h=340; applySize(t1);
+const t2=addNode('table',1280,290,{list:'contacts/identities',vmode:'grid'});
+t2.size.w=420; t2.size.h=340; applySize(t2);
+addEdge(ms.id,'rec',ct.id,'rec'); addEdge(ct.id,'book',ms.id,'rows');
 markWiresDirty();
 });
 preset('Serial Port on a Router or Another PC (Node bridge, OpenWrt ser2net)', function(){
