@@ -312,7 +312,7 @@ const PW = rnd(), TOK = rnd(), TG = rnd() + ':' + rnd(), IRC_PW = rnd(), BAD = r
   A.s.close();
   const br = createMsgrBridge({port: 0}); const bp = (await br.listen()).port; servers.push({close: () => br.close()});
   const P = rig('email', {...cfg, bridge: 'ws://127.0.0.1:' + bp, via: 'auto', io: {}}); await until(() => P.state() === 'up', 5000);
-  mails.push({uid: 6, raw: 'From: Bob <bob@ex.org>\r\nSubject: via bridge\r\n\r\nпривет через мост'});
+  mails.push({uid: 9, raw: 'From: Bob <bob@ex.org>\r\nSubject: via bridge\r\n\r\nпривет через мост'});
   await until(() => P.msgs.length, 5000);
   ok('email through the Node bridge (binary-safe)', P.msgs[0]?.text === '[via bridge] привет через мост', JSON.stringify(P.msgs)+JSON.stringify(P.st)); P.s.close();
 }
