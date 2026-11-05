@@ -2995,12 +2995,18 @@ fpsSel.onchange=()=>{ try{ LS.set('dsp-fps',fpsSel.value); }catch(e){} wakeDraw(
   if(pm) pm.onchange=()=>{ LS.set('dsp-proxy-mode',pm.value); lit(); };
   lit();
   const place=()=>{
-    const r=btn.getBoundingClientRect(), w=Math.min(300,innerWidth-16);
+    const r=btn.getBoundingClientRect(), w=Math.min(470,innerWidth-16);
     panel.style.width=w+'px';
     panel.style.left=Math.max(8,Math.min(r.left,innerWidth-w-8))+'px';
     if(r.top>innerHeight/2){ panel.style.top=''; panel.style.bottom=(innerHeight-r.top+4)+'px'; }
     else { panel.style.bottom=''; panel.style.top=(r.bottom+4)+'px'; }
   };
+  // табы-разделы слева; выбор запоминается
+  const tabs=[...panel.querySelectorAll('#setTabs button')], secs=[...panel.querySelectorAll('#setBody > section')];
+  const show=t=>{ for(const b of tabs) b.classList.toggle('on',b.dataset.t===t); for(const s of secs) s.hidden=s.dataset.t!==t; try{ LS.set('dsp-settab',t); }catch(e){} };
+  for(const b of tabs) b.onclick=e=>{ e.stopPropagation(); show(b.dataset.t); };
+  let t0='general'; try{ t0=LS.get('dsp-settab')||'general'; }catch(e){}
+  show(secs.some(s=>s.dataset.t===t0) ? t0 : 'general');
   const back=()=>{ panel.hidden=true; btn.setAttribute('aria-expanded',false); };
   const set=on=>{ const was=!panel.hidden; panel.hidden=!on; btn.setAttribute('aria-expanded',on); if(on) place();
     if(on && !was) Back.push(back); else if(!on && was) Back.drop(back); };

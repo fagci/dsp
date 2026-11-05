@@ -579,6 +579,7 @@ function mgMailCompose(o){                                   // → строка
   const hdr=['From: '+mgLine(o.from),'To: '+mgLine(o.to),'Subject: '+mgMimeWord(mgLine(o.subject||'')),
     'Date: '+new Date(o.date||Date.now()).toUTCString().replace('GMT','+0000'),'Message-ID: <'+(o.id||mgHex(mgRandom(8)))+'@dsp>',
     'MIME-Version: 1.0','X-Mailer: DSP workbench'];
+  if(o.irt) hdr.push('In-Reply-To: <'+o.irt+'>','References: <'+o.irt+'>');      // ответ в тред: id корневого письма цепочки
   if(!atts.length)
     return hdr.concat(['Content-Type: text/plain; charset=utf-8','Content-Transfer-Encoding: base64']).join('\r\n')+'\r\n\r\n'+bodyB64;
   const b='----dsp'+mgHex(mgRandom(10));
@@ -695,12 +696,12 @@ function mgImapClient(o){
 }
 
 // ---------- SMTP: одно письмо за соединение ----------
-// o: {host,user,pass,from,to,subject,body,secure,insecure,name,write(str),tls(done),done(err|null)}
+// o: {host,user,pass,from,to,subject,body,secure,insecure,name,irt,write(str),tls(done),done(err|null)}   irt — id письма, на которое отвечаем (тред)
 function mgSmtpClient(o){
   let buf='', st='greet', tlsDone=!!o.secure, exts='', ended=false, authStep=0;
   const w=s=>o.write(s+'\r\n');
   const end=err=>{ if(!ended){ ended=true; o.done(err); } };
-  const mail=mgMailCompose({from:o.from,to:o.to,subject:o.subject,body:o.body,atts:o.atts});
+  const mail=mgMailCompose({from:o.from,to:o.to,subject:o.subject,body:o.body,atts:o.atts,irt:o.irt});
   const addr=a=>(/<([^>]+)>/.exec(a)||[,a])[1];
   function reply(code,lines){
     const ok=code<400, text=lines.join(' ').slice(0,100);

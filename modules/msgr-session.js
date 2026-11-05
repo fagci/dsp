@@ -334,12 +334,15 @@ function mgOpenEmail(cfg,c){
   if(!cfg.user || !cfg.pass){ c.down('Email: pick an «account» in the node — a credential with the IMAP and SMTP servers, the login and an app password (Gmail and the like need an app password, not the account one)',true); return mgNone; }
   if(!io.tcp){ c.down('Email needs the Node bridge (tools/node/bridge.mjs): set its address',true); return mgNone; }
   const me=/@/.test(cfg.nick||'') ? cfg.nick : /@/.test(cfg.user) ? cfg.user : '';
+  const recent=new Map();                                     // адресат → {subj, root} последнего входящего треда: ответ туда же с тем же сюжетом продолжит тред
+  const stripRe=s=>String(s||'').replace(/^\s*((re|fwd?|aw|ответ):\s*)+/i,'').trim().toLowerCase();
   let closed=false, raw=null, cl=null, timer=null;
   if(imap){
     raw=io.tcp(imap.host,imap.port,imap.secure,{
       open:()=>cl.start(),data:x=>cl.feed(x),close:err=>{ if(!closed) c.down('IMAP: '+(err || 'connection closed'),false); }},{binary:true});
     cl=mgImapClient({user:cfg.user,pass:cfg.pass,box:cfg.channel||'INBOX',history:cfg.history|0,secure:imap.secure,insecure:!!cfg.insecure,
-      write:x=>{ try{ raw.write(x); }catch(e){} },tls:done=>raw.upgrade(done),onMsg:m=>c.msg(m),
+      write:x=>{ try{ raw.write(x); }catch(e){} },tls:done=>raw.upgrade(done),
+      onMsg:m=>{ if(m.fromAddr && m.thread) recent.set(String(m.fromAddr).toLowerCase(),{subj:m.subject||'',root:m.thread}); c.msg(m); },
       onStatus:(t,s)=>{ if(s==='fatal') c.down('IMAP: '+t,true); else c.status(t+(smtp ? '' : ' · receive only'),s); }});
     timer=setInterval(()=>cl.poll(),Math.max(1000,cfg.pollMs||30000));
     setTimeout(()=>cl && cl.poll(),1500);
@@ -353,13 +356,16 @@ function mgOpenEmail(cfg,c){
       if(!/^[^\s@<>]+@[^\s@<>]+$/.test(to)){ c.status('Email: address a message as «@name@host text» or with the «to» input','warn'); return Promise.resolve(false); }
       if(!me){ c.status('Email: the sender is unknown — make the user (or nick) an address','warn'); return Promise.resolve(false); }
       const nl=text.indexOf('\n'), subject=nl>0 ? text.slice(0,nl).trim() : 'DSP message', body=nl>0 ? text.slice(nl+1) : text;
+      const th=recent.get(to.toLowerCase());                  // ответ в тред: тот же адресат и тот же сюжет (без «Re:»)
+      const irt=th && stripRe(th.subj) && stripRe(th.subj)===stripRe(subject) ? th.root : '';
+      const subjOut=irt && !/^\s*re:/i.test(subject) ? 'Re: '+subject : subject;
       return new Promise(res=>{
         let h=null, cli=null;
         h=io.tcp(smtp.host,smtp.port,smtp.secure,{
           open:()=>{},data:x=>cli.feed(x),close:err=>cli.abort()},{binary:true});
-        cli=mgSmtpClient({host:smtp.host,user:cfg.user,pass:cfg.pass,from:me,to,subject,body,atts:Array.isArray(atts)&&atts.length?atts:null,secure:smtp.secure,insecure:!!cfg.insecure,
+        cli=mgSmtpClient({host:smtp.host,user:cfg.user,pass:cfg.pass,from:me,to,subject:subjOut,body,atts:Array.isArray(atts)&&atts.length?atts:null,irt,secure:smtp.secure,insecure:!!cfg.insecure,
           write:x=>{ try{ h.write(x); }catch(e){} },tls:done=>h.upgrade(done),
-          done:err=>{ try{ h.close(); }catch(e){} if(err){ c.status('SMTP: '+err,'warn'); res(false); } else { c.msg({from:me,to,subject,text:(nl>0 ? '['+subject+'] ' : '')+body,t:Date.now(),self:true,local:true,kind:'mail'}); res(true); } }});
+          done:err=>{ try{ h.close(); }catch(e){} if(err){ c.status('SMTP: '+err,'warn'); res(false); } else { c.msg({from:me,to,subject:subjOut,thread:irt,text:(nl>0 ? '['+subjOut+'] ' : '')+body,t:Date.now(),self:true,local:true,kind:'mail'}); res(true); } }});
       });
     },
     close(){ closed=true; clearInterval(timer); if(cl) cl.quit(); try{ raw && raw.close(); }catch(e){} },

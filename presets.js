@@ -1816,6 +1816,19 @@ ch.size.w=420; ch.size.h=460; applySize(ch);
 addEdge(em.id,'rec',ch.id,'rec'); addEdge(ch.id,'text',em.id,'send');
 markWiresDirty();
 });
+preset('Email: a Correspondence as Threads in the Chat', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The same mailbox as a chat, but a correspondence folds into ONE thread: letters that answer each other (the References / In-Reply-To chain) are tucked under the first letter of the chain — indented, without repeating the name. A new subject from a new sender starts a new thread.\n'+
+  'To ANSWER inside a thread, address the same recipient with the same subject («@friend@example.org The subject» and the text on the next lines): «Re: …» is added on its own, and the letter carries In-Reply-To / References — the thread continues here and in the mail client of the correspondent. A single line («@friend@example.org some text») is a new letter «DSP message» — a new thread.\n'+
+  'The account is a credential: Settings → Credentials (＋ new…) — server = imaps://imap.example.org:993, SMTP = smtps://smtp.example.org:465 (or smtp://…:587 with STARTTLS), login, password (Gmail and the like need an app password) — then pick it in «account». A browser cannot open TCP: open this page in the DSP app for Android or run the Node bridge: node tools/node/bridge.mjs (Node 22+).'});
+nt.size.w=900; nt.size.h=210; applySize(nt);
+const em=addNode('messenger',40,280,{proto:'email',account:'',channel:'INBOX',nick:'me@example.org',bridge:'ws://127.0.0.1:8777'});
+em.size.w=420; em.size.h=440; applySize(em);
+const ch=addNode('chat',500,280,{echo:false,me:'me@example.org',time:true});
+ch.size.w=420; ch.size.h=440; applySize(ch);
+addEdge(em.id,'rec',ch.id,'rec'); addEdge(ch.id,'text',em.id,'send');
+markWiresDirty();
+});
 preset('SMS: Texts as a Chat (DSP app on Android)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Text messages as a chat channel: incoming SMS of the phone come out of the Messenger node as «from number: text», and what you type goes out as an SMS from the phone. Type «@+79001234567 text» in the chat (or wire a number into the node\'s «to» input). Works in the page of the DSP app for Android (tools/android): only that page holds the app key, so SMS (personal data and money) are closed to every other site. The first time, Android asks to allow SMS for the app — allow it and repeat the command; the app sends at most 5 SMS a minute.\n'+

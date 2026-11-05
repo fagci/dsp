@@ -298,6 +298,16 @@ const PW = rnd(), TOK = rnd(), TG = rnd() + ':' + rnd(), IRC_PW = rnd(), BAD = r
   ok('email: plain compose has no multipart', !M.mgMailCompose({from: 'a@b.c', to: 'd@e.f', subject: 's', body: 't'}).includes('multipart'));
   ok('email: send with attachment', await A.s.send('@you@ex.org Отчёт\nфайл во вложении', undefined, [{name: 'data.bin', mime: 'application/octet-stream', bytes: attBytes}]) === true);
   ok('email: attachment reaches the server', sentMail.length === 2 && sentMail[1].includes('multipart/mixed') && sentMail[1].includes('Content-Disposition: attachment') && M.mgMailParse(sentMail[1]).atts.length === 1, sentMail[1] && sentMail[1].slice(0, 160));
+  // треды: ответ тому же адресату с тем же сюжетом продолжает цепочку (In-Reply-To / References, «Re: »)
+  const base2 = A.msgs.length;
+  mails.push({uid: 8, raw: 'From: Bob <bob@ex.org>\r\nTo: me@ex.org\r\nSubject: Meetup\r\nMessage-ID: <m-bob1@ex.org>\r\n\r\nгде встречаемся?'});
+  await until(() => A.msgs.length > base2);
+  const tm = A.msgs.at(-1);
+  ok('email: incoming letter starts a thread (own Message-ID)', tm.thread === 'm-bob1@ex.org' && tm.fromAddr === 'bob@ex.org', JSON.stringify(tm));
+  ok('email: reply with the same subject continues the thread', await A.s.send('@bob@ex.org Meetup\nдавай в пятницу') === true);
+  ok('email: reply carries In-Reply-To / References and «Re: »', /In-Reply-To: <m-bob1@ex\.org>\r?\n/.test(sentMail.at(-1)) && /References: <m-bob1@ex\.org>/.test(sentMail.at(-1)) && sentMail.at(-1).includes('Subject: Re: Meetup'), sentMail.at(-1) && sentMail.at(-1).slice(0, 200));
+  ok('email: own reply is echoed into the same thread', A.msgs.at(-1).thread === 'm-bob1@ex.org' && A.msgs.at(-1).self === true, JSON.stringify(A.msgs.at(-1)));
+  ok('email: a different subject starts a new letter, not a reply', await A.s.send('@bob@ex.org Other thing\nпривет') === true && !sentMail.at(-1).includes('In-Reply-To'), sentMail.at(-1) && sentMail.at(-1).slice(0, 160));
   ok('contacts: alias resolves case-insensitively', M.mgAddrResolve([{name: 'Ваня', addr: 'ivan@example.org'}], 'вАня') === 'ivan@example.org' && M.mgAddrResolve([{name: 'Ваня', addr: 'ivan@example.org'}], 'unknown') === '' && M.mgAddrResolve(null, 'x') === '');
   A.s.close();
   const br = createMsgrBridge({port: 0}); const bp = (await br.listen()).port; servers.push({close: () => br.close()});
