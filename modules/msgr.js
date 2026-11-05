@@ -155,6 +155,7 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     let t=(n.warn && !n.ok ? '⚠ '+n.warn+'\n' : '')+n.p.proto+' · '+n.status+' · messages '+n.count;
-    for(const row of n.log.slice(-8)) t+='\n'+(row.dir==='out' ? '→ ' : '')+(row.from ? row.from+': ' : '')+(row.kind==='position' || row.kind==='status' ? (row.lat!=null ? '📍 '+row.lat.toFixed(4)+','+row.lon.toFixed(4)+' ' : '')+row.comment : row.text).slice(0,200);
+    for(const row of n.log.slice(-8)){ const who=(row.dir==='out' && row.to) ? row.to : row.from;      // исходящее — с адресатом, не с собой
+      t+='\n'+(row.dir==='out' ? '→ ' : '')+(who ? who+': ' : '')+((row.kind==='position' || row.kind==='status' ? (row.lat!=null ? '📍 '+row.lat.toFixed(4)+','+row.lon.toFixed(4)+' ' : '')+row.comment : row.text).slice(0,200)); }
     if(r.textContent!==t) r.textContent=t; }
 });
