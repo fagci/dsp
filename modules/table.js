@@ -160,7 +160,7 @@ const tblClean=r=>{ const o={}; for(const k in r){ const v=r[k]; o[k]=v==null ? 
 /* ---------- фильтр ---------- */
 // узел с проводом filter (Graph.sel…): строки, где любое поле целиком равно тексту; вместе с набранным фильтром
 function tblFilterOf(n,err){
-  const f=tblFilter(n.p.filter,err), w=String(n.wf||'').trim().toLowerCase();
+  const ty=n.schema?.types||{}, f=tblFilter(n.p.filter,err,c=>ty[c]?.t==='phone' || dbIsPhoneCol(c)), w=String(n.wf||'').trim().toLowerCase();
   if(!w) return f;
   const g=r=>{ for(const k in r) if(String(r[k]??'').toLowerCase()===w) return true; return false; };
   return f ? r=>f(r) && g(r) : g;
@@ -170,9 +170,9 @@ function tblFilterOf(n,err){
 // НЕ: «-слово», «!слово», «not слово», «-col:x», «col!=x», «col!:x» — исключить,
 // «col:» без значения — поле не пусто (to: — записи, где есть адресат)
 // выражение в стиле Wireshark (kind == "beacon" && rssi > -50, wsfilter-kernels.js) — вместо слов; ошибка разбора — в err.msg, фильтр не применяется
-function tblFilter(q,err){
+function tblFilter(q,err,isPhoneCol){
   if(err) err.msg='';
-  if(wsLooksLike(q)){
+  if(!/^[+\d\s().-]+$/.test(String(q||'')) && wsLooksLike(q)){          // «+7 (916) 123-45-67» — номер, а не выражение со скобками
     try{ return wsCompile(q,tblHz); }catch(e){ if(err) err.msg=e.message; return null; }
   }
   q=String(q||'').trim().toLowerCase(); if(!q) return null;
@@ -184,23 +184,21 @@ function tblFilter(q,err){
     const m=w.match(/^([^:<>=!]+)(!=|!:|:|>=|<=|>|<|=)(.*)$/);
     const t=m ? {col:m[1],op:m[2],val:m[3]} : {val:w};
     if(t.op==='!=' || t.op==='!:'){ neg=!neg; t.op=t.op==='!=' ? '=' : ':'; }
-    t.neg=neg; t.alts=t.val.split('|');
+    t.neg=neg; t.alts=t.val.split('|'); t.dts=t.alts.map(dbTerm);      // dbsearch-kernels.js: ё=е, регистр, раскладка, номера телефонов
     terms.push(t);
   }
-  const words=v=>String(v??'').toLowerCase().split(/[\s/()]+/);
-  const startsWord=(v,s)=>{ const str=String(v??'').toLowerCase(); return str.startsWith(s) || words(v).some(w=>w.startsWith(s)); };
   const cmp=(v,op,s)=>{
     const a=tblHz(v), b=tblHz(s);
     if(isFinite(a) && isFinite(b)) return op==='>' ? a>b : op==='<' ? a<b : op==='>=' ? a>=b : op==='<=' ? a<=b : a===b;
     const x=String(v??'').toLowerCase(); return op==='=' || op===':' ? x===s : false;
   };
   const test=t=>{
-    if(t.col===undefined) return t.alts.some(a=>Object.values(r0).some(v=>startsWord(v,a)));
+    if(t.col===undefined) return t.dts.some(d=>d && Object.keys(r0).some(c=>dbMatch(d,r0[c],c,isPhoneCol)));
     const k=Object.keys(r0).find(c=>c.toLowerCase()===t.col);
     if(k===undefined) return false;
     if(t.op===':'){
       if(t.val==='') return r0[k]!=='' && r0[k]!=null;
-      const s=String(r0[k]??'').toLowerCase(); return t.alts.some(a=>s.includes(a));
+      const s=dbFold(r0[k]); return t.alts.some((a,i)=>s.includes(dbFold(a)) || (t.dts[i]?.kind==='phone' && dbMatch(t.dts[i],r0[k],k,isPhoneCol)));
     }
     return t.alts.some(a=>cmp(r0[k],t.op,a));
   };
@@ -1404,12 +1402,21 @@ function tblScrolled(n){
   const [s,e]=tblWindow(n,n.rows.length);
   if(s!==ui.rend.s || e!==ui.rend.e) tblRenderList(n);
 }
+// скин списка (schema.card.skin + card.skinCss, tblskin-kernels.js) → переменные --tk-* на самом списке; прежние снимаются
+function tblSkinApply(n,list){
+  const v=tblSkinVars(n.schema?.card?.skin,n.schema?.card?.skinCss), keys=Object.keys(v).join();
+  if(list._skinKeys===keys && list._skinVals===JSON.stringify(v)) return;
+  for(const k of (list._skinKeys||'').split(',')) if(k) list.style.removeProperty(k);
+  for(const k in v) list.style.setProperty(k,v[k]);
+  list._skinKeys=keys; list._skinVals=JSON.stringify(v);
+}
 function tblRenderList(n,inc){
   const ui=n.ui, list=ui.list, N=n.rows.length, ro=tblRO(n), grid=tcView(n)==='grid';
   // перерисовка при новых записях не должна сбрасывать прокрутку: запоминаем позицию, у низа в режиме tail — остаёмся у низа
   // чтение scrollTop / scrollHeight форсирует layout — только там, где позиция реально нужна
   const atEndNow=()=>list.scrollTop+list.clientHeight>=list.scrollHeight-4;
   list.classList.toggle('grid',grid); list.classList.toggle('cards',tcView(n)==='cards'); list.classList.toggle('icons',tcView(n)==='icons'); tcViewBtn(n);
+  tblSkinApply(n,list);
   ui.count.textContent=(n.p.filter ? N+'/' : '')+n.all.length+' rows';
   ui.crumb.hidden=!n.drill || n.drill.to!==n.p.list;
   if(n.drill) ui.crumb.textContent='← '+n.drill.label;
@@ -1764,8 +1771,17 @@ function tblRenderView(n){
   top.append(mk('span','tv-ttl','Fields & colors'),
     sel([['cards','cards (photo, fields)'],['grid','full list (columns)'],['compact','brief list (name · values)'],['icons','list with icons (avatar, online, typing)']],tcView(n),x=>tblViewApply(n,'vmode',x,true)),
     sel([['utc','time: UTC'],['local','time: local']],n.p.tz==='local' ? 'local' : 'utc',x=>tblViewApply(n,'tz',x,true)),
+    Object.assign(sel(TBL_SKINS.map(s=>[s.id,'skin: '+s.title]),String(n.schema?.card?.skin||''),x=>{ if(x) n.schema.card.skin=x; else delete n.schema.card.skin; tcSchemaSave(n); tblRenderList(n); }),{title:'look of cards and rows: roundness, spacing, avatar size…'}),
     mk('span','tv-x','✕',{click:()=>tblViewToggle(n)}));
   box.append(top);
+  if(!tblRO(n)){                                              // свои значения скина: --tk-r:14px;--tk-av:48px
+    const sk=mk('div','tv-sec'), inp=mk('input','tv-q');
+    inp.value=n.schema?.card?.skinCss||''; inp.placeholder='own look: --tk-r:14px;--tk-av:48px';
+    inp.title='variables of the skin: '+Object.entries(TBL_SKIN_VARS).map(([k,d])=>k+' — '+d).join('\n');
+    inp.addEventListener('keydown',ev=>ev.stopPropagation());
+    inp.addEventListener('change',()=>{ const t=inp.value.trim(); if(t) n.schema.card.skinCss=t; else delete n.schema.card.skinCss; tcSchemaSave(n); tblRenderList(n); });
+    sk.append(inp); box.append(sk);
+  }
   tblFieldsPanel(n,box,mk,sel);
   const rules=Array.isArray(n.p.rules) ? n.p.rules : [];
   const rh=mk('div','tv-sec tv-fold',(n.rulesOpen ? '▾ ' : '▸ ')+'Row colors'+(rules.length ? ' ('+rules.length+')' : '')+' — the first matching rule wins',{click:()=>{ n.rulesOpen=!n.rulesOpen; tblRenderView(n); }});

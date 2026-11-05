@@ -8,7 +8,7 @@
    Карточка записи — панель с большим фото, всеми полями, связями и обратными связями («кто ссылается на эту запись»). */
 
 const TC_TYPES=[['text','text'],['long','long text'],['num','number'],['bool','checkbox'],['progress','progress bar'],['date','date'],['choice','choice'],
-  ['photo','photo'],['image','avatar / image (URL or photo)'],['online','online status'],['typing','typing'],['audio','audio'],['file','file (from Files)'],['link','link to a list'],['checklist','checklist (items from another list)'],['auto','auto number'],['calc','calculated']];
+  ['photo','photo'],['image','avatar / image (URL or photo)'],['online','online status'],['typing','typing'],['audio','audio'],['file','file (from Files)'],['link','link to a list'],['phone','phone (calls on tap; searched by digits)'],['email','e-mail (opens a letter on tap)'],['checklist','checklist (items from another list)'],['auto','auto number'],['calc','calculated']];
 const TC_VIEWS=[['cards','🃏','cards','cards'],['grid','☰','full list (columns)','table'],['compact','≡','brief list (name · values)','brief'],['icons','👤','list with icons (avatar, online, typing)','avatars']];
 const TC_SEP=' | ';
 
@@ -414,10 +414,23 @@ function tcChips(n,c,v){
   }
   return box;
 }
+// телефоны и почты: несколько значений через « | », каждое — ссылка tel: / mailto: (номер без пробелов и скобок)
+function tcContactEl(t,v){
+  const box=document.createElement('span'); box.className='tc-v tc-links';
+  for(const part of tcLinks(v)){
+    const a=document.createElement('a'); a.className='tc-lnk'; a.textContent=part;
+    if(t==='phone'){ const d=dbPhoneDigits(part); a.href='tel:'+(/^\s*(\+|00)/.test(part) || d.length>10 ? '+' : '')+d; a.title='Call '+part; }
+    else { a.href='mailto:'+encodeURIComponent(part).replace(/%40/g,'@'); a.title='Write to '+part; }
+    a.addEventListener('click',e=>e.stopPropagation());                      // клик по ссылке не открывает карточку
+    box.append(a);
+  }
+  return box;
+}
 // значение поля для карточки: связи — чипы, шкала, файлы, обычный текст
 function tcValEl(n,c,v){
   const t=tblType(n,c);
   if(t==='link') return tcChips(n,c,v);
+  if(t==='phone' || t==='email') return tcContactEl(t,v);
   if(t==='progress') return tcBar(n,c,v,tcText(n,c,v));
   if(t==='checklist') return Object.assign(document.createElement('span'),{className:'tc-v',textContent:tcText(n,c,v)});
   if(t==='file') return tcFileEl(v);
@@ -474,7 +487,7 @@ function tcIconRow(n,i,ro,cols){
   const bg=tblRowBg(n,r);
   if(bg) el.style.setProperty('--rb','color-mix(in srgb,'+bg+' 24%,transparent)');
   const label=tcTitle(n,r,i);
-  const av=tcAvatar(cols.img ? r[cols.img] : '',label,38);
+  const av=tcAvatar(cols.img ? r[cols.img] : '',label,0);
   if(cols.on) tcDot(av,tcPresence(r[cols.on]));
   const body=document.createElement('div'); body.className='ir-body';
   body.append(Object.assign(document.createElement('div'),{className:'ir-t',textContent:label||'(no name)'}));

@@ -7,7 +7,7 @@
 const CT_LISTS={people:'contacts/people',idents:'contacts/identities'};
 const CT_PROTOS=['phone','email','telegram','matrix','xmpp','irc','nostr','ntfy','aprs','reticulum','bluesky','mastodon'];
 const CT_TYPES={
-  people:{photo:{t:'photo'},birthday:{t:'date'},note:{t:'long'}},
+  people:{phones:{t:'phone'},emails:{t:'email'},photo:{t:'photo'},birthday:{t:'date'},note:{t:'long'}},
   idents:{proto:{t:'choice',opts:CT_PROTOS},contact:{t:'link',to:CT_LISTS.people,multi:false},seen:{t:'date'}},
 };
 

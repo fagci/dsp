@@ -642,6 +642,7 @@ const PRESET_CATS={
   'Serial Port on a Router or Another PC (Node bridge, OpenWrt ser2net)':'Network & IoT',
   'Contacts: People and Addresses from vCard, Phone and Messages (Tables)':'Network & IoT',
   'Messenger through a Proxy (SOCKS5 / Tor / HTTP CONNECT via the Node bridge)':'Network & IoT',
+  'Table as a Database: Contacts with Smart Search (phone, name) and Skins':'Network & IoT',
   'Bridge: BLE UART ↔ Network (TCP/WS Gateway)':'Network & IoT',
   'Bridge: BLE GATT ↔ Network (Phone App)':'Network & IoT',
   'Phone App: BLE Auto-Discover Devices and Services (GATT)':'Network & IoT',
@@ -2200,6 +2201,32 @@ c.size.w=340; c.size.h=220; applySize(c);
 const ws=addNode('webserial',480,190,{baud:'115200'});
 ws.size.w=360; ws.size.h=300; applySize(ws);
 addEdge(c.id,'text',ws.id,'text');
+markWiresDirty();
+});
+preset('Table as a Database: Contacts with Smart Search (phone, name) and Skins', function(){
+clearAll();
+const nt=addNode('note',40,30,{text:'A Table is a small database. Type in the filter line of either table: «петрова анна» (words in any order, from the start of a word, ё = е, upper / lower case, a name typed in the wrong keyboard layout also works), «4567», «916 123», «+7 (916) 123-45-67» or «89161234567» (digits are looked for inside the phone columns however the number is written — a column named phone / tel / mobile / тел… or of the type «phone»), «phones:555», «org:ромашка», «-bob» (not), «a|b» (either). Phones and e-mails are links (tap to call or write). The ▦ button (Fields & colors) holds the look: the «skin» select (soft, flat, outline, dense, big, messenger) and your own values «--tk-r:14px;--tk-av:48px». Both tables below show the same list — the left one as cards in the «soft» skin, the right one as a contact list in the «messenger» skin. The list is yours to change: edit a row, add one, import a .vcf in the Contacts node (see the Contacts preset).'});
+nt.size.w=1000; nt.size.h=210; applySize(nt);
+(async()=>{
+  const L='demo/contacts-db';
+  try{
+    if(!(await ListDB.listNames()).includes(L)){
+      await ListDB.setMeta(L,{cols:['name','phones','emails','org','tags','note'],types:{phones:{t:'phone'},emails:{t:'email'},note:{t:'long'}},card:{skin:'soft'}});
+      await ListDB.addMany(L,[
+        {name:'Анна Петрова',fields:{phones:'+7 (916) 123-45-67 | +7 495 111-22-33',emails:'anna@example.org',org:'Ромашка',tags:'друзья | радио',note:'позывной R1ABC'}},
+        {name:'Фёдор Ёлкин',fields:{phones:'8 800 555-35-35',emails:'fedor@example.org',org:'ООО «Ёлка»',tags:'работа',note:''}},
+        {name:'Bob Stone',fields:{phones:'+49 30 123456',emails:'bob@example.org',org:'Stone Ltd',tags:'работа',note:'Berlin'}},
+        {name:'Мария Иванова',fields:{phones:'89031112233',emails:'maria@example.org',org:'',tags:'друзья',note:''}},
+        {name:'Chen Wei',fields:{phones:'+86 138 0013 8000',emails:'chen@example.org',org:'Huawei',tags:'работа',note:''}},
+        {name:'Дмитрий Орлов',fields:{phones:'+7 916 765-43-21',emails:'',org:'Ромашка',tags:'радио',note:'UA3DMO'}}]);
+    }
+  }catch(e){ console.error('contacts demo:',e); }
+  for(const n of Graph.nodes) if(n.type==='table' && n.p.list===L && n.ui){ try{ await tblLoad(n); }catch(e){} }
+})();
+const t1=addNode('table',40,260,{list:'demo/contacts-db',vmode:'cards'});
+t1.size.w=520; t1.size.h=420; applySize(t1);
+const t2=addNode('table',600,260,{list:'demo/contacts-db',vmode:'icons'});
+t2.size.w=420; t2.size.h=420; applySize(t2);
 markWiresDirty();
 });
 preset('Messenger through a Proxy (SOCKS5 / Tor / HTTP CONNECT via the Node bridge)', function(){
