@@ -538,7 +538,7 @@ function mgLeafBytes(h,body){
   const cte=(h['content-transfer-encoding']||'7bit').toLowerCase();
   return cte==='base64' ? mgFromB64(body) : cte==='quoted-printable' ? mgFromQp(body) : mgBin(body);
 }
-function mgHtmlText(t){
+function mgMailHtmlText(t){
   return t.replace(/<(script|style)[\s\S]*?<\/\1>/gi,'').replace(/<br\s*\/?>|<\/p>|<\/div>/gi,'\n').replace(/<[^>]+>/g,'').replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/\r\n/g,'\n').trim();
 }
 function mgBodyText(raw,depth){
@@ -547,7 +547,7 @@ function mgBodyText(raw,depth){
     const ct=(h['content-type']||'text/plain').toLowerCase();
     if(!ct.startsWith('text/') || mgParam(ct,'name')) continue;              // именованная text/* часть — вложение
     const text=mgDecode(mgLeafBytes(h,body),mgParam(ct,'charset')||'utf-8');
-    if(ct.startsWith('text/html')){ if(!html) html=mgHtmlText(text); }
+    if(ct.startsWith('text/html')){ if(!html) html=mgMailHtmlText(text); }
     else return {text:text.replace(/\r\n/g,'\n').trim(),html:false};
   }
   return html ? {text:html,html:true} : {text:''};
@@ -596,6 +596,20 @@ function mgMailCompose(o){                                   // → строка
   return parts.join('\r\n');
 }
 // адресная книга: alias/name/nick строки контакта → его addr/address/email/to
+// Путь для входящих вложений по шаблону: {from} адрес отправителя, {name} его имя, {proto}, {subject}, {date} (ГГГГ-ММ-ДД), {year}, {month}, {thread}.
+// Возвращает список папок (вложенных); каждый кусок чистится от / \\ : * ? " < > | и управляющих, «..» и пустое пропускаются.
+function mgAttPath(tpl,m,proto){
+  const d=new Date(m&&m.t||Date.now()), p2=x=>String(x).padStart(2,'0');
+  const clean=x=>String(x==null?'':x).replace(/[\u0000-\u001f\/\\:*?"<>|]+/g,'_').replace(/\s+/g,' ').trim().replace(/^\.+$/,'').slice(0,60);
+  const val={from:(m&&(m.fromAddr||m.from))||'unknown',name:(m&&m.from)||'',proto:proto||'',subject:(m&&m.subject)||'',thread:(m&&m.thread)||'',
+    date:d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate()),year:String(d.getFullYear()),month:p2(d.getMonth()+1)};
+  const out=[];
+  for(const seg of String(tpl==null?'mail/{from}':tpl).split('/')){
+    const c=clean(seg.replace(/\{(\w+)\}/g,(_,k)=>k in val?clean(val[k]):''));
+    if(c) out.push(c);
+  }
+  return out.length?out:['mail'];
+}
 function mgAddrResolve(book,token){
   token=String(token||'').trim().toLowerCase(); if(!token) return '';
   for(const r of Array.isArray(book)?book:[]){

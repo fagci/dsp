@@ -237,4 +237,14 @@ const H = M.mgHex, U = M.mgUnhex;
   c.feed('334 VXNlcm5hbWU6\r\n'); c.feed('334 UGFzc3dvcmQ6\r\n'); eq('login steps', [out[2], out[3]], ['dQ==\r\n', 'cA==\r\n']);
   c.feed('535 bad credentials\r\n'); eq('refused credentials reported', res[0], 'SMTP 535 bad credentials'); }
 
+// шаблон папки для вложений
+{ const m = {fromAddr: 'bob@ex.org', from: 'Bob', subject: 'Re: отчёт / итог', t: Date.UTC(2026, 10, 5, 12), thread: 'm1@ex.org'};
+  eq('attPath default', M.mgAttPath(undefined, m, 'email'), ['mail', 'bob@ex.org']);
+  eq('attPath empty falls back', M.mgAttPath('', m, 'email'), ['mail']);
+  eq('attPath nested with date', M.mgAttPath('mail/{from}/{year}-{month}', m, 'email'), ['mail', 'bob@ex.org', '2026-11']);
+  eq('attPath subject is cleaned', M.mgAttPath('{proto}/{subject}', m, 'email'), ['email', 'Re: отчёт _ итог'.replace(':', '_')]);
+  eq('attPath no traversal', M.mgAttPath('../{from}/./..', m, 'email'), ['bob@ex.org']);
+  eq('attPath unknown sender', M.mgAttPath('mail/{from}', {}, 'email'), ['mail', 'unknown']);
+  eq('attPath unknown token is dropped', M.mgAttPath('a/{nope}/b', m, 'email'), ['a', 'b']); }
+
 console.log(bad ? 'FAILED ' + bad : 'all ok'); process.exit(bad ? 1 : 0);
