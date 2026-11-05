@@ -277,7 +277,7 @@ def({ id:'httpcli', title:'HTTP Client (DSP app)', cat:'Sources', kw:'http get p
   ins:[{n:'go',t:'num'},{n:'url',t:'txt'},{n:'text',t:'txt'},{n:'bin',t:'bin'}], outs:NSV_CLI_OUTS, readout:true,
   params:[
     {n:'url',t:'text',d:NSV_URL,label:'bridge of the DSP app'},
-    {n:'target',t:'text',d:'http://192.168.0.1/',label:'address http://host[:port]/path (the «url» input overrides; for https use the page itself — fetch)'},
+    {n:'target',t:'text',d:'http://192.168.0.1/',label:'address http(s)://host[:port]/path (the «url» input overrides)'},
     {n:'method',t:'select',opts:['GET','POST','PUT','HEAD','DELETE'],d:'GET'},
     {n:'body',t:'text',d:'',label:'POST / PUT body text (the «text» input or a file on «bin» overrides)'},
     {n:'ctype',t:'text',d:'text/plain',label:'body type',adv:true},

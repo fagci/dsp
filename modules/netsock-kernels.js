@@ -85,7 +85,7 @@ class NetSock{
       else w.rej(Object.assign(new Error(r.msg||r.err||'error'),{reply:r}));
       return;
     }
-    if(r.src!=='net') return;
+    if(r.src!=='net'){ if(this.xhooks) for(const h of this.xhooks) h(r); return; }       // ussd / sms / sim — записи ответа на команду, не сокеты
     for(const h of this.hooks) h(r);
     if(r.ev==='accept'){
       const s=this.servers.get(r.server);
@@ -111,9 +111,9 @@ class NetSock{
       try{ this.send({...args,cmd,id}); }catch(e){ this.wait.delete(id); clearTimeout(timer); rej(e); }
     });
   }
-  async connect(host,port,timeout=5000){
+  async connect(host,port,timeout=5000,tls=false){
     let c=null;
-    const r=await this.call('tcp.connect',{host,port,timeout},timeout+3000,r=>{ c=new NsConn(this,r.conn,host+':'+port); this.conns.set(r.conn,c); });
+    const r=await this.call('tcp.connect',tls ? {host,port,timeout,tls:true} : {host,port,timeout},timeout+3000,r=>{ c=new NsConn(this,r.conn,host+':'+port); this.conns.set(r.conn,c); });
     return c||new NsConn(this,r.conn,host+':'+port);
   }
   // onAccept(conn) — каждое входящее соединение; возвращает {server, port, close()}

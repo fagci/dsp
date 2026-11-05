@@ -101,7 +101,7 @@ ok('client POST with headers', e.m === 'POST' && e.h === 'v' && e.b === 'data');
 c = await K.httpFetch(ns, 'http://us:pw@127.0.0.1:' + node.address().port + '/echo'); ok('client url credentials', JSON.parse(c.text()).a === 'Basic ' + Buffer.from('us:pw').toString('base64'));
 c = await K.httpFetch(ns, nb + '/big'); ok('client 500 KB', c.body.length === 500000);
 c = await K.httpFetch(ns, nb + '/missing'); ok('client 404', c.status === 404 && c.text() === 'no');
-ok('client rejects https', await K.httpFetch(ns, 'https://127.0.0.1/').then(() => false, (e) => /http:\/\//.test(e.message)));
+ok('client rejects other schemes', await K.httpFetch(ns, 'ftp://127.0.0.1/').then(() => false, (e) => /http:\/\//.test(e.message)));
 ok('client refused', await K.httpFetch(ns, 'http://127.0.0.1:9/').then(() => false, () => true));
 // сервер DSP ↔ клиент DSP
 const s3 = new K.HttpServer(ns, async (req) => ({ text: 'hi ' + req.path })); const p3 = await s3.start(0, false);

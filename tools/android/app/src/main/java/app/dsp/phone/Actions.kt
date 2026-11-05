@@ -23,6 +23,7 @@ import android.os.VibratorManager
 import android.provider.ContactsContract
 import android.provider.Telephony
 import android.telephony.SmsManager
+import android.telephony.SmsMessage
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
@@ -74,8 +75,11 @@ class PhoneActions(
     private val handler = Handler(thread.looper)
     private val nid = AtomicInteger(1000)
     private val limiter = Cmd.Limiter(5, 60_000)
-    private class Pending(val c: BridgeServer.Client, val id: Any?, var left: Int, var err: String? = null)
+    private class Pending(val c: BridgeServer.Client, val id: Any?, var left: Int, var err: String? = null, val req: Int = 0)
     private val sending = ConcurrentHashMap<Int, Pending>()
+    /** Отчёты о доставке sms.send: req → клиент, номер, сколько частей ждём; запись {src:'sms',dir:'status',req,status} уходит тому, кто слал. */
+    private class Delivery(val c: BridgeServer.Client, val to: String, var left: Int, var err: String? = null)
+    private val delivering = ConcurrentHashMap<Int, Delivery>()
     private val reqs = AtomicInteger(1)
 
     private val cm = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
@@ -94,7 +98,23 @@ class PhoneActions(
                 ACTION_SMS_SENT -> {
                     val p = sending[i.getIntExtra("req", 0)] ?: return
                     if (resultCode != Activity.RESULT_OK && p.err == null) p.err = "send failed (code $resultCode)"
-                    if (--p.left <= 0) { sending.remove(i.getIntExtra("req", 0)); done(p.c, p.id, "sms.send", p.err) }
+                    if (--p.left <= 0) { sending.remove(i.getIntExtra("req", 0)); done(p.c, p.id, "sms.send", p.err, extra = arrayOf("req" to p.req.toString())) }
+                }
+                ACTION_SMS_DELIVERED -> {
+                    val req = i.getIntExtra("req", 0)
+                    val d = delivering[req] ?: return
+                    // статус-отчёт SMSC (TP-Status): 0 — доставлено, 0x20…0x3F — пока пробует ещё (не итог), 0x40+ — отказ
+                    val st = i.getByteArrayExtra("pdu")?.let { try { SmsMessage.createFromPdu(it, i.getStringExtra("format")).status } catch (e: Exception) { null } }
+                    if (st != null && st in 0x20..0x3F) return
+                    if (d.err == null) {
+                        if (st != null && st != 0) d.err = "delivery status 0x" + Integer.toHexString(st)
+                        else if (st == null && resultCode != Activity.RESULT_OK) d.err = "delivery report: code $resultCode"
+                    }
+                    if (--d.left <= 0) {
+                        delivering.remove(req)
+                        d.c.send(Json.rows(listOf(Json.obj("src" to "\"sms\"", "dir" to "\"status\"", "req" to req.toString(), "to" to Json.str(d.to),
+                            "status" to if (d.err == null) "\"delivered\"" else "\"failed\"", "err" to d.err?.let { Json.str(it) }, "t" to System.currentTimeMillis().toString()))))
+                    }
                 }
             }
         }
@@ -114,7 +134,7 @@ class PhoneActions(
     private var smsOn = false
 
     init {
-        val f = IntentFilter().apply { addAction(ACTION_NOTIFY); addAction(ACTION_SMS_SENT) }
+        val f = IntentFilter().apply { addAction(ACTION_NOTIFY); addAction(ACTION_SMS_SENT); addAction(ACTION_SMS_DELIVERED) }
         if (Build.VERSION.SDK_INT >= 33) ctx.registerReceiver(rx, f, Context.RECEIVER_NOT_EXPORTED) else ctx.registerReceiver(rx, f)
         nm.createNotificationChannel(NotificationChannel(CH_ACT, "Notifications from patches", NotificationManager.IMPORTANCE_HIGH))
         try {
@@ -247,11 +267,17 @@ class PhoneActions(
                 val sm = if (Build.VERSION.SDK_INT >= 31) ctx.getSystemService(SmsManager::class.java) else @Suppress("DEPRECATION") SmsManager.getDefault()
                 val parts = sm.divideMessage(text)
                 val req = reqs.incrementAndGet()
-                sending[req] = Pending(c, id, parts.size)
-                val pis = ArrayList<PendingIntent>()
-                for (k in 0 until parts.size) pis.add(PendingIntent.getBroadcast(ctx, req * 100 + k,
-                    Intent(ACTION_SMS_SENT).setPackage(ctx.packageName).setData(Uri.parse("dsp://sms/$req/$k")).putExtra("req", req), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
-                sm.sendMultipartTextMessage(to, null, parts, pis, null)                 // ответ придёт, когда уйдут все части
+                sending[req] = Pending(c, id, parts.size, req = req)
+                delivering[req] = Delivery(c, to, parts.size)
+                val pis = ArrayList<PendingIntent>(); val dis = ArrayList<PendingIntent>()
+                for (k in 0 until parts.size) {
+                    pis.add(PendingIntent.getBroadcast(ctx, req * 100 + k,
+                        Intent(ACTION_SMS_SENT).setPackage(ctx.packageName).setData(Uri.parse("dsp://sms/$req/$k")).putExtra("req", req), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+                    dis.add(PendingIntent.getBroadcast(ctx, req * 100 + k,
+                        Intent(ACTION_SMS_DELIVERED).setPackage(ctx.packageName).setData(Uri.parse("dsp://smsd/$req/$k")).putExtra("req", req), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+                }
+                sm.sendMultipartTextMessage(to, null, parts, pis, dis)                  // ответ — когда уйдут все части; отчёт о доставке (если оператор шлёт) — позже записью status
+                if (delivering.size > 200) delivering.keys.sorted().take(delivering.size - 200).forEach { delivering.remove(it) }
             }
             "sms.send_raw" -> {
                 if (!need(c, id, cmd, listOf(Manifest.permission.SEND_SMS))) return
@@ -328,6 +354,7 @@ class PhoneActions(
     companion object {
         const val ACTION_NOTIFY = "app.dsp.phone.NOTIFY"
         const val ACTION_SMS_SENT = "app.dsp.phone.SMS_SENT"
+        const val ACTION_SMS_DELIVERED = "app.dsp.phone.SMS_DELIVERED"
         private const val CH_ACT = "actions"
     }
 }

@@ -226,9 +226,10 @@ function httpIndexPage(path,list,upload){
 
 /* ---------- клиент ---------- */
 function httpParseUrl(u){
-  const m=/^http:\/\/(?:([^@/]*)@)?([^/:?#]+)(?::(\d+))?([^#]*)$/i.exec(String(u).trim());
+  const m=/^(https?):\/\/(?:([^@/]*)@)?([^/:?#]+)(?::(\d+))?([^#]*)$/i.exec(String(u).trim());
   if(!m) return null;
-  return {auth:m[1]||'',host:m[2],port:+m[3]||80,path:m[4]||'/'};
+  const tls=m[1].toLowerCase()==='https';
+  return {auth:m[2]||'',host:m[3],port:+m[4]||(tls ? 443 : 80),path:m[5]||'/',tls};
 }
 async function httpFetch(ns,url,o={}){
   let cur=url;
@@ -236,13 +237,13 @@ async function httpFetch(ns,url,o={}){
     const u=httpParseUrl(cur); if(!u) throw new Error('http://host[:port]/path expected');
     const method=(o.method||'GET').toUpperCase();
     const body=typeof o.body==='string' ? nsEnc(o.body) : o.body;
-    const h={host:u.host+(u.port!==80 ? ':'+u.port : ''),connection:'close','user-agent':'DSP',accept:'*/*'};
+    const h={host:u.host+(u.port!==(u.tls ? 443 : 80) ? ':'+u.port : ''),connection:'close','user-agent':'DSP',accept:'*/*'};
     for(const k in (o.headers||{})) h[k.toLowerCase()]=o.headers[k];
     if(u.auth && !h.authorization) h.authorization='Basic '+btoa(u.auth);
     if(body){ h['content-length']=String(body.length); }
     else if(method==='POST' || method==='PUT') h['content-length']='0';
     const head=method+' '+u.path+' HTTP/1.1\r\n'+Object.keys(h).map(k=>k+': '+h[k]).join('\r\n')+'\r\n\r\n';
-    const c=await ns.connect(u.host,u.port,o.connectTimeout||5000);
+    const c=await ns.connect(u.host,u.port,o.connectTimeout||5000,u.tls);
     try{
       await c.write(body ? nsCat([nsEnc(head),body]) : head);
       const ms=o.timeout||30000;
@@ -251,8 +252,8 @@ async function httpFetch(ns,url,o={}){
       if(!m) throw new Error('not an HTTP answer');
       const status=+m[1], headers=httpParseHeaders(lines.slice(1));
       if((status===301 || status===302 || status===303 || status===307 || status===308) && headers.location && o.redirects!==0){
-        cur=/^https?:/i.test(headers.location) ? headers.location : 'http://'+u.host+(u.port!==80 ? ':'+u.port : '')+(headers.location[0]==='/' ? '' : '/')+headers.location;
-        if(!/^http:/i.test(cur)) throw new Error('redirect to '+cur+' (https is not supported here)');
+        cur=/^https?:/i.test(headers.location) ? headers.location : (u.tls ? 'https://' : 'http://')+u.host+(u.port!==(u.tls ? 443 : 80) ? ':'+u.port : '')+(headers.location[0]==='/' ? '' : '/')+headers.location;
+        if(!httpParseUrl(cur)) throw new Error('redirect to '+cur+' (not an http / https address)');
         if(status===303){ o={...o,method:'GET',body:undefined}; }
         continue;
       }
