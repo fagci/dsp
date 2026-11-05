@@ -433,7 +433,7 @@ const nativeTC=Object.getOwnPropertyDescriptor(Node.prototype,'textContent');
 let roVal=r.textContent;
 Object.defineProperty(r,'textContent',{configurable:true,
 get:()=>roVal,
-set:v=>{ if(v===roVal) return; roVal=v; nativeTC.set.call(r,v); }});
+set:v=>{ if(typeof v==='string' && RO_CTL_T.test(v)) v=v.replace(RO_CTL,''); if(v===roVal) return; roVal=v; nativeTC.set.call(r,v); }});     // управляющие символы (коды форматирования IRC, \x00…) в журнале не показываем во всех узлах
 r.addEventListener('pointerdown',ev=>ev.stopPropagation());   // не таскать узел за текст
 r.addEventListener('click',()=>{
 navigator.clipboard?.writeText(r.textContent);
@@ -671,6 +671,7 @@ wrap.hidden=!n.advOpen;
 const lbl=n.el.querySelector('.advToggle .advLbl');
 if(lbl) lbl.textContent=(n.advOpen?'▾':'▸')+' advanced ('+wrap.dataset.count+')';
 }
+const RO_CTL=/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, RO_CTL_T=/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/;
 function applySize(n){
 const d=MOD[n.type];
 n.el.style.width=n.size.w+'px';

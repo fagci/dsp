@@ -22,6 +22,9 @@ function mgRandom(n){
 }
 // управляющие символы в строке протокола — это впрыск команд (IRC: \r\n), режем
 const mgLine=s=>String(s).replace(/[\r\n\0]+/g,' ');
+// Текст для показа: коды форматирования IRC (\x02 жирный, \x1d курсив, \x1f подчёркнутый, \x1e зачёркнутый, \x11 моно, \x16 реверс, \x0f сброс,
+// \x03 цвет с номерами, \x04 hex-цвет) и прочие управляющие символы вырезаются (остаются перевод строки и табуляция) — иначе в журнале «◁ник◁» и квадраты
+const mgClean=s=>String(s==null ? '' : s).replace(/\r\n?/g,'\n').replace(/\x03(?:\d{1,2}(?:,\d{1,2})?)?|\x04(?:[0-9a-fA-F]{6}(?:,[0-9a-fA-F]{6})?)?/g,'').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g,'');
 
 // ---------- secp256k1 + BIP-340 ----------
 const MG_P=0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2Fn;
@@ -258,13 +261,14 @@ function mgIrcClient(o){
       else if(m.cmd==='433' || m.cmd==='432'){ nick=(nick+'_').slice(0,30); w('NICK',nick); }
       else if(m.cmd==='464'){ o.onStatus('password refused','fatal'); }
       else if(m.cmd==='PRIVMSG' && p.length>=2){
-        let text=p[1];
+        let text=p[1];                                                 // маркер CTCP (\x01) читаем до очистки: mgClean его вырезает
         const act=/^\x01ACTION (.*?)\x01?$/.exec(text);
-        if(act) text='* '+m.nick+' '+act[1];
+        if(act) text='* '+m.nick+' '+mgClean(act[1]);
         else if(text[0]==='\x01') return;                            // другие CTCP (VERSION, PING…) не показываем
+        else text=mgClean(text);
         o.onMsg({from:m.nick,to:p[0],text,t:Date.now(),self:m.nick===nick});
       }
-      else if(m.cmd==='NOTICE' && p.length>=2 && m.prefix.includes('!')) o.onMsg({from:m.nick,to:p[0],text:p[1],t:Date.now(),notice:true});
+      else if(m.cmd==='NOTICE' && p.length>=2 && m.prefix.includes('!')) o.onMsg({from:m.nick,to:p[0],text:mgClean(p[1]),t:Date.now(),notice:true});
       else if(m.cmd==='JOIN' && m.nick===nick) o.onStatus('joined '+p[0],'up');
       else if(m.cmd==='ERROR') o.onStatus('server: '+(p[0]||'error'),'down');
       else if(/^4\d\d$/.test(m.cmd) && p.length) o.onStatus(m.cmd+' '+p.slice(1).join(' '),'warn');

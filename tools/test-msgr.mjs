@@ -237,6 +237,16 @@ const H = M.mgHex, U = M.mgUnhex;
   c.feed('334 VXNlcm5hbWU6\r\n'); c.feed('334 UGFzc3dvcmQ6\r\n'); eq('login steps', [out[2], out[3]], ['dQ==\r\n', 'cA==\r\n']);
   c.feed('535 bad credentials\r\n'); eq('refused credentials reported', res[0], 'SMTP 535 bad credentials'); }
 
+// чистый текст для показа: коды форматирования IRC и управляющие символы
+eq('clean: irc bold around a nick (the «◁fagci_◁» of the log)', M.mgClean('\x02fagci_\x02 is not a registered nickname.'), 'fagci_ is not a registered nickname.');
+eq('clean: irc colours with numbers, hex colours, reset, italic, underline', M.mgClean('\x0304,01red\x03 \x04FF0000text\x0f \x1dit\x1d \x1fu\x1f \x1estrike\x1e \x11mono\x11 \x16rev\x16'), 'red text it u strike mono rev');
+eq('clean: a lone colour code does not eat digits of the text', M.mgClean('\x03 2026 year'), ' 2026 year');
+eq('clean: controls go, newline and tab stay, CRLF becomes LF', M.mgClean('a\x00b\x07c\x1bd\x7fe\tf\r\ng\nh'), 'abcde\tf\ng\nh');
+eq('clean: ordinary text, unicode and empties are untouched', [M.mgClean('привет 👋 <b>x</b>'), M.mgClean(null), M.mgClean(undefined), M.mgClean(5)], ['привет 👋 <b>x</b>', '', '', '5']);
+{ const got = [], c = M.mgIrcClient({nick: 'dsp', channels: [], write() {}, onMsg: m => got.push(m), onStatus() {}});
+  c.start(); c.feed(':srv 001 dsp :Welcome\r\n:NickServ!s@h NOTICE dsp :\x02fagci_\x02 is not a registered nickname.\r\n:bob!u@h PRIVMSG #t :\x0303green\x03 and \x02bold\x02\r\n');
+  eq('irc: notices and messages arrive without format codes', got.map(m => m.text), ['fagci_ is not a registered nickname.', 'green and bold']); }
+
 // шаблон папки для вложений
 { const m = {fromAddr: 'bob@ex.org', from: 'Bob', subject: 'Re: отчёт / итог', t: Date.UTC(2026, 10, 5, 12), thread: 'm1@ex.org'};
   eq('attPath default', M.mgAttPath(undefined, m, 'email'), ['mail', 'bob@ex.org']);
