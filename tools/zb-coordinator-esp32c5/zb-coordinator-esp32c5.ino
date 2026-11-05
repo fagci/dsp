@@ -22,7 +22,13 @@
  * OPEN_REPEAT_S seconds and every bound sensor is polled every POLL_ALL_S
  * seconds (0 = off) - fine for a lab, close it for anything reachable by
  * others.
- * This file has not been hardware-tested.
+ * Values that cannot be real (the Zigbee "invalid" 0x8000 = -327.68, a reading
+ * outside the sensor range, NaN) are not passed on as measurements:
+ *   {"zb":"bad","kind":"temp","addr":"0x1234","ep":1,"v":-327.68}
+ * Temperature is accepted from -50 up to (not including) 100 C, humidity 0..100 %.
+ * Hardware status: tested on an ESP32-C5 with one sensor - network forming,
+ * join, INFO, REPORT and POLLALL commands. NOT yet seen on hardware: measurement
+ * lines (the test sensor was outside its range / asleep) and the "bad" filter.
  */
 #include <Arduino.h>
 #ifndef ZIGBEE_MODE_ZCZR
@@ -61,15 +67,26 @@ static void fmtIeee(const uint8_t *e, char *buf, size_t n) {
 }
 
 /********************* sensor reports -> JSON lines *********************/
+static bool tempOk(float v) { return v >= -50.0f && v < 100.0f; }   // NaN fails both comparisons
+static bool humOk(float v) { return v >= 0.0f && v <= 100.0f; }
+
 static void onTemp(float v, uint8_t ep, esp_zb_zcl_addr_t src) {
   char a[24];
   fmtZclAddr(src, a, sizeof(a));
+  if (!tempOk(v)) {
+    Serial.printf("{\"zb\":\"bad\",\"kind\":\"temp\",\"addr\":\"%s\",\"ep\":%u,\"v\":%.2f}\r\n", a, ep, isnan(v) ? 0.0f : v);
+    return;
+  }
   Serial.printf("{\"zb\":\"temp\",\"addr\":\"%s\",\"ep\":%u,\"v\":%.2f}\r\n", a, ep, v);
 }
 
 static void onHum(float v, uint8_t ep, esp_zb_zcl_addr_t src) {
   char a[24];
   fmtZclAddr(src, a, sizeof(a));
+  if (!humOk(v)) {
+    Serial.printf("{\"zb\":\"bad\",\"kind\":\"hum\",\"addr\":\"%s\",\"ep\":%u,\"v\":%.2f}\r\n", a, ep, isnan(v) ? 0.0f : v);
+    return;
+  }
   Serial.printf("{\"zb\":\"hum\",\"addr\":\"%s\",\"ep\":%u,\"v\":%.2f}\r\n", a, ep, v);
 }
 
