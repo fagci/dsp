@@ -29,6 +29,7 @@ import {parseArgs} from 'node:util';
 import {wsAccept, wsFrame, wsParser, originOk, DEFAULT_ORIGINS} from '../termux/bridge.mjs';
 import {loadMsgr} from './load.mjs';
 import {prepareTls} from './tlsdir.mjs';
+import {createSerialHub, parseSerialSpec} from './serial.mjs';
 
 export function hostOk(host, allowed) {
   if (!allowed || !allowed.length) return true;
@@ -158,6 +159,7 @@ export function createMsgrBridge(opt) {
   const M = loadMsgr();
   const io = o.io || nodeIo(o.hosts);
   const clients = new Set();
+  const serial = createSerialHub((o.serial || []).map(x => typeof x === 'string' ? parseSerialSpec(x) : x), o.log);
 
   let tlsInfo = null, tlsSrv = null;
   const onRequest = (req, res) => {
@@ -167,8 +169,39 @@ export function createMsgrBridge(opt) {
       res.writeHead(200, {'content-type': 'application/x-x509-ca-cert', 'content-disposition': 'attachment; filename="dsp-bridge-ca.crt"', 'access-control-allow-origin': '*'});
       return res.end(tlsInfo.caPem);
     }
+    if (u.pathname === '/serial') {                       // список портов для страницы и для глаз
+      if (!originOk(req.headers.origin, o.origins)) { res.writeHead(403); return res.end('origin not allowed (--origin)\n'); }
+      if (o.token && !sameToken(u.searchParams.get('token') || '', o.token)) { res.writeHead(401); return res.end('token\n'); }
+      res.writeHead(200, {'content-type': 'application/json', 'access-control-allow-origin': req.headers.origin || '*'});
+      return res.end(JSON.stringify(serial.list()));
+    }
     res.writeHead(200, {'content-type': 'text/plain'});
-    res.end('DSP messenger bridge: ' + clients.size + ' client(s)\nconnect with WebSocket' + (tlsInfo ? ' (ws:// and wss:// on this port)' : '') + (proxy ? '; CORS proxy: /proxy?url=…' : '') + (tlsInfo && tlsInfo.caPem ? '\nCA certificate to trust: /ca.crt' : '') + '\n');
+    res.end('DSP messenger bridge: ' + clients.size + ' client(s)\nconnect with WebSocket' + (tlsInfo ? ' (ws:// and wss:// on this port)' : '') + (proxy ? '; CORS proxy: /proxy?url=…' : '') + serial.list().map(x => '\nserial: /serial/' + x.name + '  (' + x.target + ')').join('') + (tlsInfo && tlsInfo.caPem ? '\nCA certificate to trust: /ca.crt' : '') + '\n');
+  };
+  // порт из --serial как WebSocket: бинарные кадры в обе стороны, текстовый кадр от страницы уходит в порт своими байтами UTF-8
+  const serialUpgrade = (sock, rawName, key, deny) => {
+    let name; try { name = decodeURIComponent(rawName); } catch (e) { return deny('400 Bad Request'); }
+    if (!serial.has(name)) return deny('404 Not Found');
+    sock.write('HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-accept: ' + wsAccept(key) + '\r\n\r\n');
+    const c = {sock, dead: false};
+    clients.add(c);
+    let h = null;
+    const bye = () => { if (clients.delete(c)) { c.dead = true; if (h) h.close(); } };
+    h = serial.attach(name, {
+      onData: d => {
+        if (c.dead) return;
+        if (sock.writableLength > 8 << 20) { o.log('serial ' + name + ': client is too slow, dropped'); sock.destroy(); return bye(); }   // страница не успевает — не копим память
+        try { sock.write(wsFrame(d, 2)); } catch (e) { bye(); }
+      },
+      onClose: msg => { if (!c.dead) { c.dead = true; clients.delete(c); try { sock.end(wsFrame(Buffer.concat([Buffer.from([0x03, 0xe8]), Buffer.from(String(msg).slice(0, 100))]), 8)); } catch (e) { /* закрыт */ } } },
+    });
+    const put = b => { if (!c.dead && h) h.write(b); };
+    sock.on('data', wsParser({
+      onMsg: t => put(Buffer.from(t)), onBin: b => put(b),
+      onClose: () => { try { sock.end(wsFrame('', 8)); } catch (e) { /* закрыт */ } bye(); },
+      onPing: p => { try { sock.write(wsFrame(p, 10)); } catch (e) { /* закрыт */ } },
+    }));
+    sock.on('close', bye); sock.on('error', bye);
   };
   const onUpgrade = (req, sock) => {
     const u = new URL(req.url, 'http://x'), key = req.headers['sec-websocket-key'];
@@ -176,6 +209,8 @@ export function createMsgrBridge(opt) {
     if (!key || /websocket/i.test(req.headers.upgrade || '') === false) return deny('400 Bad Request');
     if (!originOk(req.headers.origin, o.origins)) { o.log('origin refused: ' + req.headers.origin); return deny('403 Forbidden'); }
     if (o.token && u.searchParams.get('token') !== o.token) return deny('401 Unauthorized');
+    const sm = /^\/serial\/([^/]+)$/.exec(u.pathname);
+    if (sm) return serialUpgrade(sock, sm[1], key, deny);
     sock.write('HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-accept: ' + wsAccept(key) + '\r\n\r\n');
     const c = {sock, ses: null, dead: false};
     clients.add(c);
@@ -212,7 +247,7 @@ export function createMsgrBridge(opt) {
   });
 
   return {
-    server, clients, get tls() { return tlsInfo; },
+    server, clients, get serialPorts() { return serial.list(); }, get tls() { return tlsInfo; },
     listen: async () => {
       if (o.tls || o.cert || o.key) {
         tlsInfo = await prepareTls(o, M, ip => ['private', 'loopback', 'linklocal'].includes(ipClass(ip)));
@@ -220,24 +255,25 @@ export function createMsgrBridge(opt) {
       }
       return new Promise((ok, bad) => { server.once('error', bad); server.listen(o.port, o.host, () => ok(server.address())); });
     },
-    close: () => { for (const c of clients) { c.dead = true; try { c.ses && c.ses.close(); } catch (e) { /* закрыт */ } c.sock.destroy(); } clients.clear(); server.close(); for (const x of [httpSrv, tlsSrv]) { try { x && x.closeAllConnections && x.closeAllConnections(); } catch (e) { /* закрыт */ } } },
+    close: () => { for (const c of clients) { c.dead = true; try { c.ses && c.ses.close(); } catch (e) { /* закрыт */ } c.sock.destroy(); } clients.clear(); serial.closeAll(); server.close(); for (const x of [httpSrv, tlsSrv]) { try { x && x.closeAllConnections && x.closeAllConnections(); } catch (e) { /* закрыт */ } } },
   };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === fs.realpathSync(process.argv[1])) {
   const {values: a} = parseArgs({options: {
     host: {type: 'string', default: '127.0.0.1'}, port: {type: 'string', default: '8777'}, token: {type: 'string', default: ''},
-    origin: {type: 'string', multiple: true, default: []}, 'no-proxy': {type: 'boolean', default: false}, tls: {type: 'boolean', default: false}, 'tls-dir': {type: 'string', default: ''}, 'tls-name': {type: 'string', multiple: true, default: []}, cert: {type: 'string', default: ''}, key: {type: 'string', default: ''}, 'proxy-loopback': {type: 'boolean', default: false}, 'proxy-no-private': {type: 'boolean', default: false}, hosts: {type: 'string', default: ''}, help: {type: 'boolean', short: 'h', default: false},
+    origin: {type: 'string', multiple: true, default: []}, 'no-proxy': {type: 'boolean', default: false}, tls: {type: 'boolean', default: false}, 'tls-dir': {type: 'string', default: ''}, 'tls-name': {type: 'string', multiple: true, default: []}, cert: {type: 'string', default: ''}, key: {type: 'string', default: ''}, 'proxy-loopback': {type: 'boolean', default: false}, 'proxy-no-private': {type: 'boolean', default: false}, hosts: {type: 'string', default: ''}, serial: {type: 'string', multiple: true, default: []}, help: {type: 'boolean', short: 'h', default: false},
   }});
   if (a.help) {
-    console.log('node tools/node/bridge.mjs [--host 127.0.0.1] [--port 8777] [--token T] [--origin URL]… [--hosts irc.example.org,*.example.net] [--no-proxy] [--proxy-loopback] [--proxy-no-private] [--tls [--tls-dir DIR] [--tls-name name-or-ip]…] [--cert FILE --key FILE]');
+    console.log('node tools/node/bridge.mjs [--host 127.0.0.1] [--port 8777] [--token T] [--origin URL]… [--hosts irc.example.org,*.example.net] [--no-proxy] [--proxy-loopback] [--proxy-no-private] [--tls [--tls-dir DIR] [--tls-name name-or-ip]…] [--cert FILE --key FILE] [--serial name=/dev/ttyACM0@115200 | name=tcp://router:2000]…');
     process.exit(0);
   }
   if (a.host !== '127.0.0.1' && a.host !== 'localhost' && !a.token) console.error('warning: open to the network without --token — anyone on it can use your accounts through this bridge');
   const b = createMsgrBridge({host: a.host, port: +a.port, token: a.token, origins: [...DEFAULT_ORIGINS, ...a.origin],
-    hosts: a.hosts.split(',').map(s => s.trim().toLowerCase()).filter(Boolean), proxy: !a['no-proxy'], tls: a.tls, tlsDir: a['tls-dir'], tlsNames: a['tls-name'], cert: a.cert, key: a.key, proxyLoopback: a['proxy-loopback'], proxyPrivate: !a['proxy-no-private'],
+    hosts: a.hosts.split(',').map(s => s.trim().toLowerCase()).filter(Boolean), proxy: !a['no-proxy'], tls: a.tls, tlsDir: a['tls-dir'], tlsNames: a['tls-name'], cert: a.cert, key: a.key, proxyLoopback: a['proxy-loopback'], proxyPrivate: !a['proxy-no-private'], serial: a.serial,
     log: m => console.error(new Date().toISOString().slice(11, 19) + ' ' + m)});
   b.listen().then(ad => {
+    for (const x of b.serialPorts) console.error('serial: ws://' + ad.address + ':' + ad.port + '/serial/' + x.name + (a.token ? '?token=…' : '') + '  ←  ' + x.target);
     console.error('listening on ws://' + ad.address + ':' + ad.port + (a.token ? '/?token=…' : '') + (b.tls ? '  and  wss://…:' + ad.port : '') + (a['no-proxy'] ? '' : ' · CORS proxy: http' + (b.tls ? '(s)' : '') + '://' + ad.address + ':' + ad.port + '/proxy?' + (a.token ? 'token=…&' : '') + 'url={url}'));
     const t = b.tls;
     if (t && t.own) {
