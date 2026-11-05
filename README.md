@@ -19,7 +19,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **Records pipeline** — decoders emit records → Table, Graph, Map, entity rules, charts: [Data](help/data.md) · [Map](help/map.md)
 - **Video and cameras** — analog and digital TV (DVB-S/S2/T2), IP cameras and archives, camera tools, podcasts: [Video](help/video.md)
 - **Music** — tracker, sample editor, a Winamp-style player, Internet radio: [Media](help/media.md)
-- **Out to the world** — serial (incl. Android OTG, and a port on a router / another PC through the Node bridge), Bluetooth LE, MQTT, network text and bytes, WebRTC between browsers, firmware flashers: [Protocols](help/protocols.md)
+- **Out to the world** — serial (incl. Android OTG, and a port on a router / another PC through the Node bridge), Bluetooth LE, MQTT, messengers (Nostr, Matrix, Telegram, e-mail, IRC… with one address book of people and addresses kept in Tables), network text and bytes, WebRTC between browsers, firmware flashers: [Protocols](help/protocols.md)
 - Around it all: dashboards and tiles, undo, patches saved and shared by link, 160+ presets, installable offline app. **The full story — [the manual](help/README.md).**
 
 ## Manual
