@@ -25,10 +25,10 @@
  * Values that cannot be real (the Zigbee "invalid" 0x8000 = -327.68, a reading
  * outside the sensor range, NaN) are not passed on as measurements:
  *   {"zb":"bad","kind":"temp","addr":"0x1234","ep":1,"v":-327.68}
- * Temperature is accepted from -50 up to (not including) 100 C, humidity 0..100 %.
+ * Temperature is accepted strictly between -40 and 125 C and humidity from 0 up to (not including) 100 %: a real sensor sends the sentinels 125.00 C, -40.00 C and 100.00 % together after a pause.
  * Hardware status: tested on an ESP32-C5 with one sensor - network forming,
- * join, INFO, REPORT and POLLALL commands. NOT yet seen on hardware: measurement
- * lines (the test sensor was outside its range / asleep) and the "bad" filter.
+ * join, INFO, REPORT and POLLALL commands. Measurements seen on hardware (temp -35..+13 C, hum ~58 %, over
+ * ser2net); the "bad" filter itself is not yet seen running.
  */
 #include <Arduino.h>
 #ifndef ZIGBEE_MODE_ZCZR
@@ -67,8 +67,9 @@ static void fmtIeee(const uint8_t *e, char *buf, size_t n) {
 }
 
 /********************* sensor reports -> JSON lines *********************/
-static bool tempOk(float v) { return v >= -50.0f && v < 100.0f; }   // NaN fails both comparisons
-static bool humOk(float v) { return v >= 0.0f && v <= 100.0f; }
+// Границы исключают значения-заглушки датчика (на живом датчике: 125.00 °C, -40.00 °C и 100.00 % приходят пачкой после паузы)
+static bool tempOk(float v) { return v > -40.0f && v < 125.0f; }   // NaN fails both comparisons
+static bool humOk(float v) { return v >= 0.0f && v < 100.0f; }
 
 static void onTemp(float v, uint8_t ep, esp_zb_zcl_addr_t src) {
   char a[24];
