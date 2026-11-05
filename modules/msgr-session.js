@@ -58,6 +58,95 @@ function mgPhoneTcp(ph){
   };
 }
 
+/* ---------- HTTP(S) через сокеты приложения DSP на телефоне ----------
+   Страница из браузера упирается в CORS (RSS и др.), а телефон-шлюз отдаёт только TCP. Поэтому небольшой HTTP/1.1-клиент поверх tcp.* приложения:
+   запрос с «Connection: close» и «Accept-Encoding: identity», ответ — Content-Length / chunked / до закрытия, редиректы (до 5), gzip / deflate, если сервер
+   всё же сжал. Возвращает настоящий Response. Потоковые ответы (ntfy) так не читаются — только ответ целиком (ленты, API с обычным запросом). */
+function mgPhoneFetch(ph){
+  const tcp=mgPhoneTcp(ph), MAXB=8e6;
+  const bytesOf=s=>Uint8Array.from(s,c=>c.charCodeAt(0)&255);
+  const lowerH=h=>{ const o={}; if(h && typeof h.forEach==='function' && !(h.constructor===Object)){ h.forEach((v,k)=>{ o[String(k).toLowerCase()]=String(v); }); } else for(const k of Object.keys(h||{})) o[k.toLowerCase()]=String(h[k]); return o; };
+  const once=(url,o)=>new Promise((ok,bad)=>{
+    let u; try{ u=new URL(String(url)); }catch(e){ bad(new TypeError('bad address')); return; }
+    if(!/^https?:$/.test(u.protocol)){ bad(new TypeError('only http and https')); return; }
+    const secure=u.protocol==='https:', port=+u.port||(secure ? 443 : 80), method=String(o.method||'GET').toUpperCase();
+    const body=o.body==null ? null : typeof o.body==='string' ? mgUtf8(o.body) : (o.body instanceof Uint8Array ? o.body : mgUtf8(String(o.body)));
+    const h={host:u.host,'user-agent':'DSP workbench','accept-encoding':'identity',connection:'close',accept:'*/*',...lowerH(o.headers)};
+    if(body) h['content-length']=String(body.length);
+    let acc='', head=null, st=0, hs=null, chunked=false, clen=-1, out='', done=false, link=null, timer=null, ci=0;
+    const fin=(err,res)=>{ if(done) return; done=true; clearTimeout(timer); try{ link && link.close(); }catch(e){} if(o.signal) o.signal.removeEventListener('abort',onAbort); err ? bad(err) : ok(res); };
+    const onAbort=()=>fin(Object.assign(new Error('aborted'),{name:'AbortError'}));
+    if(o.signal){ if(o.signal.aborted){ onAbort(); return; } o.signal.addEventListener('abort',onAbort,{once:true}); }
+    timer=setTimeout(()=>fin(new TypeError('the phone got no answer in time')),o.timeoutMs||45000);
+    const finish=async()=>{
+      let bytes=bytesOf(out), enc=(hs['content-encoding']||'').toLowerCase();
+      try{
+        if((enc==='gzip' || enc==='deflate') && typeof DecompressionStream!=='undefined')
+          bytes=new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream(enc))).arrayBuffer());
+      }catch(e){ fin(new TypeError('cannot unpack the answer ('+enc+')')); return; }
+      const hd=new Headers(); for(const k of Object.keys(hs)) try{ hd.append(k,hs[k]); }catch(e){ /* заголовок, который Headers не принимает */ }
+      hd.delete('content-encoding'); hd.delete('content-length');
+      const empty=method==='HEAD' || st===204 || st===304;
+      fin(null,new Response(empty ? null : bytes,{status:st,statusText:'',headers:hd}));
+    };
+    // разбор тела по мере поступления: true — ответ полный
+    const parseBody=()=>{
+      if(method==='HEAD' || st===204 || st===304 || (st>=100 && st<200)) return true;
+      if(chunked){
+        for(;;){
+          const e=acc.indexOf('\r\n',ci); if(e<0) return false;
+          const n=parseInt(acc.slice(ci,e).split(';')[0].trim(),16); if(!(n>=0)){ fin(new TypeError('broken chunked answer')); return false; }
+          if(n===0) return true;
+          if(acc.length<e+2+n+2) return false;
+          out+=acc.slice(e+2,e+2+n); ci=e+2+n+2;
+          if(out.length>MAXB){ fin(new TypeError('the answer is too big')); return false; }
+        }
+      }
+      if(clen>=0){ if(acc.length>=clen){ out=acc.slice(0,clen); return true; } return false; }
+      out=acc; return false;                                           // до закрытия соединения
+    };
+    link=tcp(u.hostname,port,secure,{
+      open:()=>{ link.write(method+' '+(u.pathname||'/')+u.search+' HTTP/1.1\r\n'+Object.keys(h).map(k=>k+': '+h[k]).join('\r\n')+'\r\n\r\n'); if(body){ let t=''; for(const x of body) t+=String.fromCharCode(x); link.write(t); } },
+      data:s=>{
+        if(done) return;
+        acc+=s; if(acc.length>MAXB+65536){ fin(new TypeError('the answer is too big')); return; }
+        if(!head){
+          const i=acc.indexOf('\r\n\r\n'); if(i<0) return;
+          head=acc.slice(0,i); acc=acc.slice(i+4);
+          const lines=head.split('\r\n'), m=/^HTTP\/1\.[01] (\d{3})/.exec(lines[0]);
+          if(!m){ fin(new TypeError('not an HTTP answer')); return; }
+          st=+m[1]; hs={}; for(const l of lines.slice(1)){ const k=l.indexOf(':'); if(k>0){ const n=l.slice(0,k).trim().toLowerCase(); hs[n]=hs[n]!==undefined && n==='set-cookie' ? hs[n]+', '+l.slice(k+1).trim() : l.slice(k+1).trim(); } }
+          chunked=/chunked/i.test(hs['transfer-encoding']||''); clen=hs['content-length']!==undefined ? +hs['content-length'] : -1;
+        }
+        if(parseBody()) finish();
+      },
+      close:err=>{
+        if(done) return;
+        if(!head){ fin(new TypeError(err || 'the connection was closed before an answer')); return; }
+        if(chunked){ fin(new TypeError('the answer was cut off')); return; }
+        if(clen>=0 && acc.length<clen){ fin(new TypeError('the answer was cut off')); return; }
+        if(clen<0) out=acc;
+        finish();
+      },
+    },{binary:true});
+  });
+  return async function phoneFetch(input,o={}){
+    let url=String(input), cur={...o};
+    for(let hop=0;hop<=5;hop++){
+      const r=await once(url,cur);
+      const loc=r.headers.get('location');
+      if([301,302,303,307,308].includes(r.status) && loc && hop<5){
+        const next=new URL(loc,url);
+        if(next.host!==new URL(url).host){ const hd=lowerH(cur.headers); delete hd.authorization; delete hd.cookie; cur={...cur,headers:hd}; }
+        if(r.status===303 || ((r.status===301 || r.status===302) && cur.method && cur.method!=='GET' && cur.method!=='HEAD')) cur={...cur,method:'GET',body:undefined};
+        url=next.toString(); continue;
+      }
+      return r;
+    }
+    throw new TypeError('too many redirects');
+  };
+}
+
 /* ---------- Nostr: реле по WebSocket, канал = хэштег (тег t) ---------- */
 function mgOpenNostr(cfg,c){
   const io=mgIo(cfg), relays=String(cfg.server||'').split(/[\s,]+/).filter(r=>/^wss?:\/\//i.test(r));
@@ -70,7 +159,7 @@ function mgOpenNostr(cfg,c){
   const me=mgHex(mgSchnorrPub(sk)), seen=new Set(), sub='dsp'+mgHex(mgRandom(4));
   const since=Math.floor(Date.now()/1000)-Math.max(0,cfg.history|0);
   let closed=false, lastErr='';
-  const rx=new Map(), myR=new Map();                              // реакции: id события → {target,author,emoji}; мои: цель+эмодзи → id (чтобы снять удалением kind 5)
+  const rx=new Map(), myR=new Map(), owner=new Map();             // реакции: id события → {target,author,emoji}; мои: цель+эмодзи → id (чтобы снять удалением kind 5); owner: id сообщения → ключ автора (удалить может только он, NIP-09)
   const note=()=>{ const up=conns.filter(r=>r.up).length; c.status('relays '+up+'/'+conns.length+(lastErr ? ' · '+lastErr : '')+' · '+mgNpub(me).slice(0,16)+'…',up ? 'up' : 'connecting'); };
   function frame(text){
     const f=mgNostrFrame(text); if(!f) return;
@@ -83,12 +172,17 @@ function mgOpenNostr(cfg,c){
         const nk=(ev.tags.find(t=>Array.isArray(t) && t[0]==='nick' && typeof t[1]==='string')||[])[1];
         const author=nk ? String(nk).slice(0,64) : mgNpub(ev.pubkey).slice(0,12), mine=ev.pubkey===me;
         if(x.kind==='reaction'){ rx.set(ev.id,{target:x.target,author,emoji:x.emoji}); if(mine) myR.set(x.target+'\u0000'+x.emoji,ev.id); c.msg({kind:'reaction',id:ev.id,target:x.target,author,emojis:[x.emoji],op:'add',t:(+ev.created_at||0)*1000,self:mine}); }
-        else for(const id of x.ids){ const r0=rx.get(id); if(!r0) continue; rx.delete(id); myR.forEach((v,k)=>{ if(v===id) myR.delete(k); }); c.msg({kind:'reaction',id:'',target:r0.target,author:r0.author,emojis:[r0.emoji],op:'remove',t:Date.now(),self:mine}); }
+        else for(const id of x.ids){
+          const r0=rx.get(id);
+          if(r0){ rx.delete(id); myR.forEach((v,k)=>{ if(v===id) myR.delete(k); }); c.msg({kind:'reaction',id:'',target:r0.target,author:r0.author,emojis:[r0.emoji],op:'remove',t:Date.now(),self:mine}); }
+          else if(owner.get(id)===ev.pubkey){ owner.delete(id); c.msg({kind:'delete',id:'',target:id,author,t:Date.now(),self:mine}); }      // удаление сообщения — только от его автора
+        }
         return;
       }
       const t=mgNostrText(ev,chan); if(!t) return;                       // чужой канал — без дорогой проверки подписи
       if(cfg.verify!==false && !mgNostrVerify(ev)) return;
       seen.add(ev.id); if(seen.size>5000) seen.delete(seen.values().next().value);
+      owner.set(ev.id,ev.pubkey); if(owner.size>5000) owner.delete(owner.keys().next().value);
       c.msg({id:ev.id,from:t.from,text:t.text,t:(+ev.created_at||0)*1000,self:ev.pubkey===me});
     } else if(f.type==='OK' && f.a[2]===false) lastErr='rejected: '+String(f.a[3]||'').slice(0,60), note();
     else if(f.type==='NOTICE') lastErr=String(f.a[1]||'').slice(0,60), note();
@@ -111,6 +205,13 @@ function mgOpenNostr(cfg,c){
     send(text){
       const ev=mgNostrSign(sk,{created_at:Math.floor(Date.now()/1000),kind:1,tags:[['t',chan.toLowerCase()],['nick',String(cfg.nick||'dsp')],['client','dsp']],content:String(text)});
       let n=0; for(const r of conns) if(r.up && r.ws){ try{ r.ws.send(JSON.stringify(['EVENT',ev])); n++; }catch(e){} }
+      return n>0;
+    },
+    modify(r){                                                     // в Nostr правки нет — только удаление (kind 5 на своё событие)
+      if(r.op!=='delete'){ c.status('Nostr: messages cannot be edited (there is no such thing in the protocol) — delete and write again','warn'); return false; }
+      if(!r.target){ c.status('Nostr: nothing to delete','warn'); return false; }
+      const ev=mgNostrSign(sk,{created_at:Math.floor(Date.now()/1000),kind:5,tags:[['e',String(r.target)],['k','1'],['t',chan.toLowerCase()],['nick',String(cfg.nick||'dsp')],['client','dsp']],content:'deleted'});
+      let n=0; for(const x of conns) if(x.up && x.ws){ try{ x.ws.send(JSON.stringify(['EVENT',ev])); n++; }catch(e){} }
       return n>0;
     },
     react(r){                                                      // r: {target (id события), emoji, on}; поставить — kind 7, снять — kind 5 на наше событие реакции
@@ -226,7 +327,12 @@ function mgOpenMatrix(cfg,c){
         if(first){ first=false; if(!(cfg.history|0)) continue; }          // первый ответ — недавняя история: пропускаем, если не просили
         for(const m of s.msgs) c.msg(m);
         for(const x of s.react){ rx.set(x.id,x); if(x.self) myR.set(x.target+'\u0000'+x.emojis[0],x.id); c.msg(x); }
-        for(const d of s.redact){ const x=rx.get(d.id); if(!x) continue; rx.delete(d.id); myR.forEach((v,k)=>{ if(v===d.id) myR.delete(k); }); c.msg({...x,id:'',op:'remove'}); }      // снята реакция — событие удаления её
+        for(const e of s.edits) c.msg(e);
+        for(const d of s.redact){
+          const x=rx.get(d.id);
+          if(x){ rx.delete(d.id); myR.forEach((v,k)=>{ if(v===d.id) myR.delete(k); }); c.msg({...x,id:'',op:'remove'}); }      // снята реакция — событие удаления её
+          else c.msg({kind:'delete',id:'',target:d.id,author:'',room:d.room,force:true,t:Date.now()});                 // удалено сообщение (права проверил сервер)
+        }
       }
     }catch(e){ if(!closed) c.down('Matrix: '+e.message,false); }
   })();
@@ -237,6 +343,21 @@ function mgOpenMatrix(cfg,c){
         const r=await call('PUT','/rooms/'+encodeURIComponent(room)+'/send/m.room.message/dsp'+Date.now()+'_'+(++txn),{msgtype:'m.text',body:String(text)});
         if(!r.ok) c.status('Matrix: send failed — '+(r.j.error||r.status),'warn');
         return r.ok;
+      }catch(e){ c.status('Matrix: '+e.message,'warn'); return false; }
+    },
+    async modify(r){                                             // r: {op:'edit'|'delete', target (id события), text, room}
+      const rid=String(room||r.room||'');
+      if(!rid || !r.target){ c.status('Matrix: nothing to change','warn'); return false; }
+      try{
+        if(r.op==='delete'){
+          const x=await call('PUT','/rooms/'+encodeURIComponent(rid)+'/redact/'+encodeURIComponent(String(r.target))+'/dsp'+Date.now()+'_'+(++txn),{});
+          if(!x.ok){ c.status('Matrix: cannot delete — '+(x.j.error||x.status),'warn'); return false; }
+          return true;
+        }
+        const text=String(r.text||'');
+        const x=await call('PUT','/rooms/'+encodeURIComponent(rid)+'/send/m.room.message/dsp'+Date.now()+'_'+(++txn),{msgtype:'m.text',body:'* '+text,'m.new_content':{msgtype:'m.text',body:text},'m.relates_to':{rel_type:'m.replace',event_id:String(r.target)}});
+        if(!x.ok){ c.status('Matrix: cannot edit — '+(x.j.error||x.status),'warn'); return false; }
+        return true;
       }catch(e){ c.status('Matrix: '+e.message,'warn'); return false; }
     },
     async react(r){                                              // r: {target (id события), emoji, on, room}
@@ -277,13 +398,14 @@ function mgOpenTelegram(cfg,c){
       if(!me.ok){ c.down('Telegram: '+(me.description||'error'),me.error_code===401 || me.error_code===404); return; }
       botName=me.result.username; c.status('connected as @'+botName+' — write to the bot','up');
       while(!closed){
-        const r=await call('getUpdates',{timeout:25,offset,allowed_updates:['message','channel_post','message_reaction']});
+        const r=await call('getUpdates',{timeout:25,offset,allowed_updates:['message','channel_post','message_reaction','edited_message','edited_channel_post']});
         if(!r.ok){ c.down('Telegram: '+(r.description||'getUpdates failed'),r.error_code===401); return; }
         const u=mgTgUpdates(r,cfg.channel);
         offset=Math.max(offset,u.next); if(u.last!==null) lastChat=u.last;
         if(u.skipped){ ignored+=u.skipped; c.status('Telegram: @'+botName+' · '+ignored+' message(s) from other chats ignored — the channel «'+cfg.channel+'» is a chat filter, clear it to receive from all chats','up'); }
         for(const m of u.msgs) c.msg(m);
         for(const x of u.react) c.msg(x);
+        for(const x of u.edits) c.msg(x);
       }
     }catch(e){ if(!closed) c.down('Telegram: '+e.message,false); }
   })();
@@ -292,11 +414,23 @@ function mgOpenTelegram(cfg,c){
       const chat=String(to || cfg.channel || lastChat || '').trim();
       if(!chat){ c.status('Telegram: no chat yet — write to the bot first, or set the channel (chat id / @name)','warn'); return false; }
       try{
+        let first=null;
         for(const part of mgSplit(text,3500)){
           const r=await call('sendMessage',{chat_id:/^-?\d+$/.test(chat) ? +chat : chat,text:part});
           if(!r.ok){ c.status('Telegram: '+(r.description||'send failed'),'warn'); return false; }
+          if(!first) first=r.result;
         }
-        c.msg({from:String(cfg.nick||'me'),to:chat,text:String(text),t:Date.now(),self:true,local:true});
+        const cid=first && first.chat ? String(first.chat.id) : '';
+        c.msg({from:String(cfg.nick||'me'),to:chat,text:String(text),t:Date.now(),self:true,local:true,...(first && first.message_id!=null ? {id:'tgo'+cid+':'+first.message_id,ref:cid+':'+first.message_id,mid:first.message_id,room:cid} : {})});
+        return true;
+      }catch(e){ c.status('Telegram: '+e.message,'warn'); return false; }
+    },
+    async modify(r){                                             // r: {op:'edit'|'delete', target:'chat:message_id', text}; бот правит и удаляет свои сообщения (и входящие в личке)
+      const m=/^(-?\d+):(\d+)$/.exec(String(r.target||''));
+      if(!m){ c.status('Telegram: this message has no reference — only messages seen in this session can be changed','warn'); return false; }
+      try{
+        const x=r.op==='delete' ? await call('deleteMessage',{chat_id:+m[1],message_id:+m[2]}) : await call('editMessageText',{chat_id:+m[1],message_id:+m[2],text:String(r.text||'')});
+        if(!x.ok){ c.status('Telegram: '+(x.description||'failed'),'warn'); return false; }
         return true;
       }catch(e){ c.status('Telegram: '+e.message,'warn'); return false; }
     },
@@ -362,9 +496,15 @@ function mgOpenXmpp(cfg,c){
     open:()=>cl.start(),data:s=>cl.feed(s),close:err=>{ if(!closed) c.down('XMPP: '+(err || 'connection closed'),false); }});
   cl=mgXmppClient({domain,user,pass:cfg.pass,register:!!cfg.register,onRegistered:()=>{ cfg.register=false; },resource:cfg.resource||'dsp',room,nick,secure,insecure:!!cfg.insecure,
     write:s=>{ try{ link.write(s); }catch(e){} },tls:done=>link.upgrade(done),onMsg:x=>{ if(!x.delay || cfg.history) c.msg(x); },
-    onRoster:cfg.roster===false ? null : list=>c.msg({kind:'roster',t:Date.now(),contacts:list,text:''}),onReact:x=>c.msg(x),
+    onRoster:cfg.roster===false ? null : list=>c.msg({kind:'roster',t:Date.now(),contacts:list,text:''}),onReact:x=>c.msg(x),onEdit:x=>c.msg(x),
     onStatus:(t,s)=>{ if(s==='fatal'){ c.down(t,true); try{ link.close(); }catch(e){} } else if(s==='down') c.down(t,false); else c.status(t,s); }});
   return {
+    modify(r){
+      const to=String(r.to||r.room||room||'').trim(), gc=!!room && to.split('/')[0]===room;
+      const ok=r.op==='delete' ? cl.retract(to,r.target,gc) : cl.edit(to,r.target,String(r.text||''),gc);
+      if(!ok){ c.status('XMPP: cannot change (not connected, or the message has no id)','warn'); return false; }
+      return true;
+    },
     react(r){
       const to=String(r.to||r.room||room||'').trim(), gc=!!room && to.split('/')[0]===room;
       if(!cl.react(to,r.target,Array.isArray(r.mine) ? r.mine : (r.on ? [r.emoji] : []),gc)){ c.status('XMPP: cannot react (not connected, or the message has no id)','warn'); return false; }
@@ -373,7 +513,7 @@ function mgOpenXmpp(cfg,c){
     send(text,to){
       const dst=String(to||room||'').trim();
       if(!cl.send(text,dst)) return false;
-      if(!(room && dst.split('/')[0]===room)) c.msg({from:jid,to:dst,text:String(text),t:Date.now(),self:true,local:true});   // личное сервер не возвращает
+      if(!(room && dst.split('/')[0]===room)) c.msg({from:jid,to:dst,text:String(text),t:Date.now(),self:true,local:true,id:cl.lastId});   // личное сервер не возвращает; id — чтобы поправить / отозвать
       return true;
     },
     close(){ closed=true; cl.quit(); try{ link.close(); }catch(e){} },
@@ -517,6 +657,7 @@ function mgOpenGateway(proto,cfg,c){
   return {
     send:(text,to)=>inner ? inner.send(text,to) : false,
     react:r=>inner && inner.react ? inner.react(r) : false,
+    modify:r=>inner && inner.modify ? inner.modify(r) : false,
     close(){ closed=true; clearTimeout(timer); stop(); if(inner) try{ inner.close(); }catch(e){} },
   };
 }
@@ -665,7 +806,8 @@ function mgOpenBluesky(cfg,c){
 /* ---------- RSS / Atom / JSON Feed: опрос лент (server — адреса через пробел), channel — слова: любое из них, -слово исключает ---------- */
 // Большинство лент не отдаёт CORS-заголовки: в приложении Android это решает приложение, в браузере — прокси из Settings (cfg.proxyUrl).
 function mgOpenRss(cfg,c){
-  const io=mgIo(cfg), urls=String(cfg.server||'').split(/[\s,]+/).filter(Boolean), spec=mgFeedSpec(cfg.channel), ac=new AbortController();
+  const io=mgIo(cfg); if(cfg.phone && !(cfg.io && cfg.io.fetch)) io.fetch=mgPhoneFetch(cfg.phone);      // шлюз-телефон: ленты читаются через его сокеты, без CORS
+  const urls=String(cfg.server||'').split(/[\s,]+/).filter(Boolean), spec=mgFeedSpec(cfg.channel), ac=new AbortController();
   if(!urls.length || urls.some(u=>!/^https?:\/\//i.test(u))){ c.down('RSS: enter feed addresses https://… in the server field (several — separated by a space)',true); return mgNone; }
   if(urls.length>20){ c.down('RSS: at most 20 feeds in one node',true); return mgNone; }
   const cutoff=Date.now()-Math.max(0,cfg.history|0)*1000, seen=new Set(); let first=true;
@@ -677,7 +819,7 @@ function mgOpenRss(cfg,c){
         if(!r.ok){ errs.push(new URL(u).host+': HTTP '+r.status); return; }
         const text=(await r.text()).slice(0,3000000), f=mgRssParse(text), host=new URL(u).host;
         for(const it of f.items) got.push({id:it.id||it.url,from:f.title||host,name:it.author||f.title||host,text:it.title||it.summary,title:it.title,summary:it.summary,feed:f.title||host,url:it.url,tags:it.tags,lang:it.lang,avatar:'',image:it.image,likes:0,boosts:0,replies:0,cw:'',boost_by:'',t:it.t});
-      }catch(e){ errs.push(new URL(u).host+': '+(e instanceof TypeError ? 'no CORS headers or no connection — set the TCP gateway to a Node bridge (it fetches the feeds itself), tick «through the CORS proxy» (Settings), or use the Android app' : e.message)); }
+      }catch(e){ errs.push(new URL(u).host+': '+(e instanceof TypeError && cfg.phone ? 'cannot read it through the phone ('+e.message+')' : e instanceof TypeError ? 'no CORS headers or no connection — set the TCP gateway to a Node bridge (it fetches the feeds itself), tick «through the CORS proxy» (Settings), or use the Android app' : e.message)); }
     }));
     if(errs.length===urls.length) throw mgFatal('RSS: '+errs.slice(0,3).join(' · '));
     const was=first; first=false;
@@ -710,6 +852,7 @@ function mgOpenRemote(proto,cfg,c){
   return {
     send(text,to){ if(ws.readyState!==1) return false; ws.send(JSON.stringify({op:'send',text:String(text),to:to||''})); return true; },
     react(r){ if(ws.readyState!==1) return false; ws.send(JSON.stringify({op:'react',r})); return true; },
+    modify(r){ if(ws.readyState!==1) return false; ws.send(JSON.stringify({op:'modify',r})); return true; },
     close(){ closed=true; ws.onopen=ws.onmessage=ws.onerror=ws.onclose=null; try{ ws.send(JSON.stringify({op:'close'})); }catch(e){} try{ ws.close(); }catch(e){} },
   };
 }
@@ -727,6 +870,7 @@ function mgConnect(proto,cfg,cb){
   const out={
     send:(text,to,atts)=>h ? h.send(text,to,atts) : false,
     react:r=>h && h.react ? h.react(r) : false,
+    modify:r=>h && h.modify ? h.modify(r) : false,
     close(){ dead=true; clearTimeout(timer); const x=h; h=null; if(x) try{ x.close(); }catch(e){} },
   };
   if(!open){ cb.status('unknown protocol '+proto,'fatal'); return out; }

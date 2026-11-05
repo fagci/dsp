@@ -10,9 +10,9 @@ const chcEl=(tag,cls,txt)=>{ const e=document.createElement(tag); if(cls) e.clas
 
 function chcInit(n){
   n.msgs=[]; n.read={}; n.seen=new Set(); n.pid=0; n.bookIdx=new Map(); n.bookSig='';
-  n.cs={open:'',q:'',person:'',proto:'',unread:false,reply:null,fo:false,fold:new Set()};
+  n.cs={open:'',q:'',person:'',proto:'',unread:false,reply:null,fo:false,fold:new Set(),edit:null,pick:''};
   n.outTo=''; n.cvEl=null; n.cvDirty=true; n.unreadN=0; n.lastBook=undefined;
-  n.react=new Map(); n.reactQ=[];
+  n.react=new Map(); n.reactQ=[]; n.editQ=[]; n.mods=new Map();
   n.hist={loaded:false,loading:false,queue:[],early:[],timer:null,name:'',err:''};
 }
 // записи книги (Contacts → book): имена людей по адресам; при смене книги сообщения переразмечаются
@@ -20,10 +20,20 @@ function chcSetBook(n,rows){
   const sig=rows.length+':'+rows.slice(0,50).map(r=>(r&&r.name)+'|'+(r&&r.addr)).join(',');
   if(sig===n.bookSig) return; n.bookSig=sig;
   n.bookIdx=chBookIndex(rows);
-  n.msgs=n.msgs.map(m=>({...chAnnotate(m.raw,n.bookIdx,n.p.me),pending:m.pending,pid:m.pid,thread:m.thread||m.raw.thread})); n.cvDirty=true;
+  n.msgs=n.msgs.map(m=>({...chAnnotate(m.raw,n.bookIdx,n.p.me),pending:m.pending,pid:m.pid,sentAt:m.sentAt,edited:m.edited,deleted:m.deleted,thread:m.thread||m.raw.thread,raw:m.raw})); n.cvDirty=true;
 }
 function chcAdd(n,r,quiet){
   if(!r || typeof r!=='object' || r.kind==='roster') return;
+  if(r.kind==='edit' || r.kind==='delete'){                                      // правка / удаление — событие над сообщением
+    const ev={...r,t:+r.t||Date.now(),proto:r.proto||'chat'}, k=chHistKey(ev);
+    if(n.seen.has(k)) return; n.seen.add(k);
+    const i=n.msgs.findIndex(m=>m.proto===ev.proto && chcRef(m)===String(ev.target));
+    if(i>=0){ if(chCanModify(n.msgs[i],ev)) n.msgs[i]=chApplyMod(n.msgs[i],ev); }
+    else { let a=n.mods.get(String(ev.target)); if(!a){ a=[]; n.mods.set(String(ev.target),a); } a.push(ev); if(n.mods.size>2000) n.mods.delete(n.mods.keys().next().value); }       // сообщение ещё не пришло — применим, когда придёт
+    n.cvDirty=true;
+    if(!quiet && chcStore(n)){ n.hist.queue.push(chToItem(ev)); chcSchedule(n); }
+    return;
+  }
   if(r.kind==='reaction'){                                                      // реакция — событие над сообщением, строки в журнале не даёт
     const rr={...r,t:+r.t||Date.now(),proto:r.proto||'chat'}, k=chHistKey(rr);
     if(n.seen.has(k)) return; n.seen.add(k);
@@ -42,6 +52,8 @@ function chcAdd(n,r,quiet){
     if(i>=0){ m.thread=m.thread||n.msgs[i].thread; n.msgs.splice(i,1); }
   }
   n.msgs.push(m); if(n.msgs.length>CHC_KEEP) n.msgs.splice(0,n.msgs.length-CHC_KEEP);
+  const pend=n.mods.get(chcRef(m));
+  if(pend){ n.mods.delete(chcRef(m)); const li=n.msgs.length-1; for(const ev of pend) if(n.msgs[li] && chCanModify(n.msgs[li],ev)) n.msgs[li]=chApplyMod(n.msgs[li],ev); }
   n.cvDirty=true;
   if(!quiet && chcStore(n)){ n.hist.queue.push(chToItem(raw)); chcSchedule(n); }
 }
@@ -52,18 +64,42 @@ function chcReactable(m){
   const ref=chcRef(m); if(!ref) return false;
   return m.proto!=='telegram' || /^-?\d+:\d+$/.test(ref);
 }
+// куда адресовать действие над сообщением m: комната или собеседник
+function chcDest(m){
+  const room=m.kind_==='room', r=room ? (m.raw.room||m.convTitle||'') : '';
+  return {room:r,to:room ? r : (m.mine ? chStr(m.raw.to) : chStr(m.raw.fromAddr||m.raw.from))};
+}
+const chcOwnRef=m=>{ const ref=chcRef(m); return !!ref && m.mine && !m.pending && !m.deleted && (m.proto!=='telegram' || /^-?\d+:\d+$/.test(ref)); };
+const chcEditable=m=>chcOwnRef(m) && CH_EDIT_PROTOS.includes(m.proto);
+const chcDeletable=m=>chcOwnRef(m) && CH_DELETE_PROTOS.includes(m.proto);
+function chcEditStart(n,m){ n.cs.edit={ref:chcRef(m),m}; n.cs.reply=null; n.cs.pick=''; n.cvDirty=true; if(n.cvInp){ n.cvInp.value=m.text; n.cvInp.focus(); } }
+function chcEditCancel(n){ if(n.cs.edit && n.cvInp) n.cvInp.value=''; n.cs.edit=null; n.cvDirty=true; }
+function chcEditApply(n,text){
+  const ed=n.cs.edit; n.cs.edit=null; n.cvDirty=true; if(!ed) return;
+  text=String(text).trim(); if(!text || text===ed.m.text) return;
+  const d=chcDest(ed.m);
+  chcAdd(n,{t:Date.now(),proto:ed.m.proto,dir:'out',kind:'edit',target:ed.ref,author:'me',text,room:d.room,to:d.to});       // сразу видно у нас
+  n.editQ.push({op:'edit',target:ed.ref,text,room:d.room,to:d.to});
+}
+function chcDelete(n,m){
+  if(!confirm('Delete this message'+(m.proto==='nostr' ? ' (relays are asked to remove it, some may keep it)' : ' for everyone')+'?')) return;
+  const d=chcDest(m);
+  chcAdd(n,{t:Date.now(),proto:m.proto,dir:'out',kind:'delete',target:chcRef(m),author:'me',room:d.room,to:d.to});
+  n.editQ.push({op:'delete',target:chcRef(m),room:d.room,to:d.to});
+}
 function chcReact(n,m,emoji){
   const ref=chcRef(m), mine=chReactMine(n.react,ref), on=!mine.has(emoji);
   let next=new Set(mine);
   if(m.proto==='telegram') next=on ? new Set([emoji]) : new Set();               // бот Telegram держит одну реакцию
   else if(on) next.add(emoji); else next.delete(emoji);
   chReactApply(n.react,{target:ref,author:CH_ME,emojis:[...next],op:'set'});
-  const room=m.kind_==='room', to=room ? '' : (m.mine ? chStr(m.raw.to) : chStr(m.raw.fromAddr||m.raw.from));
-  n.reactQ.push({target:ref,emoji,on,mine:[...next],room:room ? (m.raw.room||m.convTitle||'') : '',to:room ? (m.raw.room||m.convTitle||'') : to});
+  const room=m.kind_==='room', to=chcDest(m).to;
+  n.reactQ.push({target:ref,emoji,on,mine:[...next],room:room ? (m.raw.room||m.convTitle||'') : '',to});
   if(chcStore(n)){ n.hist.queue.push(chToItem({t:Date.now(),proto:m.proto,dir:'out',kind:'reaction',target:ref,author:'me',emojis:[...next],op:'set',room:room ? (m.raw.room||'') : '',to})); chcSchedule(n); }
   n.cs.pick=''; n.cvDirty=true;
 }
 function chcSend(n,text){
+  if(n.cs.edit){ chcEditApply(n,text); return; }                              // строка ввода в режиме правки: это новый текст, а не новое сообщение
   text=String(text).trim(); if(!text) return;
   const cv=n.cs, convs=chConvs(n.msgs,n.read), c=convs.find(x=>x.key===cv.open);
   if(!c){ n.cs.hint='open a conversation first'; n.cvDirty=true; return; }
@@ -133,9 +169,9 @@ function chcMsgEl(n,m,run,showWho){
     bub.append(who);
   }
   if(m.subject && !run) bub.append(chcEl('div','cv-subj',m.subject));
-  const body=chcEl('div','cv-text'); chcMd(m.text,body); bub.append(body);
-  if(m.atts && m.atts.length) bub.append(chcEl('div','cv-atts','📎 '+m.atts.map(a=>a.name).join(', ')));
-  const ref=chcRef(m), sum=ref ? chReactSummary(n.react,ref) : [], can=chcReactable(m);
+  const body=chcEl('div','cv-text'+(m.deleted ? ' gone' : '')); if(m.deleted) body.textContent='message deleted'; else chcMd(m.text,body); bub.append(body);
+  if(!m.deleted && m.atts && m.atts.length) bub.append(chcEl('div','cv-atts','📎 '+m.atts.map(a=>a.name).join(', ')));
+  const ref=chcRef(m), sum=ref && !m.deleted ? chReactSummary(n.react,ref) : [], can=chcReactable(m) && !m.deleted;
   if(sum.length){                                                               // реакции под сообщением: чип = эмодзи + число; клик — поставить / снять свою
     const rx=chcEl('div','cv-rx');
     for(const x of sum){ const b=chcEl('button','cv-chip'+(x.mine ? ' mine' : ''),x.emoji+(x.count>1 ? ' '+x.count : '')); b.type='button'; b.title=x.who.join(', ')+(can ? '' : ' (reactions to this message cannot be sent from here)'); if(can) b.addEventListener('click',ev=>{ ev.stopPropagation(); chcReact(n,m,x.emoji); }); else b.disabled=true; rx.append(b); }
@@ -146,9 +182,11 @@ function chcMsgEl(n,m,run,showWho){
     for(const em of CH_EMOJI){ const b=chcEl('button',null,em); b.type='button'; b.addEventListener('click',ev=>{ ev.stopPropagation(); chcReact(n,m,em); }); pk.append(b); }
     bub.append(pk);
   }
-  const foot=chcEl('div','cv-foot'); foot.append(chcEl('span','cv-time',chcTime(m.t)));
+  const foot=chcEl('div','cv-foot'); if(m.edited && !m.deleted) foot.append(chcEl('span','cv-edited','edited')); foot.append(chcEl('span','cv-time',chcTime(m.t)));
   if(can){ const rb=chcEl('button','cv-re cv-rb','☺'); rb.type='button'; rb.title='react'; rb.addEventListener('click',ev=>{ ev.stopPropagation(); n.cs.pick=n.cs.pick===ref ? '' : ref; n.cvDirty=true; }); foot.append(rb); }
   if(mine){ const st=m.pending ? (Date.now()-m.sentAt>CHC_PENDING_MS ? '⚠' : '…') : '✓'; foot.append(chcEl('span','cv-st'+(m.pending ? ' wait' : ''),st)); foot.lastChild.title=m.pending ? (st==='⚠' ? 'no confirmation from the channel' : 'sending') : 'sent'; }
+  if(chcEditable(m)){ const eb=chcEl('button','cv-re','✎'); eb.type='button'; eb.title='edit'; eb.addEventListener('click',ev=>{ ev.stopPropagation(); chcEditStart(n,m); }); foot.append(eb); }
+  if(chcDeletable(m)){ const db=chcEl('button','cv-re','🗑'); db.type='button'; db.title='delete'; db.addEventListener('click',ev=>{ ev.stopPropagation(); chcDelete(n,m); }); foot.append(db); }
   const re=chcEl('button','cv-re','↩'); re.title='reply'; re.type='button';
   re.addEventListener('click',ev=>{ ev.stopPropagation(); n.cs.reply={id:m.id||('p'+(m.pid||'')),thread:m.thread||m.id||'',text:chPreview(m,50),author:m.author}; n.cvDirty=true; if(n.cvInp) n.cvInp.focus(); });
   foot.append(re); bub.append(foot); e.append(bub);
@@ -233,7 +271,7 @@ function chcMount(n){
   const row=chcEl('div','chat-row'), inp=chcEl('input'), btn=chcEl('button',null,'Send');
   inp.type='text'; inp.placeholder='message…'; inp.autocomplete='off';
   const go=()=>{ chcSend(n,inp.value); inp.value=''; inp.focus(); };
-  btn.addEventListener('click',go); inp.addEventListener('keydown',e=>{ e.stopPropagation(); if(e.key==='Enter'){ e.preventDefault(); go(); } });
+  btn.addEventListener('click',go); inp.addEventListener('keydown',e=>{ e.stopPropagation(); if(e.key==='Enter'){ e.preventDefault(); go(); } else if(e.key==='Escape' && cv.edit){ e.preventDefault(); chcEditCancel(n); } });
   row.append(inp,btn);
   box.addEventListener('pointerdown',e=>e.stopPropagation()); box.addEventListener('wheel',e=>e.stopPropagation());
   box.append(head,fl,body,hint,rep,row); n.mid.append(box);
@@ -251,14 +289,15 @@ function chcRender(n){
   n.cvFilters.hidden=!cv.fo && !chcActive(n); n.cvQ.value!==cv.q && (n.cvQ.value=cv.q); n.cvUnc.checked=cv.unread;
   const convs=chConvs(n.msgs,n.read), cur=convs.find(c=>c.key===cv.open);
   if(cv.open && !cur) cv.open='';
-  n.cvBack.hidden=!cv.open; n.cvRow.hidden=!cv.open; n.cvRep.hidden=!cv.open || !cv.reply;
+  n.cvBack.hidden=!cv.open; n.cvRow.hidden=!cv.open; n.cvRep.hidden=!cv.open || !(cv.reply || cv.edit);
   n.cvTitle.textContent=cur ? cur.title+(cur.kind==='room' ? '' : '') : (chcActive(n) ? 'Search' : 'Chats');
   n.cvTitle.title=cur ? cur.proto+(cur.kind==='room' ? ' · room' : '') : '';
   body.textContent='';
   if(cv.open){ chcThread(n,body); chcMarkRead(n,cv.open); }       // открытый разговор читается
   else if(chcActive(n) && (cv.q || cv.person) ) chcResults(n,body);
   else chcList(n,body);
-  n.cvRep.textContent=''; if(cv.reply){ n.cvRep.append(chcEl('span',null,'↪ '+cv.reply.author+': '+cv.reply.text)); const x=chcEl('button',null,'✕'); x.type='button'; x.addEventListener('click',()=>{ cv.reply=null; n.cvDirty=true; }); n.cvRep.append(x); }
+  n.cvRep.textContent=''; if(cv.edit){ n.cvRep.hidden=false; n.cvRep.append(chcEl('span',null,'✎ editing: '+chPreview(cv.edit.m,60))); const xe=chcEl('button',null,'✕'); xe.type='button'; xe.title='cancel (Esc)'; xe.addEventListener('click',()=>chcEditCancel(n)); n.cvRep.append(xe); }
+  else if(cv.reply){ n.cvRep.append(chcEl('span',null,'↪ '+cv.reply.author+': '+cv.reply.text)); const x=chcEl('button',null,'✕'); x.type='button'; x.addEventListener('click',()=>{ cv.reply=null; n.cvDirty=true; }); n.cvRep.append(x); }
   n.cvHint.textContent=cv.hint||''; n.cvHint.hidden=!cv.hint; cv.hint='';
   n.unreadN=convs.reduce((s,c)=>s+(c.key===cv.open ? 0 : c.unread),0);
   if(cv.open){ if(stick) body.scrollTop=body.scrollHeight; else body.scrollTop=top; } else body.scrollTop=0;

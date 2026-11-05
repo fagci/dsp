@@ -113,7 +113,7 @@ function chMd(text){
   return out;
 }
 // первая строка превью для списка разговоров
-const chPreview=(m,n)=>{ const t=chStr(m&&m.text).replace(/\s+/g,' '); const s=(m&&m.mine ? 'You: ' : '')+t; return s.length>(n||60) ? s.slice(0,(n||60)-1)+'…' : s; };
+const chPreview=(m,n)=>{ if(m && m.deleted) return 'message deleted'; const t=chStr(m&&m.text).replace(/\s+/g,' '); const s=(m&&m.mine ? 'You: ' : '')+t; return s.length>(n||60) ? s.slice(0,(n||60)-1)+'…' : s; };
 
 /* ---------- история в списке Table ---------- */
 const CH_HIST_COLS=['time','proto','dir','from','from_addr','to','room','subject','thread','text','atts','conv','t','kind','ref','op'];      // kind=reaction: ref — на что, text — эмодзи через пробел, op — add / remove / set
@@ -122,10 +122,14 @@ function chHash(s){ let h=2166136261>>>0; s=String(s); for(let i=0;i<s.length;i+
 // ключ сообщения: протокол + id, а без id — время, автор и свёртка текста (повторная выдача истории не плодит дубли)
 const chHistKey=r=>r.kind==='reaction'
   ? chStr(r.proto||'chat').toLowerCase()+':rx:'+(chStr(r.id) ? chStr(r.id) : (+r.t||0)+':'+chHash(chStr(r.author||r.from)+'\u0000'+chStr(r.target)+'\u0000'+(r.emojis||[]).join(' ')+'\u0000'+chStr(r.op)))
+  : (r.kind==='edit' || r.kind==='delete')
+  ? chStr(r.proto||'chat').toLowerCase()+':'+r.kind+':'+(chStr(r.id) ? chStr(r.id) : (+r.t||0)+':'+chHash(chStr(r.author||r.from)+'\u0000'+chStr(r.target)+'\u0000'+chStr(r.text)))
   : chStr(r.proto||'chat').toLowerCase()+':'+(chStr(r.id) ? 'id:'+chStr(r.id) : (+r.t||0)+':'+chHash(chStr(r.from)+'\u0000'+chStr(r.fromAddr)+'\u0000'+chStr(r.text)));
 // сообщение → запись списка {name, fields}; name — ключ, поля — читаемые колонки (список можно листать и искать в Table)
 function chToItem(r){
   const t=+r.t||Date.now(), d=new Date(t), p2=x=>String(x).padStart(2,'0');
+  if(r.kind==='edit' || r.kind==='delete') return {name:chHistKey(r),fields:{time:d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+' '+p2(d.getHours())+':'+p2(d.getMinutes())+':'+p2(d.getSeconds()),
+    proto:chStr(r.proto),dir:chStr(r.dir)==='out' ? 'out' : 'in',from:chStr(r.author||r.from),to:chStr(r.to),room:chStr(r.room),text:r.kind==='edit' ? String(r.text==null?'':r.text) : '',conv:chConv({...r,from:r.author||r.from}).key,t:t,kind:r.kind,ref:chStr(r.target),op:r.force ? 'force' : ''}};
   if(r.kind==='reaction') return {name:chHistKey(r),fields:{time:d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+' '+p2(d.getHours())+':'+p2(d.getMinutes())+':'+p2(d.getSeconds()),
     proto:chStr(r.proto),dir:chStr(r.dir)==='out' ? 'out' : 'in',from:chStr(r.author||r.from),to:chStr(r.to),room:chStr(r.room),text:(r.emojis||[]).join(' '),conv:chConv({...r,from:r.author||r.from}).key,t:t,kind:'reaction',ref:chStr(r.target),op:chStr(r.op)||'add'}};
   return {name:chHistKey(r),fields:{
@@ -136,6 +140,12 @@ function chToItem(r){
 // запись списка → сообщение (то, что пришло бы в rec); вложения — только имена (файлы лежат в Files)
 function chFromItem(it){
   const f=(it&&it.fields)||{};
+  if(chStr(f.kind)==='edit' || chStr(f.kind)==='delete'){
+    const k=chStr(f.kind), r={t:+f.t||0,proto:chStr(f.proto)||'chat',dir:chStr(f.dir)==='out' ? 'out' : 'in',kind:k,target:chStr(f.ref),author:chStr(f.from),from:chStr(f.from),text:k==='edit' ? String(f.text==null?'':f.text) : ''};
+    if(chStr(f.room)) r.room=chStr(f.room); if(chStr(f.to)) r.to=chStr(f.to); if(chStr(f.op)==='force') r.force=true;
+    const nm=chStr(it&&it.name), pre=r.proto.toLowerCase()+':'+k+':'; if(nm.startsWith(pre) && !/^\d+:/.test(nm.slice(pre.length))) r.id=nm.slice(pre.length);
+    return r;
+  }
   if(chStr(f.kind)==='reaction'){
     const r={t:+f.t||0,proto:chStr(f.proto)||'chat',dir:chStr(f.dir)==='out' ? 'out' : 'in',kind:'reaction',target:chStr(f.ref),author:chStr(f.from),emojis:chStr(f.text).split(/\s+/).filter(Boolean),op:chStr(f.op)||'add',from:chStr(f.from),text:''};
     if(chStr(f.room)) r.room=chStr(f.room); if(chStr(f.to)) r.to=chStr(f.to);
@@ -180,3 +190,23 @@ function chReactSummary(state,target){
   return [...m.values()].sort((p,q)=>q.count-p.count || p.ord-q.ord).map(({ord,...x})=>x);
 }
 const chReactMine=(state,target)=>{ const by=state.get(chStr(target)); return new Set(by && by.get(CH_ME) || []); };
+
+/* ---------- правка и удаление ---------- */
+const CH_EDIT_PROTOS=['matrix','xmpp','telegram'];                 // где свою правку принимает сам протокол (Nostr правок не имеет)
+const CH_DELETE_PROTOS=['matrix','xmpp','telegram','nostr'];
+const chNormAuthor=v=>chStr(v).toLowerCase().replace(/^@/,'').split('/')[0];
+// можно ли применить событие правки / удаления ev к сообщению m: серверное право (force) — всегда; своё событие — только к своему; чужое — только от автора сообщения
+function chCanModify(m,ev){
+  if(!m || !ev) return false;
+  if(ev.force) return true;
+  if(ev.dir==='out') return !!m.mine;
+  if(m.mine) return false;
+  const a=chNormAuthor(ev.author||ev.from); if(!a) return false;
+  return [m.raw&&m.raw.from,m.raw&&m.raw.fromAddr,m.author,m.person].some(x=>chNormAuthor(x)===a);
+}
+// сообщение после правки / удаления (новый объект; raw тоже обновляется — по нему сообщения размечаются заново при смене книги)
+function chApplyMod(m,ev){
+  if(ev.kind==='delete') return {...m,text:'',deleted:true,subject:'',atts:null,raw:{...m.raw,text:'',subject:'',atts:null}};
+  const text=String(ev.text==null ? '' : ev.text);
+  return {...m,text,edited:true,raw:{...m.raw,text}};
+}
