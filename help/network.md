@@ -7,6 +7,7 @@ A browser can talk HTTP and WebSocket, nothing more: no raw sockets, no ICMP, no
 | **Network Scanner** | who is on the network: hosts of the /24 (ping, then TCP knocks, MAC from the ARP table with root), open TCP / UDP ports, banners |
 | **Device Discovery** | SSDP / UPnP and mDNS: cameras, printers, TVs, Chromecast, NAS |
 | **Traceroute / MTR** | the path to an address, router by router, with the time of every hop; several rounds give loss and spread per hop (mtr) |
+| **Batch Check** | a list in, the answers in the same rows: ping, tcp port, web page (code, text, css block), IPTV stream, domain expiry, SMS with delivery report, SIM balance by USSD |
 | **Network Tools** | Wake-on-LAN, NTP time offset, syslog, SMTP mail, TFTP get and put |
 | **Syslog / TFTP Server** | the phone as a log collector or a TFTP server for routers and cameras |
 | **Telnet Terminal, HTTP / FTP servers and clients** | talk to devices and serve files from the phone |
@@ -23,6 +24,14 @@ The scanners emit records; **Rec → Entities** turns them into nodes and links 
 4. A hop that shows `*` is a router that does not answer pings; the path continues around it. Loss on a hop that does not continue to the next ones is just rate limiting of that router.
 
 Needs no root. IPv4 only.
+
+## Batch Check in short
+1. Open the preset **Batch Check: Ping, Site, IPTV, Domain, SMS and SIM Balance in a Table**.
+2. Every row of the **Table** is one job: the `kind` column says what to do (`ping`, `tcp`, `http`, `iptv`, `domain`, `sms`, `ussd`) and the address column says with whom (`target`, `host`, `ip`, `url`, `domain`, `to`…). A row's own columns override the node's parameters: `port`, `expect` (200, 2xx, `<400`), `contains` (a text or `/regex/`), `selector` (a css block that must be on the page), `warn` (days), `text`, `code`, `sim`.
+3. Press **Run**. Each result is a record `{id, kind, ok, status, ms, detail, …}` on `rec`; wired back into the same Table (same key `id`) it updates the row it came from. Extra fields by kind: `code`, `found`, `block` (http), `stream`, `kbps` (iptv), `expires`, `days`, `registrar` (domain), `delivery` (sms: delivered / failed / unknown — not every carrier sends a report), `balance`, `reply` (ussd).
+4. `status` is `ok`, `fail` (the check ran and the answer is bad) or `error` (it could not run: no app, no permission, no number). **every** repeats the run; **conc** sets how many go at once (SMS and USSD always one by one — the app sends 5 a minute at most, the node waits).
+
+Pages, https, whois, SMS and USSD go through the app; without it an http page is read by the browser's `fetch` when the site allows CORS. A USSD balance is the number in the network's answer near «баланс / balance / остаток», or group 1 of your own `balanceRe`. SMS and USSD can cost money — an empty `to` is an error and sends nothing.
 
 ## Safety
 These commands make the phone open sockets and send packets, so they need a *trusted client*: the app's own page, or any page when *Let any page use actions* is ticked in the app settings (off by default). Scan and trace only networks you are allowed to.

@@ -651,6 +651,7 @@ const PRESET_CATS={
   'Phone App: Bluetooth Classic Terminal (RFCOMM / SPP)':'Network & IoT',
   'Phone App: BLE Beacon (Broadcast Sensor Data)':'Network & IoT',
   'Phone App: TCP / UDP Server, Client, Ping and DNS':'Network & IoT',
+  'Batch Check: Ping, Site, IPTV, Domain, SMS and SIM Balance in a Table':'Network & IoT',
   'Phone App: BLE GATT Server (the Phone as a Peripheral)':'Network & IoT',
   'Phone App: BLE L2CAP Channel (Fast Stream Without GATT)':'Network & IoT',
   'Phone App: mDNS / DNS-SD Service Discovery (Bonjour)':'Network & IoT',
@@ -2344,6 +2345,37 @@ gl.size.w=420; gl.size.h=460; applySize(gl);
 const lg=addNode('recLog',500,210,{});
 lg.size.w=380; applySize(lg);
 addEdge(gl.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Batch Check: Ping, Site, IPTV, Domain, SMS and SIM Balance in a Table', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A list in, the answers in the same rows. Batch Check takes every row of a Table, does what its «kind» column says to the address in it (ping, tcp port, http page, iptv stream, domain expiry, sms, ussd) and writes ok / status / ms / detail and the kind\'s own fields (code, found, expires, days, delivery, balance…) back into that row: the Table has the same key (id), so a record updates its row. Press Run on the Batch Check node (or give «go» a pulse; «every» repeats it).\n'+
+  'Top: availability checks. http: «expect» is the code (200, 2xx, <400), «contains» a text or /regex/, «selector» a css block (#promo) that must be on the page. iptv: an HLS playlist (master → variant → newest segment is fetched) or a raw stream (the first KB must arrive). domain: days to the end of registration (RDAP, then whois for .ru and others); «warn» is the alarm threshold. All of it goes through the DSP app on the phone (real ICMP, sockets, https, whois); without the app http pages can still be read by the browser if the site allows CORS.\n'+
+  'Bottom: SMS to several contacts with the delivery report (delivery = delivered / failed / unknown: not every carrier sends one; the phone sends 5 SMS a minute at most, the node waits for that) and the balance of every SIM (ussd *100#, sim = slot from 0, the number is taken from the answer). Fill «to» with real numbers first — an empty one is an error, nothing is sent. USSD and SMS can cost money.'});
+nt.size.w=1000; nt.size.h=250; applySize(nt);
+const t1=addNode('table',40,320,{list:'@patch',key:'id',initial:true,data:
+  'id,kind,target,port,expect,contains,warn\n'+
+  '1,ping,8.8.8.8,,,,\n'+
+  '2,tcp,1.1.1.1,53,,,\n'+
+  '3,http,https://example.org/,,200,Example Domain,\n'+
+  '4,http,https://example.org/missing,,404,,\n'+
+  '5,iptv,https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_4x3/bipbop_4x3_variant.m3u8,,,,\n'+
+  '6,domain,example.com,,,,30'});
+t1.size.w=640; t1.size.h=300; applySize(t1);
+const b1=addNode('batch',720,320,{url:'ws://127.0.0.1:8765',kind:'ping',key:'id',conc:4});
+b1.size.w=320; b1.size.h=300; applySize(b1);
+const t2=addNode('table',40,680,{list:'@patch',key:'id',initial:true,data:
+  'id,kind,to,text,code,sim\n'+
+  'sms1,sms,,Server is back,,\n'+
+  'sms2,sms,,Server is back,,\n'+
+  'sms3,sms,,Server is back,,\n'+
+  'sim0,ussd,,,*100#,0\n'+
+  'sim1,ussd,,,*100#,1'});
+t2.size.w=640; t2.size.h=280; applySize(t2);
+const b2=addNode('batch',720,680,{url:'ws://127.0.0.1:8765',kind:'sms',key:'id',conc:1,deliveryWait:90});
+b2.size.w=320; b2.size.h=300; applySize(b2);
+addEdge(t1.id,'rows',b1.id,'rows'); addEdge(b1.id,'rec',t1.id,'rec');
+addEdge(t2.id,'rows',b2.id,'rows'); addEdge(b2.id,'rec',t2.id,'rec');
 markWiresDirty();
 });
 preset('Phone App: TCP / UDP Server, Client, Ping and DNS', function(){
