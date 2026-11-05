@@ -188,10 +188,17 @@ function mgNtfyLine(line){                                 // → {id,from,text,
   if(!j || j.event!=='message' || typeof j.message!=='string') return null;
   return {id:String(j.id||''),from:String(j.title||'ntfy'),text:j.message,t:(+j.time||0)*1000,tags:j.tags||[],prio:j.priority};
 }
-function mgMatrixSync(j,room,self){                         // → {next,msgs:[{id,from,room,text,t,self}],react:[реакции],redact:[{id,room}],edits:[{kind:'edit',target,text,…}]}
-  const out=[], react=[], redact=[], edits=[], rooms=(j && j.rooms && j.rooms.join) || {};
+function mgMatrixSync(j,room,self){                         // → {next,msgs:[{id,from,room,text,t,self}],react:[реакции],redact:[{id,room}],edits:[…],marks:[{kind:'status',target,state:'read',author,…}]}
+  const out=[], react=[], redact=[], edits=[], marks=[], rooms=(j && j.rooms && j.rooms.join) || {};
   for(const rid of Object.keys(rooms)){
     if(room && rid!==room) continue;
+    for(const ev of (rooms[rid].ephemeral && rooms[rid].ephemeral.events) || []){          // «прочитано до»: кто из людей прочитал это событие
+      if(ev.type!=='m.receipt' || !ev.content) continue;
+      for(const eid of Object.keys(ev.content)){
+        const rd=ev.content[eid] && ev.content[eid]['m.read'];
+        for(const user of Object.keys(rd||{})){ if(user===self) continue; marks.push({kind:'status',id:'',target:eid,state:'read',author:user.replace(/^@/,'').replace(/:.*$/,'')||user,room:rid,t:+(rd[user]&&rd[user].ts)||0}); }
+      }
+    }
     for(const ev of (rooms[rid].timeline && rooms[rid].timeline.events) || []){
       const c=ev.content;
       if(ev.type==='m.reaction'){                                       // эмодзи-реакция: аннотация к событию
@@ -213,7 +220,7 @@ function mgMatrixSync(j,room,self){                         // → {next,msgs:[{
         t:+ev.origin_server_ts||0,self:!!self && who===self});
     }
   }
-  return {next:j && j.next_batch,msgs:out,react,redact,edits};
+  return {next:j && j.next_batch,msgs:out,react,redact,edits,marks};
 }
 function mgTgUpdates(j,chat){                               // → {next,msgs,react,last:chat_id,skipped}
   const out=[], react=[], edits=[]; let next=0, last=null, skipped=0;
@@ -373,7 +380,7 @@ const mgKids=(n,name)=>n.kids.filter(k=>mgLocal(k.name)===name);
 // o: {domain,user (локальная часть),pass,resource,room (МUC, необязательно),nick,secure (канал уже TLS),insecure (разрешить пароль без TLS),
 //     write(str),tls(done) — перейти на TLS и вызвать done(),onMsg(m),onStatus(text,state)}
 function mgXmppClient(o){
-  let px, tlsDone=!!o.secure, authed=false, jid='', iq=0, ready=false, closed=false, regDone=!o.register, lastF=null, lastId='';
+  let px, tlsDone=!!o.secure, authed=false, jid='', iq=0, ready=false, closed=false, regDone=!o.register, lastF=null, lastId='', rcpt=o.receipts==null ? 1 : +o.receipts;       // rcpt: 0 — ничего не отправляем, 1 — подтверждаем доставку (XEP-0184), 2 — и прочтение (XEP-0333)
   const nick=mgLine(o.nick||o.user||'dsp'), room=o.room ? String(o.room).trim() : '';
   const w=s=>{ if(!closed) o.write(s); };
   const stream=()=>{
@@ -412,6 +419,14 @@ function mgXmppClient(o){
       if(o.onEdit) o.onEdit({kind:'delete',id:s.attrs.id||'',target:rt.attrs.id,author:t2==='groupchat' ? (r2||b2) : b2,room:t2==='groupchat' ? b2 : '',to:b2,t:Date.now(),self:t2==='groupchat' && r2===nick});
       return;
     }
+    const mk=mgKid(s,'received') || mgKid(s,'displayed') || mgKid(s,'acknowledged');          // XEP-0184 received / XEP-0333 received, displayed, acknowledged
+    if(mk && mk.attrs.id){
+      const f4=s.attrs.from||'', b4=f4.split('/')[0];
+      if(o.onMark) o.onMark({kind:'status',id:'',target:mk.attrs.id,state:mgLocal(mk.name)==='received' ? 'delivered' : 'read',author:b4,to:b4,t:Date.now()});
+      return;
+    }
+    const rqst=mgKid(s,'request');                                                  // нас просят подтвердить доставку (XEP-0184) — личные сообщения, по настройке
+    if(rqst && s.attrs.id && rcpt>=1 && (s.attrs.type||'chat')!=='groupchat' && s.attrs.from && mgKid(s,'body')) w("<message to='"+mgXmlEsc(s.attrs.from)+"' id='a"+(++iq)+"'><received xmlns='urn:xmpp:receipts' id='"+mgXmlEsc(s.attrs.id)+"'/><store xmlns='urn:xmpp:hints'/></message>");
     const rep=mgKid(s,'replace'), body0=mgKid(s,'body');                       // XEP-0308: правка — тот же текст под новым id
     if(rep && rep.attrs.id && body0 && body0.text){
       const f3=s.attrs.from||'', t3=s.attrs.type||'chat', b3=f3.split('/')[0], r3=f3.includes('/') ? f3.slice(f3.indexOf('/')+1) : '';
@@ -476,7 +491,12 @@ function mgXmppClient(o){
       to=String(to||room||'').trim(); if(!to || !ready) return false;
       const type=room && to.split('/')[0]===room ? 'groupchat' : 'chat';
       lastId='m'+(++iq);
-      w("<message type='"+type+"' to='"+mgXmlEsc(to)+"' id='"+lastId+"'><body>"+mgXmlEsc(mgSplit(text,2000).join('\n'))+'</body></message>');
+      w("<message type='"+type+"' to='"+mgXmlEsc(to)+"' id='"+lastId+"'><body>"+mgXmlEsc(mgSplit(text,2000).join('\n'))+'</body>'+(type==='chat' ? "<request xmlns='urn:xmpp:receipts'/><markable xmlns='urn:xmpp:chat-markers:0'/>" : '')+'</message>');
+      return true;
+    },
+    displayed(to,target){                                                     // XEP-0333: «прочитано» (если разрешено настройкой)
+      to=String(to||'').trim(); if(rcpt<2 || !to || !target || !ready) return false;
+      w("<message type='chat' to='"+mgXmlEsc(to)+"' id='k"+(++iq)+"'><displayed xmlns='urn:xmpp:chat-markers:0' id='"+mgXmlEsc(target)+"'/><store xmlns='urn:xmpp:hints'/></message>");
       return true;
     },
     edit(to,target,text,groupchat){                                           // XEP-0308: новое сообщение с <replace id=исходного>

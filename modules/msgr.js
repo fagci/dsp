@@ -49,6 +49,7 @@ function mgNodeStart(n){
     if(!bridge){ n.status='a proxy works through the Node bridge: set the gateway (Settings → Devices) — not connecting directly'; return; }
     cfg.proxy={server:pc.server,user:pc.user||'',pass:pc.pass||''}; cfg.via='bridge';
   }
+  cfg.receipts_level=({off:0,delivered:1,'delivered + read':2})[String(p.receipts||'delivered')];     // что мы сообщаем собеседникам: ничего / доставлено / доставлено и прочитано
   if(n.regNext) cfg.register=true;                                     // «register this account» в форме учётки: при первом подключении создаём её на сервере
   const acct=String(p.account||'').trim();
   if(acct){                                                          // учётка — единственный источник сервера, логина и пароля
@@ -75,6 +76,7 @@ function mgNodeStart(n){
   n.warn=netInsecure(cfg.server) || (cfg.bridge && netInsecure(cfg.bridge)) ? NET_INSECURE_MSG : '';
   n.sess=mgConnect(proto,cfg,{
     msg:m=>{
+      if(m.kind==='status'){ n.recQ.push({t:m.t||Date.now(),proto:p.proto,dir:'in',kind:'status',target:String(m.target||''),state:String(m.state||''),author:String(m.author||''),detail:String(m.detail||''),room:m.room||'',to:m.to||'',text:'',from:String(m.author||''),id:m.id||''}); return; }     // статус доставки / прочтения — событие для Chat
       if(m.kind==='edit' || m.kind==='delete'){ n.recQ.push({t:m.t||Date.now(),proto:p.proto,dir:m.self ? 'out' : 'in',kind:m.kind,target:String(m.target||''),author:String(m.author||''),text:m.kind==='edit' ? String(m.text||'') : '',room:m.room||'',to:m.to||'',from:String(m.author||''),force:!!m.force,id:m.id||''}); return; }     // правка / удаление — событие для Chat, не строка журнала
       if(m.kind==='reaction'){ n.recQ.push({t:m.t||Date.now(),proto:p.proto,dir:m.self ? 'out' : 'in',kind:'reaction',target:String(m.target||''),author:String(m.author||''),emojis:m.emojis||[],op:m.op||'add',room:m.room||'',to:m.to||'',text:'',from:String(m.author||''),id:m.id||''}); return; }     // реакция — событие для Chat, не строка журнала
       if(m.kind==='roster'){ n.recQ.push({t:m.t||Date.now(),proto:p.proto,dir:'in',kind:'roster',contacts:m.contacts||[],text:'',from:''}); n.status='roster: '+(m.contacts||[]).length+' contact(s)'; return; }     // список контактов — в rec (для Contacts), не в чат
@@ -83,8 +85,9 @@ function mgNodeStart(n){
     status:(t,s)=>{ n.status=t; n.ok=s==='up'; if(/^registered\b|already registered/.test(t)) n.regNext=false; if(s==='fatal') n.sess=null; },
   });
 }
-function mgNodeModify(n,r){                                 // правка / удаление от Chat: {op:'edit'|'delete', target, text, room, to}
-  if(!n.sess){ n.status='not connected — press Connect'; return; }
+function mgNodeModify(n,r){                                 // правка / удаление / «прочитано» от Chat: {op:'edit'|'delete'|'read', target, text, room, to}
+  if(!n.sess){ if(r.op!=='read') n.status='not connected — press Connect'; return; }
+  if(r.op==='read'){ try{ Promise.resolve(n.sess.ack ? n.sess.ack(r) : false).catch(()=>{}); }catch(e){} return; }      // молча: протокол без квитанций или настройка не разрешает
   Promise.resolve(n.sess.modify ? n.sess.modify(r) : false).then(ok=>{ if(!ok && !/edit|delete|change|Matrix|Telegram|Nostr|XMPP/.test(n.status||'')) n.status=n.p.proto+': editing and deleting are not supported here'; }).catch(()=>{});
 }
 function mgNodeReact(n,r){                                  // реакция от Chat: {target, emoji, on, mine, room, to}
@@ -162,6 +165,7 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
     {n:'contacts',t:'text',d:'',label:'aliases (Name=addr)',tip:'contacts — extra aliases «Name=address» (comma-separated); wire a Table with name/addr columns into «rows» for a full address book',if:n=>!['mastodon','bluesky','rss'].includes(n.p.proto)},
     {n:'poll',t:'range',min:5,max:600,step:5,d:30,label:'check every, s',tip:'email / mastodon / bluesky / rss: check every, s (mastodon, bluesky: at least 5; rss: at least 60)',if:n=>['email','mastodon','bluesky','rss'].includes(n.p.proto)},
     {n:'nick',t:'text',d:'dsp',label:'nick',tip:'nick (shown to others; in Chat set «my name» the same)',if:n=>['nostr','ntfy','matrix','telegram','irc','xmpp','reticulum'].includes(n.p.proto)},
+    {n:'receipts',t:'select',opts:['off','delivered','delivered + read'],d:'delivered',label:'receipts',tip:'what this node tells the other side: delivered — confirms delivery of direct messages when the other client asks (XMPP, XEP-0184); delivered + read — also marks messages as read when you open the conversation in a Chat (Matrix read receipts, XMPP XEP-0333); off — nothing. What others tell you (✓✓, read) is always shown',adv:true,if:n=>['matrix','xmpp'].includes(n.p.proto)},
     {n:'font',t:'range',min:8,max:16,step:1,d:10,label:'font size',tip:'font size of the messages in the node, px',adv:true},
     {n:'history',t:'range',min:0,max:2592000,step:60,d:0,label:'fetch history, s',tip:'also fetch what was said in the last, s (nostr, ntfy, matrix, xmpp; feeds: how far back the first read goes — 0 shows only what comes later)',adv:true,if:n=>['nostr','ntfy','matrix','xmpp','mastodon','bluesky','rss'].includes(n.p.proto)},
     {n:'via',t:'select',opts:['auto','page','bridge'],d:'auto',label:'connection',tip:'where TCP comes from (IRC ircs://, XMPP, APRS-IS, email): auto — the phone itself inside the DSP app, else the gateway below; bridge — always the gateway',adv:true,if:n=>n.p.proto!=='sms'},

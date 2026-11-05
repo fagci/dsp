@@ -122,12 +122,14 @@ function chHash(s){ let h=2166136261>>>0; s=String(s); for(let i=0;i<s.length;i+
 // ключ сообщения: протокол + id, а без id — время, автор и свёртка текста (повторная выдача истории не плодит дубли)
 const chHistKey=r=>r.kind==='reaction'
   ? chStr(r.proto||'chat').toLowerCase()+':rx:'+(chStr(r.id) ? chStr(r.id) : (+r.t||0)+':'+chHash(chStr(r.author||r.from)+'\u0000'+chStr(r.target)+'\u0000'+(r.emojis||[]).join(' ')+'\u0000'+chStr(r.op)))
-  : (r.kind==='edit' || r.kind==='delete')
+  : (r.kind==='edit' || r.kind==='delete' || r.kind==='status')
   ? chStr(r.proto||'chat').toLowerCase()+':'+r.kind+':'+(chStr(r.id) ? chStr(r.id) : (+r.t||0)+':'+chHash(chStr(r.author||r.from)+'\u0000'+chStr(r.target)+'\u0000'+chStr(r.text)))
   : chStr(r.proto||'chat').toLowerCase()+':'+(chStr(r.id) ? 'id:'+chStr(r.id) : (+r.t||0)+':'+chHash(chStr(r.from)+'\u0000'+chStr(r.fromAddr)+'\u0000'+chStr(r.text)));
 // сообщение → запись списка {name, fields}; name — ключ, поля — читаемые колонки (список можно листать и искать в Table)
 function chToItem(r){
   const t=+r.t||Date.now(), d=new Date(t), p2=x=>String(x).padStart(2,'0');
+  if(r.kind==='status') return {name:chHistKey(r)+':'+chStr(r.state)+':'+chHash(chStr(r.author)),fields:{time:d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+' '+p2(d.getHours())+':'+p2(d.getMinutes())+':'+p2(d.getSeconds()),
+    proto:chStr(r.proto),dir:'in',from:chStr(r.author),to:chStr(r.to),room:chStr(r.room),text:chStr(r.state),subject:chStr(r.detail),conv:chConv({...r,from:r.author}).key,t:t,kind:'status',ref:chStr(r.target)}};
   if(r.kind==='edit' || r.kind==='delete') return {name:chHistKey(r),fields:{time:d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+' '+p2(d.getHours())+':'+p2(d.getMinutes())+':'+p2(d.getSeconds()),
     proto:chStr(r.proto),dir:chStr(r.dir)==='out' ? 'out' : 'in',from:chStr(r.author||r.from),to:chStr(r.to),room:chStr(r.room),text:r.kind==='edit' ? String(r.text==null?'':r.text) : '',conv:chConv({...r,from:r.author||r.from}).key,t:t,kind:r.kind,ref:chStr(r.target),op:r.force ? 'force' : ''}};
   if(r.kind==='reaction') return {name:chHistKey(r),fields:{time:d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+' '+p2(d.getHours())+':'+p2(d.getMinutes())+':'+p2(d.getSeconds()),
@@ -140,6 +142,11 @@ function chToItem(r){
 // запись списка → сообщение (то, что пришло бы в rec); вложения — только имена (файлы лежат в Files)
 function chFromItem(it){
   const f=(it&&it.fields)||{};
+  if(chStr(f.kind)==='status'){
+    const r={t:+f.t||0,proto:chStr(f.proto)||'chat',dir:'in',kind:'status',target:chStr(f.ref),state:chStr(f.text),author:chStr(f.from),from:chStr(f.from),text:'',detail:chStr(f.subject)};
+    if(chStr(f.room)) r.room=chStr(f.room); if(chStr(f.to)) r.to=chStr(f.to);
+    return r;
+  }
   if(chStr(f.kind)==='edit' || chStr(f.kind)==='delete'){
     const k=chStr(f.kind), r={t:+f.t||0,proto:chStr(f.proto)||'chat',dir:chStr(f.dir)==='out' ? 'out' : 'in',kind:k,target:chStr(f.ref),author:chStr(f.from),from:chStr(f.from),text:k==='edit' ? String(f.text==null?'':f.text) : ''};
     if(chStr(f.room)) r.room=chStr(f.room); if(chStr(f.to)) r.to=chStr(f.to); if(chStr(f.op)==='force') r.force=true;
@@ -209,4 +216,30 @@ function chApplyMod(m,ev){
   if(ev.kind==='delete') return {...m,text:'',deleted:true,subject:'',atts:null,raw:{...m.raw,text:'',subject:'',atts:null}};
   const text=String(ev.text==null ? '' : ev.text);
   return {...m,text,edited:true,raw:{...m.raw,text}};
+}
+
+/* ---------- статусы доставки и прочтения ---------- */
+const CH_RANK={sent:1,delivered:2,read:3};
+const CH_READ_PROTOS=['matrix','xmpp'];                           // где можно сообщить «прочитано»
+// состояние: Map ссылка на своё сообщение → {state:'sent'|'delivered'|'read'|'failed', by:Set (кто прочитал), detail}. Статус только растёт: прочитано > доставлено > отправлено; «failed» уступает любому успешному
+function chStatusApply(map,ev){
+  const t=chStr(ev&&ev.target), st=chStr(ev&&ev.state); if(!t || (st!=='failed' && !CH_RANK[st])) return;
+  const c=map.get(t)||{state:'',by:new Set(),detail:''};
+  if(st==='failed'){ if(!c.state || c.state==='failed'){ c.state='failed'; c.detail=chStr(ev.detail); } }
+  else if(CH_RANK[st]){
+    if(c.state==='failed' || (CH_RANK[st]||0)>(CH_RANK[c.state]||0)){ c.state=st; c.detail=chStr(ev.detail); }
+    else if(chStr(ev.detail) && st===c.state) c.detail=chStr(ev.detail);
+  }
+  if(st==='read' && chStr(ev.author)) c.by.add(chStr(ev.author));
+  map.set(t,c);
+}
+const chStatusOf=(map,ref)=>{ const c=map.get(chStr(ref)); return c ? {state:c.state,by:[...c.by],detail:c.detail} : null; };
+// галочка своего сообщения: pending → «…» (через maxWait мс без подтверждения «⚠»); подтверждённое (пришло эхо) = отправлено ✓; доставлено ✓✓; прочитано ✓✓ цветом
+function chTick(m,st,now,maxWait){
+  if(m.pending) return (now||Date.now())-(m.sentAt||0)>(maxWait||15000) ? {sym:'⚠',cls:'bad',title:'no confirmation from the channel'} : {sym:'…',cls:'wait',title:'sending'};
+  const s=st&&st.state;
+  if(s==='failed') return {sym:'⚠',cls:'bad',title:'not sent'+(st.detail ? ': '+st.detail : '')};
+  if(s==='read') return {sym:'✓✓',cls:'rd',title:'read'+(st.by.length ? ' by '+st.by.join(', ') : '')};
+  if(s==='delivered') return {sym:'✓✓',cls:'',title:'delivered'};
+  return {sym:'✓',cls:'',title:'sent'+(st&&st.detail ? ' · '+st.detail : '')};
 }

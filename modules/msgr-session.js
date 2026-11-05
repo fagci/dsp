@@ -159,7 +159,7 @@ function mgOpenNostr(cfg,c){
   const me=mgHex(mgSchnorrPub(sk)), seen=new Set(), sub='dsp'+mgHex(mgRandom(4));
   const since=Math.floor(Date.now()/1000)-Math.max(0,cfg.history|0);
   let closed=false, lastErr='';
-  const rx=new Map(), myR=new Map(), owner=new Map();             // реакции: id события → {target,author,emoji}; мои: цель+эмодзи → id (чтобы снять удалением kind 5); owner: id сообщения → ключ автора (удалить может только он, NIP-09)
+  const rx=new Map(), myR=new Map(), owner=new Map(), sentEv=new Map();             // реакции: id события → {target,author,emoji}; мои: цель+эмодзи → id (чтобы снять удалением kind 5); owner: id сообщения → ключ автора (удалить может только он, NIP-09)
   const note=()=>{ const up=conns.filter(r=>r.up).length; c.status('relays '+up+'/'+conns.length+(lastErr ? ' · '+lastErr : '')+' · '+mgNpub(me).slice(0,16)+'…',up ? 'up' : 'connecting'); };
   function frame(text){
     const f=mgNostrFrame(text); if(!f) return;
@@ -184,7 +184,15 @@ function mgOpenNostr(cfg,c){
       seen.add(ev.id); if(seen.size>5000) seen.delete(seen.values().next().value);
       owner.set(ev.id,ev.pubkey); if(owner.size>5000) owner.delete(owner.keys().next().value);
       c.msg({id:ev.id,from:t.from,text:t.text,t:(+ev.created_at||0)*1000,self:ev.pubkey===me});
-    } else if(f.type==='OK' && f.a[2]===false) lastErr='rejected: '+String(f.a[3]||'').slice(0,60), note();
+    } else if(f.type==='OK'){
+      const st=sentEv.get(f.a[1]);                                               // наше событие принято / отвергнуто реле: «доставлено до N реле»
+      if(st){
+        if(f.a[2]===true) st.ok++; else st.bad++;
+        if(f.a[2]===false) lastErr='rejected: '+String(f.a[3]||'').slice(0,60), note();
+        if(st.ok+st.bad>=st.total || st.ok===1) c.msg({kind:'status',id:'',target:f.a[1],state:st.ok ? 'sent' : 'failed',detail:st.ok ? 'relays: '+st.ok+'/'+st.total : String(f.a[3]||'rejected by all relays').slice(0,80),t:Date.now()});
+        if(st.ok+st.bad>=st.total) sentEv.delete(f.a[1]);
+      } else if(f.a[2]===false) lastErr='rejected: '+String(f.a[3]||'').slice(0,60), note();
+    }
     else if(f.type==='NOTICE') lastErr=String(f.a[1]||'').slice(0,60), note();
   }
   const conns=relays.map(url=>{
@@ -205,6 +213,7 @@ function mgOpenNostr(cfg,c){
     send(text){
       const ev=mgNostrSign(sk,{created_at:Math.floor(Date.now()/1000),kind:1,tags:[['t',chan.toLowerCase()],['nick',String(cfg.nick||'dsp')],['client','dsp']],content:String(text)});
       let n=0; for(const r of conns) if(r.up && r.ws){ try{ r.ws.send(JSON.stringify(['EVENT',ev])); n++; }catch(e){} }
+      if(n>0){ sentEv.set(ev.id,{ok:0,bad:0,total:n}); if(sentEv.size>200) sentEv.delete(sentEv.keys().next().value); }
       return n>0;
     },
     modify(r){                                                     // в Nostr правки нет — только удаление (kind 5 на своё событие)
@@ -318,7 +327,7 @@ function mgOpenMatrix(cfg,c){
       }
       c.status('connected as '+me+(room ? ', room '+room : ''),'up');
       if(cfg.roster!==false) mgMatrixRoster(call,me).then(list=>{ if(list.length && !closed) c.msg({kind:'roster',t:Date.now(),contacts:list,text:''}); }).catch(()=>{});     // не мешает синхронизации
-      const filter=encodeURIComponent(JSON.stringify({room:{...(room ? {rooms:[room]} : {}),timeline:{limit:50,types:['m.room.message','m.reaction','m.room.redaction']},state:{types:[]},ephemeral:{types:[]},account_data:{types:[]}},presence:{types:[]},account_data:{types:[]}}));
+      const filter=encodeURIComponent(JSON.stringify({room:{...(room ? {rooms:[room]} : {}),timeline:{limit:50,types:['m.room.message','m.reaction','m.room.redaction']},state:{types:[]},ephemeral:{types:['m.receipt']},account_data:{types:[]}},presence:{types:[]},account_data:{types:[]}}));
       let next=null, first=true;
       while(!closed){
         const r=await call('GET','/sync?filter='+filter+'&timeout='+(first ? 0 : 25000)+(next ? '&since='+encodeURIComponent(next) : ''));
@@ -328,6 +337,7 @@ function mgOpenMatrix(cfg,c){
         for(const m of s.msgs) c.msg(m);
         for(const x of s.react){ rx.set(x.id,x); if(x.self) myR.set(x.target+'\u0000'+x.emojis[0],x.id); c.msg(x); }
         for(const e of s.edits) c.msg(e);
+        for(const k of s.marks) c.msg(k);                                              // кто прочитал наши сообщения
         for(const d of s.redact){
           const x=rx.get(d.id);
           if(x){ rx.delete(d.id); myR.forEach((v,k)=>{ if(v===d.id) myR.delete(k); }); c.msg({...x,id:'',op:'remove'}); }      // снята реакция — событие удаления её
@@ -344,6 +354,11 @@ function mgOpenMatrix(cfg,c){
         if(!r.ok) c.status('Matrix: send failed — '+(r.j.error||r.status),'warn');
         return r.ok;
       }catch(e){ c.status('Matrix: '+e.message,'warn'); return false; }
+    },
+    async ack(r){                                                // «прочитано до этого события»: квитанция m.read (по настройке receipts = delivered + read)
+      const rid=String(room||r.room||'');
+      if((cfg.receipts_level==null ? 1 : +cfg.receipts_level)<2 || !rid || !r.target) return false;      // по умолчанию «прочитано» не отправляем
+      try{ const x=await call('POST','/rooms/'+encodeURIComponent(rid)+'/receipt/m.read/'+encodeURIComponent(String(r.target)),{}); return x.ok; }catch(e){ return false; }
     },
     async modify(r){                                             // r: {op:'edit'|'delete', target (id события), text, room}
       const rid=String(room||r.room||'');
@@ -496,9 +511,10 @@ function mgOpenXmpp(cfg,c){
     open:()=>cl.start(),data:s=>cl.feed(s),close:err=>{ if(!closed) c.down('XMPP: '+(err || 'connection closed'),false); }});
   cl=mgXmppClient({domain,user,pass:cfg.pass,register:!!cfg.register,onRegistered:()=>{ cfg.register=false; },resource:cfg.resource||'dsp',room,nick,secure,insecure:!!cfg.insecure,
     write:s=>{ try{ link.write(s); }catch(e){} },tls:done=>link.upgrade(done),onMsg:x=>{ if(!x.delay || cfg.history) c.msg(x); },
-    onRoster:cfg.roster===false ? null : list=>c.msg({kind:'roster',t:Date.now(),contacts:list,text:''}),onReact:x=>c.msg(x),onEdit:x=>c.msg(x),
+    onRoster:cfg.roster===false ? null : list=>c.msg({kind:'roster',t:Date.now(),contacts:list,text:''}),onReact:x=>c.msg(x),onEdit:x=>c.msg(x),onMark:x=>c.msg(x),receipts:cfg.receipts_level,
     onStatus:(t,s)=>{ if(s==='fatal'){ c.down(t,true); try{ link.close(); }catch(e){} } else if(s==='down') c.down(t,false); else c.status(t,s); }});
   return {
+    ack(r){ return cl.displayed(String(r.to||'').trim(),r.target); },
     modify(r){
       const to=String(r.to||r.room||room||'').trim(), gc=!!room && to.split('/')[0]===room;
       const ok=r.op==='delete' ? cl.retract(to,r.target,gc) : cl.edit(to,r.target,String(r.text||''),gc);
@@ -658,6 +674,7 @@ function mgOpenGateway(proto,cfg,c){
     send:(text,to)=>inner ? inner.send(text,to) : false,
     react:r=>inner && inner.react ? inner.react(r) : false,
     modify:r=>inner && inner.modify ? inner.modify(r) : false,
+    ack:r=>inner && inner.ack ? inner.ack(r) : false,
     close(){ closed=true; clearTimeout(timer); stop(); if(inner) try{ inner.close(); }catch(e){} },
   };
 }
@@ -853,6 +870,7 @@ function mgOpenRemote(proto,cfg,c){
     send(text,to){ if(ws.readyState!==1) return false; ws.send(JSON.stringify({op:'send',text:String(text),to:to||''})); return true; },
     react(r){ if(ws.readyState!==1) return false; ws.send(JSON.stringify({op:'react',r})); return true; },
     modify(r){ if(ws.readyState!==1) return false; ws.send(JSON.stringify({op:'modify',r})); return true; },
+    ack(r){ if(ws.readyState!==1) return false; ws.send(JSON.stringify({op:'ack',r})); return true; },
     close(){ closed=true; ws.onopen=ws.onmessage=ws.onerror=ws.onclose=null; try{ ws.send(JSON.stringify({op:'close'})); }catch(e){} try{ ws.close(); }catch(e){} },
   };
 }
@@ -871,6 +889,7 @@ function mgConnect(proto,cfg,cb){
     send:(text,to,atts)=>h ? h.send(text,to,atts) : false,
     react:r=>h && h.react ? h.react(r) : false,
     modify:r=>h && h.modify ? h.modify(r) : false,
+    ack:r=>h && h.ack ? h.ack(r) : false,
     close(){ dead=true; clearTimeout(timer); const x=h; h=null; if(x) try{ x.close(); }catch(e){} },
   };
   if(!open){ cb.status('unknown protocol '+proto,'fatal'); return out; }

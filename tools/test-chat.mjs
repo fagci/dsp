@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ctx = vm.createContext({Math, Uint8Array, TextEncoder, TextDecoder, Array, Map, Set, Error, String, Number, Object, Date, JSON, parseInt, RegExp});
 for (const f of ['contacts-kernels.js', 'dbsearch-kernels.js', 'chat-kernels.js']) vm.runInContext(fs.readFileSync(path.join(root, 'modules', f), 'utf8'), ctx, {filename: f});
-vm.runInContext('this.K={chBookIndex,chPerson,chConv,chAnnotate,chFilter,chConvs,chThreads,chDayLabel,chSameRun,chMd,chPreview,chHash,chHistKey,chToItem,chFromItem,chHistTail,chReadCounts,CH_HIST_COLS,CH_ME,CH_EMOJI,CH_REACT_PROTOS,chReactApply,chReactSummary,chReactMine,CH_EDIT_PROTOS,CH_DELETE_PROTOS,chCanModify,chApplyMod}', ctx);
+vm.runInContext('this.K={chBookIndex,chPerson,chConv,chAnnotate,chFilter,chConvs,chThreads,chDayLabel,chSameRun,chMd,chPreview,chHash,chHistKey,chToItem,chFromItem,chHistTail,chReadCounts,CH_HIST_COLS,CH_ME,CH_EMOJI,CH_REACT_PROTOS,chReactApply,chReactSummary,chReactMine,CH_EDIT_PROTOS,CH_DELETE_PROTOS,chCanModify,chApplyMod,CH_READ_PROTOS,chStatusApply,chStatusOf,chTick}', ctx);
 const K = ctx.K;
 let bad = 0;
 const eq = (n, a, b) => { const sa = JSON.stringify(a), sb = JSON.stringify(b); if (sa !== sb) { bad++; console.log('FAIL', n, sa, '!=', sb); } else console.log('ok  ', n); };
@@ -134,4 +134,29 @@ eq('read counts: nothing saved → everything unread', K.chReadCounts([{conv: 'a
   const dIt = K.chToItem({t: 21, proto: 'matrix', dir: 'in', kind: 'delete', target: '$b', author: '', force: true, id: ''}), dBack = K.chFromItem(dIt);
   eq('history: a delete keeps «force» and a stable key without an id', [dBack.kind, dBack.target, dBack.force === true, K.chHistKey(dBack) === dIt.name, dIt.fields.text], ['delete', '$b', true, true, '']);
   eq('history: new columns are known', Object.keys(eIt.fields).every(k => K.CH_HIST_COLS.includes(k)) && Object.keys(dIt.fields).every(k => K.CH_HIST_COLS.includes(k)), true); }
+// статусы доставки и прочтения
+{ const st = new Map();
+  K.chStatusApply(st, {target: 'm1', state: 'sent', detail: 'relays: 1/3'});
+  eq('status: sent', K.chStatusOf(st, 'm1'), {state: 'sent', by: [], detail: 'relays: 1/3'});
+  K.chStatusApply(st, {target: 'm1', state: 'delivered', author: 'anna@ex.org'});
+  K.chStatusApply(st, {target: 'm1', state: 'sent'});
+  eq('status: it only grows (a late «sent» does not take the delivery back)', K.chStatusOf(st, 'm1').state, 'delivered');
+  K.chStatusApply(st, {target: 'm1', state: 'read', author: 'anna'}); K.chStatusApply(st, {target: 'm1', state: 'read', author: 'bob'}); K.chStatusApply(st, {target: 'm1', state: 'read', author: 'bob'});
+  eq('status: read, and who read it (once each)', K.chStatusOf(st, 'm1'), {state: 'read', by: ['anna', 'bob'], detail: ''});
+  K.chStatusApply(st, {target: 'f1', state: 'failed', detail: 'blocked'});
+  eq('status: failed with the reason', K.chStatusOf(st, 'f1'), {state: 'failed', by: [], detail: 'blocked'});
+  K.chStatusApply(st, {target: 'f1', state: 'sent', detail: 'relays: 1/1'});
+  eq('status: a later success replaces a failure', K.chStatusOf(st, 'f1').state, 'sent');
+  K.chStatusApply(st, {target: '', state: 'read'}); K.chStatusApply(st, {target: 'x', state: 'nonsense'}); K.chStatusApply(st, null);
+  eq('status: junk is ignored; unknown messages have no status', [st.has('x'), K.chStatusOf(st, 'nope'), st.size], [false, null, 2]);
+  const now = 100000;
+  eq('tick: sending, then not confirmed in time', [K.chTick({pending: true, sentAt: now - 1000}, null, now).sym, K.chTick({pending: true, sentAt: now - 20000}, null, now).sym], ['…', '⚠']);
+  eq('tick: a confirmed message is sent ✓; with the relay count in the tooltip', [K.chTick({}, null, now).sym, K.chTick({}, {state: 'sent', by: [], detail: 'relays: 2/3'}, now).title], ['✓', 'sent · relays: 2/3']);
+  eq('tick: delivered ✓✓, read ✓✓ in colour naming the readers', [K.chTick({}, {state: 'delivered', by: []}).sym, K.chTick({}, {state: 'read', by: ['anna', 'bob']}).cls, K.chTick({}, {state: 'read', by: ['anna', 'bob']}).title], ['✓✓', 'rd', 'read by anna, bob']);
+  eq('tick: failed with the reason', K.chTick({}, {state: 'failed', by: [], detail: 'blocked: spam'}).title, 'not sent: blocked: spam');
+  const sIt = K.chToItem({t: 30, proto: 'xmpp', kind: 'status', target: 'm5', state: 'read', author: 'anna@ex.org', detail: ''}), sBack = K.chFromItem(sIt);
+  eq('history: a status is a row (kind, ref, state in the text)', [sIt.fields.kind, sIt.fields.ref, sIt.fields.text, sIt.fields.from], ['status', 'm5', 'read', 'anna@ex.org']);
+  eq('history: a status survives the round trip', [sBack.kind, sBack.target, sBack.state, sBack.author], ['status', 'm5', 'read', 'anna@ex.org']);
+  eq('history: two readers of one message are two rows, the same reader twice is one', [K.chToItem({t: 1, proto: 'matrix', kind: 'status', target: 'e', state: 'read', author: 'a'}).name === K.chToItem({t: 1, proto: 'matrix', kind: 'status', target: 'e', state: 'read', author: 'b'}).name, K.chToItem({t: 1, proto: 'matrix', kind: 'status', target: 'e', state: 'read', author: 'a'}).name === K.chToItem({t: 1, proto: 'matrix', kind: 'status', target: 'e', state: 'read', author: 'a'}).name], [false, true]);
+  eq('read protocols', K.CH_READ_PROTOS, ['matrix', 'xmpp']); }
 console.log(bad ? 'FAILED ' + bad : 'all ok'); process.exit(bad ? 1 : 0);
