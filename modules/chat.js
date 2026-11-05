@@ -94,7 +94,7 @@ function chRender(n){
 
 def({ id:'chat', title:'Chat', cat:'Output', kw:'chat messages text terminal console send receive', resize:true, w:340, h:340, bare:true,
   ins:[{n:'text',t:'txt'},{n:'send',t:'txt'},{n:'from',t:'txt'},{n:'rec',t:'rec'},{n:'rows',t:'bands'},{n:'book',t:'bands'}],
-  outs:[{n:'text',t:'txt'},{n:'to',t:'txt'},{n:'go',t:'num'},{n:'unread',t:'num'}],
+  outs:[{n:'text',t:'txt'},{n:'to',t:'txt'},{n:'react',t:'rec'},{n:'go',t:'num'},{n:'unread',t:'num'}],
   params:[{n:'mode',t:'select',opts:['simple','conversations'],d:'simple',label:'view',tip:'simple — one log (as before). conversations — a list of chats (people and rooms of all protocols from a Messenger rec) with unread counts, threads, replies, filters by person (book ← Contacts), protocol and text; what you write goes to the open conversation: out text + to → Messenger send + to',fn:n=>{ n.full=true; n.dirty=true; n.cvDirty=true; chDropViews(n); }},
           {n:'store',t:'text',d:'chat/history',label:'history list',tip:'conversations view: every message is kept in this Table list (open it in a Table to browse and search all of it) and loaded back when the patch starts, so chats survive a reload; unread marks are remembered too. Empty — no history, chats live until reload',adv:true},
           {n:'delhist',t:'button',label:'Delete history…',fn:n=>chcWipe(n)},
@@ -111,7 +111,8 @@ def({ id:'chat', title:'Chat', cat:'Output', kw:'chat messages text terminal con
       if(typeof I.send==='string' && I.send!==n.lastSend){ n.lastSend=I.send; chcSend(n,I.send); }
       if(n.msgs.some(m=>m.pending)) n.cvDirty=true;                       // статус «отправляется» → «⚠» по времени
       let go=0; if(n.outQ.length){ n.last=n.outQ.shift(); go=1; }
-      return {text:n.last,to:n.outTo,go,unread:n.unreadN||0};
+      const rx=n.reactQ.splice(0);
+      return {text:n.last,to:n.outTo,react:rx.length ? rx : null,go,unread:n.unreadN||0};
     }
     if(Array.isArray(I.rows) && I.rows!==n.lastRows){ n.lastRows=I.rows; chSetPeople(n,I.rows); }
     if(typeof I.text==='string' && I.text!==n.lastIn){
@@ -130,7 +131,7 @@ def({ id:'chat', title:'Chat', cat:'Output', kw:'chat messages text terminal con
     if(typeof I.send==='string' && I.send!==n.lastSend){ n.lastSend=I.send; chSend(n,I.send); }   // исходящее с провода
     let go=0;
     if(n.outQ.length){ n.last=n.outQ.shift(); go=1; }
-    return {text:n.last, to:'', go, unread:0}; },
+    return {text:n.last, to:'', react:null, go, unread:0}; },
   dispose:n=>{ if(n.hist && n.hist.queue && n.hist.queue.length) chcFlush(n); },
   draw(n){
     chDropViews(n);                                                         // виден только вид текущего режима: прежний убираем (иначе при переключении view панели копились)

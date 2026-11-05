@@ -14,6 +14,7 @@ function mgNodeLog(n,dir,m){
     row.text=(row.text?row.text+' ':'')+row.atts.map(a=>'[file: '+a.name+(a.size?' · '+(a.size/1024).toFixed(0)+' KB':'')+']').join(' ');
   }
   if(m.thread) row.thread=m.thread;
+  if(m.ref) row.ref=m.ref;                                                    // на что ссылаются реакции (Telegram: чат:сообщение; в остальных — id)
   if(m.fromAddr) row.fromAddr=m.fromAddr;
   if(m.subject) row.subject=m.subject;
   const room=(m.to && /^[#&]/.test(m.to)) ? m.to : (['nostr','ntfy','matrix'].includes(n.p.proto) ? String(n.p.channel||'') : (n.p.proto==='xmpp' && m.to && m.to===String(n.p.channel||'').split('/')[0] ? m.to : ''));
@@ -58,6 +59,8 @@ function mgNodeStart(n){
     if(cr.pass) cfg.pass=cr.pass;
     if(cr.smtp) cfg.smtp=cr.smtp;
   }
+  const own=String(p.server||'').trim();
+  if(own) cfg.server=own;                                            // адрес, набранный в самом узле, главнее адреса из учётки (учётка тогда даёт только логин и пароль)
   if(!cfg.server) cfg.server=MG_DEF_SERVER[proto]||'';
   if(proto==='reticulum' && !cfg.pass.trim()){
     try{ cfg.pass=mgHex(mgRandom(64));
@@ -72,11 +75,16 @@ function mgNodeStart(n){
   n.warn=netInsecure(cfg.server) || (cfg.bridge && netInsecure(cfg.bridge)) ? NET_INSECURE_MSG : '';
   n.sess=mgConnect(proto,cfg,{
     msg:m=>{
+      if(m.kind==='reaction'){ n.recQ.push({t:m.t||Date.now(),proto:p.proto,dir:m.self ? 'out' : 'in',kind:'reaction',target:String(m.target||''),author:String(m.author||''),emojis:m.emojis||[],op:m.op||'add',room:m.room||'',to:m.to||'',text:'',from:String(m.author||''),id:m.id||''}); return; }     // реакция — событие для Chat, не строка журнала
       if(m.kind==='roster'){ n.recQ.push({t:m.t||Date.now(),proto:p.proto,dir:'in',kind:'roster',contacts:m.contacts||[],text:'',from:''}); n.status='roster: '+(m.contacts||[]).length+' contact(s)'; return; }     // список контактов — в rec (для Contacts), не в чат
       if(m.delay && !cfg.history) return; mgNodeSaveAtts(n,m); mgNodeLog(n,m.self ? 'out' : 'in',m);
     },
     status:(t,s)=>{ n.status=t; n.ok=s==='up'; if(/^registered\b|already registered/.test(t)) n.regNext=false; if(s==='fatal') n.sess=null; },
   });
+}
+function mgNodeReact(n,r){                                  // реакция от Chat: {target, emoji, on, mine, room, to}
+  if(!n.sess){ n.status='not connected — press Connect'; return; }
+  Promise.resolve(n.sess.react ? n.sess.react(r) : false).then(ok=>{ if(!ok && !/react|reaction|Matrix|Telegram|Nostr|XMPP/.test(n.status||'')) n.status=n.p.proto+': reactions are not supported here'; }).catch(()=>{});
 }
 function mgNodeSend(n,text,to){
   text=String(text||'').trim(); if(!text) return;
@@ -136,10 +144,11 @@ function mgNodeSaveAtts(n,m){
 
 def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · IRC · XMPP · APRS · Email · SMS · Reticulum · Mastodon · Bluesky · RSS)', cat:'Sources',
   kw:'messenger chat nostr ntfy matrix telegram bot irc xmpp jabber relay message channel push notify send receive internet',
-  ins:[{n:'send',t:'txt'},{n:'to',t:'txt'},{n:'rows',t:'bands'}], outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'from',t:'txt'},{n:'new',t:'num'},{n:'ok',t:'num'}],
+  ins:[{n:'send',t:'txt'},{n:'to',t:'txt'},{n:'rows',t:'bands'},{n:'react',t:'rec'}], outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'from',t:'txt'},{n:'new',t:'num'},{n:'ok',t:'num'}],
   readout:true, tall:true,
   params:[
     {n:'proto',t:'select',opts:['nostr','ntfy','matrix','telegram','irc','xmpp','aprs','email','sms','reticulum','mastodon','bluesky','rss'],d:'nostr',fn:n=>{ mgNodeStop(n); mgNodeReset(n); n.sig=undefined; n.status='not connected'; },label:'protocol'},
+    {n:'server',t:'text',d:'',label:'server',tip:'where to connect — nostr: relays wss://… (several, separated by a space; empty — public ones) · ntfy: https://ntfy.sh (empty — that one) · matrix: https://matrix.org · telegram: empty · irc: ircs://irc.libera.chat:6697 or wss://… · xmpp: xmpp://host:5222 (empty — the domain of the login) · aprs: aprs://rotate.aprs2.net:14580 · email: imaps://imap.gmail.com:993 (SMTP — in the account) · mastodon: https://mastodon.social · bluesky: https://public.api.bsky.app · rss: feed addresses https://…, several separated by a space · reticulum: rns://host:port. Typed here it wins over the server of the account (the account then gives only the login and password)',if:n=>n.p.proto!=='sms'},
     {n:'pxcred',t:'text',d:'',cred:true,credType:'proxy',label:'proxy',tip:'proxy — a credential of type «proxy» (socks5://… or http://…): the Node bridge opens everything through it (IRC, XMPP, e-mail, Matrix, Nostr, feeds…). Empty — the proxy of the gateway in Settings → Devices, or the bridge\'s own --proxy',adv:true,if:n=>n.p.proto!=='sms'},
     {n:'account',t:'text',d:'',cred:true,label:'account',tip:'account — a credential (Settings → Credentials) or «＋ new…» right here: it IS the server, the login and the password of the channel. Empty — no auth (Nostr anonymous, ntfy, public feeds; defaults: public relays, ntfy.sh, …)',if:n=>!['sms','rss'].includes(n.p.proto)},
     {n:'channel',t:'text',d:'dsp',label:'channel / room / topic',tip:'channel — nostr: hashtag · ntfy: topic · matrix: room (!id:server or #alias:server) · telegram: only to receive from ONE chat — its id or @name; leave empty for all chats (replies go to the last one) · irc: #channels · xmpp: room@conference.server (empty — direct messages only) · aprs: server filter (g/CALL, m/50, r/lat/lon/km, b/CALL*; empty — messages to you) · email: mailbox (empty — INBOX) · reticulum: the default recipient (32-digit address or a name heard in announces) · mastodon / bluesky: WHAT TO READ — #tags (several: any of them), -#tag drops posts with it, mastodon: «local» / «home» (token), empty — the public timeline; bluesky: @account, a feed link (bsky.app/profile/…/feed/…) or an at:// feed · rss: WORDS — any of them in the title / text / categories, -word drops an item; empty — everything',if:n=>n.p.proto!=='sms'},
@@ -176,6 +185,7 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
       if(nm&&ad) book.push({name:nm,addr:ad});
     }
     n.book=book;
+    if(I.react && I.react!==n.lastReact){ n.lastReact=I.react; for(const r of Array.isArray(I.react) ? I.react : [I.react]) if(r && typeof r==='object') mgNodeReact(n,r); }
     const send=typeof I.send==='string' ? I.send : '';
     if(send && send!==n.lastSend) mgNodeSend(n,send,typeof I.to==='string' ? I.to : '');
     n.lastSend=send;
