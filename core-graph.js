@@ -679,6 +679,7 @@ n.cv.style.height=n.size.h+'px'; n.resized=true; }
 else if(n.cv){ n.cv.width=midWidth(n); n.cv.height=d.view.h;
 n.cv.style.height=d.view.h+'px'; n.resized=true; }
 if(n.ro  && d.tall) n.ro.style.height=n.size.h+'px';
+const chb=n.cvEl||n.chat; if(chb && d.resize && n.size.h>0) chb.style.height=n.size.h+'px';     // Chat: высота рамки узла = высота окна переписки (раньше тянуть можно было только уголок журнала)
 const ur=n.ui&&n.ui.root; if(ur && d.resize && n.size.h>0 && ur.matches('.ml,.pl')) ur.style.height=n.size.h+'px';   // Playlist, Media Library: высота рамки = высота списка
 const fr=n.fm?.root; if(fr && d.resize && n.size.h>0) fr.style.height=n.size.h+'px';   // Files: рамка менеджера = высота узла
 if(n.gv && n.size.h >0) n.gv.style.height=n.size.h+'px';

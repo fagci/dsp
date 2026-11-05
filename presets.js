@@ -642,6 +642,7 @@ const PRESET_CATS={
   'Serial Port on a Router or Another PC (Node bridge, OpenWrt ser2net)':'Network & IoT',
   'Contacts: People and Addresses from vCard, Phone and Messages (Tables)':'Network & IoT',
   'Messenger through a Proxy (SOCKS5 / Tor / HTTP CONNECT via the Node bridge)':'Network & IoT',
+  'Messenger Chats: Conversations, Threads and Filters by Contact':'Network & IoT',
   'Messenger: Create an XMPP or Matrix Account Right in the Node':'Network & IoT',
   'Table as a Database: Contacts with Smart Search (phone, name) and Skins':'Network & IoT',
   'Bridge: BLE UART ↔ Network (TCP/WS Gateway)':'Network & IoT',
@@ -2239,6 +2240,21 @@ ms.size.w=420; ms.size.h=520; applySize(ms);
 const ch=addNode('chat',500,270,{});
 ch.size.w=360; ch.size.h=320; applySize(ch);
 addEdge(ms.id,'rec',ch.id,'rec');
+markWiresDirty();
+});
+preset('Messenger Chats: Conversations, Threads and Filters by Contact', function(){
+clearAll();
+const nt=addNode('note',40,30,{text:'A messenger window over every channel at once. The Messenger (any protocol — add more Messenger nodes for more channels, all into the same Chat rec) feeds the Chat in «conversations» view: a list of chats — a person (one conversation per person per protocol) or a room / channel — with the last message, the time and the unread count; open one to see the messages by day, a run of messages of one author in a bubble, e-mail threads folded under «thread · N messages», **bold** *italic* `code` and links, 📎 attachments. ↩ replies to a message (the answer joins its thread). What you type goes to the open conversation: Chat «to» + «text» → Messenger «to» + «send». Contacts (wire its «rec» from the Messenger; its «book» to the Chat «book» and to the Messenger «rows») gives the names: the same person writing by e-mail, Telegram and SMS is one name, and «Filters» finds them everywhere — by person, by protocol, by text (words in any order, ё = е, a phone number written any way; click an author\'s name to see only them), «unread» only. The Chat\'s height follows the node: drag its lower edge.'});
+nt.size.w=1100; nt.size.h=230; applySize(nt);
+const ms=addNode('messenger',40,290,{proto:'nostr',channel:'dsp'});
+ms.size.w=360; ms.size.h=380; applySize(ms);
+const ct=addNode('contacts',440,290);
+ct.size.w=280; ct.size.h=240; applySize(ct);
+const ch=addNode('chat',760,290,{mode:'conversations',me:'dsp'});
+ch.size.w=420; ch.size.h=560; applySize(ch);
+addEdge(ms.id,'rec',ct.id,'rec'); addEdge(ms.id,'rec',ch.id,'rec');
+addEdge(ct.id,'book',ms.id,'rows'); addEdge(ct.id,'book',ch.id,'book');
+addEdge(ch.id,'text',ms.id,'send'); addEdge(ch.id,'to',ms.id,'to');
 markWiresDirty();
 });
 preset('Messenger through a Proxy (SOCKS5 / Tor / HTTP CONNECT via the Node bridge)', function(){
