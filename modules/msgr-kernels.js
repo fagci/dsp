@@ -22,6 +22,8 @@ function mgRandom(n){
 }
 // управляющие символы в строке протокола — это впрыск команд (IRC: \r\n), режем
 const mgLine=s=>String(s).replace(/[\r\n\0]+/g,' ');
+// реакция как эмодзи: «+» и пусто — 👍, «-» — 👎 (так Nostr и Matrix-клиенты пишут «лайк»), остальное как есть, не длиннее 16 знаков
+const mgReactKey=s=>{ s=String(s==null ? '' : s).trim(); return s==='' || s==='+' ? '👍' : s==='-' ? '👎' : s.slice(0,16); };
 // Текст для показа: коды форматирования IRC (\x02 жирный, \x1d курсив, \x1f подчёркнутый, \x1e зачёркнутый, \x11 моно, \x16 реверс, \x0f сброс,
 // \x03 цвет с номерами, \x04 hex-цвет) и прочие управляющие символы вырезаются (остаются перевод строки и табуляция) — иначе в журнале «◁ник◁» и квадраты
 const mgClean=s=>String(s==null ? '' : s).replace(/\r\n?/g,'\n').replace(/\x03(?:\d{1,2}(?:,\d{1,2})?)?|\x04(?:[0-9a-fA-F]{6}(?:,[0-9a-fA-F]{6})?)?/g,'').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g,'');
@@ -150,11 +152,21 @@ function mgNostrVerify(ev){
   return !!(id && pk && sig && mgSchnorrVerify(sig,id,pk));
 }
 // канал — хэштег (тег t): kind 1, ответы и чужие хэштеги отбираются фильтром реле
-const mgNostrReq=(sub,chan,since)=>JSON.stringify(['REQ',sub,{kinds:[1],'#t':[String(chan).toLowerCase()],since}]);
+const mgNostrReq=(sub,chan,since)=>JSON.stringify(['REQ',sub,{kinds:[1,5,7],'#t':[String(chan).toLowerCase()],since}]);      // 1 — сообщения, 7 — реакции (NIP-25), 5 — удаления (NIP-09)
 function mgNostrFrame(text){
   let a; try{ a=JSON.parse(text); }catch(e){ return null; }
   if(!Array.isArray(a) || typeof a[0]!=='string') return null;
   return {type:a[0],a};
+}
+// реакция (kind 7) или удаление (kind 5) нашего канала: → {kind:'reaction', target, emoji, id} | {kind:'delete', ids} | null. Свой тег канала ставят клиенты DSP: чужие реакции без него не приходят
+function mgNostrExtra(ev,chan){
+  if(!ev || !Array.isArray(ev.tags)) return null;
+  const want=String(chan).toLowerCase();
+  if(!ev.tags.some(t=>Array.isArray(t) && t[0]==='t' && String(t[1]).toLowerCase()===want)) return null;
+  const es=ev.tags.filter(t=>Array.isArray(t) && t[0]==='e' && typeof t[1]==='string').map(t=>t[1]);
+  if(ev.kind===7 && es.length) return {kind:'reaction',id:ev.id,target:es[es.length-1],emoji:mgReactKey(ev.content)};     // цель — последний e-тег (NIP-25)
+  if(ev.kind===5 && es.length) return {kind:'delete',ids:es};
+  return null;
 }
 function mgNostrText(ev,chan){                              // событие → {from,text} или null (не наш канал)
   if(ev.kind!==1 || !Array.isArray(ev.tags)) return null;
@@ -176,12 +188,18 @@ function mgNtfyLine(line){                                 // → {id,from,text,
   if(!j || j.event!=='message' || typeof j.message!=='string') return null;
   return {id:String(j.id||''),from:String(j.title||'ntfy'),text:j.message,t:(+j.time||0)*1000,tags:j.tags||[],prio:j.priority};
 }
-function mgMatrixSync(j,room,self){                         // → {next,msgs:[{id,from,room,text,t,self}]}
-  const out=[], rooms=(j && j.rooms && j.rooms.join) || {};
+function mgMatrixSync(j,room,self){                         // → {next,msgs:[{id,from,room,text,t,self}],react:[реакции],redact:[{id,room}]}
+  const out=[], react=[], redact=[], rooms=(j && j.rooms && j.rooms.join) || {};
   for(const rid of Object.keys(rooms)){
     if(room && rid!==room) continue;
     for(const ev of (rooms[rid].timeline && rooms[rid].timeline.events) || []){
       const c=ev.content;
+      if(ev.type==='m.reaction'){                                       // эмодзи-реакция: аннотация к событию
+        const rel=c && c['m.relates_to'], w=String(ev.sender||'');
+        if(rel && rel.rel_type==='m.annotation' && rel.event_id && rel.key) react.push({kind:'reaction',id:String(ev.event_id||''),target:String(rel.event_id),author:w.replace(/^@/,'').replace(/:.*$/,'')||w,emojis:[mgReactKey(rel.key)],op:'add',room:rid,t:+ev.origin_server_ts||0,self:!!self && w===self});
+        continue;
+      }
+      if(ev.type==='m.room.redaction'){ const t=ev.redacts || (c && c.redacts); if(t) redact.push({id:String(t),room:rid}); continue; }      // удалено событие (в том числе снятая реакция)
       if(ev.type!=='m.room.message' || !c || typeof c.body!=='string') continue;
       if(c.msgtype && !/^m\.(text|notice|emote)$/.test(c.msgtype)) continue;
       const who=String(ev.sender||'');
@@ -189,22 +207,28 @@ function mgMatrixSync(j,room,self){                         // → {next,msgs:[{
         t:+ev.origin_server_ts||0,self:!!self && who===self});
     }
   }
-  return {next:j && j.next_batch,msgs:out};
+  return {next:j && j.next_batch,msgs:out,react,redact};
 }
-function mgTgUpdates(j,chat){                               // → {next,msgs,last:chat_id,skipped}
-  const out=[]; let next=0, last=null, skipped=0;
+function mgTgUpdates(j,chat){                               // → {next,msgs,react,last:chat_id,skipped}
+  const out=[], react=[]; let next=0, last=null, skipped=0;
   const want=String(chat||'').trim().toLowerCase();
   const filter=/^-?\d+$/.test(want) || want[0]==='@';          // «dsp» (значение по умолчанию других каналов) — не чат: фильтр не включаем
   for(const u of (j && j.result) || []){
     next=Math.max(next,(u.update_id|0)+1);
+    if(u.message_reaction){                                      // реакции на сообщения: полный набор эмодзи этого человека (new_reaction), а не одна добавленная
+      const rr=u.message_reaction, c0=rr.chat||{}, f0=rr.user||{};
+      if(filter && String(c0.id)!==want && '@'+String(c0.username||'').toLowerCase()!==want){ skipped++; continue; }
+      react.push({kind:'reaction',id:'tgr'+u.update_id,target:String(c0.id)+':'+rr.message_id,author:f0.username||f0.first_name||(rr.actor_chat&&rr.actor_chat.title)||'?',emojis:(rr.new_reaction||[]).filter(x=>x&&x.type==='emoji').map(x=>mgReactKey(x.emoji)),op:'set',room:String(c0.id),t:(+rr.date||0)*1000});
+      continue;
+    }
     const m=u.message || u.channel_post; if(!m || typeof m.text!=='string') continue;
     const c=m.chat||{};
     if(filter && String(c.id)!==want && '@'+String(c.username||'').toLowerCase()!==want){ skipped++; continue; }
     const f=m.from||{};
-    out.push({id:String(u.update_id),from:f.username||f.first_name||c.title||String(c.id),room:String(c.id),text:m.text,t:(+m.date||0)*1000,chat:c.title||c.username||''});
+    out.push({id:String(u.update_id),ref:String(c.id)+':'+m.message_id,mid:m.message_id,from:f.username||f.first_name||c.title||String(c.id),room:String(c.id),text:m.text,t:(+m.date||0)*1000,chat:c.title||c.username||''});
     last=c.id;
   }
-  return {next,msgs:out,last,skipped};
+  return {next,msgs:out,react,last,skipped};
 }
 
 // ---------- IRC ----------
@@ -363,6 +387,13 @@ function mgXmppClient(o){
     w("<iq type='set' id='bind1'><bind xmlns='urn:ietf:params:xml:ns:xmpp-bind'><resource>"+mgXmlEsc(o.resource||'dsp')+'</resource></bind></iq>');
   }
   function message(s){
+    const rx=mgKid(s,'reactions');                                           // XEP-0444: полный набор реакций отправителя на сообщение id
+    if(rx && rx.attrs.id){
+      const f0=s.attrs.from||'', t0=s.attrs.type||'chat', bare0=f0.split('/')[0], res0=f0.includes('/') ? f0.slice(f0.indexOf('/')+1) : '';
+      if(o.onReact) o.onReact({kind:'reaction',id:s.attrs.id||'',target:rx.attrs.id,author:t0==='groupchat' ? (res0||bare0) : bare0,emojis:mgKids(rx,'reaction').map(k=>mgReactKey(k.text)).filter(Boolean),op:'set',
+        room:t0==='groupchat' ? bare0 : '',to:bare0,t:Date.now(),self:t0==='groupchat' && res0===nick});
+      return;
+    }
     const body=mgKid(s,'body'); if(!body || !body.text) return;
     const from=s.attrs.from||'', type=s.attrs.type||'chat', bare=from.split('/')[0], res=from.includes('/') ? from.slice(from.indexOf('/')+1) : '';
     const delay=!!mgKid(s,'delay');
@@ -420,6 +451,11 @@ function mgXmppClient(o){
       to=String(to||room||'').trim(); if(!to || !ready) return false;
       const type=room && to.split('/')[0]===room ? 'groupchat' : 'chat';
       w("<message type='"+type+"' to='"+mgXmlEsc(to)+"' id='m"+(++iq)+"'><body>"+mgXmlEsc(mgSplit(text,2000).join('\n'))+'</body></message>');
+      return true;
+    },
+    react(to,target,emojis,groupchat){                                        // полный набор своих реакций на сообщение target
+      to=String(to||'').trim(); if(!to || !target || !ready) return false;
+      w("<message type='"+(groupchat ? 'groupchat' : 'chat')+"' to='"+mgXmlEsc(to)+"' id='r"+(++iq)+"'><reactions xmlns='urn:xmpp:reactions:0' id='"+mgXmlEsc(target)+"'>"+emojis.map(e=>'<reaction>'+mgXmlEsc(e)+'</reaction>').join('')+'</reactions><store xmlns=\'urn:xmpp:hints\'/></message>');
       return true;
     },
     quit(){ try{ w('</stream:stream>'); }catch(e){} closed=true; },

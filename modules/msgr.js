@@ -14,6 +14,7 @@ function mgNodeLog(n,dir,m){
     row.text=(row.text?row.text+' ':'')+row.atts.map(a=>'[file: '+a.name+(a.size?' · '+(a.size/1024).toFixed(0)+' KB':'')+']').join(' ');
   }
   if(m.thread) row.thread=m.thread;
+  if(m.ref) row.ref=m.ref;                                                    // на что ссылаются реакции (Telegram: чат:сообщение; в остальных — id)
   if(m.fromAddr) row.fromAddr=m.fromAddr;
   if(m.subject) row.subject=m.subject;
   const room=(m.to && /^[#&]/.test(m.to)) ? m.to : (['nostr','ntfy','matrix'].includes(n.p.proto) ? String(n.p.channel||'') : (n.p.proto==='xmpp' && m.to && m.to===String(n.p.channel||'').split('/')[0] ? m.to : ''));
@@ -72,11 +73,16 @@ function mgNodeStart(n){
   n.warn=netInsecure(cfg.server) || (cfg.bridge && netInsecure(cfg.bridge)) ? NET_INSECURE_MSG : '';
   n.sess=mgConnect(proto,cfg,{
     msg:m=>{
+      if(m.kind==='reaction'){ n.recQ.push({t:m.t||Date.now(),proto:p.proto,dir:m.self ? 'out' : 'in',kind:'reaction',target:String(m.target||''),author:String(m.author||''),emojis:m.emojis||[],op:m.op||'add',room:m.room||'',to:m.to||'',text:'',from:String(m.author||''),id:m.id||''}); return; }     // реакция — событие для Chat, не строка журнала
       if(m.kind==='roster'){ n.recQ.push({t:m.t||Date.now(),proto:p.proto,dir:'in',kind:'roster',contacts:m.contacts||[],text:'',from:''}); n.status='roster: '+(m.contacts||[]).length+' contact(s)'; return; }     // список контактов — в rec (для Contacts), не в чат
       if(m.delay && !cfg.history) return; mgNodeSaveAtts(n,m); mgNodeLog(n,m.self ? 'out' : 'in',m);
     },
     status:(t,s)=>{ n.status=t; n.ok=s==='up'; if(/^registered\b|already registered/.test(t)) n.regNext=false; if(s==='fatal') n.sess=null; },
   });
+}
+function mgNodeReact(n,r){                                  // реакция от Chat: {target, emoji, on, mine, room, to}
+  if(!n.sess){ n.status='not connected — press Connect'; return; }
+  Promise.resolve(n.sess.react ? n.sess.react(r) : false).then(ok=>{ if(!ok && !/react|reaction|Matrix|Telegram|Nostr|XMPP/.test(n.status||'')) n.status=n.p.proto+': reactions are not supported here'; }).catch(()=>{});
 }
 function mgNodeSend(n,text,to){
   text=String(text||'').trim(); if(!text) return;
@@ -136,7 +142,7 @@ function mgNodeSaveAtts(n,m){
 
 def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · IRC · XMPP · APRS · Email · SMS · Reticulum · Mastodon · Bluesky · RSS)', cat:'Sources',
   kw:'messenger chat nostr ntfy matrix telegram bot irc xmpp jabber relay message channel push notify send receive internet',
-  ins:[{n:'send',t:'txt'},{n:'to',t:'txt'},{n:'rows',t:'bands'}], outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'from',t:'txt'},{n:'new',t:'num'},{n:'ok',t:'num'}],
+  ins:[{n:'send',t:'txt'},{n:'to',t:'txt'},{n:'rows',t:'bands'},{n:'react',t:'rec'}], outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'from',t:'txt'},{n:'new',t:'num'},{n:'ok',t:'num'}],
   readout:true, tall:true,
   params:[
     {n:'proto',t:'select',opts:['nostr','ntfy','matrix','telegram','irc','xmpp','aprs','email','sms','reticulum','mastodon','bluesky','rss'],d:'nostr',fn:n=>{ mgNodeStop(n); mgNodeReset(n); n.sig=undefined; n.status='not connected'; },label:'protocol'},
@@ -176,6 +182,7 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
       if(nm&&ad) book.push({name:nm,addr:ad});
     }
     n.book=book;
+    if(I.react && I.react!==n.lastReact){ n.lastReact=I.react; for(const r of Array.isArray(I.react) ? I.react : [I.react]) if(r && typeof r==='object') mgNodeReact(n,r); }
     const send=typeof I.send==='string' ? I.send : '';
     if(send && send!==n.lastSend) mgNodeSend(n,send,typeof I.to==='string' ? I.to : '');
     n.lastSend=send;

@@ -70,11 +70,22 @@ function mgOpenNostr(cfg,c){
   const me=mgHex(mgSchnorrPub(sk)), seen=new Set(), sub='dsp'+mgHex(mgRandom(4));
   const since=Math.floor(Date.now()/1000)-Math.max(0,cfg.history|0);
   let closed=false, lastErr='';
+  const rx=new Map(), myR=new Map();                              // реакции: id события → {target,author,emoji}; мои: цель+эмодзи → id (чтобы снять удалением kind 5)
   const note=()=>{ const up=conns.filter(r=>r.up).length; c.status('relays '+up+'/'+conns.length+(lastErr ? ' · '+lastErr : '')+' · '+mgNpub(me).slice(0,16)+'…',up ? 'up' : 'connecting'); };
   function frame(text){
     const f=mgNostrFrame(text); if(!f) return;
     if(f.type==='EVENT'){
       const ev=f.a[2]; if(!ev || typeof ev.id!=='string' || seen.has(ev.id)) return;
+      if(ev.kind===7 || ev.kind===5){                                    // реакция / удаление нашего канала
+        const x=mgNostrExtra(ev,chan); if(!x) return;
+        if(cfg.verify!==false && !mgNostrVerify(ev)) return;
+        seen.add(ev.id);
+        const nk=(ev.tags.find(t=>Array.isArray(t) && t[0]==='nick' && typeof t[1]==='string')||[])[1];
+        const author=nk ? String(nk).slice(0,64) : mgNpub(ev.pubkey).slice(0,12), mine=ev.pubkey===me;
+        if(x.kind==='reaction'){ rx.set(ev.id,{target:x.target,author,emoji:x.emoji}); if(mine) myR.set(x.target+'\u0000'+x.emoji,ev.id); c.msg({kind:'reaction',id:ev.id,target:x.target,author,emojis:[x.emoji],op:'add',t:(+ev.created_at||0)*1000,self:mine}); }
+        else for(const id of x.ids){ const r0=rx.get(id); if(!r0) continue; rx.delete(id); myR.forEach((v,k)=>{ if(v===id) myR.delete(k); }); c.msg({kind:'reaction',id:'',target:r0.target,author:r0.author,emojis:[r0.emoji],op:'remove',t:Date.now(),self:mine}); }
+        return;
+      }
       const t=mgNostrText(ev,chan); if(!t) return;                       // чужой канал — без дорогой проверки подписи
       if(cfg.verify!==false && !mgNostrVerify(ev)) return;
       seen.add(ev.id); if(seen.size>5000) seen.delete(seen.values().next().value);
@@ -100,6 +111,17 @@ function mgOpenNostr(cfg,c){
     send(text){
       const ev=mgNostrSign(sk,{created_at:Math.floor(Date.now()/1000),kind:1,tags:[['t',chan.toLowerCase()],['nick',String(cfg.nick||'dsp')],['client','dsp']],content:String(text)});
       let n=0; for(const r of conns) if(r.up && r.ws){ try{ r.ws.send(JSON.stringify(['EVENT',ev])); n++; }catch(e){} }
+      return n>0;
+    },
+    react(r){                                                      // r: {target (id события), emoji, on}; поставить — kind 7, снять — kind 5 на наше событие реакции
+      if(!r.target || !r.emoji){ c.status('Nostr: nothing to react to','warn'); return false; }
+      const key=String(r.target)+'\u0000'+r.emoji, base=[['t',chan.toLowerCase()],['nick',String(cfg.nick||'dsp')],['client','dsp']];
+      let ev;
+      if(r.on) ev=mgNostrSign(sk,{created_at:Math.floor(Date.now()/1000),kind:7,tags:[['e',String(r.target)],...base],content:String(r.emoji)});
+      else { const id=myR.get(key); if(!id){ c.status('Nostr: this reaction is not known to the session — remove it in another client','warn'); return false; }
+        ev=mgNostrSign(sk,{created_at:Math.floor(Date.now()/1000),kind:5,tags:[['e',id],['k','7'],...base],content:'removed'}); }
+      let n=0; for(const x of conns) if(x.up && x.ws){ try{ x.ws.send(JSON.stringify(['EVENT',ev])); n++; }catch(e){} }
+      if(n>0){ if(r.on){ myR.set(key,ev.id); rx.set(ev.id,{target:String(r.target),author:String(cfg.nick||'dsp'),emoji:String(r.emoji)}); } else myR.delete(key); }
       return n>0;
     },
     close(){ closed=true; for(const r of conns){ clearTimeout(r.t); const ws=r.ws; if(ws){ ws.onopen=ws.onmessage=ws.onerror=ws.onclose=null; try{ ws.close(); }catch(e){} } } },
@@ -154,6 +176,7 @@ function mgOpenMatrix(cfg,c){
   const io=mgIo(cfg), hs=mgTrim(cfg.server), ac=new AbortController(), cache=cfg.cache||{};
   if(!/^https?:\/\//i.test(hs)){ c.down('Matrix: enter the homeserver address https://…',true); return mgNone; }
   let closed=false, token=cfg.token || (!cfg.user ? cfg.pass : '') || cache.token || '', me=cache.userId||'', room=String(cfg.channel||'').trim(), txn=0;
+  const rx=new Map(), myR=new Map();                            // реакции: id события → {target,author,emojis}; мои: цель+эмодзи → id события (чтобы снять)
   const api=p=>hs+'/_matrix/client/v3'+p;
   const call=async(method,path,body)=>{
     const r=await io.fetch(api(path),{method,signal:ac.signal,headers:{...(token ? {authorization:'Bearer '+token} : {}),...(body ? {'content-type':'application/json'} : {})},body:body ? JSON.stringify(body) : undefined});
@@ -194,7 +217,7 @@ function mgOpenMatrix(cfg,c){
       }
       c.status('connected as '+me+(room ? ', room '+room : ''),'up');
       if(cfg.roster!==false) mgMatrixRoster(call,me).then(list=>{ if(list.length && !closed) c.msg({kind:'roster',t:Date.now(),contacts:list,text:''}); }).catch(()=>{});     // не мешает синхронизации
-      const filter=encodeURIComponent(JSON.stringify({room:{...(room ? {rooms:[room]} : {}),timeline:{limit:50,types:['m.room.message']},state:{types:[]},ephemeral:{types:[]},account_data:{types:[]}},presence:{types:[]},account_data:{types:[]}}));
+      const filter=encodeURIComponent(JSON.stringify({room:{...(room ? {rooms:[room]} : {}),timeline:{limit:50,types:['m.room.message','m.reaction','m.room.redaction']},state:{types:[]},ephemeral:{types:[]},account_data:{types:[]}},presence:{types:[]},account_data:{types:[]}}));
       let next=null, first=true;
       while(!closed){
         const r=await call('GET','/sync?filter='+filter+'&timeout='+(first ? 0 : 25000)+(next ? '&since='+encodeURIComponent(next) : ''));
@@ -202,6 +225,8 @@ function mgOpenMatrix(cfg,c){
         const s=mgMatrixSync(r.j,room,me); next=s.next || next;
         if(first){ first=false; if(!(cfg.history|0)) continue; }          // первый ответ — недавняя история: пропускаем, если не просили
         for(const m of s.msgs) c.msg(m);
+        for(const x of s.react){ rx.set(x.id,x); if(x.self) myR.set(x.target+'\u0000'+x.emojis[0],x.id); c.msg(x); }
+        for(const d of s.redact){ const x=rx.get(d.id); if(!x) continue; rx.delete(d.id); myR.forEach((v,k)=>{ if(v===d.id) myR.delete(k); }); c.msg({...x,id:'',op:'remove'}); }      // снята реакция — событие удаления её
       }
     }catch(e){ if(!closed) c.down('Matrix: '+e.message,false); }
   })();
@@ -212,6 +237,23 @@ function mgOpenMatrix(cfg,c){
         const r=await call('PUT','/rooms/'+encodeURIComponent(room)+'/send/m.room.message/dsp'+Date.now()+'_'+(++txn),{msgtype:'m.text',body:String(text)});
         if(!r.ok) c.status('Matrix: send failed — '+(r.j.error||r.status),'warn');
         return r.ok;
+      }catch(e){ c.status('Matrix: '+e.message,'warn'); return false; }
+    },
+    async react(r){                                              // r: {target (id события), emoji, on, room}
+      const rid=String(room||r.room||''), key=String(r.target)+'\u0000'+r.emoji;       // комната, в которую мы вошли (id), главнее алиаса из записи
+      if(!rid || !r.target || !r.emoji){ c.status('Matrix: nothing to react to','warn'); return false; }
+      try{
+        if(r.on){
+          const x=await call('PUT','/rooms/'+encodeURIComponent(rid)+'/send/m.reaction/dsp'+Date.now()+'_'+(++txn),{'m.relates_to':{rel_type:'m.annotation',event_id:String(r.target),key:String(r.emoji)}});
+          if(!x.ok){ c.status('Matrix: reaction failed — '+(x.j.error||x.status),'warn'); return false; }
+          if(x.j.event_id) myR.set(key,x.j.event_id);
+          return true;
+        }
+        const id=myR.get(key);                                    // снять можно реакцию, событие которой мы знаем (поставлена в этой сессии или пришла с синхронизацией)
+        if(!id){ c.status('Matrix: this reaction is not known to the session — remove it in another client','warn'); return false; }
+        const x=await call('PUT','/rooms/'+encodeURIComponent(rid)+'/redact/'+encodeURIComponent(id)+'/dsp'+Date.now()+'_'+(++txn),{});
+        if(!x.ok){ c.status('Matrix: cannot remove the reaction — '+(x.j.error||x.status),'warn'); return false; }
+        myR.delete(key); return true;
       }catch(e){ c.status('Matrix: '+e.message,'warn'); return false; }
     },
     close(){ closed=true; try{ ac.abort(); }catch(e){} },
@@ -235,12 +277,13 @@ function mgOpenTelegram(cfg,c){
       if(!me.ok){ c.down('Telegram: '+(me.description||'error'),me.error_code===401 || me.error_code===404); return; }
       botName=me.result.username; c.status('connected as @'+botName+' — write to the bot','up');
       while(!closed){
-        const r=await call('getUpdates',{timeout:25,offset,allowed_updates:['message','channel_post']});
+        const r=await call('getUpdates',{timeout:25,offset,allowed_updates:['message','channel_post','message_reaction']});
         if(!r.ok){ c.down('Telegram: '+(r.description||'getUpdates failed'),r.error_code===401); return; }
         const u=mgTgUpdates(r,cfg.channel);
         offset=Math.max(offset,u.next); if(u.last!==null) lastChat=u.last;
         if(u.skipped){ ignored+=u.skipped; c.status('Telegram: @'+botName+' · '+ignored+' message(s) from other chats ignored — the channel «'+cfg.channel+'» is a chat filter, clear it to receive from all chats','up'); }
         for(const m of u.msgs) c.msg(m);
+        for(const x of u.react) c.msg(x);
       }
     }catch(e){ if(!closed) c.down('Telegram: '+e.message,false); }
   })();
@@ -254,6 +297,15 @@ function mgOpenTelegram(cfg,c){
           if(!r.ok){ c.status('Telegram: '+(r.description||'send failed'),'warn'); return false; }
         }
         c.msg({from:String(cfg.nick||'me'),to:chat,text:String(text),t:Date.now(),self:true,local:true});
+        return true;
+      }catch(e){ c.status('Telegram: '+e.message,'warn'); return false; }
+    },
+    async react(r){                                              // r: {target:'chat:message_id', emoji, on}; бот ставит одну реакцию (из набора Telegram), пустой список снимает
+      const m=/^(-?\d+):(\d+)$/.exec(String(r.target||''));
+      if(!m){ c.status('Telegram: this message has no reference — only messages received in this session can be reacted to','warn'); return false; }
+      try{
+        const x=await call('setMessageReaction',{chat_id:+m[1],message_id:+m[2],reaction:r.on ? [{type:'emoji',emoji:String(r.emoji)}] : []});
+        if(!x.ok){ c.status('Telegram: '+(x.description||'reaction failed')+(/REACTION_INVALID/.test(x.description||'') ? ' (Telegram allows a fixed set of emoji)' : ''),'warn'); return false; }
         return true;
       }catch(e){ c.status('Telegram: '+e.message,'warn'); return false; }
     },
@@ -310,9 +362,14 @@ function mgOpenXmpp(cfg,c){
     open:()=>cl.start(),data:s=>cl.feed(s),close:err=>{ if(!closed) c.down('XMPP: '+(err || 'connection closed'),false); }});
   cl=mgXmppClient({domain,user,pass:cfg.pass,register:!!cfg.register,onRegistered:()=>{ cfg.register=false; },resource:cfg.resource||'dsp',room,nick,secure,insecure:!!cfg.insecure,
     write:s=>{ try{ link.write(s); }catch(e){} },tls:done=>link.upgrade(done),onMsg:x=>{ if(!x.delay || cfg.history) c.msg(x); },
-    onRoster:cfg.roster===false ? null : list=>c.msg({kind:'roster',t:Date.now(),contacts:list,text:''}),
+    onRoster:cfg.roster===false ? null : list=>c.msg({kind:'roster',t:Date.now(),contacts:list,text:''}),onReact:x=>c.msg(x),
     onStatus:(t,s)=>{ if(s==='fatal'){ c.down(t,true); try{ link.close(); }catch(e){} } else if(s==='down') c.down(t,false); else c.status(t,s); }});
   return {
+    react(r){
+      const to=String(r.to||r.room||room||'').trim(), gc=!!room && to.split('/')[0]===room;
+      if(!cl.react(to,r.target,Array.isArray(r.mine) ? r.mine : (r.on ? [r.emoji] : []),gc)){ c.status('XMPP: cannot react (not connected, or the message has no id)','warn'); return false; }
+      return true;
+    },
     send(text,to){
       const dst=String(to||room||'').trim();
       if(!cl.send(text,dst)) return false;
@@ -459,6 +516,7 @@ function mgOpenGateway(proto,cfg,c){
   };
   return {
     send:(text,to)=>inner ? inner.send(text,to) : false,
+    react:r=>inner && inner.react ? inner.react(r) : false,
     close(){ closed=true; clearTimeout(timer); stop(); if(inner) try{ inner.close(); }catch(e){} },
   };
 }
@@ -651,6 +709,7 @@ function mgOpenRemote(proto,cfg,c){
   ws.onclose=()=>{ if(!closed) c.down('Node bridge: connection closed',false); };
   return {
     send(text,to){ if(ws.readyState!==1) return false; ws.send(JSON.stringify({op:'send',text:String(text),to:to||''})); return true; },
+    react(r){ if(ws.readyState!==1) return false; ws.send(JSON.stringify({op:'react',r})); return true; },
     close(){ closed=true; ws.onopen=ws.onmessage=ws.onerror=ws.onclose=null; try{ ws.send(JSON.stringify({op:'close'})); }catch(e){} try{ ws.close(); }catch(e){} },
   };
 }
@@ -667,6 +726,7 @@ function mgConnect(proto,cfg,cb){
   let h=null, timer=null, dead=false, gen=0;
   const out={
     send:(text,to,atts)=>h ? h.send(text,to,atts) : false,
+    react:r=>h && h.react ? h.react(r) : false,
     close(){ dead=true; clearTimeout(timer); const x=h; h=null; if(x) try{ x.close(); }catch(e){} },
   };
   if(!open){ cb.status('unknown protocol '+proto,'fatal'); return out; }

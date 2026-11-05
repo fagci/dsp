@@ -116,25 +116,36 @@ function chMd(text){
 const chPreview=(m,n)=>{ const t=chStr(m&&m.text).replace(/\s+/g,' '); const s=(m&&m.mine ? 'You: ' : '')+t; return s.length>(n||60) ? s.slice(0,(n||60)-1)+'…' : s; };
 
 /* ---------- история в списке Table ---------- */
-const CH_HIST_COLS=['time','proto','dir','from','from_addr','to','room','subject','thread','text','atts','conv','t'];
+const CH_HIST_COLS=['time','proto','dir','from','from_addr','to','room','subject','thread','text','atts','conv','t','kind','ref','op'];      // kind=reaction: ref — на что, text — эмодзи через пробел, op — add / remove / set
 // короткая свёртка строки (для ключа сообщения без id)
 function chHash(s){ let h=2166136261>>>0; s=String(s); for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619)>>>0; } return h.toString(36); }
 // ключ сообщения: протокол + id, а без id — время, автор и свёртка текста (повторная выдача истории не плодит дубли)
-const chHistKey=r=>chStr(r.proto||'chat').toLowerCase()+':'+(chStr(r.id) ? 'id:'+chStr(r.id) : (+r.t||0)+':'+chHash(chStr(r.from)+'\u0000'+chStr(r.fromAddr)+'\u0000'+chStr(r.text)));
+const chHistKey=r=>r.kind==='reaction'
+  ? chStr(r.proto||'chat').toLowerCase()+':rx:'+(chStr(r.id) ? chStr(r.id) : (+r.t||0)+':'+chHash(chStr(r.author||r.from)+'\u0000'+chStr(r.target)+'\u0000'+(r.emojis||[]).join(' ')+'\u0000'+chStr(r.op)))
+  : chStr(r.proto||'chat').toLowerCase()+':'+(chStr(r.id) ? 'id:'+chStr(r.id) : (+r.t||0)+':'+chHash(chStr(r.from)+'\u0000'+chStr(r.fromAddr)+'\u0000'+chStr(r.text)));
 // сообщение → запись списка {name, fields}; name — ключ, поля — читаемые колонки (список можно листать и искать в Table)
 function chToItem(r){
   const t=+r.t||Date.now(), d=new Date(t), p2=x=>String(x).padStart(2,'0');
+  if(r.kind==='reaction') return {name:chHistKey(r),fields:{time:d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+' '+p2(d.getHours())+':'+p2(d.getMinutes())+':'+p2(d.getSeconds()),
+    proto:chStr(r.proto),dir:chStr(r.dir)==='out' ? 'out' : 'in',from:chStr(r.author||r.from),to:chStr(r.to),room:chStr(r.room),text:(r.emojis||[]).join(' '),conv:chConv({...r,from:r.author||r.from}).key,t:t,kind:'reaction',ref:chStr(r.target),op:chStr(r.op)||'add'}};
   return {name:chHistKey(r),fields:{
     time:d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+' '+p2(d.getHours())+':'+p2(d.getMinutes())+':'+p2(d.getSeconds()),
     proto:chStr(r.proto),dir:chStr(r.dir),from:chStr(r.from),from_addr:chStr(r.fromAddr),to:chStr(r.to),room:chStr(r.room),subject:chStr(r.subject),thread:chStr(r.thread),
-    text:String(r.text==null?'':r.text),atts:(r.atts||[]).map(a=>a&&a.name).filter(Boolean).join(' | '),conv:chConv(r).key,t:t}};
+    text:String(r.text==null?'':r.text),atts:(r.atts||[]).map(a=>a&&a.name).filter(Boolean).join(' | '),conv:chConv(r).key,t:t,ref:chStr(r.ref)}};
 }
 // запись списка → сообщение (то, что пришло бы в rec); вложения — только имена (файлы лежат в Files)
 function chFromItem(it){
-  const f=(it&&it.fields)||{}, id=chStr(it&&it.name).startsWith(chStr(f.proto).toLowerCase()+':id:') ? chStr(it.name).slice(chStr(f.proto).length+4) : '';
+  const f=(it&&it.fields)||{};
+  if(chStr(f.kind)==='reaction'){
+    const r={t:+f.t||0,proto:chStr(f.proto)||'chat',dir:chStr(f.dir)==='out' ? 'out' : 'in',kind:'reaction',target:chStr(f.ref),author:chStr(f.from),emojis:chStr(f.text).split(/\s+/).filter(Boolean),op:chStr(f.op)||'add',from:chStr(f.from),text:''};
+    if(chStr(f.room)) r.room=chStr(f.room); if(chStr(f.to)) r.to=chStr(f.to);
+    const nm=chStr(it&&it.name), pre=r.proto.toLowerCase()+':rx:'; if(nm.startsWith(pre) && !/^\d+:/.test(nm.slice(pre.length))) r.id=nm.slice(pre.length);
+    return r;
+  }
+  const id=chStr(it&&it.name).startsWith(chStr(f.proto).toLowerCase()+':id:') ? chStr(it.name).slice(chStr(f.proto).length+4) : '';
   const r={t:+f.t||0,proto:chStr(f.proto)||'chat',dir:chStr(f.dir)==='out' ? 'out' : 'in',from:chStr(f.from),text:String(f.text==null?'':f.text)};
   if(chStr(f.from_addr)) r.fromAddr=chStr(f.from_addr); if(chStr(f.to)) r.to=chStr(f.to); if(chStr(f.room)) r.room=chStr(f.room);
-  if(chStr(f.subject)) r.subject=chStr(f.subject); if(chStr(f.thread)) r.thread=chStr(f.thread); if(id) r.id=id;
+  if(chStr(f.subject)) r.subject=chStr(f.subject); if(chStr(f.thread)) r.thread=chStr(f.thread); if(id) r.id=id; if(chStr(f.ref)) r.ref=chStr(f.ref);
   if(chStr(f.atts)) r.atts=chStr(f.atts).split('|').map(s=>({name:s.trim(),mime:'',size:0})).filter(a=>a.name);
   return r;
 }
@@ -146,3 +157,26 @@ function chReadCounts(msgs,readT){
   for(const m of msgs){ if(m.t<=(readT[m.conv]||0)) out[m.conv]=(out[m.conv]||0)+1; else out[m.conv]=out[m.conv]||0; }
   return out;
 }
+
+/* ---------- реакции ---------- */
+const CH_ME='\u0001me';                                           // автор «я» в состоянии реакций
+const CH_EMOJI=['👍','❤️','😂','😮','😢','🙏'];
+const CH_REACT_PROTOS=['matrix','xmpp','telegram','nostr'];       // где реакции уходят в протокол (в остальных — только чужие, если придут)
+// состояние: Map цель → Map автор → Set эмодзи. ev: {target, author, emojis, op:'add'|'remove'|'set'}; «set» — полный набор автора (XMPP, Telegram)
+function chReactApply(state,ev){
+  const t=chStr(ev&&ev.target); if(!t) return;
+  let by=state.get(t); if(!by){ by=new Map(); state.set(t,by); }
+  const a=chStr(ev.author)||'?', es=(ev.emojis||[]).map(chStr).filter(Boolean);
+  let set=by.get(a)||new Set();
+  if(ev.op==='set') set=new Set(es); else if(ev.op==='remove') for(const e of es) set.delete(e); else for(const e of es) set.add(e);
+  if(set.size) by.set(a,set); else by.delete(a);
+  if(!by.size) state.delete(t);
+}
+// сводка по сообщению: [{emoji, count, mine, who:[имена]}] — чаще выше, при равенстве — в порядке появления
+function chReactSummary(state,target){
+  const by=state.get(chStr(target)); if(!by) return [];
+  const m=new Map();
+  for(const [a,set] of by) for(const e of set){ let x=m.get(e); if(!x){ x={emoji:e,count:0,mine:false,who:[],ord:m.size}; m.set(e,x); } x.count++; if(a===CH_ME) x.mine=true; x.who.push(a===CH_ME ? 'You' : a); }
+  return [...m.values()].sort((p,q)=>q.count-p.count || p.ord-q.ord).map(({ord,...x})=>x);
+}
+const chReactMine=(state,target)=>{ const by=state.get(chStr(target)); return new Set(by && by.get(CH_ME) || []); };

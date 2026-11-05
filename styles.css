@@ -1080,6 +1080,13 @@ select.aed-b{padding:0 6px}
 .cv-hit{padding:6px;border-bottom:1px solid color-mix(in srgb,var(--line) 40%,transparent);cursor:pointer;border-radius:4px}
 .cv-hit:hover{background:color-mix(in srgb,var(--acc2) 12%,transparent)}
 .cv-hit-h{font-size:10px;color:var(--dim);margin-bottom:2px}
+.cv-rx{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.cv-chip{height:20px;padding:0 7px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--txt);font-size:12px;line-height:18px;cursor:pointer}
+.cv-chip.mine{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 28%,var(--bg))}
+.cv-chip:disabled{cursor:default;opacity:.85}
+.cv-pick{display:flex;gap:2px;margin-top:4px;padding:2px;border-radius:12px;background:var(--bg);border:1px solid var(--line);width:max-content;max-width:100%;flex-wrap:wrap}
+.cv-pick button{border:0;background:none;cursor:pointer;font-size:16px;line-height:22px;width:28px;height:26px;border-radius:50%}
+.cv-pick button:hover{background:var(--panel2)}
 .cv-hint{font-size:11px;color:#d9822b;flex:0 0 auto}
 .cv-hint[hidden]{display:none}
 .cv-reply{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--acc2);padding:2px 6px;border-left:2px solid var(--acc2);background:var(--panel2);border-radius:0 4px 4px 0;flex:0 0 auto}

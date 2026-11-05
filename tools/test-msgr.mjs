@@ -42,7 +42,7 @@ const H = M.mgHex, U = M.mgUnhex;
   eq('other channel ignored', M.mgNostrText(ev, 'other'), null);
   const anon = M.mgNostrSign(sk, {created_at: 1, kind: 1, tags: [['t', 'dsp']], content: 'x'});
   eq('no nick → short npub', M.mgNostrText(anon, 'dsp').from.startsWith('npub1'), true);
-  eq('REQ frame', JSON.parse(M.mgNostrReq('s1', 'DSP', 5)), ['REQ', 's1', {kinds: [1], '#t': ['dsp'], since: 5}]);
+  eq('REQ frame', JSON.parse(M.mgNostrReq('s1', 'DSP', 5)), ['REQ', 's1', {kinds: [1, 5, 7], '#t': ['dsp'], since: 5}]);
   eq('relay frame', M.mgNostrFrame('["EOSE","s1"]').type, 'EOSE');
   eq('garbage frame', M.mgNostrFrame('nope'), null);
   const t0 = Date.now(); for (let i = 0; i < 5; i++) M.mgNostrVerify(ev);
@@ -236,6 +236,32 @@ const H = M.mgHex, U = M.mgUnhex;
   c.feed('220 hi\r\n250 AUTH LOGIN\r\n'); eq('auth login', out[1], 'AUTH LOGIN\r\n');
   c.feed('334 VXNlcm5hbWU6\r\n'); c.feed('334 UGFzc3dvcmQ6\r\n'); eq('login steps', [out[2], out[3]], ['dQ==\r\n', 'cA==\r\n']);
   c.feed('535 bad credentials\r\n'); eq('refused credentials reported', res[0], 'SMTP 535 bad credentials'); }
+
+// реакции: разбор событий протоколов
+eq('react key: plus and minus are thumbs, empty is a thumb, long is cut', [M.mgReactKey('+'), M.mgReactKey('-'), M.mgReactKey(''), M.mgReactKey('❤️'), M.mgReactKey('x'.repeat(40)).length], ['👍', '👎', '👍', '❤️', 16]);
+{ const sync = {next_batch: 'n1', rooms: {join: {'!r:hs': {timeline: {events: [
+    {type: 'm.room.message', event_id: '$m1', sender: '@bob:hs', origin_server_ts: 1, content: {msgtype: 'm.text', body: 'hi'}},
+    {type: 'm.reaction', event_id: '$r1', sender: '@me:hs', origin_server_ts: 2, content: {'m.relates_to': {rel_type: 'm.annotation', event_id: '$m1', key: '👍'}}},
+    {type: 'm.reaction', event_id: '$r2', sender: '@anna:hs', origin_server_ts: 3, content: {'m.relates_to': {rel_type: 'm.annotation', event_id: '$m1', key: '❤️'}}},
+    {type: 'm.reaction', event_id: '$r3', sender: '@x:hs', content: {'m.relates_to': {rel_type: 'm.replace', event_id: '$m1', key: 'z'}}},
+    {type: 'm.room.redaction', event_id: '$d1', sender: '@me:hs', redacts: '$r1', content: {}},
+    {type: 'm.room.redaction', event_id: '$d2', sender: '@me:hs', content: {redacts: '$r2'}}]}}}}};
+  const o = M.mgMatrixSync(sync, '!r:hs', '@me:hs');
+  eq('matrix: messages are still parsed', o.msgs.map(m => m.id), ['$m1']);
+  eq('matrix: reactions (annotations only), own one marked', o.react.map(r => [r.id, r.target, r.author, r.emojis, r.op, r.self]), [['$r1', '$m1', 'me', ['👍'], 'add', true], ['$r2', '$m1', 'anna', ['❤️'], 'add', false]]);
+  eq('matrix: redactions in both shapes (room version 11 puts redacts in content)', o.redact.map(r => r.id), ['$r1', '$r2']); }
+{ const u = M.mgTgUpdates({result: [
+    {update_id: 1, message: {message_id: 77, chat: {id: -100, title: 'G'}, from: {username: 'bob'}, date: 5, text: 'hello'}},
+    {update_id: 2, message_reaction: {chat: {id: -100, title: 'G'}, message_id: 77, user: {username: 'anna'}, date: 6, new_reaction: [{type: 'emoji', emoji: '🔥'}, {type: 'custom_emoji', custom_emoji_id: '1'}], old_reaction: []}},
+    {update_id: 3, message_reaction: {chat: {id: -100}, message_id: 77, user: {first_name: 'Anna'}, date: 7, new_reaction: []}}]}, '');
+  eq('telegram: a message knows its reference (chat:message_id)', [u.msgs[0].ref, u.msgs[0].mid, u.msgs[0].room], ['-100:77', 77, '-100']);
+  eq('telegram: reactions are the full set of that person (custom emoji skipped), an empty set removes', u.react.map(r => [r.target, r.author, r.emojis, r.op]), [['-100:77', 'anna', ['🔥'], 'set'], ['-100:77', 'Anna', [], 'set']]);
+  eq('telegram: update offset covers reactions too', u.next, 4); }
+{ const base = {id: 'e1', pubkey: 'p', kind: 7, content: '+', tags: [['t', 'dsp'], ['e', 'target0'], ['e', 'target1'], ['p', 'x']]};
+  eq('nostr: a reaction of the channel points at the last e tag, + is a thumb', M.mgNostrExtra(base, 'DSP'), {kind: 'reaction', id: 'e1', target: 'target1', emoji: '👍'});
+  eq('nostr: the emoji content is kept', M.mgNostrExtra({...base, content: '🔥'}, 'dsp').emoji, '🔥');
+  eq('nostr: a deletion lists the event ids', M.mgNostrExtra({...base, kind: 5, content: ''}, 'dsp'), {kind: 'delete', ids: ['target0', 'target1']});
+  eq('nostr: another channel or no target is nothing', [M.mgNostrExtra(base, 'other'), M.mgNostrExtra({...base, tags: [['t', 'dsp']]}, 'dsp'), M.mgNostrExtra({...base, kind: 1}, 'dsp'), M.mgNostrExtra(null, 'dsp')], [null, null, null, null]); }
 
 // чистый текст для показа: коды форматирования IRC и управляющие символы
 eq('clean: irc bold around a nick (the «◁fagci_◁» of the log)', M.mgClean('\x02fagci_\x02 is not a registered nickname.'), 'fagci_ is not a registered nickname.');

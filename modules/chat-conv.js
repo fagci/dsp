@@ -12,6 +12,7 @@ function chcInit(n){
   n.msgs=[]; n.read={}; n.seen=new Set(); n.pid=0; n.bookIdx=new Map(); n.bookSig='';
   n.cs={open:'',q:'',person:'',proto:'',unread:false,reply:null,fo:false,fold:new Set()};
   n.outTo=''; n.cvEl=null; n.cvDirty=true; n.unreadN=0; n.lastBook=undefined;
+  n.react=new Map(); n.reactQ=[];
   n.hist={loaded:false,loading:false,queue:[],early:[],timer:null,name:'',err:''};
 }
 // записи книги (Contacts → book): имена людей по адресам; при смене книги сообщения переразмечаются
@@ -23,6 +24,14 @@ function chcSetBook(n,rows){
 }
 function chcAdd(n,r,quiet){
   if(!r || typeof r!=='object' || r.kind==='roster') return;
+  if(r.kind==='reaction'){                                                      // реакция — событие над сообщением, строки в журнале не даёт
+    const rr={...r,t:+r.t||Date.now(),proto:r.proto||'chat'}, k=chHistKey(rr);
+    if(n.seen.has(k)) return; n.seen.add(k);
+    chReactApply(n.react,{target:rr.target,author:rr.dir==='out' ? CH_ME : (rr.author||rr.from||'?'),emojis:rr.emojis,op:rr.op});
+    n.cvDirty=true;
+    if(!quiet && chcStore(n)){ n.hist.queue.push(chToItem(rr)); chcSchedule(n); }
+    return;
+  }
   const text=r.text ?? r.msg ?? r.message; if(text==null || text==='') return;
   const raw={...r,text:String(text),t:+r.t||Date.now(),dir:r.dir||(String(r.from||'')===String(n.p.me||'') && n.p.me ? 'out' : 'in'),proto:r.proto||'chat'};
   const key=chHistKey(raw);                                                     // тот же ключ, что у записи истории: повторная выдача сервера и перезагрузка не плодят дубли
@@ -35,6 +44,24 @@ function chcAdd(n,r,quiet){
   n.msgs.push(m); if(n.msgs.length>CHC_KEEP) n.msgs.splice(0,n.msgs.length-CHC_KEEP);
   n.cvDirty=true;
   if(!quiet && chcStore(n)){ n.hist.queue.push(chToItem(raw)); chcSchedule(n); }
+}
+// реакция на сообщение m: поставить / снять эмодзи. Состояние обновляется сразу, в Messenger уходит строка выхода react
+const chcRef=m=>String(m.ref||m.id||'');
+function chcReactable(m){
+  if(!CH_REACT_PROTOS.includes(m.proto) || m.pending) return false;
+  const ref=chcRef(m); if(!ref) return false;
+  return m.proto!=='telegram' || /^-?\d+:\d+$/.test(ref);
+}
+function chcReact(n,m,emoji){
+  const ref=chcRef(m), mine=chReactMine(n.react,ref), on=!mine.has(emoji);
+  let next=new Set(mine);
+  if(m.proto==='telegram') next=on ? new Set([emoji]) : new Set();               // бот Telegram держит одну реакцию
+  else if(on) next.add(emoji); else next.delete(emoji);
+  chReactApply(n.react,{target:ref,author:CH_ME,emojis:[...next],op:'set'});
+  const room=m.kind_==='room', to=room ? '' : (m.mine ? chStr(m.raw.to) : chStr(m.raw.fromAddr||m.raw.from));
+  n.reactQ.push({target:ref,emoji,on,mine:[...next],room:room ? (m.raw.room||m.convTitle||'') : '',to:room ? (m.raw.room||m.convTitle||'') : to});
+  if(chcStore(n)){ n.hist.queue.push(chToItem({t:Date.now(),proto:m.proto,dir:'out',kind:'reaction',target:ref,author:'me',emojis:[...next],op:'set',room:room ? (m.raw.room||'') : '',to})); chcSchedule(n); }
+  n.cs.pick=''; n.cvDirty=true;
 }
 function chcSend(n,text){
   text=String(text).trim(); if(!text) return;
@@ -108,7 +135,19 @@ function chcMsgEl(n,m,run,showWho){
   if(m.subject && !run) bub.append(chcEl('div','cv-subj',m.subject));
   const body=chcEl('div','cv-text'); chcMd(m.text,body); bub.append(body);
   if(m.atts && m.atts.length) bub.append(chcEl('div','cv-atts','📎 '+m.atts.map(a=>a.name).join(', ')));
+  const ref=chcRef(m), sum=ref ? chReactSummary(n.react,ref) : [], can=chcReactable(m);
+  if(sum.length){                                                               // реакции под сообщением: чип = эмодзи + число; клик — поставить / снять свою
+    const rx=chcEl('div','cv-rx');
+    for(const x of sum){ const b=chcEl('button','cv-chip'+(x.mine ? ' mine' : ''),x.emoji+(x.count>1 ? ' '+x.count : '')); b.type='button'; b.title=x.who.join(', ')+(can ? '' : ' (reactions to this message cannot be sent from here)'); if(can) b.addEventListener('click',ev=>{ ev.stopPropagation(); chcReact(n,m,x.emoji); }); else b.disabled=true; rx.append(b); }
+    bub.append(rx);
+  }
+  if(can && n.cs.pick===ref){
+    const pk=chcEl('div','cv-pick');
+    for(const em of CH_EMOJI){ const b=chcEl('button',null,em); b.type='button'; b.addEventListener('click',ev=>{ ev.stopPropagation(); chcReact(n,m,em); }); pk.append(b); }
+    bub.append(pk);
+  }
   const foot=chcEl('div','cv-foot'); foot.append(chcEl('span','cv-time',chcTime(m.t)));
+  if(can){ const rb=chcEl('button','cv-re cv-rb','☺'); rb.type='button'; rb.title='react'; rb.addEventListener('click',ev=>{ ev.stopPropagation(); n.cs.pick=n.cs.pick===ref ? '' : ref; n.cvDirty=true; }); foot.append(rb); }
   if(mine){ const st=m.pending ? (Date.now()-m.sentAt>CHC_PENDING_MS ? '⚠' : '…') : '✓'; foot.append(chcEl('span','cv-st'+(m.pending ? ' wait' : ''),st)); foot.lastChild.title=m.pending ? (st==='⚠' ? 'no confirmation from the channel' : 'sending') : 'sent'; }
   const re=chcEl('button','cv-re','↩'); re.title='reply'; re.type='button';
   re.addEventListener('click',ev=>{ ev.stopPropagation(); n.cs.reply={id:m.id||('p'+(m.pid||'')),thread:m.thread||m.id||'',text:chPreview(m,50),author:m.author}; n.cvDirty=true; if(n.cvInp) n.cvInp.focus(); });
