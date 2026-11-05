@@ -639,6 +639,7 @@ const PRESET_CATS={
   'Reference: Decode BLE Advertisements (Company ID, Service UUID)':'Network & IoT',
   'Bridge: Serial Port ↔ BLE UART (USB Radio to a BLE Device)':'Network & IoT',
   'Bridge: Serial Port ↔ Network (TCP/WS Gateway)':'Network & IoT',
+  'Serial Port on a Router or Another PC (Node bridge, OpenWrt ser2net)':'Network & IoT',
   'Bridge: BLE UART ↔ Network (TCP/WS Gateway)':'Network & IoT',
   'Bridge: BLE GATT ↔ Network (Phone App)':'Network & IoT',
   'Phone App: BLE Auto-Discover Devices and Services (GATT)':'Network & IoT',
@@ -2197,6 +2198,20 @@ c.size.w=340; c.size.h=220; applySize(c);
 const ws=addNode('webserial',480,190,{baud:'115200'});
 ws.size.w=360; ws.size.h=300; applySize(ws);
 addEdge(c.id,'text',ws.id,'text');
+markWiresDirty();
+});
+preset('Serial Port on a Router or Another PC (Node bridge, OpenWrt ser2net)', function(){
+clearAll();
+const nt=addNode('note',40,30,{text:'A USB-serial device (ESP32, an Arduino, a GPS, a radio) plugged into a router or another computer, used from the page over the network. A browser cannot open TCP or a serial port of another machine, so the Node bridge does it on this computer: «node tools/node/bridge.mjs --serial esp=tcp://192.168.1.1:2000» (the router runs ser2net with a raw port: «2000:raw:0:/dev/ttyACM0:115200 8DATABITS NONE 1STOPBIT» in /etc/ser2net.conf; on OpenWrt 18.06: opkg install ser2net kmod-usb-acm — or kmod-usb-serial-ftdi / -ch341 / -cp210x for a USB-UART chip; the Xiao ESP32-C5 and other chips with a native USB are ACM). A port plugged into this very computer works too: «--serial esp=/dev/ttyACM0@115200» (Linux, macOS). Only the ports listed in --serial can be opened, the Origin is checked, add «--token secret» and «?token=secret» in the URL when the bridge listens on the network. Packet Link takes the bytes as they come (binary frames both ways) and cuts them into lines; the commands below go into the port as text. ws://127.0.0.1 is allowed from an https page, so no wss:// and no certificates are needed.'});
+nt.size.w=900; nt.size.h=210; applySize(nt);
+const pl=addNode('plink',40,280,{via:'websocket',url:'ws://127.0.0.1:8777/serial/esp',frame:'text lines',src:'esp',reconnect:true});
+pl.size.w=420; pl.size.h=380; applySize(pl);
+const c=addNode('cmds',560,280);
+c.size.w=340; c.size.h=220; applySize(c);
+const lg=addNode('recLog',560,540,{});
+lg.size.w=340; applySize(lg);
+addEdge(c.id,'text',pl.id,'sendText');
+addEdge(pl.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Bridge: BLE UART ↔ Network (TCP/WS Gateway)', function(){
