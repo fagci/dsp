@@ -1793,9 +1793,9 @@ markWiresDirty();
 preset('APRS-IS: Messages and Stations on the Map', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'APRS over the internet (APRS-IS): stations heard by iGates all over the world come out of the Messenger node as records with lat / lon — they go straight onto the Map — and messages addressed to you show up in the chat. The server filter in «channel» decides what you get: r/lat/lon/km (a circle, here around Berlin), m/km (around your last position), b/CALL* (stations by callsign), g/CALL (messages to a callsign; empty — to you).\n'+
-  'Put your callsign into «user». With no passcode it is receive-only; to send, enter the APRS-IS passcode of YOUR OWN callsign (the owner of a licence only) and type «@K1ABC text» in the chat — the message is acknowledged and retried like on air. A browser cannot open TCP, so either open this page in the DSP app for Android (the sockets and TLS of the phone are used automatically) or run the Node bridge: node tools/node/bridge.mjs (Node 22+).'});
+  'Your callsign and the APRS-IS passcode live in a credential: Settings → Credentials (＋ new…) — user = YOUR OWN callsign, password = its passcode, server aprs://rotate.aprs2.net:14580 — then pick it in «account». With no passcode the channel is receive-only; to send, type «@K1ABC text» in the chat — the message is acknowledged and retried like on air. A browser cannot open TCP, so either open this page in the DSP app for Android (the sockets and TLS of the phone are used automatically) or run the Node bridge: node tools/node/bridge.mjs (Node 22+).'});
 nt.size.w=900; nt.size.h=190; applySize(nt);
-const ap=addNode('messenger',40,260,{proto:'aprs',server:'',channel:'r/52.52/13.40/100',user:'N0CALL',nick:'N0CALL',bridge:'ws://127.0.0.1:8777'});
+const ap=addNode('messenger',40,260,{proto:'aprs',account:'',channel:'r/52.52/13.40/100',nick:'N0CALL',bridge:'ws://127.0.0.1:8777'});
 ap.size.w=420; ap.size.h=420; applySize(ap);
 const ch=addNode('chat',500,260,{echo:false,me:'N0CALL',time:true});
 ch.size.w=380; ch.size.h=420; applySize(ch);
@@ -1806,10 +1806,10 @@ markWiresDirty();
 });
 preset('Email: Mailbox as a Chat (IMAP / SMTP)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'Email as just another chat channel: new mail in the mailbox comes out of the Messenger node as «[subject] text» (From = the sender), and what you type in the chat goes out as a letter. Fill in the IMAP server (imaps://imap.example.org:993), the SMTP server (smtps://smtp.example.org:465, or smtp://…:587 with STARTTLS), the login and password — Gmail and the like need an app password, not the account one — and put your own address in the nick if the login is not an address.\n'+
+const nt=addNode('note',40,40,{text:'Email as just another chat channel: new mail in the mailbox comes out of the Messenger node as «[subject] text» (From = the sender), and what you type in the chat goes out as a letter. Make one credential (Settings → Credentials, ＋ new…): server = imaps://imap.example.org:993, SMTP = smtps://smtp.example.org:465 (or smtp://…:587 with STARTTLS), login, password — Gmail and the like need an app password, not the account one — and pick it in «account». Put your own address in the nick if the login is not an address.\n'+
   'Address a letter in the chat as «@friend@example.org Subject line» and, on the next lines, the text; a single line goes out with the subject «DSP message». A browser cannot open TCP, so either open this page in the DSP app for Android (the sockets and TLS of the phone are used automatically) or run the Node bridge: node tools/node/bridge.mjs (Node 22+). Old mail is not delivered (raise «also fetch… last, s» for that); mail is only read, never marked as seen or deleted; a password is never sent without TLS.'});
 nt.size.w=900; nt.size.h=190; applySize(nt);
-const em=addNode('messenger',40,260,{proto:'email',server:'imaps://imap.example.org:993',smtp:'smtps://smtp.example.org:465',channel:'INBOX',user:'me@example.org',nick:'me@example.org',bridge:'ws://127.0.0.1:8777'});
+const em=addNode('messenger',40,260,{proto:'email',account:'',channel:'INBOX',nick:'me@example.org',bridge:'ws://127.0.0.1:8777'});
 em.size.w=420; em.size.h=460; applySize(em);
 const ch=addNode('chat',500,260,{echo:false,me:'me@example.org',time:true});
 ch.size.w=420; ch.size.h=460; applySize(ch);
@@ -1821,7 +1821,7 @@ clearAll();
 const nt=addNode('note',40,40,{text:'Text messages as a chat channel: incoming SMS of the phone come out of the Messenger node as «from number: text», and what you type goes out as an SMS from the phone. Type «@+79001234567 text» in the chat (or wire a number into the node\'s «to» input). Works in the page of the DSP app for Android (tools/android): only that page holds the app key, so SMS (personal data and money) are closed to every other site. The first time, Android asks to allow SMS for the app — allow it and repeat the command; the app sends at most 5 SMS a minute.\n'+
   'Combine it with the other channels of the Messenger node: for example wire «rec» of an SMS node to a Chat shared with Nostr or IRC and you get a gateway — a text from a phone number appears on the mesh/internet side, and an answer from there goes out as a text. (An automatic gateway without a browser: node tools/node/msgr.mjs relay.)'});
 nt.size.w=900; nt.size.h=210; applySize(nt);
-const sm=addNode('messenger',40,280,{proto:'sms',server:'',nick:'me'});
+const sm=addNode('messenger',40,280,{proto:'sms',nick:'me'});
 sm.size.w=420; sm.size.h=400; applySize(sm);
 const ch=addNode('chat',500,280,{echo:false,me:'me',time:true});
 ch.size.w=420; ch.size.h=400; applySize(ch);

@@ -331,7 +331,7 @@ function mgOpenEmail(cfg,c){
   if(cfg.server && (!imap || !/^imap/i.test(cfg.server))){ c.down('Email: server must be imaps://host:993 (or imap://host:143)',true); return mgNone; }
   if(cfg.smtp && (!smtp || !/^smtp/i.test(cfg.smtp))){ c.down('Email: smtp must be smtps://host:465 (or smtp://host:587, STARTTLS)',true); return mgNone; }
   if(!imap && !smtp){ c.down('Email: enter the IMAP server (to receive) and/or the SMTP server (to send)',true); return mgNone; }
-  if(!cfg.user || !cfg.pass){ c.down('Email: enter the user and password (an app password for Gmail and the like)',true); return mgNone; }
+  if(!cfg.user || !cfg.pass){ c.down('Email: pick an «account» in the node — a credential with the IMAP and SMTP servers, the login and an app password (Gmail and the like need an app password, not the account one)',true); return mgNone; }
   if(!io.tcp){ c.down('Email needs the Node bridge (tools/node/bridge.mjs): set its address',true); return mgNone; }
   const me=/@/.test(cfg.nick||'') ? cfg.nick : /@/.test(cfg.user) ? cfg.user : '';
   let closed=false, raw=null, cl=null, timer=null;

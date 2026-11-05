@@ -27,21 +27,27 @@ function mgNodeStop(n){
 function mgNodeStart(n){
   mgNodeStop(n);
   const p=n.p, proto=p.proto;
-  const rawBridge=String(p.bridge||'').trim(), rawServer=String(p.server||'').trim();
-  if((rawBridge[0]==='@' && gwErr(rawBridge)) || (p.proto==='sms' && rawServer[0]==='@' && gwErr(rawServer))){ n.status=gwErr(rawBridge[0]==='@' ? rawBridge : rawServer); return; }
+  const rawBridge=String(p.bridge||'').trim();
+  if(rawBridge[0]==='@' && gwErr(rawBridge)){ n.status=gwErr(rawBridge); return; }
   const bridge=gwUrl(rawBridge) + (p.bridgeToken && /^wss?:/i.test(rawBridge) ? '?token='+encodeURIComponent(p.bridgeToken) : '');      // bridgeToken — из старых патчей; новый путь — токен в Settings → Devices
-  const cfg={server:(p.proto==='sms' ? gwUrl(rawServer) : rawServer) || MG_DEF_SERVER[proto] || '',channel:String(p.channel||'').trim(),user:String(p.user||'').trim(),pass:String(p.pass||''),
-    nick:String(p.nick||'dsp').trim() || 'dsp',appKey:(()=>{ try{ return (window.DspApp && DspApp.appKey && DspApp.appKey()) || ''; }catch(e){ return ''; } })(),history:+p.history||0,retry:!!p.reconnect,via:p.via,proxyUrl:p.proxy && typeof Net!=='undefined' ? u=>Net.url(u) : null,smtp:String(p.smtp||'').trim(),pollMs:(+p.poll||30)*1000,bridge,insecure:!!p.plain,cache:n.mxCache};
+  const cfg={server:'',channel:String(p.channel||'').trim(),user:'',pass:'',
+    nick:String(p.nick||'dsp').trim() || 'dsp',appKey:(()=>{ try{ return (window.DspApp && DspApp.appKey && DspApp.appKey()) || ''; }catch(e){ return ''; } })(),history:+p.history||0,retry:!!p.reconnect,via:p.via,proxyUrl:p.proxy && typeof Net!=='undefined' ? u=>Net.url(u) : null,smtp:'',pollMs:(+p.poll||30)*1000,bridge,insecure:!!p.plain,cache:n.mxCache};
   const acct=String(p.account||'').trim();
-  if(acct){                                                          // учётка из Settings → Credentials: сервер + логин + пароль
+  if(acct){                                                          // учётка — единственный источник сервера, логина и пароля
     const cr=(typeof Cred!=='undefined' && Cred.get(acct))||null;
-    if(!cr){ n.status='credential «'+acct+'» not found — add it in Settings → Credentials'; return; }
+    if(!cr){ n.status='credential «'+acct+'» not found — add it in Settings → Credentials or with «＋ new…» here'; return; }
     if(cr.server) cfg.server=cr.server;
     if(cr.user) cfg.user=cr.user;
     if(cr.pass) cfg.pass=cr.pass;
     if(cr.smtp) cfg.smtp=cr.smtp;
   }
-  if(proto==='reticulum' && !cfg.pass.trim()){ try{ cfg.pass=mgHex(mgRandom(64)); p.pass=cfg.pass; n.status='new Reticulum identity made — it is kept in the «password» field'; }catch(e){ n.status='no secure random generator'; return; } }
+  if(!cfg.server) cfg.server=MG_DEF_SERVER[proto]||'';
+  if(proto==='reticulum' && !cfg.pass.trim()){
+    try{ cfg.pass=mgHex(mgRandom(64));
+      if(acct && typeof Cred!=='undefined'){ Cred.upsert({name:acct,pass:cfg.pass}); n.status='new Reticulum identity made — kept in the «'+acct+'» credential'; }
+      else n.status='new Reticulum identity for this session only — keep it: make a credential and pick it in «account»';
+    }catch(e){ n.status='no secure random generator'; return; }
+  }
   if(proto==='reticulum') cfg.key=cfg.pass;
   if(proto==='nostr'){ cfg.key=cfg.pass; if(!cfg.key){ try{ if(!n.eph) n.eph=mgHex(mgNostrGenKey()); cfg.key=n.eph; }catch(e){ n.status='no secure random generator'; return; } } }
   const inApp=(()=>{ try{ return !!(window.DspApp && DspApp.appKey); }catch(e){ return false; } })();
@@ -108,12 +114,8 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
   readout:true, tall:true,
   params:[
     {n:'proto',t:'select',opts:['nostr','ntfy','matrix','telegram','irc','xmpp','aprs','email','sms','reticulum','mastodon','bluesky','rss'],d:'nostr',label:'channel of communication'},
-    {n:'server',t:'text',d:'',label:'server — nostr: relays wss://… (several, space-separated; empty: public ones) · ntfy: https://… (empty: ntfy.sh) · matrix: https://homeserver · irc: wss://host/path, or ircs://host:6697 / irc://… via the bridge · xmpp: xmpp://host:5222, empty — by the domain of the account (bridge) · aprs: aprs://host:14580 (empty — rotate.aprs2.net, bridge) · email: IMAP imaps://host:993 or imap://host:143 (to receive; bridge) · sms: the phone app, empty — ws://127.0.0.1:8765 · reticulum: rns://host:port — the TCP server interface of a Reticulum node (needs TCP) · mastodon: instance https://… (empty — mastodon.social) · bluesky: empty — public.api.bsky.app (bsky.social after a login) · rss: feed addresses https://… (RSS, Atom, JSON Feed — several, separated by a space)'},
+    {n:'account',t:'text',d:'',cred:true,label:'account — a credential (Settings → Credentials) or «＋ new…» right here: it IS the server, the login and the password of the channel. Empty — no auth (Nostr anonymous, ntfy, public feeds; defaults: public relays, ntfy.sh, …)'},
     {n:'channel',t:'text',d:'dsp',label:'channel — nostr: hashtag · ntfy: topic · matrix: room (!id:server or #alias:server) · telegram: only to receive from ONE chat — its id or @name; leave empty for all chats (replies go to the last one) · irc: #channels · xmpp: room@conference.server (empty — direct messages only) · aprs: server filter (g/CALL, m/50, r/lat/lon/km, b/CALL*; empty — messages to you) · email: mailbox (empty — INBOX) · reticulum: the default recipient (32-digit address or a name heard in announces) · mastodon / bluesky: WHAT TO READ — #tags (several: any of them), -#tag drops posts with it, mastodon: «local» / «home» (token), empty — the public timeline; bluesky: @account, a feed link (bsky.app/profile/…/feed/…) or an at:// feed · rss: WORDS — any of them in the title / text / categories, -word drops an item; empty — everything'},
-    {n:'user',t:'text',d:'',label:'user — bluesky: your handle (needed only for the search by #tag) · matrix: login · xmpp: account user@domain · aprs: your callsign (N0CALL-7) · email: login, usually the address · irc / ntfy: optional. Filled by «account» when set'},
-    {n:'pass',t:'text',d:'',label:'password / token (saved with the patch!) — nostr: nsec or hex key (empty — a new anonymous key each session) · matrix: password or access token · telegram: bot token from @BotFather · ntfy: token'},
-    {n:'account',t:'select',d:'',opts:()=>(typeof Cred!=='undefined' ? [''].concat(Cred.list().map(c=>c.name)) : ['']),label:'account — a credential from Settings → Credentials (server, user, password); empty — the params below'},
-    {n:'smtp',t:'text',d:'',label:'email: SMTP smtps://host:465 or smtp://host:587 (STARTTLS) — to send; a message is «@name@host subject line⏎text» or the «to» input'},
     {n:'attach',t:'text',d:'',label:'email: a file from Files (name or id) attached to what is sent'},
     {n:'contacts',t:'text',d:'',label:'contacts — extra aliases «Name=address» (comma-separated); wire a Table with name/addr columns into «rows» for a full address book'},
     {n:'poll',t:'range',min:5,max:600,step:5,d:30,label:'email / mastodon / bluesky / rss: check every, s (mastodon, bluesky: at least 5; rss: at least 60)'},

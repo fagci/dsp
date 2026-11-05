@@ -31,11 +31,13 @@ eq('backup: the token key is kept out of the export and the import', [/k!=='dsp\
 
 // учётки (Settings → Credentials)
 vm.runInContext(fs.readFileSync(path.join(root, 'modules/creds-kernels.js'), 'utf8'), ctx);
-const C = vm.runInContext('({crClean,crFind})', ctx);
+const C = vm.runInContext('({crClean,crFind,crGuess})', ctx);
 eq('creds: bad names, duplicates (any case) and junk are dropped', C.crClean([{name: 'mail', user: 'a', pass: 'x'}, {name: 'MAIL', user: 'b'}, {name: 'bad name'}, {name: ''}, null, {name: 'xmpp', server: 'xmpp://xmpp.org:5222', user: 'u@d', pass: 'p'}]),
-  [{name: 'mail', server: '', user: 'a', pass: 'x', smtp: ''}, {name: 'xmpp', server: 'xmpp://xmpp.org:5222', user: 'u@d', pass: 'p', smtp: ''}]);
+  [{name: 'mail', type: 'custom', server: '', user: 'a', pass: 'x', smtp: ''}, {name: 'xmpp', type: 'xmpp', server: 'xmpp://xmpp.org:5222', user: 'u@d', pass: 'p', smtp: ''}]);
 eq('creds: find is case-insensitive', [C.crFind(C.crClean([{name: 'Mail', server: 'imaps://imap.ex.org:993', smtp: 'smtps://smtp.ex.org:465', user: 'a', pass: 'x'}]), 'mail'), C.crFind([{name: 'mail'}], 'unknown')],
-  [{name: 'Mail', server: 'imaps://imap.ex.org:993', user: 'a', pass: 'x', smtp: 'smtps://smtp.ex.org:465'}, null]);
+  [{name: 'Mail', type: 'email', server: 'imaps://imap.ex.org:993', user: 'a', pass: 'x', smtp: 'smtps://smtp.ex.org:465'}, null]);
+eq('creds: type is guessed from the server scheme', [C.crGuess('imaps://imap.ex.org:993'), C.crGuess('ircs://irc.libera.chat:6697'), C.crGuess('wss://relay.damus.io'), C.crGuess(''), C.crGuess('whatever')],
+  ['email', 'irc', 'nostr', 'custom', 'custom']);
 eq('creds: not a list', C.crClean('x'), []);
 eq('backup: the credential key is kept out of the export and the import', [/k!=='dsp-creds'/.test(bk), /k==='dsp-creds'/.test(bk)], [true, true]);
 console.log(bad ? 'FAILED ' + bad : 'all ok'); process.exit(bad ? 1 : 0);
