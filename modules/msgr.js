@@ -96,14 +96,20 @@ function mgNodeSaveAtts(n,m){
   if(!m.atts || !m.atts.length || typeof FileStore==='undefined') return;
   (async()=>{
     try{
-      let dir=(await FileStore.listFolders('files',null).catch(()=>[])).find(f=>f.name==='mail');
-      if(!dir) dir=await FileStore.addFolder('files','mail',null).catch(()=>null);
+      const path=mgAttPath(n.p.attPath,m,n.p.proto);                 // по шаблону «mail/{from}»: вложенные папки создаются по пути
+      let dir=null;
+      for(const name of path){
+        let f=(await FileStore.listFolders('files',dir?dir.id:null).catch(()=>[])).find(x=>x.name===name);
+        if(!f) f=await FileStore.addFolder('files',name,dir?dir.id:null).catch(()=>null);
+        if(!f){ dir=null; break; }
+        dir=f;
+      }
       for(const a of m.atts){
         const blob=new Blob([a.bytes],{type:a.mime});
         await FileStore.put({space:'files',folderId:dir?dir.id:null,name:a.name,mime:a.mime,blob,
           meta:{from:m.fromAddr||m.from||'',subject:m.subject||'',t:m.t||Date.now()}});
       }
-      n.status='saved '+m.atts.length+' attachment(s) → Files/mail';
+      n.status='saved '+m.atts.length+' attachment(s) → Files/'+path.join('/');
     }catch(e){ n.status='attachment save failed: '+e.message; }
   })();
 }
@@ -117,6 +123,7 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
     {n:'account',t:'text',d:'',cred:true,label:'account — a credential (Settings → Credentials) or «＋ new…» right here: it IS the server, the login and the password of the channel. Empty — no auth (Nostr anonymous, ntfy, public feeds; defaults: public relays, ntfy.sh, …)'},
     {n:'channel',t:'text',d:'dsp',label:'channel — nostr: hashtag · ntfy: topic · matrix: room (!id:server or #alias:server) · telegram: only to receive from ONE chat — its id or @name; leave empty for all chats (replies go to the last one) · irc: #channels · xmpp: room@conference.server (empty — direct messages only) · aprs: server filter (g/CALL, m/50, r/lat/lon/km, b/CALL*; empty — messages to you) · email: mailbox (empty — INBOX) · reticulum: the default recipient (32-digit address or a name heard in announces) · mastodon / bluesky: WHAT TO READ — #tags (several: any of them), -#tag drops posts with it, mastodon: «local» / «home» (token), empty — the public timeline; bluesky: @account, a feed link (bsky.app/profile/…/feed/…) or an at:// feed · rss: WORDS — any of them in the title / text / categories, -word drops an item; empty — everything'},
     {n:'attach',t:'text',d:'',label:'email: a file from Files (name or id) attached to what is sent'},
+    {n:'attPath',t:'text',d:'mail/{from}',label:'email: folder in Files for incoming attachments — «/» makes subfolders; {from} address, {name}, {subject}, {date}, {year}, {month}, {thread}, {proto}',adv:true},
     {n:'contacts',t:'text',d:'',label:'contacts — extra aliases «Name=address» (comma-separated); wire a Table with name/addr columns into «rows» for a full address book'},
     {n:'poll',t:'range',min:5,max:600,step:5,d:30,label:'email / mastodon / bluesky / rss: check every, s (mastodon, bluesky: at least 5; rss: at least 60)'},
     {n:'nick',t:'text',d:'dsp',label:'nick (shown to others; in Chat set «my name» the same)'},

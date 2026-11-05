@@ -9,7 +9,7 @@
 
 const TC_TYPES=[['text','text'],['long','long text'],['num','number'],['bool','checkbox'],['progress','progress bar'],['date','date'],['choice','choice'],
   ['photo','photo'],['image','avatar / image (URL or photo)'],['online','online status'],['typing','typing'],['audio','audio'],['file','file (from Files)'],['link','link to a list'],['checklist','checklist (items from another list)'],['auto','auto number'],['calc','calculated']];
-const TC_VIEWS=[['cards','🃏','cards'],['grid','☰','full list (columns)'],['compact','≡','brief list (name · values)'],['icons','👤','list with icons (avatar, online, typing)']];
+const TC_VIEWS=[['cards','🃏','cards','cards'],['grid','☰','full list (columns)','table'],['compact','≡','brief list (name · values)','brief'],['icons','👤','list with icons (avatar, online, typing)','avatars']];
 const TC_SEP=' | ';
 
 const tcView=n=>n.p.vmode==='cards' ? 'cards' : n.p.vmode==='compact' ? 'compact' : n.p.vmode==='icons' ? 'icons' : 'grid';
@@ -509,7 +509,7 @@ function tcCards(n){
 function tcViewBtn(n){
   const b=n.ui.vmBtn; if(!b) return;
   const v=TC_VIEWS.find(x=>x[0]===tcView(n));
-  b.textContent=v[1]; b.title='View: '+v[2]+' — click to switch';
+  b.textContent=v[1]+' '+v[3]; b.title='View: '+v[2]+' — click to switch (the ⋯ button next to the list name is for actions)';   // со словом: иначе ☰ путают с ⋯
 }
 function tcViewNext(n){
   const i=TC_VIEWS.findIndex(x=>x[0]===tcView(n));
