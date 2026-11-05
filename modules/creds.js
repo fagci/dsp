@@ -1,6 +1,6 @@
 "use strict";
 /* ============================ Учётки (Credentials): хранилище и окно в Settings ============================
-   Cred.get('почта') → {name,user,pass}. Список — LS 'dsp-creds' (как токены устройств 'dsp.gwtok': не входит в бэкап
+   Cred.get('почта') → {name,type,server,user,pass,smtp}. Список — LS 'dsp-creds' (как токены устройств 'dsp.gwtok': не входит в бэкап
    и не светится в патчах — пароли живут только в этом браузере). Логика — creds-kernels.js. */
 
 const CR_KEY='dsp-creds';
@@ -9,7 +9,7 @@ const crLs={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null
 const Cred={
   list(){ try{ return crClean(JSON.parse(crLs.get(CR_KEY)||'[]')); }catch(e){ return []; } },
   save(list){ crLs.set(CR_KEY,JSON.stringify(crClean(list))); Cred.names(); },
-  get(name){ const c=crFind(this.list(),name); return c ? {name:c.name,user:c.user,pass:c.pass} : null; },
+  get(name){ return crFind(this.list(),name); },
   upsert(rec){                                                     // добавить или обновить поля учётки с таким именем
     const list=this.list(), i=list.findIndex(c=>c.name.toLowerCase()===String(rec.name||'').trim().toLowerCase());
     if(i>=0) list[i]={...list[i],...rec}; else list.push(rec);
