@@ -24,8 +24,17 @@ function bchFetch(u,o){
   const pu=typeof Net!=='undefined' ? Net.url(u) : u;
   return fetch(pu,o).then(r=>pu===u ? r : new Proxy(r,{get:(t,k)=>k==='url' ? u : typeof t[k]==='function' ? t[k].bind(t) : t[k]}));
 }
+// провод rows доставляет движок; пока он остановлен, process() не вызывается — тогда читаем строки прямо у узла-источника
+function bchWired(n){
+  const e=Graph.edges.find(x=>x.to===n.id && x.tp==='rows'); if(!e) return null;
+  const src=Graph.map[e.from]; if(!src) return null;
+  const rows=e.fp==='all' ? src.all : (src.rowsOut || src.rows);
+  return Array.isArray(rows) && rows.length ? rows : null;
+}
+const bchEngineOn=()=>typeof Eng!=='undefined' && !!Eng.running;
 async function bchLoad(n){                                   // строки: провод rows, иначе список из хранилища
   if(Array.isArray(n.rowsIn) && n.rowsIn.length) return n.rowsIn.map(r=>({...r}));
+  const w=bchWired(n); if(w) return w.map(r=>({...r}));
   const name=tblCanon(String(n.listIn||n.p.list||'').trim());
   if(!name) return [];
   if(tblKind(name)==='patch') throw new Error('a list inside a patch is not in storage: wire its rows');
@@ -40,7 +49,11 @@ async function bchRun(n){
   n.bcBusy=true; n.bcStop=false; n.bcStopP=new Promise(r=>{ n.bcStopRes=r; }); n.bcOk=0; n.bcBad=0; n.bcDone=0; n.status='reading the list…';
   try{
     const rows=await bchLoad(n);
-    if(!rows.length){ n.status='no rows: wire «rows» from a Table or set «list»'; return; }
+    if(!rows.length){
+      const wired=Graph.edges.some(x=>x.to===n.id && x.tp==='rows');
+      n.status=wired ? 'no rows yet: the wired list is empty'+(bchEngineOn() ? '' : ' (or start the engine ▶ so the wire delivers them)') : 'no rows: wire «rows» from a Table or set «list»';
+      return;
+    }
     n.bcTotal=rows.length; n.bcRows=rows; n.bcOutRows=rows.slice(); n.bcLast=[];
     n.status='checking 0/'+rows.length+'…';
     const p=n.p, o={kind:p.kind,keyCol:p.key||'id',targetCol:p.target,conc:p.conc,timeout:p.timeout,via:p.via,port:p.port,count:p.count,expect:p.expect,
@@ -55,7 +68,8 @@ async function bchRun(n){
         n.bcLast.push(rec); if(n.bcLast.length>12) n.bcLast.shift();
       },
       onProgress:(d,t)=>{ n.bcDone=d; n.status=(n.bcStop ? 'stopping… ' : 'checking ')+d+'/'+t+' · ok '+n.bcOk+' · bad '+n.bcBad; }});
-    n.status=(n.bcStop ? 'stopped ' : 'done ')+n.bcDone+'/'+rows.length+' · ok '+n.bcOk+' · bad '+n.bcBad;
+    n.status=(n.bcStop ? 'stopped ' : 'done ')+n.bcDone+'/'+rows.length+' · ok '+n.bcOk+' · bad '+n.bcBad+
+      (bchEngineOn() ? '' : ' · engine is stopped: start it (▶) and the results reach the Table');
     n.pulse=2;
   }catch(e){ n.status='error: '+(e.message||e); }
   n.bcBusy=false; n.bcAt=Date.now();
