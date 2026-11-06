@@ -9,8 +9,14 @@
 function bchSelEnv(html,css){
   try{ return !!new DOMParser().parseFromString(html,'text/html').querySelector(css); }catch(e){ return null; }
 }
+// подключение к приложению с таймаутом: недостижимый адрес не должен вешать все проверки на одном «вечном» соединении
+function bchLink(n){
+  const ms=Math.max(3000,Math.min(10000,+n.p.timeout||8000));
+  let t; const guard=new Promise((_,rej)=>{ t=setTimeout(()=>{ if(!n.ns) nsvDrop(n); rej(new Error('no connection to the app at '+n.p.url+' in '+ms/1000+' s — check the phone address (not 127.0.0.1 on a laptop) and that the phone is reachable')); },ms); });
+  return Promise.race([nsvLink(n),guard]).finally(()=>clearTimeout(t));
+}
 function bchEnv(n){
-  return {ns:()=>nsvLink(n),now:()=>Date.now(),sleep:ms=>new Promise(r=>setTimeout(r,ms)),sel:bchSelEnv,
+  return {ns:()=>bchLink(n),now:()=>Date.now(),sleep:ms=>new Promise(r=>setTimeout(r,ms)),sel:bchSelEnv,
     fetch:typeof fetch==='function' ? (u,o)=>fetch(u,o) : null};
 }
 async function bchLoad(n){                                   // строки: провод rows, иначе список из хранилища
@@ -20,10 +26,13 @@ async function bchLoad(n){                                   // строки: п
   if(tblKind(name)==='patch') throw new Error('a list inside a patch is not in storage: wire its rows');
   return (await tblReadList(n,name)).rows.map(r=>({...r}));
 }
-function bchStop(n){ n.bcStop=true; if(n.bcBusy) n.status='stopping…'; }
+function bchStop(n){                                 // сразу: запущенные проверки бросаем, подключение закрываем
+  n.bcStop=true;
+  if(n.bcBusy){ n.status='stopping…'; if(n.bcStopRes) n.bcStopRes(null); nsvDrop(n); }
+}
 async function bchRun(n){
   if(n.bcBusy){ n.status='busy — wait for the previous run or press Stop'; return; }
-  n.bcBusy=true; n.bcStop=false; n.bcOk=0; n.bcBad=0; n.bcDone=0; n.status='reading the list…';
+  n.bcBusy=true; n.bcStop=false; n.bcStopP=new Promise(r=>{ n.bcStopRes=r; }); n.bcOk=0; n.bcBad=0; n.bcDone=0; n.status='reading the list…';
   try{
     const rows=await bchLoad(n);
     if(!rows.length){ n.status='no rows: wire «rows» from a Table or set «list»'; return; }
@@ -33,7 +42,7 @@ async function bchRun(n){
       contains:p.contains,selector:p.selector,minBytes:p.minBytes,warnDays:p.warnDays,text:p.text,deliveryWait:p.deliveryWait,code:p.code,sim:p.sim,
       ussdWait:p.ussdWait,balanceRe:p.balanceRe};
     await bchRunAll(bchEnv(n),rows,o,{
-      stop:()=>n.bcStop || n.disposed,
+      stop:()=>n.bcStop || n.disposed, stopP:n.bcStopP,
       onRec:(rec,row,i)=>{
         nsvPush(n,rec);
         n.bcOutRows[i]={...row,...rec}; n.bcOutRows=n.bcOutRows.slice();
@@ -79,7 +88,7 @@ def({ id:'batch', title:'Batch Check (list → results in the same table)', cat:
     {n:'run',t:'button',label:'Run',fn:n=>bchRun(n)},
     {n:'stop',t:'button',label:'Stop',fn:n=>bchStop(n)}],
   init:n=>{ n.nsP=null; n.ns=null; n.ws=null; n.recQ=[]; n.warn=''; n.status='idle'; n.pulse=0; n.prevGo=0; n.rowsIn=null; n.listIn='';
-    n.bcBusy=false; n.bcStop=false; n.bcOk=0; n.bcBad=0; n.bcDone=0; n.bcTotal=0; n.bcRows=[]; n.bcOutRows=null; n.bcLast=[]; n.bcAt=0; n.bcStarted=false; },
+    n.bcBusy=false; n.bcStop=false; n.bcOk=0; n.bcBad=0; n.bcDone=0; n.bcTotal=0; n.bcStopP=null; n.bcStopRes=null; n.bcRows=[]; n.bcOutRows=null; n.bcLast=[]; n.bcAt=0; n.bcStarted=false; },
   dispose:n=>{ n.disposed=true; nsvDrop(n); },
   process(n,I){
     n.rowsIn=Array.isArray(I.rows) ? I.rows : null; n.listIn=typeof I.list==='string' ? I.list : '';

@@ -201,5 +201,16 @@ let stopAt=0;
 const part=await K.bchRunAll(env,rows,{...O,conc:1},{onRec:()=>{ stopAt++; },stop:()=>stopAt>=2});
 eq(part.filter(Boolean).length,2,'очередь: stop() останавливает на середине');
 
+// Stop обрывает зависшие проверки сразу, а не ждёт их таймаутов
+ns.reply.ping=()=>new Promise(()=>{});                               // мост молчит
+let stopRes; const stopP=new Promise(r=>{ stopRes=r; });
+const t0=Date.now(); setTimeout(()=>stopRes(null),30);
+const hung=await K.bchRunAll(env,[{id:'x',host:'a'},{id:'y',host:'b'},{id:'z',host:'c'}],{...O,conc:2},{stopP,stop:()=>false});
+ok(Date.now()-t0<2000 && hung.filter(Boolean).length===0,'Stop: зависшие проверки брошены сразу');
+// приложение отказывает недоверенной странице — понятный текст
+ns.reply.ping=()=>Object.assign(new Error('only the page of the DSP app may use it'),{code:'forbidden'});
+r=await K.bchCheck(env,{id:'f',host:'1.1.1.1'},O);
+ok(r.status==='error' && /Let any page use actions/.test(r.detail),'forbidden: подсказка про настройку приложения');
+
 if(bad){ console.error(bad+' ошибок'); process.exit(1); }
 console.log('ok: batch');
