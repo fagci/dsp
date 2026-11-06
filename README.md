@@ -4,7 +4,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 
 **[▶ Live demo](https://fagci.github.io/dsp/)** · **[📦 Releases](https://github.com/fagci/dsp/releases)** (signed Android app) · **[💛 Boosty — support the project](https://boosty.to/fagci)**
 
-[![Typing osc>fft>sa builds a chain; run it and drag the frequency — the spectrum and waterfall follow](docs/demo.gif)](https://fagci.github.io/dsp/)
+[![Typing osc>fft>sa builds a chain, then a synthetic ADS-B signal from the IQ Generator is demodulated, decoded and drawn on the map — no radio needed](docs/demo.gif)](https://fagci.github.io/dsp/)
 
 [More screenshots ↓](#screenshots)
 
