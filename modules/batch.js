@@ -17,7 +17,12 @@ function bchLink(n){
 }
 function bchEnv(n){
   return {ns:()=>bchLink(n),now:()=>Date.now(),sleep:ms=>new Promise(r=>setTimeout(r,ms)),sel:bchSelEnv,
-    fetch:typeof fetch==='function' ? (u,o)=>fetch(u,o) : null};
+    fetch:typeof fetch==='function' ? bchFetch : null};
+}
+// браузерный fetch через CORS-прокси из Settings (Node-мост ноутбука: /proxy), если он задан; адрес ответа — запрошенный (иначе HLS не разберёт относительные пути)
+function bchFetch(u,o){
+  const pu=typeof Net!=='undefined' ? Net.url(u) : u;
+  return fetch(pu,o).then(r=>pu===u ? r : new Proxy(r,{get:(t,k)=>k==='url' ? u : typeof t[k]==='function' ? t[k].bind(t) : t[k]}));
 }
 async function bchLoad(n){                                   // строки: провод rows, иначе список из хранилища
   if(Array.isArray(n.rowsIn) && n.rowsIn.length) return n.rowsIn.map(r=>({...r}));
@@ -62,12 +67,12 @@ def({ id:'batch', title:'Batch Check (list → results in the same table)', cat:
   readout:true, tall:true, w:280,
   groups:[{n:'Source'},{n:'Check'},{n:'Ping / TCP',open:false},{n:'HTTP page',open:false},{n:'IPTV',open:false},{n:'Domain',open:false},{n:'SMS',open:false},{n:'USSD / balance',open:false}],
   params:[
-    {n:'url',t:'text',d:NSV_URL,dev:true,label:'bridge of the DSP app — an address, or @name from Settings → Devices'},
+    {n:'url',t:'text',d:NSV_URL,dev:true,label:'bridge: the phone app (ws://phone:8765) or the Node bridge on a computer (ws://127.0.0.1:8777: ping, tcp, http(s), whois; SMS / USSD only on the phone) — an address, or @name from Settings → Devices'},
     {n:'list',t:'text',d:'',label:'list (storage) — the rows to check (the «rows» wire or the «list» input overrides)',g:'Source'},
     {n:'key',t:'text',d:'id',label:'key column — put the same one in the Table (upsert) so a result lands in its row',g:'Source'},
     {n:'target',t:'text',d:'',label:'column with the address (empty — the first of target, host, ip, url, stream, domain, to, number, phone)',g:'Source'},
     {n:'kind',t:'select',opts:BCH_KINDS,d:'ping',label:'what to check (a «kind» column in a row overrides it)',g:'Check'},
-    {n:'via',t:'select',opts:['auto','bridge','browser'],d:'auto',label:'http / iptv / domain: through the app (any site, https), or the browser fetch (CORS), auto — the app if it is running',g:'Check'},
+    {n:'via',t:'select',opts:['auto','bridge','browser'],d:'auto',label:'http / iptv / domain: through the bridge (any site, https), or the browser fetch (CORS; the CORS proxy from Settings is used if set), auto — the bridge if it is reachable',g:'Check'},
     {n:'conc',t:'range',min:1,max:32,step:1,d:4,label:'at the same time (SMS and USSD always go one by one)',g:'Check'},
     {n:'timeout',t:'range',min:1000,max:60000,step:500,d:8000,label:'wait for one check, ms',g:'Check'},
     {n:'every',t:'range',min:0,max:86400,step:10,d:0,label:'repeat every N s after the run ends (0 — only on Run / go)',g:'Check'},
