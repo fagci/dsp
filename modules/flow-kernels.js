@@ -106,3 +106,44 @@ function cmdFmtVal(v){ if(typeof v==='number'){ if(!isFinite(v)) return ''; retu
 // подстановка: нет значения — placeholder остаётся как есть (видно в выводе, что не хватает входа)
 function cmdFill(tpl,vals){ return String(tpl).replace(/\{([^}]+)\}/g,(m,f)=>{ const k=f.trim(); return Object.prototype.hasOwnProperty.call(vals,k)?cmdFmtVal(vals[k]):m; }); }
 if(typeof module!=='undefined') Object.assign(module.exports,{cmdTpls,cmdFields,cmdNames,cmdFmtVal,cmdFill});
+
+/* ============================ Wait Until / Measure Window ============================
+   Шаги обработчика задачи (Batch Check, kind node): дождаться, пока прибор «успокоится», и усреднить замер за окно.
+   Чистые функции: состояние st, события e, время t (мс), настройки o; результат — импульсы на один шаг. Проверка: node tools/test-flow.mjs */
+function wuNew(){ return {on:false,t0:0,since:null,ok:0,held:0}; }
+// условие над числом v: < <= > >= == != и «в диапазоне a…b»
+function wuTest(v,op,a,b){
+  if(typeof v!=='number' || !isFinite(v)) return false;
+  switch(op){
+    case '<': return v<a; case '<=': return v<=a; case '>': return v>a; case '>=': return v>=a;
+    case '==': return Math.abs(v-a)<1e-9; case '!=': return Math.abs(v-a)>=1e-9;
+    case 'in a…b': return v>=Math.min(a,b) && v<=Math.max(a,b);
+    default: return false;
+  }
+}
+// arm — начать ждать; условие должно держаться stable с подряд; не дождались за timeout с (0 — вечно) — timeout
+function wuStep(st,e,t,o){
+  if(e.arm){ st.on=true; st.t0=t; st.since=null; st.ok=0; st.held=0; }
+  const r={done:false,timeout:false};
+  if(!st.on) return r;
+  if(wuTest(e.v,o.op,+o.a,+o.b)){ if(st.since==null) st.since=t; } else st.since=null;
+  st.held=st.since==null ? 0 : (t-st.since)/1000;
+  if(st.since!=null && t-st.since>=(+o.stable||0)*1000){ st.on=false; st.ok=1; r.done=true; return r; }
+  if(+o.timeout>0 && t-st.t0>=o.timeout*1000){ st.on=false; st.ok=0; r.timeout=true; }
+  return r;
+}
+function winNew(){ return {on:false,t0:0,n:0,sum:0,min:Infinity,max:-Infinity,avg:null,ok:0}; }
+// arm — начать собирать v; окно window с (или samples отсчётов, если mode 'samples'); по окончании done и avg / min / max / n
+function winStep(st,e,t,o){
+  if(e.arm){ st.on=true; st.t0=t; st.n=0; st.sum=0; st.min=Infinity; st.max=-Infinity; st.avg=null; st.ok=0; }
+  const r={done:false};
+  if(!st.on) return r;
+  if(typeof e.v==='number' && isFinite(e.v)){ st.n++; st.sum+=e.v; if(e.v<st.min) st.min=e.v; if(e.v>st.max) st.max=e.v; }
+  const over=o.mode==='samples' ? st.n>=Math.max(1,+o.samples||1) : t-st.t0>=(+o.window||0)*1000;
+  if(over){
+    st.on=false; st.ok=st.n>0 ? 1 : 0; st.avg=st.n>0 ? st.sum/st.n : null; r.done=true;
+    if(!st.n){ st.min=null; st.max=null; }
+  }
+  return r;
+}
+if(typeof module!=='undefined') Object.assign(module.exports,{wuNew,wuTest,wuStep,winNew,winStep});

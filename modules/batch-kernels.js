@@ -3,10 +3,10 @@
    Пакетные проверки по строкам таблицы: у каждой строки своё «что проверить» (kind) и «кого» (host / url / номер), результат ложится
    в поля той же строки (ok, status, ms, detail + поля вида). Без DOM — проверяется в tools/test-batch.mjs.
    Виды: ping, tcp, http (код + текст + css-селектор), iptv (HLS-плейлист / сегмент / сырой поток), domain (срок регистрации: RDAP, затем whois),
-         sms (отправка + отчёт о доставке), ussd (баланс SIM).
-   env: {ns():Promise<NetSock> (мост приложения; бросает, если нет), fetch (браузерный), now(), sel(html,css)→bool|null (DOM), sleep(ms)} */
+         sms (отправка + отчёт о доставке), ussd (баланс SIM), node (обработчик — ваш граф: запись-задача на выход task, ответ-запись на вход result).
+   env: {task(row,attempt,ms)→Promise<rec|null> (вид node), cond(r,t)→bool (условие успеха), ns():Promise<NetSock> (мост приложения; бросает, если нет), fetch (браузерный), now(), sel(html,css)→bool|null (DOM), sleep(ms)} */
 
-const BCH_KINDS=['ping','tcp','http','iptv','domain','sms','ussd'];
+const BCH_KINDS=['ping','tcp','http','iptv','domain','sms','ussd','node'];
 const BCH_TARGET=['target','host','ip','url','stream','domain','to','number','phone','tel','addr'];
 const bchSleep=ms=>new Promise(r=>setTimeout(r,ms));
 const bchStr=v=>v==null ? '' : String(v).trim();
@@ -278,35 +278,68 @@ function bchUssd(env,row,o){
   const p=bchUssdBusy.then(run,run); bchUssdBusy=p.catch(()=>{}); return p;
 }
 
-const BCH_RUN={ping:bchPing,tcp:bchTcp,http:bchHttp,iptv:bchIptv,domain:bchDomain,sms:bchSms,ussd:bchUssd};
+/* node: задачу (строку) получает обработчик — любые модули на холсте: выход task → … → вход result. Ответ ждём ms; нет ответа — не ок.
+   Успех: условие cond(r,t) (выражение над ответом r и задачей t), без условия — сам факт ответа, если в нём нет ok=0/false. */
+const BCH_NODE_SKIP=new Set(['kind','status','ok','checked','attempts','attempt','count','first','last','ms','detail','t']);
+async function bchNode(env,row,o){
+  if(!env.task) throw new Error('this node has no handler wires (task / result)');
+  const ms=Math.max(1,+bchOpt(row,'timeoutS',o.nodeTimeout)||30)*1000, t0=env.now();
+  const r=await env.task(row,o.attempt||1,ms);
+  if(r==null) return {ok:false,detail:'no answer in '+ms/1000+' s'};
+  const falsy=v=>v===0 || v===false || v==='0' || /^(false|no|fail|error)$/i.test(String(v));
+  const good=env.cond && bchStr(o.cond) ? !!(await env.cond(r,row)) : !(r.ok!=null && falsy(r.ok));
+  const out={ok:good,ms:env.now()-t0};
+  for(const k in r) if(!BCH_NODE_SKIP.has(k) && k!==bchStr(o.keyCol||'id') && r[k]!=='' && r[k]!=null) out[k]=r[k];
+  out.detail=bchStr(r.detail??r.text)||(good ? 'answered in '+out.ms+' ms' : 'the answer did not meet the condition'+(bchStr(o.cond) ? ' ('+bchStr(o.cond)+')' : ''));
+  return out;
+}
+const BCH_RUN={node:bchNode,ping:bchPing,tcp:bchTcp,http:bchHttp,iptv:bchIptv,domain:bchDomain,sms:bchSms,ussd:bchUssd};
 
-/* Одна строка → запись {<ключ>, kind, ok:1|0, status, ms, detail, checked, …поля вида}. Ошибка проверки — status «error», ok 0. */
-async function bchCheck(env,row,o){
-  const kind=bchKindOf(row,o.kind), t0=env.now();
-  const rec={kind};
+/* Одна попытка → запись {<ключ>, kind, ok:1|0, status, ms, detail, checked, …поля вида}. Ошибка проверки — status «error», ok 0;
+   fatal — повторять бессмысленно (нет разрешения, команда не поддержана, нет цели). */
+async function bchOnce(env,row,o,kind,attempt){
+  const t0=env.now(), rec={kind};
   const key=bchStr(o.keyCol)||'id', tgt=bchPick(row,o.targetCol ? [o.targetCol,...BCH_TARGET] : BCH_TARGET);
   rec[key]=bchStr(row[key])||tgt||(kind==='ussd' ? bchStr(row.code)+(bchStr(row.sim)!=='' ? '@sim'+bchStr(row.sim) : '') : '');
-  if(!tgt && kind!=='ussd'){ return {...rec,ok:0,status:'error',detail:'no target (a «'+(o.targetCol||'target')+'» column)',checked:env.now()}; }
+  if(!tgt && kind!=='ussd' && kind!=='node'){ return {...rec,ok:0,status:'error',fatal:1,detail:'no target (a «'+(o.targetCol||'target')+'» column)',checked:env.now()}; }
   try{
-    const r=await BCH_RUN[kind](env,row,{...o,target:tgt});
+    const r=await BCH_RUN[kind](env,row,{...o,target:tgt,attempt});
     const {ok,detail,...rest}=r;
     return {...rec,...rest,ok:ok ? 1 : 0,status:ok ? 'ok' : 'fail',detail:detail||'',ms:rest.ms??(env.now()-t0),checked:env.now()};
   }catch(e){
-    const why=/only the page of the DSP app|not allowed for this page/i.test(e.message||'')
-      ? 'the app refuses this page: open DSP from the app, or tick «Let any page use actions» in the app settings' : String(e.message||e);
-    return {...rec,ok:0,status:'error',detail:why.slice(0,200),ms:'',checked:env.now()};
+    const hint=/only the page of the DSP app|not allowed for this page/i.test(e.message||'');
+    const why=hint ? 'the app refuses this page: open DSP from the app, or tick «Let any page use actions» in the app settings' : String(e.message||e);
+    const fatal=hint || ['forbidden','unsupported','disabled','args','permission'].includes(e.reply?.err);
+    return {...rec,ok:0,status:'error',fatal:fatal ? 1 : 0,detail:why.slice(0,200),ms:'',checked:env.now()};
   }
+}
+// retries — сколько раз повторить после неудачи (SMS не повторяем: второе сообщение дойдёт дважды); пауза retryDelay с между попытками
+async function bchCheck(env,row,o){
+  const kind=bchKindOf(row,o.kind);
+  const tries=kind==='sms' ? 1 : 1+Math.max(0,Math.min(10,Math.floor(+bchOpt(row,'retries',o.retries)||0)));
+  const gap=Math.max(0,Math.min(600,+bchOpt(row,'retryDelay',o.retryDelay)||0))*1000;
+  let rec, n=0;
+  for(;;){
+    n++; rec=await bchOnce(env,row,o,kind,n);
+    if(rec.ok || rec.fatal || n>=tries) break;
+    if(gap) await (env.sleep||bchSleep)(gap);
+  }
+  delete rec.fatal;
+  if(tries>1 || kind==='node') rec.attempts=n;
+  return rec;
 }
 
 /* Очередь: conc строк одновременно (SMS и USSD всегда по одной — у приложения лимит 5 в минуту); onRec(rec,row) по мере готовности. */
 async function bchRunAll(env,rows,o,hooks={}){
   const list=rows.map((row,i)=>({row,i})), done=new Array(rows.length);
-  let next=0, finished=0, chain=Promise.resolve();
+  let next=0, finished=0, chain=Promise.resolve(), nodeBusy=0; const nodeQ=[];
+  const nodeLim=Math.max(1,Math.min(32,+o.nodeConc||1));
+  const nodeSem=job=>new Promise((res,rej)=>{ const go=()=>{ nodeBusy++; job().then(res,rej).finally(()=>{ nodeBusy--; const x=nodeQ.shift(); if(x) x(); }); }; if(nodeBusy<nodeLim) go(); else nodeQ.push(go); });      // задач в обработчике одновременно — nodeConc (физический прибор один — 1)
   const one=async()=>{
     while(!hooks.stop?.() && next<list.length){
       const {row,i}=list[next++], kind=bchKindOf(row,o.kind);
       const job=()=>bchCheck(env,row,o);
-      const run=kind==='sms' ? (chain=chain.then(job,job)) : job();
+      const run=kind==='sms' ? (chain=chain.then(job,job)) : kind==='node' ? nodeSem(job) : job();
       const rec=hooks.stopP ? await Promise.race([run,hooks.stopP]) : await run;     // Stop не ждёт зависшие проверки
       if(rec==null) break;
       done[i]=rec; finished++;

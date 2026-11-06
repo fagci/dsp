@@ -15,8 +15,37 @@ function bchLink(n){
   let t; const guard=new Promise((_,rej)=>{ t=setTimeout(()=>{ if(!n.ns) nsvDrop(n); rej(new Error('no connection to the app at '+n.p.url+' in '+ms/1000+' s — check the phone address (not 127.0.0.1 on a laptop) and that the phone is reachable')); },ms); });
   return Promise.race([nsvLink(n),guard]).finally(()=>clearTimeout(t));
 }
+// условие успеха вида node: выражение над ответом r и задачей t; компилируется так же, как у Rec Filter (динамический модуль)
+function bchCompile(n){
+  const src=bchSrc(n);
+  if(!src) return Promise.resolve(null);
+  return new Promise((res,rej)=>{
+    const url=URL.createObjectURL(new Blob(['export default (r,t)=>('+src+');'],{type:'text/javascript'}));
+    import(url).then(m=>res(m.default),e=>rej(new Error('bad condition «'+src+'»: '+e.message))).finally(()=>URL.revokeObjectURL(url));
+  });
+}
+const bchSrc=n=>String(n.p.cond||'').trim();
+// задача уходит на выход task, ответ приходит на result: по ключу строки (если обработчик его сохранил) или, когда задача в работе одна, просто следующий ответ
+function bchTask(n,row,attempt,ms){
+  const key=String(row[n.p.key||'id']??'');
+  return new Promise(res=>{
+    const tok=++n.bcSeq, e={key,attempt,res:r=>{ clearTimeout(e.timer); n.bcPend.delete(tok); res(r); }};
+    e.timer=setTimeout(()=>{ n.bcPend.delete(tok); res(null); },ms);
+    n.bcPend.set(tok,e);
+    n.taskQ.push({...row,[n.p.key||'id']:key,attempt});
+  });
+}
+function bchAnswer(n,r){                                      // → true, если ответ нашёл свою задачу
+  const kc=n.p.key||'id', pend=[...n.bcPend.values()];
+  if(r.attempt!=null && pend.length===1 && +r.attempt!==pend[0].attempt) return false;      // опоздавший ответ на прошлую попытку
+  let e=r[kc]!=null ? pend.find(x=>x.key===String(r[kc]) && (r.attempt==null || +r.attempt===x.attempt)) : null;
+  if(!e && pend.length===1) e=pend[0];
+  if(!e) return false;
+  e.res(r); return true;
+}
 function bchEnv(n){
-  return {ns:()=>bchLink(n),now:()=>Date.now(),sleep:ms=>new Promise(r=>setTimeout(r,ms)),sel:bchSelEnv,
+  return {task:(row,att,ms)=>bchTask(n,row,att,ms),cond:n.bcCond ? (r,t)=>{ try{ return n.bcCond(r,t); }catch(e){ return false; } } : null,
+    ns:()=>bchLink(n),now:()=>Date.now(),sleep:ms=>new Promise(r=>setTimeout(r,ms)),sel:bchSelEnv,
     fetch:typeof fetch==='function' ? bchFetch : null};
 }
 // браузерный fetch через CORS-прокси из Settings (Node-мост ноутбука: /proxy), если он задан; адрес ответа — запрошенный (иначе HLS не разберёт относительные пути)
@@ -42,7 +71,7 @@ async function bchLoad(n){                                   // строки: п
 }
 function bchStop(n){                                 // сразу: запущенные проверки бросаем, подключение закрываем
   n.bcStop=true;
-  if(n.bcBusy){ n.status='stopping…'; if(n.bcStopRes) n.bcStopRes(null); nsvDrop(n); }
+  if(n.bcBusy){ n.status='stopping…'; if(n.bcStopRes) n.bcStopRes(null); nsvDrop(n); for(const e of [...n.bcPend.values()]) e.res(null); }
 }
 async function bchRun(n){
   if(n.bcBusy){ n.status='busy — wait for the previous run or press Stop'; return; }
@@ -54,11 +83,12 @@ async function bchRun(n){
       n.status=wired ? 'no rows yet: the wired list is empty'+(bchEngineOn() ? '' : ' (or start the engine ▶ so the wire delivers them)') : 'no rows: wire «rows» from a Table or set «list»';
       return;
     }
+    try{ n.bcCond=await bchCompile(n); }catch(e){ n.status=e.message; return; }
     n.bcTotal=rows.length; n.bcRows=rows; n.bcOutRows=rows.slice(); n.bcLast=[];
     n.status='checking 0/'+rows.length+'…';
     const p=n.p, o={kind:p.kind,keyCol:p.key||'id',targetCol:p.target,conc:p.conc,timeout:p.timeout,via:p.via,port:p.port,count:p.count,expect:p.expect,
       contains:p.contains,selector:p.selector,minBytes:p.minBytes,warnDays:p.warnDays,text:p.text,deliveryWait:p.deliveryWait,code:p.code,sim:p.sim,
-      ussdWait:p.ussdWait,balanceRe:p.balanceRe};
+      ussdWait:p.ussdWait,balanceRe:p.balanceRe,retries:p.retries,retryDelay:p.retryDelay,nodeTimeout:p.nodeTimeout,nodeConc:p.nodeConc,cond:bchSrc(n)};
     await bchRunAll(bchEnv(n),rows,o,{
       stop:()=>n.bcStop || n.disposed, stopP:n.bcStopP,
       onRec:(rec,row,i)=>{
@@ -76,21 +106,26 @@ async function bchRun(n){
 }
 def({ id:'batch', title:'Batch Check (list → results in the same table)', cat:'Sources',
   kw:'batch check list table ping tcp http status code page block text iptv stream m3u8 hls domain whois rdap expiry expire sms deliver delivery ussd balance sim monitor uptime availability bulk each rows contacts',
-  ins:[{n:'rows',t:'bands'},{n:'go',t:'num'},{n:'list',t:'txt'}],
-  outs:[{n:'rec',t:'rec'},{n:'rows',t:'bands'},{n:'text',t:'txt'},{n:'ok',t:'num'},{n:'bad',t:'num'},{n:'progress',t:'num'},{n:'busy',t:'num'},{n:'new',t:'num'}],
+  ins:[{n:'rows',t:'bands'},{n:'go',t:'num'},{n:'list',t:'txt'},{n:'result',t:'rec'}],
+  outs:[{n:'rec',t:'rec'},{n:'task',t:'rec'},{n:'rows',t:'bands'},{n:'text',t:'txt'},{n:'ok',t:'num'},{n:'bad',t:'num'},{n:'progress',t:'num'},{n:'busy',t:'num'},{n:'new',t:'num'}],
   readout:true, tall:true, w:280,
-  groups:[{n:'Source'},{n:'Check'},{n:'Ping / TCP',open:false},{n:'HTTP page',open:false},{n:'IPTV',open:false},{n:'Domain',open:false},{n:'SMS',open:false},{n:'USSD / balance',open:false}],
+  groups:[{n:'Source'},{n:'Check'},{n:'Ping / TCP',open:false},{n:'HTTP page',open:false},{n:'IPTV',open:false},{n:'Domain',open:false},{n:'Handler: your own graph (kind node)',open:false},{n:'SMS',open:false},{n:'USSD / balance',open:false}],
   params:[
     {n:'url',t:'text',d:NSV_URL,dev:true,label:'bridge: the phone app (ws://phone:8765) or the Node bridge on a computer (ws://127.0.0.1:8777: ping, tcp, http(s), whois; SMS / USSD only on the phone) — an address, or @name from Settings → Devices'},
     {n:'list',t:'text',d:'',label:'list (storage) — the rows to check (the «rows» wire or the «list» input overrides)',g:'Source'},
     {n:'key',t:'text',d:'id',label:'key column — put the same one in the Table (upsert) so a result lands in its row',g:'Source'},
     {n:'target',t:'text',d:'',label:'column with the address (empty — the first of target, host, ip, url, stream, domain, to, number, phone)',g:'Source'},
-    {n:'kind',t:'select',opts:BCH_KINDS,d:'ping',label:'what to check (a «kind» column in a row overrides it)',g:'Check'},
+    {n:'kind',t:'select',opts:BCH_KINDS,d:'ping',label:'what to check (a «kind» column in a row overrides it); node — hand every row to your own graph: «task» out → modules → «result» in',g:'Check'},
     {n:'via',t:'select',opts:['auto','bridge','browser'],d:'auto',label:'http / iptv / domain: through the bridge (any site, https), or the browser fetch (CORS; the CORS proxy from Settings is used if set), auto — the bridge if it is reachable',g:'Check'},
     {n:'conc',t:'range',min:1,max:32,step:1,d:4,label:'at the same time (SMS and USSD always go one by one)',g:'Check'},
     {n:'timeout',t:'range',min:1000,max:60000,step:500,d:8000,label:'wait for one check, ms',g:'Check'},
     {n:'every',t:'range',min:0,max:86400,step:10,d:0,label:'repeat every N s after the run ends (0 — only on Run / go)',g:'Check'},
     {n:'auto',t:'check',d:false,label:'run once when the patch starts',g:'Check'},
+    {n:'retries',t:'range',min:0,max:10,step:1,d:0,label:'repeat a failed check this many times (a «retries» column overrides; SMS is never repeated)',g:'Check'},
+    {n:'retryDelay',t:'range',min:0,max:600,step:1,d:2,label:'pause between attempts, s (a «retryDelay» column overrides)',g:'Check'},
+    {n:'nodeTimeout',t:'range',min:1,max:3600,step:1,d:30,label:'node: wait for the answer on «result», s (a «timeoutS» column overrides)',g:'Handler: your own graph (kind node)'},
+    {n:'nodeConc',t:'range',min:1,max:32,step:1,d:1,label:'node: tasks in the handler at the same time (1 — one device; more — the handler must keep the key field in the answer)',g:'Handler: your own graph (kind node)'},
+    {n:'cond',t:'text',d:'',label:'node: success condition, JS over the answer r and the task t, e.g. r.level > t.min (empty — any answer without ok=0 counts)',g:'Handler: your own graph (kind node)'},
     {n:'count',t:'range',min:1,max:10,step:1,d:2,label:'ping: packets (a «count» column overrides)',g:'Ping / TCP'},
     {n:'port',t:'range',min:0,max:65535,step:1,d:80,label:'tcp: port (a «port» column or host:port overrides)',g:'Ping / TCP'},
     {n:'expect',t:'text',d:'2xx',label:'expected code: 200, 2xx, 200,301, <400 (an «expect» column overrides)',g:'HTTP page'},
@@ -107,16 +142,18 @@ def({ id:'batch', title:'Batch Check (list → results in the same table)', cat:
     {n:'run',t:'button',label:'Run',fn:n=>bchRun(n)},
     {n:'stop',t:'button',label:'Stop',fn:n=>bchStop(n)}],
   init:n=>{ n.nsP=null; n.ns=null; n.ws=null; n.recQ=[]; n.warn=''; n.status='idle'; n.pulse=0; n.prevGo=0; n.rowsIn=null; n.listIn='';
-    n.bcBusy=false; n.bcStop=false; n.bcOk=0; n.bcBad=0; n.bcDone=0; n.bcTotal=0; n.bcStopP=null; n.bcStopRes=null; n.bcRows=[]; n.bcOutRows=null; n.bcLast=[]; n.bcAt=0; n.bcStarted=false; },
-  dispose:n=>{ n.disposed=true; nsvDrop(n); },
+    n.bcBusy=false; n.bcStop=false; n.bcOk=0; n.bcBad=0; n.bcDone=0; n.bcTotal=0; n.bcStopP=null; n.bcStopRes=null; n.bcRows=[]; n.bcOutRows=null; n.bcLast=[]; n.bcAt=0; n.bcStarted=false;
+    n.taskQ=[]; n.bcPend=new Map(); n.bcSeq=0; n.bcCond=null; n.bcSeen=new WeakSet(); },
+  dispose:n=>{ n.disposed=true; nsvDrop(n); for(const e of [...n.bcPend.values()]) e.res(null); },
   process(n,I){
     n.rowsIn=Array.isArray(I.rows) ? I.rows : null; n.listIn=typeof I.list==='string' ? I.list : '';
+    for(const r of recList(I.result)){ if(!r || typeof r!=='object' || n.bcSeen.has(r)) continue; n.bcSeen.add(r); bchAnswer(n,r); }
     const go=(I.go||0)>.5; if(go && !n.prevGo) bchRun(n); n.prevGo=go;
     if(!n.bcStarted){ n.bcStarted=true; if(n.p.auto) setTimeout(()=>{ if(!n.disposed) bchRun(n); },1500); }
     else if(+n.p.every>0 && !n.bcBusy && n.bcAt && Date.now()-n.bcAt>=n.p.every*1000) bchRun(n);
     const pl=n.pulse>0 ? 1 : 0; if(n.pulse>0) n.pulse--;
-    const rec=n.recQ.length ? n.recQ.splice(0) : null;
-    return {rec,rows:n.bcOutRows,text:n.bcLast.length ? n.bcLast.map(r=>(r.status==='ok' ? '✓ ' : r.status==='fail' ? '✗ ' : '⚠ ')+r.id+' '+r.detail).join('\n') : null,
+    const rec=n.recQ.length ? n.recQ.splice(0) : null, task=n.taskQ.length ? n.taskQ.splice(0) : null;
+    return {rec,task,rows:n.bcOutRows,text:n.bcLast.length ? n.bcLast.map(r=>(r.status==='ok' ? '✓ ' : r.status==='fail' ? '✗ ' : '⚠ ')+r.id+' '+r.detail).join('\n') : null,
       ok:n.bcOk,bad:n.bcBad,progress:n.bcTotal ? n.bcDone/n.bcTotal : 0,busy:n.bcBusy ? 1 : 0,new:pl};
   },
   draw(n){

@@ -212,5 +212,60 @@ ns.reply.ping=()=>Object.assign(new Error('only the page of the DSP app may use 
 r=await K.bchCheck(env,{id:'f',host:'1.1.1.1'},O);
 ok(r.status==='error' && /Let any page use actions/.test(r.detail),'forbidden: подсказка про настройку приложения');
 
+// повторы: пока не получится; пауза между попытками; фатальное и SMS не повторяем
+{
+  let calls=0; const sleeps=[]; const envR={...env,sleep:async ms=>{ sleeps.push(ms); }};
+  ns.reply.ping=()=>{ calls++; return calls<3 ? {got:0,sent:1,avg:0} : {got:1,sent:1,avg:7}; };
+  r=await K.bchCheck(envR,{id:'r1',host:'h'},{...O,retries:3,retryDelay:2});
+  eq([r.ok,r.attempts,calls,sleeps],[1,3,3,[2000,2000]],'retries: третья попытка удалась, пауза между попытками');
+  calls=-99; sleeps.length=0;
+  r=await K.bchCheck(envR,{id:'r2',host:'h'},{...O,retries:2,retryDelay:1});
+  eq([r.ok,r.status,r.attempts],[0,'fail',3],'retries: исчерпаны — fail, attempts=3');
+  r=await K.bchCheck(envR,{id:'r3',host:'h',retries:'1'},{...O,retries:0});
+  eq(r.attempts,2,'retries: колонка строки важнее параметра узла');
+  let fc=0; ns.reply.ping=()=>{ fc++; return Object.assign(new Error('only the page of the DSP app may use it'),{code:'forbidden'}); };
+  r=await K.bchCheck(envR,{id:'r4',host:'h'},{...O,retries:5});
+  eq([fc,r.attempts],[1,1],'retries: отказ приложения — фатально, без повторов');
+  let sc=0; ns.reply['sms.send']=()=>{ sc++; return {}; };
+  r=await K.bchCheck(envR,{id:'r5',to:'+7111',kind:'sms',text:'x'},{...O,retries:5,deliveryWait:0});
+  eq(sc,1,'retries: SMS не повторяется');
+  r=await K.bchCheck(envR,{id:'r6',kind:'ping'},{...O,retries:5});
+  eq([r.status,r.attempts],['error',1],'retries: нет цели — фатально');
+}
+// node: обработчик — граф пользователя (task → result)
+{
+  const tasks=[]; let answer=null;
+  const envN={...env,task:async(row,att,ms)=>{ tasks.push([row.id,att,ms]); return typeof answer==='function' ? answer(row,att) : answer; },
+              cond:async(rr,t)=>{ const f=new Function('r','t','return ('+condSrc+')'); return !!f(rr,t); }};
+  let condSrc='';
+  const ON={...O,kind:'node',nodeTimeout:5,cond:'',retries:0,retryDelay:0};
+  answer={ok:1,level:-48.5,note:'hi'};
+  r=await K.bchCheck(envN,{id:'n1',az:'90'},ON);
+  eq([r.kind,r.ok,r.status,r.level,r.note,r.attempts,tasks[0]],['node',1,'ok',-48.5,'hi',1,['n1',1,5000]],'node: ответ без условия — успех, поля ответа попали в запись');
+  answer={level:-48};
+  r=await K.bchCheck(envN,{id:'n2'},ON); eq(r.ok,1,'node: ответ без поля ok — успех');
+  answer={ok:0,detail:'busy'};
+  r=await K.bchCheck(envN,{id:'n3'},ON); eq([r.ok,r.status,r.detail],[0,'fail','busy'],'node: ok=0 в ответе — не ок, detail из ответа');
+  condSrc='r.level > t.min';
+  answer={level:-40};
+  r=await K.bchCheck(envN,{id:'n4',min:'-50'},{...ON,cond:condSrc}); eq(r.ok,1,'node: условие над ответом и задачей — истина');
+  answer={level:-60};
+  r=await K.bchCheck(envN,{id:'n5',min:'-50'},{...ON,cond:condSrc}); eq([r.ok,/condition/.test(r.detail)],[0,true],'node: условие ложно — не ок');
+  answer=null;
+  r=await K.bchCheck(envN,{id:'n6'},{...ON,nodeTimeout:2}); eq([r.ok,r.status,r.detail],[0,'fail','no answer in 2 s'],'node: нет ответа — fail по таймауту');
+  // повтор: первая попытка без ответа, вторая — с ответом; номер попытки уходит в задачу
+  tasks.length=0; answer=(row,att)=>att<2 ? null : {ok:1};
+  r=await K.bchCheck({...envN,sleep:async()=>{}},{id:'n7'},{...ON,retries:2,retryDelay:1});
+  eq([r.ok,r.attempts,tasks.map(x=>x[1])],[1,2,[1,2]],'node: повтор по таймауту, attempt растёт');
+  r=await K.bchCheck({...env},{id:'n8'},ON); eq(r.status,'error','node: без проводов обработчика — error');
+  // одновременно задач в обработчике — nodeConc
+  for(const lim of [1,3]){
+    let cur=0, max=0; answer=async()=>{ cur++; max=Math.max(max,cur); await new Promise(r=>setTimeout(r,20)); cur--; return {ok:1}; };
+    const rows=Array.from({length:6},(_,i)=>({id:'q'+i}));
+    const res=await K.bchRunAll(envN,rows,{...ON,conc:6,nodeConc:lim},{});
+    eq([res.every(x=>x.ok===1),max],[true,lim],'node: nodeConc='+lim+' — задач в обработчике не больше');
+  }
+}
+
 if(bad){ console.error(bad+' ошибок'); process.exit(1); }
 console.log('ok: batch');

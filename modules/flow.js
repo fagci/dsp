@@ -236,3 +236,56 @@ def({ id:'cmds', title:'Command Templates', cat:'Control', kw:'serial commands m
     n.mid.append(box);
   }
 });
+
+
+/* ============================ Wait Until / Measure Window ============================
+   Два шага для обработчика задачи Batch Check (kind node) — и для любых автоматизаций. Wait Until: дождаться, чтобы число (moving, скорость, уровень)
+   удовлетворяло условию непрерывно stable секунд, но не дольше timeout. Measure Window: по сигналу собрать число за окно и дать среднее / минимум / максимум.
+   Ядро — flow-kernels.js (tools/test-flow.mjs). Импульсы держатся 2 шага: их увидит и узел с обработкой по фронту. */
+def({ id:'waitUntil', title:'Wait Until (stable condition)', cat:'Control', kw:'wait until settle stable condition timeout stopped moving rotator delay ready arm done pulse handler task',
+  ins:[{n:'arm',t:'num',tip:'a 0→1 pulse starts the wait'},{n:'v',t:'num',tip:'the value to watch'}],
+  outs:[{n:'done',t:'num',tip:'a pulse: the condition held for the whole «hold» time'},{n:'timeout',t:'num',tip:'a pulse: gave up'},{n:'ok',t:'num',tip:'1 after done, 0 after timeout / while waiting'},{n:'waiting',t:'num'},{n:'held',t:'num',tip:'how long the condition has held now, s'}],
+  readout:true,
+  params:[
+    {n:'op',t:'select',opts:['<','<=','>','>=','==','!=','in a…b'],d:'<',label:'condition on v'},
+    {n:'a',t:'num',d:0.5,label:'a (the threshold; in a…b — the lower bound)'},
+    {n:'b',t:'num',d:1,label:'b (the upper bound; only in a…b)'},
+    {n:'stable',t:'range',min:0,max:120,step:.1,d:1,label:'it must hold for, s'},
+    {n:'timeout',t:'range',min:0,max:3600,step:1,d:30,label:'give up after, s (0 — never)'},
+    {n:'now',t:'button',label:'Start now',fn:n=>{ n.manual=true; }},
+  ],
+  init:n=>{ n.st=wuNew(); n.prevArm=0; n.pd=0; n.pt=0; n.manual=false; },
+  process(n,I){
+    const arm=(I.arm||0)>.5, edge=arm && n.prevArm<=.5 || n.manual; n.prevArm=arm ? 1 : 0; n.manual=false;
+    const r=wuStep(n.st,{arm:edge,v:typeof I.v==='number' ? I.v : null},Date.now(),n.p);
+    if(r.done) n.pd=2; if(r.timeout) n.pt=2;
+    const d=n.pd>0 ? 1 : 0, t=n.pt>0 ? 1 : 0; if(n.pd>0) n.pd--; if(n.pt>0) n.pt--;
+    return {done:d,timeout:t,ok:n.st.ok,waiting:n.st.on ? 1 : 0,held:n.st.held};
+  },
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    const t=n.st.on ? 'waiting · held '+n.st.held.toFixed(1)+' s of '+n.p.stable : n.st.ok ? 'done' : n.st.t0 ? 'timed out' : 'idle';
+    if(r.textContent!==t) r.textContent=t; }
+});
+def({ id:'winMeasure', title:'Measure Window (avg / min / max)', cat:'Control', kw:'measure window average mean max min sample level signal strength snr dwell integrate arm done handler task',
+  ins:[{n:'arm',t:'num',tip:'a 0→1 pulse starts collecting'},{n:'v',t:'num',tip:'the value to measure'}],
+  outs:[{n:'done',t:'num',tip:'a pulse: the window is over'},{n:'avg',t:'num'},{n:'min',t:'num'},{n:'max',t:'num'},{n:'n',t:'num',tip:'samples collected'},{n:'ok',t:'num',tip:'1 if there was at least one sample'},{n:'busy',t:'num'}],
+  readout:true,
+  params:[
+    {n:'mode',t:'select',opts:['time','samples'],d:'time',label:'the window is'},
+    {n:'window',t:'range',min:.05,max:600,step:.05,d:2,label:'window, s (mode time)'},
+    {n:'samples',t:'range',min:1,max:100000,step:1,d:50,label:'samples (mode samples)'},
+    {n:'now',t:'button',label:'Start now',fn:n=>{ n.manual=true; }},
+  ],
+  init:n=>{ n.st=winNew(); n.prevArm=0; n.pd=0; n.manual=false; },
+  process(n,I){
+    const arm=(I.arm||0)>.5, edge=arm && n.prevArm<=.5 || n.manual; n.prevArm=arm ? 1 : 0; n.manual=false;
+    const r=winStep(n.st,{arm:edge,v:typeof I.v==='number' ? I.v : null},Date.now(),n.p);
+    if(r.done) n.pd=2;
+    const d=n.pd>0 ? 1 : 0; if(n.pd>0) n.pd--;
+    const s=n.st;
+    return {done:d,avg:s.avg==null ? 0 : s.avg,min:s.min==null||!isFinite(s.min) ? 0 : s.min,max:s.max==null||!isFinite(s.max) ? 0 : s.max,n:s.n,ok:s.ok,busy:s.on ? 1 : 0};
+  },
+  draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
+    const s=n.st, t=s.on ? 'collecting · '+s.n+' samples' : s.n ? s.n+' samples · avg '+(s.avg==null ? '–' : s.avg.toFixed(2))+' · min '+s.min.toFixed(2)+' · max '+s.max.toFixed(2) : 'idle';
+    if(r.textContent!==t) r.textContent=t; }
+});
