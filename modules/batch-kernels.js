@@ -288,7 +288,11 @@ async function bchCheck(env,row,o){
     const r=await BCH_RUN[kind](env,row,{...o,target:tgt});
     const {ok,detail,...rest}=r;
     return {...rec,...rest,ok:ok ? 1 : 0,status:ok ? 'ok' : 'fail',detail:detail||'',ms:rest.ms??(env.now()-t0),checked:env.now()};
-  }catch(e){ return {...rec,ok:0,status:'error',detail:String(e.message||e).slice(0,200),ms:'',checked:env.now()}; }
+  }catch(e){
+    const why=e.reply?.err==='forbidden' || /only the page of the DSP app|not allowed for this page/i.test(e.message||'')
+      ? 'the app refuses this page: open DSP from the app, or tick «Let any page use actions» in the app settings' : String(e.message||e);
+    return {...rec,ok:0,status:'error',detail:why.slice(0,200),ms:'',checked:env.now()};
+  }
 }
 
 /* Очередь: conc строк одновременно (SMS и USSD всегда по одной — у приложения лимит 5 в минуту); onRec(rec,row) по мере готовности. */
@@ -299,7 +303,9 @@ async function bchRunAll(env,rows,o,hooks={}){
     while(!hooks.stop?.() && next<list.length){
       const {row,i}=list[next++], kind=bchKindOf(row,o.kind);
       const job=()=>bchCheck(env,row,o);
-      const rec=await (kind==='sms' ? (chain=chain.then(job,job)) : job());
+      const run=kind==='sms' ? (chain=chain.then(job,job)) : job();
+      const rec=hooks.stopP ? await Promise.race([run,hooks.stopP]) : await run;     // Stop не ждёт зависшие проверки
+      if(rec==null) break;
       done[i]=rec; finished++;
       hooks.onRec?.(rec,row,i); hooks.onProgress?.(finished,list.length);
     }
