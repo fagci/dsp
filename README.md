@@ -4,7 +4,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 
 **[▶ Live demo](https://fagci.github.io/dsp/)** · **[📦 Releases](https://github.com/fagci/dsp/releases)** (signed Android app) · **[💛 Boosty — support the project](https://boosty.to/fagci)**
 
-[![FT8 propagation map in DSP workbench — open the demo](docs/screenshots/map-ft8.png)](https://fagci.github.io/dsp/)
+[![Typing osc>fft>sa builds a chain; run it and drag the frequency — the spectrum and waterfall follow](docs/demo.gif)](https://fagci.github.io/dsp/)
 
 [More screenshots ↓](#screenshots)
 
