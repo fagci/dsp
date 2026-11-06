@@ -633,6 +633,9 @@ const PRESET_CATS={
   'Messenger: One Chat for Nostr, ntfy, Matrix, Telegram, IRC and XMPP':'Network & IoT',
   'APRS-IS: Messages and Stations on the Map':'Network & IoT',
   'Email: Mailbox as a Chat (IMAP / SMTP)':'Network & IoT',
+  'Email: a Correspondence as Threads in the Chat':'Network & IoT',
+  'Serial: Command Templates (Parameters → Serial Port)':'Network & IoT',
+  'Trend Chart: 24 h History':'Analysis & Measurement',
   'SMS: Texts as a Chat (DSP app on Android)':'Network & IoT',
   'Reticulum: LXMF Messages over a Mesh (Sideband / NomadNet compatible)':'Network & IoT',
   'Feed: Mastodon and Bluesky by Tags into a Table (cards)':'Network & IoT',
@@ -7699,9 +7702,9 @@ d2.size.w=520; d2.size.h=90; applySize(d2);
 const st=addNode('stream',40,500,{url:'https://ice1.somafm.com/groovesalad-128-mp3',auto:false});
 const dc=addNode('dac',320,500,{vol:.5});
 const mt=addNode('stats',320,640,{view:'bar'}); mt.size.h=26; applySize(mt);
-const e1=addNode('eye',620,340,{style:'eye',min:-48,max:-6});
+const e1=addNode('magiceye',620,340,{style:'eye',min:-48,max:-6});
 e1.size.w=240; e1.size.h=230; applySize(e1);
-const e2=addNode('eye',900,340,{style:'bar',min:-48,max:-6,color:'teal'});
+const e2=addNode('magiceye',900,340,{style:'bar',min:-48,max:-6,color:'teal'});
 e2.size.w=320; e2.size.h=140; applySize(e2);
 addEdge(dl.id,'f',sd.id,'in');
 addEdge(st.id,'L',dc.id,'L'); addEdge(st.id,'R',dc.id,'R'); addEdge(st.id,'L',mt.id,'in');

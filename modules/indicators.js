@@ -467,7 +467,7 @@ def({ id:'dial', lazy:'proc', touch:true, title:'Tuning Dial', cat:'Indicators',
 });
 
 /* ---------- Magic Eye (электронно-световой индикатор настройки: «магический глаз», 6Е5С / EM84) ---------- */
-def({ id:'eye', lazy:'proc', title:'Magic Eye', cat:'Indicators', kw:'tuning eye cats eye tube 6E5 6E5C EM84 EM80 valve radio analog level indicator',
+def({ id:'magiceye', lazy:'proc', title:'Magic Eye', cat:'Indicators', kw:'tuning eye cats eye tube 6E5 6E5C EM84 EM80 valve radio analog level indicator',
   ins:[{n:'in',t:'num'}], outs:[{n:'s',t:'num'}], view:{h:150}, resize:true,
   params:[{n:'style',t:'select',opts:['eye','bar'],d:'eye',label:'eye — round 6E5 (shadow wedge closes); bar — EM84 (two bars meet)'},
           {n:'min',t:'num',d:0},{n:'max',t:'num',d:1},
