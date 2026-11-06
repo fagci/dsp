@@ -111,7 +111,7 @@ async function bchGet(env,url,o={}){
     const text=await r.text();
     return {status:r.status,text,bytes:text.length,ms:env.now()-t0,via:'browser',url:r.url||url,headers:{}};
   }catch(e){
-    throw new Error(/abort/i.test(e.message) ? 'timeout' : /fetch|network|cors/i.test(e.message) ? 'blocked by the browser (CORS) — run the DSP app and use via «app»' : e.message);
+    throw new Error(/abort/i.test(e.message) ? 'timeout' : /fetch|network|cors/i.test(e.message) ? 'blocked by the browser (CORS) — use a bridge (phone app / Node bridge) with via «bridge», or set a CORS proxy in Settings' : e.message);
   } finally { clearTimeout(tm); }
 }
 // первые bytes байт ответа (поток IPTV бесконечный — целиком не читаем)
@@ -154,7 +154,7 @@ async function bchSniff(env,url,o={}){
     } else { const b=new Uint8Array(await r.arrayBuffer()); parts.push(b); }
     return {status:r.status,headers:{'content-type':r.headers?.get?.('content-type')||''},data:nsCat(parts).subarray(0,bytes),ms:env.now()-t0,via:'browser',url:r.url||url};
   }catch(e){
-    throw new Error(/abort/i.test(e.message) ? 'timeout' : /fetch|network|cors/i.test(e.message) ? 'blocked by the browser (CORS) — run the DSP app and use via «app»' : e.message);
+    throw new Error(/abort/i.test(e.message) ? 'timeout' : /fetch|network|cors/i.test(e.message) ? 'blocked by the browser (CORS) — use a bridge (phone app / Node bridge) with via «bridge», or set a CORS proxy in Settings' : e.message);
   } finally { clearTimeout(tm); ac.abort(); }
 }
 
@@ -173,7 +173,10 @@ async function bchTcp(env,row,o){
   try{
     const c=await ns.connect(host,port,+o.timeout||5000); await c.close();
     return {ok:true,ms:env.now()-t0,detail:'port '+port+' is open'};
-  }catch(e){ return {ok:false,detail:/refus/i.test(e.message) ? 'port '+port+' refused (host is up)' : e.message}; }
+  }catch(e){
+    if(['forbidden','unsupported','disabled','args','rate','permission'].includes(e.reply?.err)) throw e;      // не ответ хоста, а отказ самого моста
+    return {ok:false,detail:/refus/i.test(e.message) ? 'port '+port+' refused (host is up)' : e.message};
+  }
 }
 async function bchHttp(env,row,o){
   let url=o.target; if(!/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) url='http://'+url;
@@ -289,7 +292,7 @@ async function bchCheck(env,row,o){
     const {ok,detail,...rest}=r;
     return {...rec,...rest,ok:ok ? 1 : 0,status:ok ? 'ok' : 'fail',detail:detail||'',ms:rest.ms??(env.now()-t0),checked:env.now()};
   }catch(e){
-    const why=e.reply?.err==='forbidden' || /only the page of the DSP app|not allowed for this page/i.test(e.message||'')
+    const why=/only the page of the DSP app|not allowed for this page/i.test(e.message||'')
       ? 'the app refuses this page: open DSP from the app, or tick «Let any page use actions» in the app settings' : String(e.message||e);
     return {...rec,ok:0,status:'error',detail:why.slice(0,200),ms:'',checked:env.now()};
   }
