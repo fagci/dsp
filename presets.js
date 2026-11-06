@@ -292,6 +292,7 @@ const PRESET_CATS={
   'Rig Control: Dial, Mode, PTT Lock and S-Meter (Simulator)':'Control & Remote',
   'Rotator: Compass, Jog and Limits (Simulator)':'Control & Remote',
   'Rotator: Circular Scan for the Best Azimuth (Simulator)':'Control & Remote',
+  'Batch Check: Your Own Graph per Row — Antenna Turn, Wait, Measure (Simulator)':'Control & Remote',
   'Antenna Aiming: Peak Tone, Best Hold and Hot/Cold on a Moving Level (Generator)':'Analysis & Measurement',
   'Measure: Modulation Meter — FM and AM (Generator)':'Analysis & Measurement',
   'Measure: Channel Model — Noise, Fading and Doppler on a Signal (Generator)':'Analysis & Measurement',
@@ -3258,6 +3259,29 @@ nt.size.w=900; nt.size.h=170; applySize(nt);
 const rg=addNode('rigctl',40,240,{via:'simulator',auto:true}); rg.size.w=460; rg.size.h=170; applySize(rg);
 const tr=addNode('trend',560,240,{span:60}); tr.size.w=360; tr.size.h=170; applySize(tr);
 addEdge(rg.id,'s',tr.id,'in');
+markWiresDirty();
+});
+preset('Batch Check: Your Own Graph per Row — Antenna Turn, Wait, Measure (Simulator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A task per table row, handled by YOUR graph. Batch Check (kind node) puts every row on «task» one at a time (the whole row plus «attempt»), waits for an answer record on «result» up to «nodeTimeout» seconds, repeats the row «retries» times when nothing comes, and writes the verdict (ok, status, attempts, ms and the answer\'s own fields) into the same Table row. In between is any chain of modules — Batch knows nothing about them.\n'+
+  'Here the handler turns an antenna and measures: Rec → Fields takes az from the row → Rotator (simulator, a virtual beacon at 217°); Wait Until watches «moving» and fires when it has been below 0.5 for 0.8 s; Measure Window averages the level for 1.5 s; Fields → Rec packs {az, level} and sends it to «result». The condition level > 5 marks the rows that see the beacon (only around 225° here). Press Run on Batch Check; Stop drops the current task.\n'+
+  'The same shape fits other jobs: an auto-dialler (task → call → «answered» pulse → result, retries = redial), a sensor poll (task → command to Serial / Network / BLE → reply → result, the condition decides the status). The key «id» is used to match the answer; with one task at a time any next record on «result» is the answer.'});
+nt.size.w=1180; nt.size.h=210; applySize(nt);
+const tb=addNode('table',40,280,{list:'@patch',key:'id',initial:true,data:'id,az\n1,0\n2,45\n3,90\n4,135\n5,180\n6,225\n7,270\n8,315'});
+tb.size.w=420; tb.size.h=380; applySize(tb);
+const bt=addNode('batch',500,280,{kind:'node',key:'id',nodeTimeout:40,nodeConc:1,retries:1,retryDelay:1,cond:'r.level > 5'});
+bt.size.w=300; bt.size.h=380; applySize(bt);
+const un=addNode('recUnpack',840,280,{names:'az'}); un.size.w=190; applySize(un);
+const ro=addNode('rotator',1060,280,{via:'simulator',auto:true,simRate:40,simBeam:217}); ro.size.w=300; ro.size.h=360; applySize(ro);
+const wu=addNode('waitUntil',840,470,{op:'<',a:0.5,stable:0.8,timeout:20}); wu.size.w=190; applySize(wu);
+const wm=addNode('winMeasure',840,610,{mode:'time',window:1.5}); wm.size.w=190; applySize(wm);
+const pk=addNode('recPack',1060,670,{names:'az,level',mode:'trigger'}); pk.size.w=220; applySize(pk);
+addEdge(tb.id,'rows',bt.id,'rows'); addEdge(bt.id,'rec',tb.id,'rec');
+addEdge(bt.id,'task',un.id,'rec'); addEdge(un.id,'az',ro.id,'az');
+addEdge(un.id,'go',wu.id,'arm'); addEdge(ro.id,'moving',wu.id,'v');
+addEdge(wu.id,'done',wm.id,'arm'); addEdge(ro.id,'lvl',wm.id,'v');
+addEdge(wm.id,'done',pk.id,'go'); addEdge(wm.id,'avg',pk.id,'level'); addEdge(ro.id,'az',pk.id,'az');
+addEdge(pk.id,'rec',bt.id,'result');
 markWiresDirty();
 });
 preset('Rotator: Compass, Jog and Limits (Simulator)', function(){
