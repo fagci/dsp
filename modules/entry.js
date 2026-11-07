@@ -155,7 +155,7 @@ def({ id:'freqdigits', lazy:'proc', touch:true, title:'Frequency Digits', cat:'I
     const groups=Math.ceil(N/3)-1, sw=sep ? .45 : .18, tw=N+groups*sw+2.4, cw=Math.min(W/tw,(H-6)*.62), fs=Math.min(cw*1.5,H*.7);
     const x0=(W-cw*tw)/2+cw*.1, cy=H*.52;
     // позиция цифры с учётом разделителей слева: считаем число разделителей до неё
-    const posX=idx=>{ let sepsBefore=0; for(let q=1;q<=idx;q++) if((N-q)%3===2) sepsBefore++; return x0+(idx+.5)*cw+sepsBefore*sw*cw; };
+    const posX=idx=>{ let sepsBefore=0; for(let q=1;q<=idx;q++) if((N-q)%3===0) sepsBefore++; return x0+(idx+.5)*cw+sepsBefore*sw*cw; };
     const kAt=x=>{ let best=-1,bd=1e9; for(let idx=0;idx<N;idx++){ const d=Math.abs(x-posX(idx)); if(d<bd){ bd=d; best=idx; } } return bd<=cw*.62 ? N-1-best : -1; };
     const stepF=(k,dir)=>{ n.f=fdStep(n.f,k,dir,lo,hi); n.p.state=String(n.f); };
     indWire(n,cv,{
