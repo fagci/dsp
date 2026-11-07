@@ -2117,6 +2117,11 @@ function saHistPush(n, s){
   }
 }
 // RGBA Wp×H из истории; top — новые сверху (CPU-канва), иначе порядок кольца GL (новые снизу)
+// окно цвета водопада: окно дБ спектра, сдвинутое (яркость) и сжатое (контраст)
+function saWfWin(n){
+  const lo=n.p.floor, hi=n.p.top, b=+n.p.wfBright||0, c=Math.max(.25,+n.p.wfContrast||1), mid=(lo+hi)/2, half=(hi-lo)/2/c;
+  return [mid-half-b, mid+half-b];
+}
 function saHistRender(n, Wp, H, top){
   const rows=n.hist.rows, buf=new Uint8ClampedArray(Wp*H*4);
   for(let i=3;i<buf.length;i+=4) buf[i]=255;
@@ -2124,8 +2129,8 @@ function saHistRender(n, Wp, H, top){
   for(let x=0;x<=Wp;x++) fE[x]=saFreq(n,(x-.5)/Math.max(1,Wp-1));
   let dMin=Infinity; for(let x=0;x<Wp;x++){ const d=Math.abs(fE[x+1]-fE[x]); if(d<dMin) dMin=d; }
   // цвет на каждый код уровня — один раз
-  const pal=paletteLut(n.p.palette), rng=(n.p.top-n.p.floor)||1, col=new Uint8Array(256*3);
-  for(let c=0;c<256;c++){ const hk=heatIdx((SA_H_DB0+c*SA_H_STEP-n.p.floor)/rng)*3;
+  const [wLo,wHi]=saWfWin(n), pal=paletteLut(n.p.palette), rng=(wHi-wLo)||1, col=new Uint8Array(256*3);
+  for(let c=0;c<256;c++){ const hk=heatIdx((SA_H_DB0+c*SA_H_STEP-wLo)/rng)*3;
     col[c*3]=pal[hk]; col[c*3+1]=pal[hk+1]; col[c*3+2]=pal[hk+2]; }
   const cnt=Math.min(H, rows.length);
   for(let a=0;a<cnt;a++){
@@ -2232,6 +2237,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
   view:{h:280}, pick:true, resize:true,
   params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)',fn:n=>{ if(n.p.auto) n.zoom=null; }},
           {n:'show',t:'select',opts:['both','spectrum','waterfall'],d:'both',label:'show: spectrum and waterfall, only the spectrum, or only the waterfall (drag the boundary between them to the edge)'},
+          {n:'fill',t:'select',opts:['flat','gradient','off'],d:'flat',label:'fill under the trace: flat, gradient (brightest at the strongest peak, fading to the floor) or none'},
+          {n:'fillAlpha',t:'range',min:0,max:80,step:1,d:22,label:'fill strength, % (gradient: at its brightest)',adv:true},
           {n:'frange',t:'range2',keys:['fmin','fmax'],min:1,max:6e9,step:1,log:true,d:[0,4000],label:'range, Hz'},
           {n:'dbrange',t:'range2',keys:['floor','top'],min:-140,max:20,step:1,d:[-100,-20],label:'range, dB'},
           // слайдера больше нет — граница спектр/водопад тащится прямо на графике (см. resize в drag ниже)
@@ -2297,6 +2304,9 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
           {n:'savePng',t:'button',label:'⤓ Picture (PNG)',fn:n=>saExportPng(n)},
           {n:'refSave',t:'button',label:'⤓ Reference to a file',adv:true,fn:n=>saRefSave(n)},
           {n:'refLoad',t:'button',label:'⤒ Reference from a file',adv:true,fn:n=>saRefLoad(n)},
+          // окно цвета водопада = окно дБ спектра, сдвинутое (яркость) и сжатое (контраст): слабые сигналы видны на водопаде независимо от масштаба трассы
+          {n:'wfBright',t:'range',min:-40,max:40,step:1,d:0,label:'waterfall brightness, dB (+ lifts weak signals out of the noise)'},
+          {n:'wfContrast',t:'range',min:.5,max:4,step:.05,d:1,label:'waterfall contrast (× — narrows the colour window)'},
           {n:'palette',t:'select',opts:['default',...Object.keys(PALETTES)],d:'classic',label:'waterfall palette',adv:true},
           // история водопада в полном разрешении — зум/смена палитры и диапазона дБ перерисовывают её без потерь
           {n:'wfMem',t:'select',opts:['off','32','128','512'],d:'128',label:'waterfall history memory, MB',adv:true,
@@ -3033,10 +3043,10 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
         // проверка fresh выше. Просто красим следующую НАСТОЯЩУЮ новую строку уже новой палитрой —
         // старая история водопада хранит только готовые RGBA-пиксели, её перекрашивать задним
         // числом не из чего (см. n.off ниже).
-        const pal=paletteLut(n.p.palette);
+        const pal=paletteLut(n.p.palette), [wLo,wHi]=saWfWin(n);
         const line=n._line;
         for(let x=0;x<Wp;x++){
-          const v=clamp((saDb(magReduce(m,edgeXwf[x],edgeXwf[x+1]))-n.p.floor)/((n.p.top-n.p.floor)||1),0,1);
+          const v=clamp((saDb(magReduce(m,edgeXwf[x],edgeXwf[x+1]))-wLo)/((wHi-wLo)||1),0,1);
           const hk=heatIdx(v)*3, k=x*4;
           if(!n._inXwf[x]){ line[k]=line[k+1]=line[k+2]=0; line[k+3]=255; continue; }
           line[k]=pal[hk]; line[k+1]=pal[hk+1]; line[k+2]=pal[hk+2]; line[k+3]=255; }
@@ -3048,7 +3058,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
       // окно/шкала/палитра сменились — перерисовать водопад из истории, когда жест затих
       // (пока тянут — шейдер растягивает старые строки как превью)
       if(n.hist && n.hist.rows.length){
-        const key=[bLo,bHi,Wp,hwP,n.p.log,n.p.floor,n.p.top,n.p.palette,!!n.wfGl].join('|');
+        const key=[bLo,bHi,Wp,hwP,n.p.log,n.p.floor,n.p.top,n.p.wfBright,n.p.wfContrast,n.p.palette,!!n.wfGl].join('|');
         if(key!==n._histKey){
           const now=performance.now();
           if(key!==n._histPendKey){ n._histPendKey=key; n._histPendT=now; }
@@ -3087,10 +3097,18 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
       if(n.p.phosphor) lineY=saPhosphor(n,cx,W,plotH,traceY,fresh,diff);
       else {
         // заливка под трассой — чуть плотнее (темнее), чем у полос band plan/приёма (там alpha .14)
-        cx.beginPath(); cx.moveTo(0,traceY[0]);
-        for(let x=1;x<W;x++) cx.lineTo(x,traceY[x]);
-        cx.lineTo(W-1,plotH); cx.lineTo(0,plotH); cx.closePath();
-        cx.fillStyle=n.colTS; cx.globalAlpha=.22; cx.fill(); cx.globalAlpha=1;
+        const fm=n.p.fill||'flat', fa=clamp((+n.p.fillAlpha>=0 ? +n.p.fillAlpha : 22)/100,0,1);
+        if(fm!=='off' && fa>0){
+          cx.beginPath(); cx.moveTo(0,traceY[0]);
+          for(let x=1;x<W;x++) cx.lineTo(x,traceY[x]);
+          cx.lineTo(W-1,plotH); cx.lineTo(0,plotH); cx.closePath();
+          if(fm==='gradient'){                          // ярче всего у самого сильного пика, к полу — почти прозрачно
+            let top=plotH; for(let x=0;x<W;x++) if(traceY[x]<top) top=traceY[x];
+            const g=cx.createLinearGradient(0,Math.min(top,plotH-2),0,plotH);
+            g.addColorStop(0,themeRgba('--t-spec',Math.min(1,fa*1.8))); g.addColorStop(1,themeRgba('--t-spec',fa*.12));
+            cx.fillStyle=g; cx.fill();
+          } else { cx.fillStyle=n.colTS; cx.globalAlpha=fa; cx.fill(); cx.globalAlpha=1; }
+        }
       }
       if(n.p.phosphor) cx.globalAlpha=.7;             // сглаженная трасса поверх тепловой карты
       cx.beginPath(); cx.moveTo(0,lineY[0]);
@@ -4595,10 +4613,10 @@ def({ id:'spectral', title:'Spectral Descriptors', cat:'Analysis',
     'centroid '+n.centroid.toFixed(0)+' Hz · spread '+n.spread.toFixed(0)+' Hz · flux '+
     n.flux.toFixed(3)+' · rolloff '+n.rolloff.toFixed(0)+' Hz'; }});
 defGroups('sa',[
-  {n:'View', p:'show auto frange dbrange log grid peakHold peakDecay layout'},
+  {n:'View', p:'show auto frange dbrange fill fillAlpha log grid peakHold peakDecay layout'},
   {n:'Level', p:'vscale refLvl dbDiv autoDb adHead adMargin adTrack unit lvlOff', open:false},
   {n:'Markers', p:'snap trk trkBw wfMk ant antVf markMode markLabels tickSec clearMarks bandFilter', open:false},
-  {n:'Waterfall', p:'rowMs palette wfMem phosphor phDecay phGain', open:false},
+  {n:'Waterfall', p:'wfBright wfContrast rowMs palette wfMem phosphor phDecay phGain', open:false},
   {n:'Traces', p:'tr1 tr2 tr3 tr4 avgN det rbw rbwHz mkTrace clrTr tol band ref take refSave refLoad', open:false},
   {n:'Measure & export', p:'dRef meas measBw measPct measX acpOff calMk slice sliceSec saveCsv savePng', open:false},
   {n:'Panes', p:'panes follow edge paneFrom holdMarker avg ageFade', open:false}],

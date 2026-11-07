@@ -1477,6 +1477,18 @@ function saChans(n){
 // Шторки каналов приёмника (spec.chans от rtlsdr): полоса канального фильтра ПЧ вокруг частоты
 // каждого канала, цветом маркера с тем же номером. Подпись (режим и ширина) — отдельным проходом
 // saChannelLabels, после маркеров, чтобы линия маркера её не перекрывала.
+// Полоса канала (края, шторка, число) видна только под курсором и в момент изменения (тянут край, ~1.2 с после любого изменения);
+// без наведения (телефон) — всегда. Маркер по центру рисуется постоянно.
+const SA_NO_HOVER=typeof matchMedia==='function' && matchMedia('(hover: none)').matches;
+function saChanShown(n,c){
+  const now=performance.now(), prev=n._bwPrev||(n._bwPrev={}), until=n._bwUntil||(n._bwUntil={}), bw=c.hi-c.lo, was=prev[c.idx];
+  if(was!=null && Math.abs(was-bw)>.5){ until[c.idx]=now+1200; setTimeout(()=>{ if(typeof saOvKick==='function') saOvKick(n); },1300); }
+  prev[c.idx]=bw;
+  if(now<(until[c.idx]||0) || SA_NO_HOVER) return true;
+  const hx=n._hoverX; if(hx==null) return false;
+  const m=6/Math.max(1,n.cv.width);
+  return hx>=saPos(n,c.lo)-m && hx<=saPos(n,c.hi)+m;
+}
 function saChannels(n,cx,W,H,plotH){
   const list=saChans(n); if(!list) return;
   const TOP=Math.max(16,n._topH||0);
@@ -1484,6 +1496,7 @@ function saChannels(n,cx,W,H,plotH){
   for(const c of list){
     const x1=saPos(n,c.lo)*W, x2=saPos(n,c.hi)*W;
     if(x2<0||x1>W) continue;
+    if(!saChanShown(n,c)) continue;
     const col=MK_COL(c.idx);
     // всё считаем в физических пикселях (sc): центр — тот же, что у линии маркера, края — ровно на h пикселей в обе стороны
     const sc=(n.cv.pxW||n.cv.width)/n.cv.width;
@@ -1725,15 +1738,12 @@ function saChanAtMarker(n,f){
 function saChannelLabels(n,cx,W){
   const list=saChans(n); n._chLblBottom=0; n._bwWfRows=0;
   if(!list) return;
-  // ширина полосы — только значение (без вида модуляции) и только в момент изменения: пока тянут край и ~1.2 с после любого изменения (в том числе извне)
-  const now=performance.now(), prev=n._bwPrev||(n._bwPrev={}), until=n._bwUntil||(n._bwUntil={});
+  // ширина полосы — только значение (без вида модуляции), по наведению на канал и в момент изменения
   cx.font=BW_FONT;
   const used=[...(n._sgRects||[])];
   for(const c of list){
-    const bw=c.hi-c.lo, was=prev[c.idx];
-    if(was!=null && Math.abs(was-bw)>.5){ until[c.idx]=now+1200; setTimeout(()=>{ if(typeof saOvKick==='function') saOvKick(n); },1300); }
-    prev[c.idx]=bw;
-    if(!(now<(until[c.idx]||0))) continue;
+    const bw=c.hi-c.lo;
+    if(!saChanShown(n,c)) continue;
     const x1=saPos(n,c.lo)*W, x2=saPos(n,c.hi)*W;
     if(x2<0||x1>W) continue;
     const t=fmtHz(bw, bw%1000?1:0), tw=Math.ceil(cx.measureText(t).width), col=MK_COL(c.idx);
@@ -2099,7 +2109,8 @@ function saMarkersWf(n,cx,W,hs,H){
     const f=n.mk[k], x=saPos(n,f)*W; if(x<-2||x>W+2) return;
     const sc=(n.cv.pxW||n.cv.width)/n.cv.width, dc=Math.floor(x*sc);        // физические пиксели: центр и края полосы — симметрично
     const col=MK_COL(k), bw=saMarkerBw(n,k), xr=(dc+.5)/sc;
-    if(bw){
+    const chw=saChanAtMarker(n,f);
+    if(bw && (!chw || saChanShown(n,chw))){               // у канала приёмника полоса — по наведению / при изменении
       const x1=saPos(n,bw[0])*W, x2=saPos(n,bw[1])*W;
       let dl=Math.floor(x1*sc), dr=Math.floor(x2*sc);
       if(Math.abs((bw[0]+bw[1])/2-f)<(bw[1]-bw[0])*.02){ const h=Math.max(1,Math.round((x2-x1)*sc/2)); dl=dc-h; dr=dc+h; }
