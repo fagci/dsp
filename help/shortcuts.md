@@ -5,7 +5,7 @@
 | Help | **F1** (the module under selection) or the **?** button |
 | This page | **?** (Shift+/) |
 | Command palette: modules and patches, fuzzy | **Ctrl+K** or **/** |
-| Chain of modules (Emmet-style, live preview on the canvas) | **Ctrl+K** or **/**, then `mic>fft>sa`, **Enter** · `>fft>sa` continues from the selected module |
+| Chain of modules (Emmet-style, live preview on the canvas) | **Ctrl+K** or **/**, then `mic>fft>sa`, **Enter** · `>fft>sa` continues from the selected module (with one module selected the palette opens with `>` already typed) · `usb>(dac,sa,iqshift>iqdec)` — branches in parentheses, separated by commas |
 | Run / stop | **Space** |
 | Save the patch | **Ctrl+S** |
 | Select all modules | **Ctrl+A** |

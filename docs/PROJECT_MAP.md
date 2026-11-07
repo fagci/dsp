@@ -32,7 +32,7 @@
 |---|---|---|
 | Граф/узлы/провода | `core-graph.js` | `addNode/addNodeUI/delNode/addEdge/delEdge/connect` (автоадаптер iq↔sig `IQ_ADAPT`), `posNode`, `Sel/syncSel/delSel`, `Undo` (уважает `Undo.busy`) |
 | Палитра модулей, поиск | `core-graph.js` | `modInfo/modScoreW/modRank/queryWords` (fuzzy), палитра `pal*` |
-| Командная палитра, Emmet-цепочки | `core-graph.js` | `cmdkOpen/cmdkRender/cmdkPreview/cmdkChainDone/chainPins`; превью — реальные узлы под `Undo.busy` + `_frozen` + класс `cmdk-ghost`; `>` в запросе — цепочка, `>a>b` — от выделенного |
+| Командная палитра, Emmet-цепочки | `core-graph.js` | `cmdkOpen/cmdkRender/cmdkPreview/cmdkChainDone/chainPins`; превью — реальные узлы под `Undo.busy` + `_frozen` + класс `cmdk-ghost`; `>` в запросе — цепочка, `>a>b` — от выделенного, `usb>(a,b>c)` — ветви в скобках; разбор и раскладка — `modules/chain-kernels.js` (тест `tools/test-chain.mjs`) |
 | Хоткеи | `core-graph.js` | `keydown`: Space (run/stop), Ctrl+S/A/K, стрелки (nudge), `+/-` зум, `?` шорткаты, `/` палитра, Delete, Ctrl+Z/Y |
 | Fuzzy-поиск | `modules/help-kernels.js` | `fzDist` (Дамерау-Левенштейн), `fzWord` (1–2 правки), `fzAbbr` (PHone SEnsors), `fzScoreWords`, `fzTokens` |
 | Справка в приложении | `modules/help.js` + `help-kernels.js` | `hpOpen/hpGo/hpLoad`; `hpLoad` собирает «абзацы модулей» (`hlpBullets`) со всех страниц `help/` — карточки модулей и поиск |
