@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', HKEY='dsp-presets-hash', PRESET_VER=155;   // PRESET_VER — полная пересборка всех пресетов (дефолты модулей, формат патча); правки самих пресетов подхватываются по хэшу
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', HKEY='dsp-presets-hash', PRESET_VER=156;   // PRESET_VER — полная пересборка всех пресетов (дефолты модулей, формат патча); правки самих пресетов подхватываются по хэшу
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -267,6 +267,7 @@ const PRESET_CATS={
   'Tools: Pedometer (Phone, Screen Stays On)':'Tools',
   'Echo Repeater: Record the Transmission, Play It Back (USB SDR)':'SDR Receivers',
   'USB SDR: Channel Scan (Channel Scanner + squelch)':'SDR Receivers',
+  'USB SDR: Chain by Typing (Ctrl+K, usb>(dac,sa,…))':'SDR Receivers',
   'USB SDR: Channel Scan + Decoder Switch (digital voice / analog)':'SDR Receivers',
   'Signal Catalog: Pick a Type, the SDR Tunes and Decodes (USB SDR)':'SDR Receivers',
   'Signal Database: What Is It and How to Decode (USB SDR)':'SDR Receivers',
@@ -1655,6 +1656,21 @@ const rx=addNode('rtlsdr',40,220,{sr:'1024000',auto:false,gainDb:30,demod:'WFM',
 const sa=addNode('sa',40,560,{auto:true,floor:-90,top:-20,split:.3});
 sa.size.w=520; sa.size.h=300; applySize(sa);
 const dc=addNode('dac',620,220,{vol:.4});
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(sa.id,'f1',rx.id,'tuneFreq');
+addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
+markWiresDirty();
+});
+preset('USB SDR: Chain by Typing (Ctrl+K, usb>(dac,sa,…))', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'This patch was typed: Ctrl+K (or /), then  usb>(dac,sa)  and Enter. «>» goes on to the next module, «( , )» fans out several branches from one module: usb>(dac,sa,iqshift>iqdec>demod>digvo>mbe>dac). Names are fuzzy; an exact module id wins.\n'+
+  'With one module selected, Ctrl+K opens already with «>» — just type what comes next: fft>sa. The canvas shows a ghost preview before Enter.\n'+
+  'USB SDR starts at gain 32 dB (auto gain off). Spectrum Analyzer: the «A» button (auto dB) in the top left corner of the spectrum fits the dB window to the signal (Shift+click keeps refitting).'});
+nt.size.w=720; nt.size.h=150; applySize(nt);
+const rx=addNode('rtlsdr',40,220,{});
+const dc=addNode('dac',620,220,{vol:.4});
+const sa=addNode('sa',40,560,{auto:true,floor:-90,top:-20,split:.3});
+sa.size.w=520; sa.size.h=300; applySize(sa);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(sa.id,'f1',rx.id,'tuneFreq');
 addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');

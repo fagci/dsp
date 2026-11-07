@@ -5298,14 +5298,14 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
       try{ await iqRecStart(n); }catch(e){ if(e.name!=='AbortError') n.status='record error: '+e.message; } }},
     {n:'recStop',t:'button',label:'■ Stop recording',fn:async n=>{ await iqRecStop(n); }},
     // кусок полосы: сдвиг + децимация, файл только с нужной частью (центр — в имени и в метаданных)
-    {n:'recBand',t:'select',opts:['full','channel 1','custom'],d:'full',label:'IQ record band (channel 1 / custom: only that part, decimated)'},
-    {n:'recBw',t:'range',min:1000,max:2000000,step:1000,log:true,d:200000,label:'IQ record bandwidth, Hz (channel 1 / custom)'},
-    {n:'recF',t:'num',d:0,label:'IQ record centre, Hz (custom; 0 = receiver centre)'},
+    {n:'recBand',t:'select',opts:['full','channel 1','custom'],d:'full',label:'IQ record band (channel 1 / custom: only that part, decimated)',adv:true},
+    {n:'recBw',t:'range',min:1000,max:2000000,step:1000,log:true,d:200000,label:'IQ record bandwidth, Hz (channel 1 / custom)',adv:true},
+    {n:'recF',t:'num',d:0,label:'IQ record centre, Hz (custom; 0 = receiver centre)',adv:true},
     // разметка и метки; тег идёт в имя записи, SigMF и подписи аннотаций
-    {n:'tag',t:'text',d:'',label:'tags, comma separated (recording name, SigMF, Files tags, marks)'},
-    {n:'markTime',t:'check',d:true,label:'marks: add local time to the label'},
+    {n:'tag',t:'text',d:'',label:'tags, comma separated (recording name, SigMF, Files tags, marks)',adv:true},
+    {n:'markTime',t:'check',d:true,label:'marks: add local time to the label',adv:true},
     // запись по условию до закрытия шумоподавителя; секунды до триггера берутся из накопленных чанков
-    {n:'recTrig',t:'select',opts:['off','squelch','go input'],d:'off',label:'record while squelch is open (channel 1; needs squelch on) or while the recGo input is above 0.5 (a satellite pass window)'},
+    {n:'recTrig',t:'select',opts:['off','squelch','go input'],d:'off',label:'record while squelch is open (channel 1; needs squelch on) or while the recGo input is above 0.5 (a satellite pass window)',adv:true},
     {n:'recPre',t:'range',min:0,max:5,step:.5,d:1,label:'trigger: pre-roll, s'},
     {n:'recMax',t:'range',min:5,max:3600,step:5,log:true,d:300,label:'trigger: max length, s'},
     // только файл: повтор и позиция
@@ -5324,9 +5324,9 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'planMode',t:'check',d:true,short:'plan: demod and bandwidth',label:'band plan (plan input): set demodulation and bandwidth by the most specific range under the tuned frequency, when the range changes'},
     {n:'planGain',t:'check',d:true,short:'plan: gain',label:'band plan (plan input): set the gain by the most specific range that has a gain column (AGC off)'},
     // SAM: какую боковую слушать после когерентного детектора (обе — DSB, ISB — верхняя в L, нижняя в R)
-    {n:'samSb',t:'select',opts:['DSB','USB','LSB','ISB'],d:'DSB',label:'SAM sideband (ISB: L upper, R lower)'},
-    {n:'nb',t:'select',opts:['off','low','mid','high'],d:'off',label:'noise blanker'},
-    {n:'anf',t:'check',d:false,label:'auto notch'},
+    {n:'samSb',t:'select',opts:['DSB','USB','LSB','ISB'],d:'DSB',label:'SAM sideband (ISB: L upper, R lower)',adv:true},
+    {n:'nb',t:'select',opts:['off','low','mid','high'],d:'off',label:'noise blanker',adv:true},
+    {n:'anf',t:'check',d:false,label:'auto notch',adv:true},
     // шумоподавитель на каждый канал: SNR — по спектру вокруг канала (не зависит от усиления), level — RSSI, dBFS
     {n:'sql',t:'select',opts:['off','SNR','level','input'],d:'off',label:'squelch (input: opened by the sqlGate wire, e.g. the Band Scanner listening)'},
     {n:'sqlSnr',t:'range',min:0,max:40,step:.5,d:6,label:'squelch SNR, dB'},
@@ -5335,9 +5335,9 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'stereo',t:'check',d:false,label:'WFM stereo (the 19 kHz pilot PLL and the L−R filter cost CPU)'},
     // запомненная ширина для каждого режима — при смене режима ползунок bw переключается на неё
     ...['WFM','NFM','AM','SAM','USB','LSB'].map(m=>({n:'if'+m,t:'range',min:500,max:300000,d:RTL_BW_DEF[m],hidden:true})),
-    {n:'auto',t:'check',d:true,label:'auto gain'},
+    {n:'auto',t:'check',d:false,label:'auto gain'},
     // ручное усиление действует только без auto — движение ползунка само его снимает
-    {n:'gainDb',t:'range',min:0,max:49.6,step:.1,d:20,label:'gain, dB',fn:n=>{ if(n.p.auto){ if(n.set?.auto) n.set.auto(false); else n.p.auto=false; } }},
+    {n:'gainDb',t:'range',min:0,max:49.6,step:.1,d:32,label:'gain, dB',fn:n=>{ if(n.p.auto){ if(n.set?.auto) n.set.auto(false); else n.p.auto=false; } }},
     // RTL-SDR, режим «stages» (вместо auto/gain): ступени R820T по отдельности — индекс 0–15, LNA и смеситель можно оставить на АРУ чипа
     {n:'gainMode',t:'select',opts:['default','stages'],d:'default',label:'RTL gain mode (stages: LNA / mixer / VGA separately)',adv:true},
     {n:'stLna',t:'range',min:0,max:15,step:1,d:8,label:'LNA step',adv:true},
@@ -7679,15 +7679,11 @@ function captureImgSrc(n){                          // картинка стат
   catch(e){ n.img=null; n.status='cross-origin without CORS — frame unreadable'; }
 }
 defGroups('rtlsdr',[
-  {n:'Receiver', p:'sr demod bw deemph samSb stereo agc nb anf'},
-  {n:'Squelch', p:'sql sqlSnr sqlLvl sqlHang'},
-  {n:'Gain', p:'auto gainDb lna vga amp'},
-  {n:'Gain stages', p:'gainMode stLna stLnaAuto stMix stMixAuto stVga', open:false},
-  {n:'Tuner', p:'ppm conv bias dcShift fastTune', open:false},
-  {n:'Spectrum', p:'specSize specWin specWinP specFps specAvg specWelch specMode', open:false},
-  {n:'Sweep', p:'sweep swLo swHi swHw swFft swAvg swMode swUse swOvl swSmooth swDecay swSettle', open:false},
-  {n:'Record IQ', p:'rec recStop recFmt recBand recBw recF tag markTime recTrig recPre recMax', open:false},
-  {n:'IQ file', p:'iqFmt loop seek', open:false}],
+  {n:'Receiver', p:'sr demod bw auto gainDb lna vga amp sql sqlSnr sqlLvl'},
+  {n:'Audio', p:'deemph samSb stereo agc nb anf sqlHang', open:false},
+  {n:'Tuner', p:'gainMode stLna stLnaAuto stMix stMixAuto stVga ppm conv bias dcShift fastTune planMode planGain', open:false},
+  {n:'Spectrum & sweep', p:'specSize specWin specWinP specFps specAvg specWelch specMode sweep swLo swHi swHw swFft swAvg swMode swUse swOvl swSmooth swDecay swSettle', open:false},
+  {n:'Record & files', p:'openStored recDest recFolder rec recStop recFmt recBand recBw recF tag markTime recTrig recPre recMax iqFmt loop seek', open:false}],
   {pri:'demod bw sql auto gainDb'});
 defGroups('cam',[
   {n:'Capture', p:'res fps w zoom'},

@@ -2312,7 +2312,7 @@ function cmdkOpen(){
 if(typeof dashMode!=='undefined' && dashMode) return;                    // палитра — для графа, в дашборде свои панели
 if(!cmdkEl){
   cmdkEl=document.createElement('div'); cmdkEl.id='cmdk'; cmdkEl.hidden=true;
-  cmdkEl.innerHTML='<input type="search" placeholder="Module or patch — fuzzy («phose» finds Phone sensors) · chain: mic>fft>sa" autocomplete="off" spellcheck="false"><div class="cmdk-list"></div>';
+  cmdkEl.innerHTML='<input type="search" placeholder="Module or patch — fuzzy («phose» finds Phone sensors) · chain: mic>fft>sa, usb>(dac,sa)" autocomplete="off" spellcheck="false"><div class="cmdk-list"></div>';
   document.body.append(cmdkEl);
   cmdkEl.querySelector('input').addEventListener('input',()=>{ cmdkRender(); clearTimeout(cmdkPrevT); cmdkPrevT=setTimeout(cmdkPreview,140); });
   cmdkEl.addEventListener('keydown',cmdkKeys);
@@ -2326,8 +2326,9 @@ if(!cmdkEl){
   document.addEventListener('pointerdown',e=>{ if(cmdkEl && !cmdkEl.hidden && !cmdkEl.contains(e.target)) cmdkClose(); });
 }
 cmdkEl.hidden=false; cmdkSel=0; cmdkChain=false; cmdkKeep=null;
-const q=cmdkEl.querySelector('input'); q.value=''; cmdkRender();
-setTimeout(()=>q.focus({preventScroll:true}),0);
+const q=cmdkEl.querySelector('input'); q.value=Sel.size===1 ? '>' : '';   // выделен один модуль — сразу продолжение цепочки от него
+cmdkRender(); if(q.value) cmdkPrevT=setTimeout(cmdkPreview,0);
+setTimeout(()=>{ q.focus({preventScroll:true}); q.setSelectionRange(q.value.length,q.value.length); },0);
 }
 /* превью цепочки: узлы настоящие, но история/автосохранение подавлены (Undo.busy) — до Enter или Esc */
 function cmdkPreview(){
@@ -2335,40 +2336,45 @@ if(!cmdkEl || cmdkEl.hidden) return;
 cmdkTeardown();
 const v=cmdkEl.querySelector('input').value;
 if(!cmdkChain) return;
-const cont=v.startsWith('>');                                // «>fft>sa» — продолжить цепочку от выделенного модуля
-const segs=v.split('>').map(s=>s.trim()).filter(Boolean).slice(0,12);
-if(!segs.length) return;
+const {cont,ast}=cmdkParse(v);                               // «>fft>sa» — продолжить цепочку от выделенного модуля
 if(cont && Sel.size!==1) return;                             // про выделение — подсказка в cmdkRender
 const src=cont?Graph.map[[...Sel][0]]:null;
-const chain=segs.map(seg=>({seg,m:modRank(Object.values(MOD),queryWords(seg))[0]||null}));
-const stop=chain.findIndex(st=>!st.m);                       // строим непрерывный префикс: после пропуска — не строим
-const build=stop<0?chain:chain.slice(0,stop);
-if(!build.length) return;
+const leaves=chainLeaves(ast);
+if(!leaves.length) return;
 const was=Undo.busy; Undo.busy=true;
 try{
   cmdkKeep=new Set(Graph.nodes.map(n=>n.id));
   const rect=cv.getBoundingClientRect();
-  const W=n=>(n.el.offsetWidth||n.size.w||180);
-  const cx0=(rect.width/2)/view.k-view.x, cy0=(rect.height/2.4)/view.k-view.y;
-  const nodes=[];
-  let x=src?src.x+W(src)+70:cx0, y=src?src.y:cy0;           // продолжение — от правого края выделенного
-  for(const st of build){
-    const n=addNodeUI(st.m.id,x,y);
-    if(!n){ st.m=null; break; }
-    nodes.push(n); x+=W(n)+70;
-  }
-  if(!src){ let xx=cx0-(x-cx0-70)/2;                         // новая цепочка — по центру видимой области
-    for(const n of nodes){ n.x=xx; posNode(n); xx+=W(n)+70; } }
-  const from=src?[src,...nodes]:nodes;
-  for(let i=1;i<from.length;i++){
-    const pin=chainPins(from[i-1],from[i]);
-    if(!pin) break;
-    connect(from[i-1].id,pin[0],from[i].id,pin[1]);          // автоадаптер iq↔sig ставится сам
-  }
+  for(const lf of leaves){ lf.node=addNodeUI(lf.m.id,0,0); }
+  const made=leaves.filter(lf=>lf.node);
+  const sz=lf=>({w:lf.node.el.offsetWidth||lf.node.size.w||180, h:lf.node.el.offsetHeight||lf.node.size.h||120});
+  const lay=chainLayout(ast);
+  const cw=[], rh=[];                                         // ширина колонки / высота строки — по самому крупному узлу
+  for(const lf of made){ const z=sz(lf); cw[lf.col]=Math.max(cw[lf.col]||0,z.w); rh[lf.row]=Math.max(rh[lf.row]||0,z.h); }
+  const colX=[], rowY=[]; let ax=0, ay=0;
+  for(let c=0;c<lay.w;c++){ colX[c]=ax; ax+=(cw[c]||0)+70; }
+  for(let r=0;r<lay.h;r++){ rowY[r]=ay; ay+=(rh[r]||0)+40; }
+  const Wsrc=src?(src.el.offsetWidth||src.size.w||180):0;
+  const x0=src ? src.x+Wsrc+70 : (rect.width/2)/view.k-view.x-(ax-70)/2;     // продолжение — от правого края выделенного, новая цепочка — по центру видимой области
+  const y0=src ? src.y : (rect.height/2.4)/view.k-view.y-(ay-40)/2;
+  for(const lf of made){ lf.node.x=x0+colX[lf.col]; lf.node.y=y0+rowY[lf.row]; posNode(lf.node); }
+  const hasNode=lf=>!!lf.node;
+  chainEdges(ast, src?[{node:src}]:[], (f,t)=>{
+    if(!hasNode(f)||!hasNode(t)) return;
+    const pin=chainPins(f.node,t.node);
+    if(pin) connect(f.node.id,pin[0],t.node.id,pin[1]);      // автоадаптер iq↔sig ставится сам
+  });
   for(const n of Graph.nodes) if(!cmdkKeep.has(n.id)) n.el.classList.add('cmdk-ghost');   // превью — полупрозрачное
   for(const e of Graph.edges) if(!cmdkKeep.has(e.to)) e.path.classList.add('cmdk-ghost');
   for(const n of Graph.nodes) if(!cmdkKeep.has(n.id)) n._frozen=true;   // и не трогает железо: движок превью пропускает (микрофон, USB SDR…)
 } finally { Undo.busy=was; }
+}
+// строка → дерево с найденными модулями в листьях (.m); пустые ветки и всё после первого несовпадения отброшено
+function cmdkParse(v){
+const r=chainParse(v);
+const ids=new Map(Object.values(MOD).map(m=>[m.id.toLowerCase(),m]));
+chainResolve(r.ast,seg=>ids.get(seg.trim().toLowerCase())||modRank(Object.values(MOD),queryWords(seg))[0]||null);   // точный id важнее нечёткого поиска
+return r;
 }
 function cmdkTeardown(){
 if(!cmdkKeep) return;
@@ -2408,24 +2414,19 @@ const q=cmdkEl.querySelector('input').value, words=queryWords(q), list=cmdkEl.qu
 cmdkChain=q.includes('>');
 list.innerHTML='';
 if(cmdkChain){
-  const segs=q.split('>').map(s=>s.trim()).filter(Boolean).slice(0,12);
-  const cont=q.startsWith('>');
+  const cont=q.trim().startsWith('>');
   list.innerHTML='<div class="cmdk-chain"></div>';
   const box=list.querySelector('.cmdk-chain');
   if(cont && Sel.size!==1){ box.innerHTML='<div class="cmdk-hint">«&gt;fft&gt;sa» continues the chain from the selected module — select exactly one first</div>'; return; }
-  if(!segs.length){ box.innerHTML='<div class="cmdk-hint">mic&gt;fft&gt;sa — each part is a fuzzy module name, the canvas shows the preview<br>&gt;fft&gt;sa — continue from the selected module</div>'; return; }
-  if(cont){ const s=Graph.map[[...Sel][0]];
-    box.insertAdjacentHTML('beforeend','<div class="cmdk-step"><span class="cmdk-kind">•</span><b>'+hlpEsc(shortLabel(MOD[s.type].title))+'</b><span class="cmdk-arrow">→</span><span class="cmdk-dim">selected</span></div>');
-  }
-  segs.forEach((seg,i)=>{
-    const m=modRank(Object.values(MOD),queryWords(seg))[0];
-    const d=document.createElement('div'); d.className='cmdk-step';
-    d.innerHTML='<span class="cmdk-kind">'+ (i+1) +'</span><b>'+hlpEsc(seg)+'</b><span class="cmdk-arrow">→</span>'
-      + (m ? '<b>'+hlpEsc(m.title)+'</b>' : '<span class="cmdk-bad">no match — the chain stops here</span>');
-    box.append(d);
-  });
-  const ok=segs.every(seg=>modRank(Object.values(MOD),queryWords(seg)).length);
-  box.insertAdjacentHTML('beforeend','<div class="cmdk-hint">'+(ok?'Enter — add the chain, Esc — cancel':'Enter — add the matched part before the gap, Esc — cancel')+'</div>');
+  const full=chainParse(q);
+  if(!chainLeaves(full.ast).length){ box.innerHTML='<div class="cmdk-hint">mic&gt;fft&gt;sa — each part is a fuzzy module name, the canvas shows the preview<br>usb&gt;(dac,sa,iqshift&gt;iqdec) — branches from one module<br>&gt;fft&gt;sa — continue from the selected module</div>'; return; }
+  const total=chainLeaves(full.ast).length;
+  const {ast}=cmdkParse(q), found=chainLeaves(ast).length;
+  const lab=lf=>'<b>'+hlpEsc(lf.m.title)+'</b>';
+  const from=cont ? '<b>'+hlpEsc(shortLabel(MOD[Graph.map[[...Sel][0]].type].title))+'</b> <span class="cmdk-dim">selected</span> → ' : '';
+  box.insertAdjacentHTML('beforeend','<div class="cmdk-step tree">'+from+chainText(ast,lab)+'</div>');
+  const ok=found===total;
+  box.insertAdjacentHTML('beforeend','<div class="cmdk-hint">'+(ok?'Enter — add the chain, Esc — cancel':'<span class="cmdk-bad">'+(total-found)+' part(s) have no match — the chain stops there.</span> Enter — add the rest, Esc — cancel')+'</div>');
   return;
 }
 cmdkRows=[];

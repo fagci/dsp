@@ -1811,6 +1811,8 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 .cmdk-step .cmdk-kind{text-align:right}
 .cmdk-step b{font-weight:600}
 .cmdk-step b:first-of-type{color:var(--dim);font-weight:400}
+.cmdk-step.tree{display:block;line-height:1.7}
+.cmdk-step.tree b:first-of-type{color:inherit;font-weight:600}
 .cmdk-arrow{color:var(--acc)}
 .cmdk-bad{color:#d66;font-size:12px}
 .cmdk-hint{padding:8px 12px;font-size:11px;color:var(--dim)}

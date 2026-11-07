@@ -2257,7 +2257,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
           // выключить — тот же жест, что и "очистить": незачем отдельная кнопка (см. fn у 'check' в core-graph.js)
           {n:'peakHold',t:'check',d:false,label:'peak hold',fn:n=>{ if(!n.p.peakHold){ n.peak=null; if(typeof saPeakClear==='function') saPeakClear(n); } }},
           {n:'peakDecay',t:'range',min:0,max:120,step:1,d:0,label:'peak decay, s per 60 dB (0 = hold forever)',adv:true},
-          {n:'autoDb',t:'button',label:'Auto dB',fn:n=>{ if(typeof saAutoDb==='function') saAutoDb(n); }},
+          {n:'autoDb',t:'button',hidden:true,label:'Auto dB',fn:n=>{ if(typeof saAutoDb==='function') saAutoDb(n); }},
           {n:'adHead',t:'range',min:0,max:40,step:1,d:20,label:'Auto dB: headroom above the strongest signal, dB',adv:true},
           {n:'adMargin',t:'range',min:0,max:15,step:1,d:3,label:'Auto dB: margin under the noise, dB (the noise sits right at the bottom)',adv:true},
           {n:'adTrack',t:'check',d:false,label:'Auto dB: keep refitting while it runs (moves only for changes over 3 dB)',adv:true},
@@ -2870,6 +2870,9 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         }
         return null;
       };
+      const autoHit=ev=>{ const b=n._autoBox; if(!b) return false;      // кнопка «Auto dB» на канве (см. saMarkerTabs)
+        const rc=cv.getBoundingClientRect(), x=(ev.clientX-rc.left)/rc.width*cv.width, y=(ev.clientY-rc.top)/rc.height*cv.height;
+        return x>=b.x0&&x<=b.x1&&y>=b.y0&&y<=b.y1; };
       const nearBoundary=ev=>{
         const rc=cv.getBoundingClientRect();
         const y=(ev.clientY-rc.top)/rc.height*cv.height;
@@ -2885,6 +2888,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
         if(!d || Math.hypot(ev.clientX-d.x,ev.clientY-d.y)>6) return;  // перетаскивание, не клик
         const hb=harmHit(ev);
         if(hb){ n.pickT=null; n.zoom=null; n._steer=hb.f; return; }   // перейти на f/k
+        if(autoHit(ev)){ n.pickT=null; if(ev.shiftKey) setMod(n,'adTrack',!n.p.adTrack); saAutoDb(n); return; }
         const tab=tabHit(ev);
         if(tab){ n.pickT=null; if(tab.clear) n.mk[tab.idx]=null; else n.active=tab.idx+1; return; }
         if(nearBoundary(ev)){ n.pickT=null; return; }   // клик (без протаскивания) по границе split — не маркер
@@ -2908,7 +2912,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
       });
       cv.addEventListener('pointermove', ev=>{
         { const rc=cv.getBoundingClientRect(), fx=(ev.clientX-rc.left)/rc.width;
-          n._hoverX = ev.pointerType==='touch'||drag||fx<0||fx>1||tabHit(ev)||nearBoundary(ev) ? null : fx;
+          cv.title=autoHit(ev)?'Auto dB: fit the dB window to the signal (Shift+click: keep refitting'+(n.p.adTrack?' — on':'')+')':'';
+          n._hoverX = ev.pointerType==='touch'||drag||fx<0||fx>1||tabHit(ev)||autoHit(ev)||nearBoundary(ev) ? null : fx;
           n._hoverY = (ev.clientY-rc.top)/rc.height*cv.height; }
         n._bmHoverFreq = bmHit(ev)?.freq ?? null; saOvKick(n);
         n._mkHoverIdx = n._bmHoverFreq==null ? (mkHit(ev)?.idx ?? null) : null;
@@ -4587,17 +4592,13 @@ def({ id:'spectral', title:'Spectral Descriptors', cat:'Analysis',
     'centroid '+n.centroid.toFixed(0)+' Hz · spread '+n.spread.toFixed(0)+' Hz · flux '+
     n.flux.toFixed(3)+' · rolloff '+n.rolloff.toFixed(0)+' Hz'; }});
 defGroups('sa',[
-  {n:'View', p:'auto frange dbrange autoDb vscale refLvl dbDiv adHead adMargin adTrack log grid peakHold peakDecay layout panes'},
-  {n:'Panes', p:'follow edge paneFrom holdMarker avg ageFade'},
-  {n:'Markers', p:'snap trk trkBw wfMk ant antVf', open:false},
-  {n:'Overlay', p:'bandFilter', open:false},
-  {n:'Time marks', p:'markMode markLabels tickSec clearMarks'},
-  {n:'Waterfall', p:'rowMs palette wfMem', open:false},
-  {n:'Phosphor', p:'phosphor phDecay phGain', open:false},
-  {n:'Traces', p:'tr1 tr2 tr3 tr4 avgN det rbw rbwHz mkTrace clrTr', open:false},
-  {n:'Measure', p:'dRef meas measBw measPct measX acpOff unit lvlOff calMk slice sliceSec', open:false},
-  {n:'Export', p:'saveCsv savePng', open:false},
-  {n:'Reference', p:'tol band ref take refSave refLoad', open:false}],
+  {n:'View', p:'auto frange dbrange log grid peakHold peakDecay layout'},
+  {n:'Level', p:'vscale refLvl dbDiv autoDb adHead adMargin adTrack unit lvlOff', open:false},
+  {n:'Markers', p:'snap trk trkBw wfMk ant antVf markMode markLabels tickSec clearMarks bandFilter', open:false},
+  {n:'Waterfall', p:'rowMs palette wfMem phosphor phDecay phGain', open:false},
+  {n:'Traces', p:'tr1 tr2 tr3 tr4 avgN det rbw rbwHz mkTrace clrTr tol band ref take refSave refLoad', open:false},
+  {n:'Measure & export', p:'dRef meas measBw measPct measX acpOff calMk slice sliceSec saveCsv savePng', open:false},
+  {n:'Panes', p:'panes follow edge paneFrom holdMarker avg ageFade', open:false}],
   {pri:'auto frange dbrange peakHold layout'});
 defGroups('scope',[
   {n:'Scale', p:'span gain ofs cursors grid stack meas'},

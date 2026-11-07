@@ -1485,9 +1485,12 @@ function saChannels(n,cx,W,H,plotH){
     const x1=saPos(n,c.lo)*W, x2=saPos(n,c.hi)*W;
     if(x2<0||x1>W) continue;
     const col=MK_COL(c.idx);
-    cx.globalAlpha=.08; cx.fillStyle=col; cx.fillRect(x1,TOP,Math.max(1,x2-x1),H-TOP);
+    // границы — по целым пикселям; полоса симметрична вокруг линии маркера (иначе края «гуляют» на пиксель вправо/влево)
+    let xl=Math.round(x1), xr=Math.round(x2);
+    if(Math.abs((c.lo+c.hi)/2-c.f)<(c.hi-c.lo)*.02){ const xc=Math.round(saPos(n,c.f)*W), h=Math.max(1,Math.round((x2-x1)/2)); xl=xc-h; xr=xc+h; }
+    cx.globalAlpha=.08; cx.fillStyle=col; cx.fillRect(xl,TOP,Math.max(1,xr-xl+1),H-TOP);
     cx.globalAlpha=.9; cx.strokeStyle=col; cx.lineWidth=1;
-    const e1=Math.round(x1)+.5, e2=Math.round(x2)-.5;
+    const e1=xl+.5, e2=xr+.5;
     cx.beginPath(); cx.moveTo(e1,TOP); cx.lineTo(e1,H); cx.moveTo(e2,TOP); cx.lineTo(e2,H); cx.stroke();
     // шумоподавитель: пунктир — порог, сплошная — текущий средний уровень в полосе канала
     // (в той же шкале, что трасса); сплошная выше пунктира — открыт (с гистерезисом 3 дБ и hang)
@@ -2120,11 +2123,13 @@ function saMarkers(n,cx,W,H){
     const act=(n.active-1)===k, hovered=hoverK===k;
     // линия начинается НИЖЕ потолка (см. TOP_H) — там теперь подписи закладок (см. saBandPlan), и
     // полоса маркера не должна наезжать на них своим цветом поверх
-    cx.strokeStyle=themeColor('--screen'); cx.lineWidth=act?3:2; cx.globalAlpha=.55;   // тёмная обводка под линией
-    cx.beginPath(); cx.moveTo(x+.5,TOP_H); cx.lineTo(x+.5,H); cx.stroke();
+    // целая ширина и центр на границе/середине пикселя — линия чёткая, без размытия (нечётная — на x+.5, чётная — на x)
+    const w1=act?4:3, w2=act?2:1;
+    cx.strokeStyle=themeColor('--screen'); cx.lineWidth=w1; cx.globalAlpha=.55;   // тёмная обводка под линией
+    cx.beginPath(); cx.moveTo(w1%2?x+.5:x,TOP_H); cx.lineTo(w1%2?x+.5:x,H); cx.stroke();
     cx.globalAlpha=1;
-    cx.strokeStyle=MK_COL(k); cx.lineWidth=act?1.5:1;
-    cx.beginPath(); cx.moveTo(x+.5,TOP_H); cx.lineTo(x+.5,H); cx.stroke();
+    cx.strokeStyle=MK_COL(k); cx.lineWidth=w2;
+    cx.beginPath(); cx.moveTo(w2%2?x+.5:x,TOP_H); cx.lineTo(w2%2?x+.5:x,H); cx.stroke();
     const tb=n.p.trk&&n._trkWin?.[k];                 // окно поиска несущей
     if(tb){ const x1=saPos(n,f-tb/2)*W, x2=saPos(n,f+tb/2)*W;
       cx.globalAlpha=.12; cx.fillStyle=MK_COL(k); cx.fillRect(x1,TOP_H,Math.max(2,x2-x1),H-TOP_H); cx.globalAlpha=1; }
@@ -2204,6 +2209,14 @@ function saMarkerTabs(n,cx,W){
       cl={x0:cx0-2,y0:cy0-2,x1:cx0+cs+2,y1:cy0+cs+2};
     }
     boxes.push({x0,y0,x1,y1,idx:k,cl});
+  }
+  // «Auto dB» — кнопка в левом верхнем углу спектра: подогнать окно дБ под сигнал (Shift+клик — следить постоянно)
+  n._autoBox=null;
+  if(n.p.vscale==='range'){
+    const lbl='A', w=TH, x0=4, y0=2;                  // подсказка (title) — в analysis.js, у pointermove
+    cx.globalAlpha=n.p.adTrack?1:.65; cx.fillStyle=themeColor('--acc'); cx.fillRect(x0,y0,w,TH);
+    cx.globalAlpha=1; cx.fillStyle=themeColor('--screen'); cx.fillText(lbl,x0+w/2,y0+TH/2+1);
+    n._autoBox={x0,y0,x1:x0+w,y1:y0+TH};
   }
   cx.textAlign='left'; cx.textBaseline='alphabetic'; cx.globalAlpha=1;
 }
