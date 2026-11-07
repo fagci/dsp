@@ -7814,6 +7814,7 @@ clearAll();
 const nt=addNode('note',40,20,{text:'Entering numbers and frequencies on the screen. Number Pad: type digits and finish with a unit key (GHz / MHz / kHz / Hz) or ENT (uses the unit set in the node); its out is in Hz and goes to Frequency Digits, where a tap on the upper / lower half of a digit (or a vertical swipe, or the wheel) steps that decade. '+
   'The Tuning Dial follows it, and you can swipe the dial too. Number Readout shows the same value as a frequency, in groups of three, or as SI (LCD / VFD / LED / paper styles).\n'+
   'Pocket Calculator: type an expression (sin, ln, √, ^, %, ANS, memory, A / B from its pins; deg / rad); «=» sends the result to out — wire it to any number pin. Tick «live» to send the running result before «=». The computer keyboard works too: click the node and type.\n'+
+  'Frequency Digits: tap a digit to select it, then ↑ / ↓ step it, ← / → move between digits, type 0–9 to enter the value; the arrows above / below a digit step it by a tap.\n'+
   'In the phone app press the floating-window button of a node: Number Pad, Calculator, Dial and Frequency Digits take taps and swipes there (move the window by the ✥ corner) — no system keyboard is needed.'});
 nt.size.w=1000; nt.size.h=150; applySize(nt);
 const np=addNode('numpad',40,210,{mode:'frequency',unit:'MHz',state:'14200000'});

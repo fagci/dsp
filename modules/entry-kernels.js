@@ -182,6 +182,11 @@ function fdStep(f,k,dir,lo,hi){
   const r=Math.round(f)+dir*Math.pow(10,k);
   return Math.min(hi,Math.max(lo,r));
 }
+// ввод цифры с клавиатуры: разряд k (0 — единицы) становится d; за пределы lo…hi не выходим (null — не принято)
+function fdSetDigit(f,k,d,lo,hi){
+  const p=Math.pow(10,k), cur=Math.floor(Math.round(f)/p)%10, r=Math.round(f)+(d-cur)*p;
+  return d>=0 && d<=9 && r>=lo && r<=hi ? r : null;
+}
 // строка из n цифр (с нулями слева)
 const fdDigits=(f,n)=>String(Math.min(Math.pow(10,n)-1,Math.max(0,Math.round(f)))).padStart(n,'0');
 

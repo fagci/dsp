@@ -5,7 +5,7 @@ let bad = 0;
 const ok = (n, c, x = '') => { if (!c) { bad++; console.log('FAIL', n, x); } else console.log('ok  ', n); };
 const ctx = vm.createContext({ Math, Number, String, Object, Array, JSON, RegExp, Error, isFinite, parseFloat });
 vm.runInContext(fs.readFileSync(new URL('../modules/entry-kernels.js', import.meta.url), 'utf8'), ctx);
-vm.runInContext('this.K={ceEval,ceFmt,calcNew,calcPress,calcPreview,npNew,npPress,keyName,fdStep,fdDigits,fmtNum}', ctx);
+vm.runInContext('this.K={ceEval,ceFmt,calcNew,calcPress,calcPreview,npNew,npPress,keyName,fdStep,fdSetDigit,fdDigits,fmtNum}', ctx);
 const K = ctx.K, near = (a, b) => Math.abs(a - b) < 1e-9 * Math.max(1, Math.abs(b));
 const ev = (s, v, o) => { try { return K.ceEval(s, v, o); } catch (e) { return 'ERR:' + e.message; } };
 
@@ -53,6 +53,7 @@ ok('pad: length limit', np('1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7', {}).buf.length =
 ok('keyboard names', K.keyName({ key: '7' }) === '7' && K.keyName({ key: 'Enter' }) === 'ENT' && K.keyName({ key: 'Backspace' }) === '⌫' && K.keyName({ key: '*' }) === '×' && K.keyName({ key: 'q' }) === null);
 
 ok('VFO step: decade, clamp', K.fdStep(14200000, 3, 1, 0, 3e10) === 14201000 && K.fdStep(14200000, 6, -1, 0, 3e10) === 13200000 && K.fdStep(500, 3, -1, 0, 1e9) === 0 && K.fdStep(999999000, 3, 1, 0, 1e9) === 1e9);
+ok('VFO ввод цифры в разряд', K.fdSetDigit(14200000,3,5,0,3e10)===14205000 && K.fdSetDigit(14205000,3,0,0,3e10)===14200000 && K.fdSetDigit(999,0,9,0,500)===null && K.fdSetDigit(14200000,7,0,0,3e10)===4200000);
 ok('VFO digits: zero padded and clamped', K.fdDigits(14200000, 9) === '014200000' && K.fdDigits(-5, 4) === '0000' && K.fdDigits(99999, 3) === '999');
 
 const f = (x, o) => K.fmtNum(x, o);
