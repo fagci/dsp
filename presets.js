@@ -1665,7 +1665,7 @@ preset('USB SDR: Chain by Typing (Ctrl+K, usb>(dac,sa,…))', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'This patch was typed: Ctrl+K (or /), then  usb>(dac,sa)  and Enter. «>» goes on to the next module, «( , )» fans out several branches from one module: usb>(dac,sa,iqshift>iqdec>demod>digvo>mbe>dac). Names are fuzzy; an exact module id wins.\n'+
   'With one module selected, Ctrl+K opens already with «>» — just type what comes next: fft>sa. The canvas shows a ghost preview before Enter.\n'+
-  'USB SDR starts at gain 32 dB (auto gain off). Spectrum Analyzer: the «A» button (auto dB) in the top left corner of the spectrum fits the dB window to the signal (Shift+click keeps refitting).'});
+  'The «Arrange graph» toolbar button lays the whole patch out in columns by signal flow. USB SDR starts at gain 32 dB (auto gain off). Spectrum Analyzer: the «A» button (auto dB) in the top left corner of the spectrum fits the dB window to the signal (Shift+click keeps refitting).'});
 nt.size.w=720; nt.size.h=150; applySize(nt);
 const rx=addNode('rtlsdr',40,220,{});
 const dc=addNode('dac',620,220,{vol:.4});

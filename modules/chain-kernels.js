@@ -92,3 +92,57 @@ function chainText(a,label){
   if(a.k==='seq') return a.items.map(x=>chainText(x,label)).join(' → ');
   return '( '+a.branches.map(x=>chainText(x,label)).join(' | ')+' )';
 }
+
+// y листьев по настоящей высоте узлов: ветви друг под другом без пустот (а не по самой высокой строке всей цепочки).
+// size(лист) → {w,h}; возвращает высоту поддерева.
+function chainPlaceY(a,size,gap,y=0){
+  if(a.k==='mod'){ a.y=y; return size(a).h; }
+  if(a.k==='seq'){ let h=0; for(const it of a.items) h=Math.max(h,chainPlaceY(it,size,gap,y)); return h; }
+  let acc=0; for(const b of a.branches){ acc+=chainPlaceY(b,size,gap,y+acc)+gap; }
+  return Math.max(0,acc-gap);
+}
+
+/* ============================ «Упорядочить граф» ============================
+   Слоистая раскладка: слой = самый длинный путь от источника (циклы разрываются), порядок в слое — по среднему положению соседей,
+   слои центруются по высоте; узлы без проводов — рядами под графом. nodes: [{id,x,y,w,h}], edges: [{from,to}] → {id:{x,y}}. */
+function arrangeLayout(nodes,edges,opt){
+  const gx=opt?.gapX??70, gy=opt?.gapY??28;
+  const byId=new Map(nodes.map(n=>[n.id,n]));
+  const succ=new Map(nodes.map(n=>[n.id,new Set()])), pred=new Map(nodes.map(n=>[n.id,new Set()]));
+  for(const e of edges){ if(e.from===e.to||!byId.has(e.from)||!byId.has(e.to)) continue; succ.get(e.from).add(e.to); pred.get(e.to).add(e.from); }
+  const linked=nodes.filter(n=>succ.get(n.id).size||pred.get(n.id).size), loose=nodes.filter(n=>!succ.get(n.id).size&&!pred.get(n.id).size);
+  const order0=[...linked].sort((a,b)=>a.y-b.y||a.x-b.x), rank=new Map(order0.map((n,i)=>[n.id,i]));
+  // слои: глубина от источников; DFS с цветами — обратные рёбра (цикл) пропускаем
+  const depth=new Map(), state=new Map();
+  const dfs=id=>{
+    if(depth.has(id)) return depth.get(id);
+    state.set(id,1); let d=0;
+    for(const p of [...pred.get(id)].sort((a,b)=>rank.get(a)-rank.get(b))){ if(state.get(p)===1) continue; d=Math.max(d,dfs(p)+1); }
+    state.set(id,2); depth.set(id,d); return d;
+  };
+  for(const n of order0) dfs(n.id);
+  const L=[]; for(const n of order0){ const d=depth.get(n.id); (L[d]||(L[d]=[])).push(n); }
+  const layers=L.filter(Boolean);
+  const pos=new Map(); const reindex=()=>layers.forEach(l=>l.forEach((n,i)=>pos.set(n.id,i)));
+  reindex();
+  const sweep=(ls,nb)=>{ for(const l of ls){
+    const key=n=>{ const s=[...nb.get(n.id)].filter(i=>pos.has(i)); return s.length ? s.reduce((t,i)=>t+pos.get(i),0)/s.length : pos.get(n.id); };
+    const k=new Map(l.map(n=>[n.id,key(n)])); l.sort((a,b)=>k.get(a.id)-k.get(b.id)||pos.get(a.id)-pos.get(b.id)); reindex(); } };
+  for(let it=0;it<4;it++){ sweep(layers,pred); sweep([...layers].reverse(),succ); }
+  const ox=Math.min(...nodes.map(n=>n.x)), oy=Math.min(...nodes.map(n=>n.y)), out={};
+  let x=ox, totalH=0, totalW=0;
+  const heights=layers.map(l=>l.reduce((t,n)=>t+n.h,0)+gy*(l.length-1)), maxH=Math.max(0,...heights);
+  layers.forEach((l,i)=>{
+    let y=oy+(maxH-heights[i])/2; const w=Math.max(...l.map(n=>n.w));
+    for(const n of l){ out[n.id]={x:x+(w-n.w)/2*0,y}; y+=n.h+gy; }
+    x+=w+gx;
+  });
+  totalW=layers.length ? x-gx-ox : 0; totalH=maxH;
+  // одиночки — рядами под графом, перенос по ширине графа (не уже 1200)
+  const wrap=Math.max(1200,totalW); let cx=ox, cy=oy+totalH+(layers.length?60:0), rowH=0;
+  for(const n of [...loose].sort((a,b)=>a.y-b.y||a.x-b.x)){
+    if(cx>ox && cx+n.w>ox+wrap){ cx=ox; cy+=rowH+gy; rowH=0; }
+    out[n.id]={x:cx,y:cy}; cx+=n.w+gx; rowH=Math.max(rowH,n.h);
+  }
+  return out;
+}

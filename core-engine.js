@@ -51,6 +51,7 @@ const Eng = {
   _preload:12,                 // фактический preload текущего запуска
   maxQ:24,                     // ёмкость внутренней очереди воркета, см. комментарий в start()
   sab:false,                   // используется ли SharedArrayBuffer-путь (решается в start(), зависит от COOP/COEP)
+  onResume:null,               // колбэк: запуск или снятие с паузы — модули сбрасывают накопленные аудио-буферы (MOD.onResume)
   onRunChange:null,            // колбэк для UI: дергается при старте/паузе/резюме
   async start(){
     if(this.running) return;
@@ -184,6 +185,7 @@ const Eng = {
     // ОТ ожидаемого периода и есть сигнал, а не абсолютное время между тиками.
     this.stallWatch(true);
     this.running = true; this.paused = false;
+    this.onResume?.();                                  // запуск: накопленные источниками аудио-кольца не играем
     this.onRunChange?.();
   },
   // На паузе/останове таймер не нужен: 10 пробуждений в секунду впустую
@@ -296,6 +298,7 @@ const Eng = {
     if(!this.running){ await this.start(); return true; }
     if(this.paused){
       await this.ctx.resume(); this.paused=false; this.stallWatch(true);
+      this.onResume?.();                                // пока стояли, источники копили звук — старый хвост не проигрываем
       // переподключаем входы, которые были активны до паузы
       if(this.wasStereo) await this.enableStereoMic(this.stereoDeviceId||undefined, this.stereoSr||undefined);
       else for(let slot=0;slot<2;slot++)
