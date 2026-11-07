@@ -1491,7 +1491,7 @@ function saChannels(n,cx,W,H,plotH){
     if(Math.abs((c.lo+c.hi)/2-c.f)<(c.hi-c.lo)*.02){ const dc=Math.floor(saPos(n,c.f)*W*sc), h=Math.max(1,Math.round((x2-x1)*sc/2)); dl=dc-h; dr=dc+h; }
     const xl=dl/sc;
     cx.globalAlpha=.1; cx.fillStyle=col; cx.fillRect(xl,TOP,Math.max(1,dr-dl+1)/sc,H-TOP);
-    cx.globalAlpha=.5; cx.strokeStyle=col; cx.lineWidth=1;            // края шторки приглушены: главная линия — маркер в центре
+    cx.globalAlpha=.32; cx.strokeStyle=col; cx.lineWidth=1;           // края BW — тонкие (физический пиксель) полупрозрачные линии: главная линия — маркер в центре
     const e1=(dl+.5)/sc, e2=(dr+.5)/sc;
     cx.beginPath(); cx.moveTo(e1,TOP); cx.lineTo(e1,H); cx.moveTo(e2,TOP); cx.lineTo(e2,H); cx.stroke();
     // шумоподавитель: пунктир — порог, сплошная — текущий средний уровень в полосе канала
@@ -2104,7 +2104,7 @@ function saMarkersWf(n,cx,W,hs,H){
       let dl=Math.floor(x1*sc), dr=Math.floor(x2*sc);
       if(Math.abs((bw[0]+bw[1])/2-f)<(bw[1]-bw[0])*.02){ const h=Math.max(1,Math.round((x2-x1)*sc/2)); dl=dc-h; dr=dc+h; }
       cx.globalAlpha=.12; cx.fillStyle=col; cx.fillRect(dl/sc,hs,Math.max(1,dr-dl+1)/sc,H-hs);
-      if(dr-dl>=3){ cx.globalAlpha=.8; cx.strokeStyle=col; cx.lineWidth=1; cx.beginPath();
+      if(dr-dl>=3){ cx.globalAlpha=.4; cx.strokeStyle=col; cx.lineWidth=1; cx.beginPath();
         cx.moveTo((dl+.5)/sc,hs); cx.lineTo((dl+.5)/sc,H); cx.moveTo((dr+.5)/sc,hs); cx.lineTo((dr+.5)/sc,H); cx.stroke(); }
     }
     cx.globalAlpha=.85; cx.strokeStyle=col; cx.lineWidth=1; cx.setLineDash([3,3]);
