@@ -1723,30 +1723,25 @@ function saChanAtMarker(n,f){
 }
 // подпись на плашке цвета канала; не влезает в шторку — выносим вбок от неё
 function saChannelLabels(n,cx,W){
-  const list=saChans(n); if(!list) return;
+  const list=saChans(n); n._chLblBottom=0; n._bwWfRows=0;
+  if(!list) return;
+  // ширина полосы — только значение (без вида модуляции) и только в момент изменения: пока тянут край и ~1.2 с после любого изменения (в том числе извне)
+  const now=performance.now(), prev=n._bwPrev||(n._bwPrev={}), until=n._bwUntil||(n._bwUntil={});
   cx.font=BW_FONT;
-  const used=[...(n._sgRects||[])];                 // метки сигналов уже стоят — подписи каналов обходят их
-  n._chLblBottom=0; n._bwWfRows=0;
-  const hs=n._hs|0, Hc=n.cv.height, showWf=n.p.show!=='spectrum' && hs<Hc-6;
+  const used=[...(n._sgRects||[])];
   for(const c of list){
+    const bw=c.hi-c.lo, was=prev[c.idx];
+    if(was!=null && Math.abs(was-bw)>.5){ until[c.idx]=now+1200; setTimeout(()=>{ if(typeof saOvKick==='function') saOvKick(n); },1300); }
+    prev[c.idx]=bw;
+    if(!(now<(until[c.idx]||0))) continue;
     const x1=saPos(n,c.lo)*W, x2=saPos(n,c.hi)*W;
     if(x2<0||x1>W) continue;
-    // ширина полосы — одной мелкой плашкой и только в одном месте: на шторке спектра, если влезает, иначе на водопаде (отдельно от плашки частоты маркера)
-    const col=MK_COL(c.idx), bw=c.hi-c.lo, t=c.mode+' '+fmtHz(bw, bw%1000?1:0)+(c.sql ? (c.sqOpen?' SQL open':' SQL closed') : '');
-    const tw=Math.ceil(cx.measureText(t).width), fits=x2-x1>=tw+8 && n.p.show!=='waterfall';
-    let tx=(x1+x2-tw)/2, ty;
-    if(fits || !showWf){                              // на спектре (если водопада нет и не влезает — сбоку от шторки)
-      if(!fits && x2-x1<tw+8) tx = x2+4+tw<=W ? x2+4 : x1-tw-4;
-      ty=Math.max(16,n._topH||0)+4+c.idx*13;
-      tx=clamp(Math.round(tx), 3, W-tw-3);
-      for(let k=0;k<8 && used.some(u=>tx-3<u.x+u.w && tx+tw+3>u.x && ty<u.y+u.h && ty+12>u.y);k++) ty+=13;
-      used.push({x:tx-3,y:ty,w:tw+6,h:12});
-      n._chLblBottom=Math.max(n._chLblBottom,ty+12);
-    } else {                                          // на водопаде: у верхнего края зоны, плашки частоты маркеров встают ниже (saMarkersWf)
-      if(x2-x1<tw+8) tx = x2+4+tw<=W ? x2+4 : x1-tw-4;
-      tx=clamp(Math.round(tx), 3, W-tw-3);
-      ty=hs+3+n._bwWfRows++*13;
-    }
+    const t=fmtHz(bw, bw%1000?1:0), tw=Math.ceil(cx.measureText(t).width), col=MK_COL(c.idx);
+    let tx=clamp(Math.round((x1+x2-tw)/2), 3, W-tw-3);          // только по центру шторки, без выноса вбок
+    let ty=Math.max(16,n._topH||0)+4+c.idx*13;
+    for(let k=0;k<8 && used.some(u=>tx-3<u.x+u.w && tx+tw+3>u.x && ty<u.y+u.h && ty+12>u.y);k++) ty+=13;
+    used.push({x:tx-3,y:ty,w:tw+6,h:12});
+    n._chLblBottom=Math.max(n._chLblBottom,ty+12);
     cx.globalAlpha=.9; cx.fillStyle=col; cx.fillRect(tx-3,ty,tw+6,12);
     cx.globalAlpha=1; cx.fillStyle=contrastText(col); cx.fillText(t,tx,ty+9);
   }
