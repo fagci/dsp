@@ -2231,7 +2231,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
         {n:'measTxt',t:'txt'}],   // holdF — панели (layout=panes)
   view:{h:280}, pick:true, resize:true,
   params:[{n:'auto',t:'check',d:false,label:'auto range (full source span)',fn:n=>{ if(n.p.auto) n.zoom=null; }},
-          {n:'show',t:'select',opts:['both','spectrum','waterfall'],d:'both',label:'show: spectrum and waterfall, only the spectrum, or only the waterfall (button S+W / S / W on the plot)'},
+          {n:'show',t:'select',opts:['both','spectrum','waterfall'],d:'both',label:'show: spectrum and waterfall, only the spectrum, or only the waterfall (drag the boundary between them to the edge)'},
           {n:'frange',t:'range2',keys:['fmin','fmax'],min:1,max:6e9,step:1,log:true,d:[0,4000],label:'range, Hz'},
           {n:'dbrange',t:'range2',keys:['floor','top'],min:-140,max:20,step:1,d:[-100,-20],label:'range, dB'},
           // слайдера больше нет — граница спектр/водопад тащится прямо на графике (см. resize в drag ниже)
@@ -2660,9 +2660,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
         if(!n.s) return null;
         const rc=cv.getBoundingClientRect();
         const x=(ev.clientX-rc.left)/rc.width, y=(ev.clientY-rc.top)/rc.height*cv.height;
-        if(y>(n._hs||0)-6) return null;
-        const px=5/Math.max(1,rc.width);
-        for(const c of (saChans(n)||[])){
+        const px=5/Math.max(1,rc.width), inSpec=y<=(n._hs||0)-6;
+        if(inSpec) for(const c of (saChans(n)||[])){          // тело шторки — только в зоне спектра (на водопаде там панорама)
           const k=c.idx;
           if(n.mk[k]==null||n.ext[k]) continue;
           if(x>=saPos(n,c.lo)-px && x<=saPos(n,c.hi)+px) return k;
@@ -2716,11 +2715,11 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
           drag={um:true, t0:t, f0:f, x0:ev.clientX, y0:ev.clientY, w:rc.width, left:rc.left, moved:false, pid:ev.pointerId};
           cv.setPointerCapture(ev.pointerId); return;
         }
-        const resize=n.p.show==='both' && Math.abs(y-(n._hs||0))<=6;
+        const resize=y>=(n._hs||0)-5 && y<=(n._hs||0)+8;
         if(!resize && !n.s) return;
         drag={x0:ev.clientX, y0:ev.clientY, yc:y, w:rc.width, h:rc.height,
               lo0:n.s?saFreq(n,0):0, hi0:n.s?saFreq(n,1):0,
-              pid:ev.pointerId, resize, split0:n.p.split};
+              pid:ev.pointerId, resize, split0:(n._hs||0)/Math.max(1,cv.height)};
         cv.setPointerCapture(ev.pointerId);
       });
       cv.addEventListener('pointermove', ev=>{
@@ -2776,7 +2775,10 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
         if(drag.resize){
           ev.preventDefault();
           const dy=ev.clientY-drag.y0;
-          setMod(n,'split',clamp(drag.split0+dy/drag.h,.15,.85));
+          // тянем границу: у самого края — спрятать водопад (вниз) или спектр (вверх), иначе обычное положение 15…85 %
+          const v=drag.split0+dy/drag.h;
+          if(v>.93) setMod(n,'show','spectrum'); else if(v<.07) setMod(n,'show','waterfall');
+          else { if(n.p.show!=='both') setMod(n,'show','both'); setMod(n,'split',clamp(v,.15,.85)); }
           return;
         }
         if(!n.s) return;
@@ -2874,13 +2876,10 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
       const autoHit=ev=>{ const b=n._autoBox; if(!b) return false;      // кнопка «Auto dB» на канве (см. saMarkerTabs)
         const rc=cv.getBoundingClientRect(), x=(ev.clientX-rc.left)/rc.width*cv.width, y=(ev.clientY-rc.top)/rc.height*cv.height;
         return x>=b.x0&&x<=b.x1&&y>=b.y0&&y<=b.y1; };
-      const viewHit=ev=>{ const b=n._viewBox; if(!b) return false;      // кнопка «S+W» на канве (см. saMarkerTabs)
-        const rc=cv.getBoundingClientRect(), x=(ev.clientX-rc.left)/rc.width*cv.width, y=(ev.clientY-rc.top)/rc.height*cv.height;
-        return x>=b.x0&&x<=b.x1&&y>=b.y0&&y<=b.y1; };
       const nearBoundary=ev=>{
         const rc=cv.getBoundingClientRect();
         const y=(ev.clientY-rc.top)/rc.height*cv.height;
-        return n.p.show==='both' && Math.abs(y-(n._hs||0))<=6;
+        return y>=(n._hs||0)-5 && y<=(n._hs||0)+8;           // вся полоса границы: линия, шкала над ней и пара пикселей водопада
       };
       const harmHit=ev=>{ const rc=cv.getBoundingClientRect(), x=(ev.clientX-rc.left)/rc.width*cv.width, y=(ev.clientY-rc.top)/rc.height*cv.height;
         return (n._hbBoxes||[]).find(b=>x>=b.x0&&x<=b.x1&&y>=b.y0&&y<=b.y1); };
@@ -2892,7 +2891,6 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
         if(!d || Math.hypot(ev.clientX-d.x,ev.clientY-d.y)>6) return;  // перетаскивание, не клик
         const hb=harmHit(ev);
         if(hb){ n.pickT=null; n.zoom=null; n._steer=hb.f; return; }   // перейти на f/k
-        if(viewHit(ev)){ n.pickT=null; const o=['both','spectrum','waterfall']; setMod(n,'show',o[(o.indexOf(n.p.show||'both')+1)%3]); return; }
         if(autoHit(ev)){ n.pickT=null; if(ev.shiftKey) setMod(n,'adTrack',!n.p.adTrack); saAutoDb(n); return; }
         const tab=tabHit(ev);
         if(tab){ n.pickT=null; if(tab.clear) n.mk[tab.idx]=null; else n.active=tab.idx+1; return; }
@@ -2918,11 +2916,11 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
       cv.addEventListener('pointermove', ev=>{
         { const rc=cv.getBoundingClientRect(), fx=(ev.clientX-rc.left)/rc.width;
           cv.title=autoHit(ev)?'Auto dB: fit the dB window to the signal (Shift+click: keep refitting'+(n.p.adTrack?' — on':'')+')':'';
-          n._hoverX = ev.pointerType==='touch'||drag||fx<0||fx>1||tabHit(ev)||autoHit(ev)||viewHit(ev)||nearBoundary(ev) ? null : fx;
+          n._hoverX = ev.pointerType==='touch'||drag||fx<0||fx>1||tabHit(ev)||autoHit(ev)||nearBoundary(ev) ? null : fx;
           n._hoverY = (ev.clientY-rc.top)/rc.height*cv.height; }
         n._bmHoverFreq = bmHit(ev)?.freq ?? null; saOvKick(n);
         n._mkHoverIdx = n._bmHoverFreq==null ? (mkHit(ev)?.idx ?? null) : null;
-        if(!drag) cv.style.cursor = nearBoundary(ev) ? 'ns-resize' : chanEdgeAt(ev) ? 'ew-resize' : mkLineAt(ev)!=null ? 'grab' : '';
+        if(!drag) cv.style.cursor = nearBoundary(ev) ? 'ns-resize' : chanEdgeAt(ev) ? 'ew-resize' : mkLineAt(ev)!=null ? 'ew-resize' : '';
       });
       // телефон: долгое нажатие на закладку, полосу, метку или флажок — подсказка (hover там нет); следующее касание её снимает
       {

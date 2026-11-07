@@ -2159,9 +2159,13 @@ function saMarkers(n,cx,W,H){
     const ch=saChanAtMarker(n,f);
     // «1:104.400 -16/19» — номер, частота, уровень / SNR; без «dBFS» (единица по умолчанию — она и на оси) и без пробелов у «:» и «/»
     const un=n.p.unit==='dBFS' ? '' : n.p.unit;
-    const t=(k+1)+':'+fv+(ch && ch.rssi!=null
+    const lvNow=ch && ch.rssi!=null
       ? ' '+(ch.rssi+(n._lvOff||0)).toFixed(0)+un+'/'+(ch.snr!=null?ch.snr.toFixed(0):'—')
-      : n.db[k]>-119?' '+(n.db[k]+(n._lvOff||0)).toFixed(0)+un+'/'+Math.max(0,n.snr?.[k]??0).toFixed(0):'');
+      : n.db[k]>-119?' '+(n.db[k]+(n._lvOff||0)).toFixed(0)+un+'/'+Math.max(0,n.snr?.[k]??0).toFixed(0):'';
+    // уровень и SNR обновляем раз в 500 мс — цифры, меняющиеся каждый кадр, не прочесть; частота — сразу
+    const tn=performance.now(), lc=(n._lvC||(n._lvC={}))[k];
+    const lvTxt=(lc && lc.f===f && tn-lc.t<500) ? lc.s : ((n._lvC[k]={t:tn,s:lvNow,f}).s);
+    const t=(k+1)+':'+fv+lvTxt;
     const ant=n.p.ant==='antenna'||n.p.ant==='both', hrm=n.p.ant==='harmonics'||n.p.ant==='both';
     let t2=ant ? t+' λ/4 '+fmtLen(antennaDims(f,n.p.antVf).quarter) : t;
     const rk=n.p.dRef==='off' ? -1 : (+n.p.dRef)-1;     // дельта-маркеры: у опорного — метка, у остальных Δf и ΔdB к нему
@@ -2243,11 +2247,6 @@ function saMarkerTabs(n,cx,W){
     cx.globalAlpha=1; cx.fillStyle=themeColor('--screen'); cx.fillText(lbl,x0+w/2,y0+TH/2+1);
     n._autoBox={x0,y0,x1:x0+w,y1:y0+TH};
   }
-  // «S+W / S / W» — что показывать: спектр с водопадом, только спектр, только водопад (клик — следующий)
-  { const m=n.p.show||'both', lbl=m==='spectrum'?'S':m==='waterfall'?'W':'S+W', w=Math.ceil(cx.measureText(lbl).width)+8, x0=4+TH+3, y0=2;
-    cx.globalAlpha=m==='both'?.65:1; cx.fillStyle=themeColor('--acc'); cx.fillRect(x0,y0,w,TH);
-    cx.globalAlpha=1; cx.fillStyle=themeColor('--screen'); cx.fillText(lbl,x0+w/2,y0+TH/2+1);
-    n._viewBox={x0,y0,x1:x0+w,y1:y0+TH}; }
   cx.textAlign='left'; cx.textBaseline='alphabetic'; cx.globalAlpha=1;
 }
 
