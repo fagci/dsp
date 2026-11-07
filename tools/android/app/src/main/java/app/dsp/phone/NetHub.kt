@@ -30,6 +30,7 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
         @Volatile var upgradeTo: String? = null
         @Volatile var upReply: ((String?) -> Unit)? = null
         val tx = SerialTx()                                   // tcp.send этого соединения идут по порядку (страница шлёт несколько подряд)
+        val pend = java.util.concurrent.atomic.AtomicInteger(0)   // байт, ждущих отправки двоичными кадрами
     }
     private val tcp = ConcurrentHashMap<Int, TcpConn>()
     private val servers = ConcurrentHashMap<Int, ServerSocket>()
@@ -53,6 +54,19 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
         emit("net", Json.obj("src" to "\"net\"", "ev" to Json.str(ev), "t" to System.currentTimeMillis().toString(), *kv))
 
     private fun dataKv(b: ByteArray) = arrayOf<Pair<String, String?>>("hex" to Json.str(Hex.of(b)), "n" to b.size.toString(), "text" to Json.str(String(b, Charsets.UTF_8)))
+
+    /** Двоичный кадр [1][conn u32 BE][данные]: байты в сокет по порядку, без hex и без ответа. Очередь ограничена — медленному клиенту блоки пропускаются. */
+    fun sendBin(b: ByteArray) {
+        if (b.size <= 5) return
+        val n = ((b[1].toInt() and 255) shl 24) or ((b[2].toInt() and 255) shl 16) or ((b[3].toInt() and 255) shl 8) or (b[4].toInt() and 255)
+        val t = tcp[n] ?: return
+        val sz = b.size - 5
+        if (t.pend.addAndGet(sz) > (4 shl 20)) { t.pend.addAndGet(-sz); return }
+        t.tx.execute(Runnable {
+            try { t.s.getOutputStream().apply { write(b, 5, sz); flush() } } catch (e: Exception) { /* соединение закрыто */ }
+            finally { t.pend.addAndGet(-sz) }
+        })
+    }
 
     fun exec(c: BridgeServer.Client, j: JSONObject) {
         val cmd = j.optString("cmd"); val id = j.opt("id")
@@ -91,7 +105,7 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
                 val ss = ServerSocket(); ss.reuseAddress = true
                 ss.bind(InetSocketAddress(if (j.optBoolean("lan", true)) InetAddress.getByName("0.0.0.0") else InetAddress.getByName("127.0.0.1"), port))
                 val sid = ids.incrementAndGet(); servers[sid] = ss
-                Reply.done(c, id, cmd, null, extra = arrayOf("server" to sid.toString(), "port" to ss.localPort.toString(), "ordered" to "true"))
+                Reply.done(c, id, cmd, null, extra = arrayOf("server" to sid.toString(), "port" to ss.localPort.toString(), "ordered" to "true", "binary" to "true"))
                 pool.execute {
                     try {
                         while (true) {

@@ -98,6 +98,7 @@ class BridgeService : Service() {
         screenrec = ScreenRecHub(this) { recorder.dir }; ScreenEvents.sink = emit; ScreenEvents.backlog = { server.backlog() }
         net = NetHub(this, cfg, emit); sys = SysHub(this, cfg, emit, needs); sys.note = server::note; MockGps.clearStale(this); tlsCmds = TlsCmds(this, server)
         server.onCommand = { c, j -> route(c, j) }
+        server.onBinary = { c, b -> if (c.power) net.sendBin(b) }                // действие, как tcp.send: страницам с другого устройства — по настройке
         tlsCmds.start()                                          // сертификат уже стоит — TLS поднимется вместе с сервером
         sensors = SensorHub(this) { s, j -> server.emit(s, j) }
         gps = GpsHub(this) { s, j -> server.emit(s, j) }

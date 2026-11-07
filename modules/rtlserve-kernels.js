@@ -95,18 +95,21 @@ const rtlsFromHex=h=>{ const o=new Uint8Array(h.length>>1); for(let i=0;i<o.leng
 /* Пересэмплирование потока под частоту, которую попросил клиент (SDR++ просит 250 kS/s, а USB SDR умеет от 960 kS/s).
    Каскад: ФНЧ (окно Блэкмана, срез 0.47·Fout) + прореживание в D = ⌊Fin/Fout⌋ раз, затем кубическая интерполяция (4 точки, Лагранж)
    до Fout — линейная на 75 кГц при 256 кС/с занижала амплитуду на четверть. Поточный: состояние (история фильтра, 3 последних
-   отсчёта, фаза) переходит между чанками любой длины. Только Fin > Fout. */
+   отсчёта, фаза) переходит между чанками любой длины. Fin < Fout (клиент просит чуть больше, чем даёт железо, — 0.96 → 1.024) —
+   только интерполяция, без ФНЧ: полоса исходного потока уже уже новой. */
 class RtlsResampler{
   constructor(fin,fout,tpp){
     this.fin=fin; this.fout=fout;
-    this.D=Math.max(1,Math.floor(fin/fout+1e-9));
-    const D=this.D, L=D*(tpp||24)+1, fc=0.47*fout/fin, mid=(L-1)/2, h=new Float32Array(L);
+    const up=fin<fout*0.9999;
+    this.D=up ? 1 : Math.max(1,Math.floor(fin/fout+1e-9));
+    const D=this.D, L=up ? 1 : D*(tpp||24)+1, fc=0.47*fout/fin, mid=(L-1)/2, h=new Float32Array(L);
     let sum=0;
-    for(let i=0;i<L;i++){
+    if(up) h[0]=1;
+    else for(let i=0;i<L;i++){
       const x=i-mid, sinc=x===0 ? 2*fc : Math.sin(2*Math.PI*fc*x)/(Math.PI*x);
       h[i]=sinc*(0.42-0.5*Math.cos(2*Math.PI*i/(L-1))+0.08*Math.cos(4*Math.PI*i/(L-1))); sum+=h[i];
     }
-    for(let i=0;i<L;i++) h[i]/=sum;
+    if(!up) for(let i=0;i<L;i++) h[i]/=sum;
     this.h=h; this.hr=new Float32Array(L-1); this.hi=new Float32Array(L-1); this.ph=0;       // история фильтра, фаза прореживания
     this.ratio=(fin/D)/fout; this.pos=2;                                                     // шаг интерполяции; положение в буфере [3 прошлых | новые]
     this.tr=new Float32Array(3); this.ti=new Float32Array(3);                                // три последних отсчёта после прореживания

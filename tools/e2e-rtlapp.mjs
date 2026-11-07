@@ -56,14 +56,15 @@ async function rate(opt, port) {
   await wait(1500);
   const c = net.connect(port, '127.0.0.1'); let got = 0; c.on('data', (d) => { got += d.length; });
   await wait(600); const g0 = got; await wait(3000); const bps = (got - g0) / 3;
-  const info = await pg.evaluate(() => ({ ordered: __srv.ordered, dropped: __srv.dropped }));
+  const info = await pg.evaluate(() => ({ ordered: __srv.ordered, binary: __srv.binary, dropped: __srv.dropped }));
   c.destroy(); await pg.evaluate(() => rtlsStop(__srv)); await wait(300); br.close();
   return { bps, ...info };
 }
-const fast = await rate({}, 21301), slow = await rate({ legacy: true }, 21302);
-console.log('rate with 40 ms each way: new app', Math.round(fast.bps / 1000), 'kB/s, old app', Math.round(slow.bps / 1000), 'kB/s');
-ok('new app (ordered) carries the full 1.024 MS/s through 80 ms of latency', fast.ordered && fast.bps > 1.9e6, JSON.stringify(fast));
-ok('old app still works, bigger blocks, but slower', !slow.ordered && slow.bps > 2e5 && slow.bps < fast.bps / 3, JSON.stringify(slow));
+const fast = await rate({}, 21301), mid = await rate({ nobin: true }, 21304), slow = await rate({ legacy: true }, 21302);
+console.log('rate with 40 ms each way: binary', Math.round(fast.bps / 1000), 'kB/s, pipelined hex', Math.round(mid.bps / 1000), 'kB/s, old app', Math.round(slow.bps / 1000), 'kB/s');
+ok('newest app (binary frames) carries the full 1.024 MS/s through 80 ms of latency', fast.ordered && fast.binary && fast.bps > 1.9e6, JSON.stringify(fast));
+ok('pipelined hex (previous app) also carries 1.024 MS/s here', mid.ordered && !mid.binary && mid.bps > 1.9e6, JSON.stringify(mid));
+ok('old app still works, bigger blocks, but slower', !slow.ordered && !slow.binary && slow.bps > 2e5 && slow.bps < fast.bps / 3, JSON.stringify(slow));
 
 // клиент просит 250 kS/s, USB SDR даёт 1.024 MS/s: узел пересэмплирует (≈ 500 кБ/с вместо 2 МБ/с), в readout это видно
 {
@@ -75,6 +76,19 @@ ok('old app still works, bigger blocks, but slower', !slow.ordered && slow.bps >
   await wait(1200); const g0 = got; await wait(3000); const bps = (got - g0) / 3;
   const rs = await pg.evaluate(() => ({ resamp: __srv.resamp, dropped: __srv.dropped, status: __srv.status }));
   ok('client asked 250 kS/s: the node sends ~500 kB/s, not 2 MB/s', bps > 4.2e5 && bps < 5.8e5 && /1024000>250000/.test(rs.resamp), Math.round(bps) + ' B/s ' + JSON.stringify(rs));
+  c.destroy(); await pg.evaluate(() => rtlsStop(__srv)); await wait(300); br.close();
+}
+
+// клиент просит чуть больше, чем даёт железо (1.1 MS/s при потоке 1.024): интерполяция вверх, а не «врём о частоте»
+{
+  const br = await mockBridgeWs(0, { app: true });
+  await pg.evaluate(([wp, pt]) => { __srv.p.url = 'ws://127.0.0.1:' + wp; __srv.p.port = pt; rtlsStart(__srv); }, [br.port, 21305]);
+  await wait(1500);
+  const c = net.connect(21305, '127.0.0.1'); let got = 0; c.on('data', (d) => { got += d.length; });
+  await wait(400); c.write(Buffer.from('02' + (1100000).toString(16).padStart(8, '0'), 'hex'));
+  await wait(1200); const g0 = got; await wait(3000); const bps = (got - g0) / 3;
+  const rs = await pg.evaluate(() => ({ resamp: __srv.resamp, status: __srv.status }));
+  ok('client asked 1.1 MS/s, stream 1.024: interpolated up (~2.2 MB/s)', bps > 2.0e6 && bps < 2.4e6 && /1024000>1100000/.test(rs.resamp), Math.round(bps) + ' B/s ' + JSON.stringify(rs));
   c.destroy(); await pg.evaluate(() => rtlsStop(__srv)); await wait(300); br.close();
 }
 

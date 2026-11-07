@@ -50,4 +50,15 @@ ok('pick', K.rtlsPick(2500000, [250000, 1024000, 2048000, 2400000, 3200000]) ===
   for (let i = 0; i < Math.min(fr.length, big.re.length); i++) md = Math.max(md, Math.abs(fr[i] - big.re[i]));
   ok('resample: chunk boundaries do not matter (1, 7, 333 … samples)', fr.length === big.re.length && md < 1e-5, fr.length + ' vs ' + big.re.length + ', diff ' + md);
 }
+
+// интерполяция вверх: клиент просит 1.024 MS/s, железо дало 0.96
+{
+  const fin = 960000, fout = 1024000, N = fin;
+  const re = new Float32Array(N), im = new Float32Array(N);
+  for (let i = 0; i < N; i++) { re[i] = Math.cos(2 * Math.PI * 100000 * i / fin); im[i] = Math.sin(2 * Math.PI * 100000 * i / fin); }
+  const o = new K.RtlsResampler(fin, fout).push(re, im);
+  let a = 0, c = 0, s2 = 0; for (let i = 3000; i < o.re.length - 1; i++) { a += Math.atan2(o.re[i] * o.im[i + 1] - o.im[i] * o.re[i + 1], o.re[i] * o.re[i + 1] + o.im[i] * o.im[i + 1]); s2 += o.re[i] ** 2 + o.im[i] ** 2; c++; }
+  ok('upsample 0.96 → 1.024: count', Math.abs(o.re.length - 1024000) <= 3, String(o.re.length));
+  ok('upsample: 100 kHz tone stays 100 kHz, level ≈ 1', Math.abs(a / c * fout / (2 * Math.PI) - 100000) < 30 && Math.sqrt(s2 / c) > 0.99, (a / c * fout / (2 * Math.PI)).toFixed(1) + ' Hz, ' + Math.sqrt(s2 / c).toFixed(3));
+}
 process.exit(bad ? 1 : 0);
