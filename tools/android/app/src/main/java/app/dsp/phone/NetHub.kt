@@ -31,6 +31,7 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
         @Volatile var upReply: ((String?) -> Unit)? = null
         val tx = SerialTx()                                   // tcp.send этого соединения идут по порядку (страница шлёт несколько подряд)
         val pend = java.util.concurrent.atomic.AtomicInteger(0)   // байт, ждущих отправки двоичными кадрами
+        @Volatile var bin: BridgeServer.Client? = null            // tcp.connect с binary:true — принятые байты уходят этому клиенту кадрами [2][conn u32 BE][данные], а не записями data
     }
     private val tcp = ConcurrentHashMap<Int, TcpConn>()
     private val servers = ConcurrentHashMap<Int, ServerSocket>()
@@ -94,9 +95,9 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
                     try { Tls.wrap(raw, host) } catch (e: Exception) { raw.close(); return Reply.done(c, id, cmd, "TLS: ${e.message ?: e.javaClass.simpleName}") }
                 } else raw
                 if (j.optBoolean("starttls") && s === raw) raw.soTimeout = 200          // читатель просыпается и смотрит, не просят ли TLS
-                val n = ids.incrementAndGet(); tcp[n] = TcpConn(s, null)
+                val n = ids.incrementAndGet(); val tc = TcpConn(s, null); if (j.optBoolean("binary")) tc.bin = c; tcp[n] = tc
                 rec("open", "conn" to n.toString(), "proto" to "\"tcp\"", "peer" to Json.str("$host:$port"))
-                Reply.done(c, id, cmd, null, extra = arrayOf("conn" to n.toString()))
+                Reply.done(c, id, cmd, null, extra = arrayOf("conn" to n.toString(), "binary" to (if (tc.bin != null) "true" else "false")))
                 pool.execute { readTcp(n) }
             }
             "tcp.listen" -> {
@@ -221,7 +222,7 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
 
     private fun readTcp(n: Int) {
         val conn = tcp[n] ?: return
-        val buf = ByteArray(8192)
+        val buf = ByteArray(if (conn.bin != null) 32768 else 8192)
         try {
             while (true) {
                 val up = conn.upgradeTo
@@ -233,7 +234,12 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
                 }
                 val k = try { conn.s.getInputStream().read(buf) } catch (e: SocketTimeoutException) { continue }
                 if (k < 0) break
-                rec("data", "conn" to n.toString(), "proto" to "\"tcp\"", *dataKv(buf.copyOf(k)))
+                val bc = conn.bin
+                if (bc != null) {                                      // поток без JSON и hex: [2][conn u32 BE][данные]
+                    if (bc.dead) break
+                    val f = ByteArray(5 + k); f[0] = 2; f[1] = (n shr 24).toByte(); f[2] = (n shr 16).toByte(); f[3] = (n shr 8).toByte(); f[4] = n.toByte()
+                    System.arraycopy(buf, 0, f, 5, k); bc.sendBytes(f)
+                } else rec("data", "conn" to n.toString(), "proto" to "\"tcp\"", *dataKv(buf.copyOf(k)))
             }
         } catch (e: Exception) { /* обрыв */ }
         tcp.remove(n); try { conn.s.close() } catch (e: Exception) {}

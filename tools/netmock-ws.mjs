@@ -18,7 +18,7 @@ export function mockBridgeWs(port = 0, opt = {}) {
       if (!subs.has(o.src)) return;
       buf.push(o); if (!tm) tm = setTimeout(() => { tm = null; const b = buf; buf = []; raw(JSON.stringify(b)); }, 40);
     };
-    const app = mockApp(send, opt); apps.add(app);
+    const app = mockApp(send, { ...opt, feedBin: (b) => { if (lat) setTimeout(() => { try { sock.write(wsFrame(b, 2)); } catch (e) { /* закрыт */ } }, lat); else { try { sock.write(wsFrame(b, 2)); } catch (e) { /* закрыт */ } } } }); apps.add(app);
     const par = wsParser({
       onMsg: (t) => { let m; try { m = JSON.parse(t); } catch (e) { return; } if (m && Array.isArray(m.sub)) { subs.clear(); for (const x of m.sub) subs.add(x); } else if (m && m.cmd) { if (lat) setTimeout(() => app.send(m), lat); else app.send(m); } },
       onBin: (b) => { if (opt.nobin || opt.legacy) return; if (lat) setTimeout(() => app.sendBin(b), lat); else app.sendBin(b); },

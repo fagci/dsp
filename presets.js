@@ -317,6 +317,7 @@ const PRESET_CATS={
   'USB SDR: FM Receiver from Blocks':'SDR Receivers',
   'USB SDR: FM Radio with RDS':'SDR Receivers',
   'Remote SDR: FM Receiver (rtl_tcp over WebSocket)':'SDR Receivers',
+  'Remote SDR: FM Receiver (rtl_tcp via DSP app — phone driver, Raspberry Pi)':'SDR Receivers',
   'Remote SDR: FM Receiver (rtl_tcp over WebRTC)':'SDR Receivers',
   'USB SDR: rtl_tcp Server (WebRTC / SDR++)':'SDR Receivers',
   'Remote SDR: FM Receiver (SpyServer over WebSocket)':'SDR Receivers',
@@ -3840,6 +3841,35 @@ const nt=addNode('note',40,40,{text:'The same broadcast FM receiver as «USB SDR
   'From the https page only wss:// works; from a local copy over http — ws:// too. Press Connect, tap a station on the upper spectrum.'});
 nt.size.w=760; nt.size.h=180; applySize(nt);
 const rx=addNode('iqnet',40,260,{url:'ws://127.0.0.1:8766',proto:'rtl_tcp',sr:1024000,freq:100000000});
+rx.size.w=300; rx.size.h=180; applySize(rx);
+const dcb=addNode('iqDc',400,260,{});
+const w0=addNode('iqSpec',400,400,{size:'4096'});
+const sa=addNode('sa',720,260,{auto:true,floor:-90,top:-20,split:.4});
+sa.size.w=640; sa.size.h=300; applySize(sa);
+const sh=addNode('iqShift',400,560,{});
+const d1=addNode('iqDecim',400,720,{M:'4',cut:.45});
+const sp=addNode('iqSpec',400,900,{size:'2048'});
+const s2=addNode('sa',720,600,{auto:true,floor:-100,top:-20,split:.4});
+s2.size.w=640; s2.size.h=260; applySize(s2);
+const de=addNode('iqDemod',40,900,{mode:'WFM',deemph:'50 µs',stereo:true});
+de.size.w=360; applySize(de);
+const au=addNode('iqAudio',720,900,{});
+const dc=addNode('dac',980,900,{vol:.4});
+addEdge(rx.id,'iq',dcb.id,'in'); addEdge(dcb.id,'out',w0.id,'in'); addEdge(w0.id,'spec',sa.id,'spec');
+addEdge(dcb.id,'out',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',sp.id,'in'); addEdge(sp.id,'spec',s2.id,'spec');
+addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'stereo',au.id,'in');
+addEdge(au.id,'out',dc.id,'L'); addEdge(au.id,'q',dc.id,'R');
+markWiresDirty();
+});
+preset('Remote SDR: FM Receiver (rtl_tcp via DSP app — phone driver, Raspberry Pi)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The same broadcast FM receiver, fed by a standard rtl_tcp server without websockify: the DSP app on the phone (or `node tools/net-bridge.mjs` on a computer) opens the TCP connection for the page (tcp.connect) and hands the stream over in binary frames.\n'+
+  '1) The RTL-SDR on this phone (OTG): install an rtl_tcp driver app (e.g. «RTL-SDR driver»), start it — it listens on 127.0.0.1:1234; leave host 127.0.0.1, bridge ws://127.0.0.1:8765 (the page inside the DSP app).\n'+
+  '2) A Raspberry Pi / another computer with the SDR: `rtl_tcp -a 0.0.0.0 -s 1024000` there, set host to its address (192.168.x.x), port 1234. From a page on another device the app needs Settings → «Let any page use actions»; the bridge is ws://phone:8765 or @name from Settings → Devices.\n'+
+  'Press Connect, tap a station on the upper spectrum. The readout shows the tuner and the stream rate.'});
+nt.size.w=760; nt.size.h=200; applySize(nt);
+const rx=addNode('iqnet',40,260,{url:'ws://127.0.0.1:8765',proto:'rtl_tcp (DSP app)',host:'127.0.0.1',port:1234,sr:1024000,freq:100000000});
 rx.size.w=300; rx.size.h=180; applySize(rx);
 const dcb=addNode('iqDc',400,260,{});
 const w0=addNode('iqSpec',400,400,{size:'4096'});
