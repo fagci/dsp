@@ -152,7 +152,7 @@ def({ id:'freqdigits', lazy:'proc', touch:true, title:'Frequency Digits', cat:'I
     const W=cv.width, H=cv.height, p=n.p, N=Math.max(1,Math.round(+p.digits)||9), col=indColor(p.color), sep=p.sep==='none' ? '' : p.sep;
     const hi=+p.max>+p.min ? +p.max : Math.pow(10,N)-1, lo=Math.min(+p.min||0,hi);
     // геометрия: N цифр + разделители групп + суффикс Hz
-    const groups=Math.ceil(N/3)-1, sw=sep ? .45 : .18, tw=N+groups*sw+2.4, cw=Math.min(W/tw,(H-6)*.62), fs=Math.min(cw*1.5,H*.7);
+    const groups=Math.ceil(N/3)-1, sw=sep ? .45 : .18, tw=N+groups*sw+1.45, cw=Math.min(W/tw,(H-6)*.62), fs=Math.min(cw*1.5,H*.7);
     const x0=(W-cw*tw)/2+cw*.1, cy=H*.52;
     // позиция цифры с учётом разделителей слева: считаем число разделителей до неё
     const posX=idx=>{ let sepsBefore=0; for(let q=1;q<=idx;q++) if((N-q)%3===0) sepsBefore++; return x0+(idx+.5)*cw+sepsBefore*sw*cw; };
