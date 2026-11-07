@@ -5394,6 +5394,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
               readPos:0,readCount:0,rebuffering:false,appliedOffset:0,
               hardKey:null,softKey:null,tuneFreq:null}));
             rtlResetRing(n); },
+  onResume:n=>{ if(n.dev) rtlResetRing(n); },        // стояли — кольца IQ и звука полны старым; начинаем с чистого
   dispose:n=>{ rtlDisconnect(n).catch(e=>console.error('rtlsdr dispose:',e)); },
   process(n,I){
     // Центр приёмника (n.p.freq) меняют четыре источника, по приоритету:

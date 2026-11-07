@@ -212,6 +212,20 @@ if(n.ghost) n.ghost.style.transform=n.el.style.transform;
 // под капотом в devicePixelRatio раз крупнее, и матрица контекста это компенсирует.
 // Настоящий размер буфера (нужен для putImageData/getImageData — водопады sa/persist)
 // доступен через cv.pxW/cv.pxH.
+// «Чёткий» контекст (MOD.crisp): линии и прямоугольники привязаны к пикселям экрана — сетка, трасса и маркеры не мылятся на дробном масштабе
+// (hiDPI × зум холста). Толщина — целое число физических пикселей (не меньше 1), точки moveTo/lineTo — на центр пикселя.
+// Работает, пока матрица контекста — только масштаб (так рисует Spectrum Analyzer); шрифты не трогаем.
+function crispCtx(cx,getS){
+const P=CanvasRenderingContext2D.prototype, lwd=Object.getOwnPropertyDescriptor(P,'lineWidth');
+let lw=1;
+Object.defineProperty(cx,'lineWidth',{configurable:true,get:()=>lw,set:v=>{ lw=+v||0; const s=getS()||1; lwd.set.call(cx,lw>0?Math.max(1,Math.round(lw*s))/s:0); }});
+const mt=P.moveTo, lt=P.lineTo, fr=P.fillRect;
+const sn=v=>{ const s=getS()||1; return (Math.floor(v*s)+.5)/s; };
+cx.moveTo=(x,y)=>mt.call(cx,sn(x),sn(y));
+cx.lineTo=(x,y)=>lt.call(cx,sn(x),sn(y));
+cx.fillRect=(x,y,w,h)=>{ const s=getS()||1, x0=Math.round(x*s)/s, y0=Math.round(y*s)/s, x1=Math.round((x+w)*s)/s, y1=Math.round((y+h)*s)/s;
+  fr.call(cx,x0,y0,Math.max(x1-x0,w>0?1/s:0),Math.max(y1-y0,h>0?1/s:0)); };
+}
 const HiDPICanvases=new Map();                      // канва -> restretch
 const HiDPI_CAP=matchMedia('(pointer:coarse)').matches?2.5e6:8e6;   // пикселей буфера на канву
 function hiDPICanvas(cv,cx,n){
@@ -233,6 +247,7 @@ nativeH.set.call(cv, cv.pxH=ph);
 cv.pxGen=(cv.pxGen|0)+1;                             // буфер стёрт — кэширующим draw() надо перерисовать
 cx.setTransform(pw/logW,0,0,ph/logH,0,0); };
 HiDPICanvases.set(cv,restretch);
+if(n && MOD[n.type]?.crisp) crispCtx(cx,()=>cv.pxW/logW);
 // Chrome на Android сбрасывает 2D-контекст в фоне; после восстановления матрица сброшена
 cv.addEventListener('contextrestored',()=>restretch(true));
 Object.defineProperty(cv,'width',{configurable:true, get:()=>logW,
@@ -2196,6 +2211,17 @@ document.getElementById('align').onclick=()=>{
   if(Math.max(...xs)-Math.min(...xs)>=Math.max(...ys)-Math.min(...ys)){ const y=Math.min(...ys); g.forEach(n=>n.y=y); }
   else{ const x=Math.min(...xs); g.forEach(n=>n.x=x); }
   g.forEach(posNode); markWiresDirty(); Undo.push(); };
+// «Упорядочить граф»: слоистая раскладка по ходу сигнала (выделенные модули — если выделено два и больше, иначе весь патч)
+document.getElementById('arrange').onclick=()=>{
+  if(typeof dashMode!=='undefined' && dashMode) return;
+  let g=[...Sel].map(id=>Graph.map[id]).filter(Boolean); if(g.length<2) g=Graph.nodes.slice();
+  if(g.length<2){ showToast('nothing to arrange'); return; }
+  const ids=new Set(g.map(n=>n.id));
+  const sz=n=>({w:n.el?.offsetWidth||n.size?.w||180, h:n.el?.offsetHeight||n.size?.h||120});
+  const P=arrangeLayout(g.map(n=>({id:n.id,x:n.x,y:n.y,...sz(n)})), Graph.edges.filter(e=>ids.has(e.from)&&ids.has(e.to)).map(e=>({from:e.from,to:e.to})));
+  for(const n of g){ const p=P[n.id]; if(p){ n.x=Math.round(p.x); n.y=Math.round(p.y); posNode(n); } }
+  markWiresDirty(); Undo.push(); fitView();
+  stat.textContent='graph arranged: '+g.length+' modules'; };
 document.getElementById('dup').onclick=()=>{ copySel(); pasteData(clip,30,30); };
 // «→+»: к выбранному узлу — модуль, подходящий его свободному выходу (нет выходов — входу); новый узел сразу соединён и выбран,
 // так что цепочку можно наращивать тапами (удобно на телефоне, где тянуть провода трудно)
@@ -2231,7 +2257,7 @@ const t=ev.target;
 if(ROTILES) return;
 if(t &&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable)) return;
 if(ev.key==='Delete' &&!ev.ctrlKey &&!ev.metaKey &&!ev.altKey){ ev.preventDefault(); delSel(); return; }
-const k=ev.key.toLowerCase();
+const k=/^[a-z]$/i.test(ev.key) ? ev.key.toLowerCase() : /^Key[A-Z]$/.test(ev.code||'') ? ev.code.slice(3).toLowerCase() : ev.key.toLowerCase();   // русская раскладка: Ctrl+Л = Ctrl+K
 if((ev.ctrlKey||ev.metaKey) &&!ev.altKey &&(k==='z'||k==='y')){ ev.preventDefault(); (k==='y'||ev.shiftKey) ? Undo.redo() : Undo.undo(); return; }
 if((ev.ctrlKey||ev.metaKey) &&!ev.altKey &&!ev.shiftKey){
   if(k==='s'){ ev.preventDefault(); document.getElementById('psave').click(); return; }
@@ -2240,7 +2266,7 @@ if((ev.ctrlKey||ev.metaKey) &&!ev.altKey &&!ev.shiftKey){
 }
 if(ev.ctrlKey||ev.metaKey||ev.altKey) return;
 if(ev.key===' ' && !(t&&(t.tagName==='BUTTON'||t.tagName==='SELECT'||t.tagName==='A'))){ ev.preventDefault(); runBtn.click(); return; }
-if(ev.key==='/'){ ev.preventDefault(); cmdkOpen(); return; }
+if(ev.key==='/'||ev.code==='Slash'){ ev.preventDefault(); cmdkOpen(); return; }
 if(ev.key==='?'){ hpOpen(); if(typeof hpGo==='function') hpGo('page','help/shortcuts.md'); return; }
 if(ev.key==='+'||ev.key==='='||ev.key==='-'){ (ev.key==='-'?panzoom.zoomOut():panzoom.zoomIn()); return; }
 if(Sel.size && ev.key.indexOf('Arrow')===0){
@@ -2349,15 +2375,14 @@ try{
   const made=leaves.filter(lf=>lf.node);
   const sz=lf=>({w:lf.node.el.offsetWidth||lf.node.size.w||180, h:lf.node.el.offsetHeight||lf.node.size.h||120});
   const lay=chainLayout(ast);
-  const cw=[], rh=[];                                         // ширина колонки / высота строки — по самому крупному узлу
-  for(const lf of made){ const z=sz(lf); cw[lf.col]=Math.max(cw[lf.col]||0,z.w); rh[lf.row]=Math.max(rh[lf.row]||0,z.h); }
-  const colX=[], rowY=[]; let ax=0, ay=0;
+  const cw=[]; for(const lf of made){ cw[lf.col]=Math.max(cw[lf.col]||0,sz(lf).w); }   // ширина колонки — по самому широкому узлу
+  const colX=[]; let ax=0;
   for(let c=0;c<lay.w;c++){ colX[c]=ax; ax+=(cw[c]||0)+70; }
-  for(let r=0;r<lay.h;r++){ rowY[r]=ay; ay+=(rh[r]||0)+40; }
+  const ay=chainPlaceY(ast,lf=>lf.node?sz(lf):{w:0,h:0},24);                // ветви друг под другом по настоящей высоте
   const Wsrc=src?(src.el.offsetWidth||src.size.w||180):0;
   const x0=src ? src.x+Wsrc+70 : (rect.width/2)/view.k-view.x-(ax-70)/2;     // продолжение — от правого края выделенного, новая цепочка — по центру видимой области
-  const y0=src ? src.y : (rect.height/2.4)/view.k-view.y-(ay-40)/2;
-  for(const lf of made){ lf.node.x=x0+colX[lf.col]; lf.node.y=y0+rowY[lf.row]; posNode(lf.node); }
+  const y0=src ? src.y : (rect.height/2.4)/view.k-view.y-ay/2;
+  for(const lf of made){ lf.node.x=x0+colX[lf.col]; lf.node.y=y0+lf.y; posNode(lf.node); }
   const hasNode=lf=>!!lf.node;
   chainEdges(ast, src?[{node:src}]:[], (f,t)=>{
     if(!hasNode(f)||!hasNode(t)) return;
@@ -2890,6 +2915,7 @@ function askPermissions(){
 for(const n of Graph.nodes){
 try{ Promise.resolve(MOD[n.type].onRun?.(n)).catch(()=>{}); }catch(e){} }
 }
+Eng.onResume=()=>{ for(const n of Graph.nodes){ try{ MOD[n.type].onResume?.(n); }catch(e){ console.error('onResume '+n.type+':',e); } } };
 runBtn.onclick=async()=>{
 if(!(Eng.running&&!Eng.paused)) askPermissions();
 const on=await Eng.toggle();

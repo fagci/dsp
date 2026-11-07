@@ -1887,6 +1887,7 @@ function saOvEnsure(n,cv){
   let ov=n._ov;
   if(!ov){
     ov=n._ov=document.createElement('canvas'); ov.className='sa-ov'; n._ovCx=ov.getContext('2d');
+    if(typeof crispCtx==='function') crispCtx(n._ovCx,()=>(ov.width||1)/(n.cv.width||1));
     Object.assign(ov.style,{position:'absolute',margin:'0',pointerEvents:'none',zIndex:'2'});
   }
   if(ov.parentNode!==mid || n._ovCv!==cv){
@@ -2179,7 +2180,7 @@ function saSkipDraw(n,cv){
   n._drawKey=k; n._drawSp=sp; n._drawT=now;
   return false;
 }
-def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis',
+def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
   ins:[
         {n:'spec',t:'spec'},
         {n:'bands',t:'bands'},
