@@ -1,6 +1,7 @@
 // Настольный мост для узла «Network (DSP app)»: те же команды tcp.* / udp.* / net.info, что у Android-приложения (NetHub.kt),
 // на сокетах Node — TCP/UDP-клиент и сервер, пакеты приходят записями с hex (src:'net', ev:'data'). Вместе с HEX Structure
 // (схемы rtltcp-cmd, rtltcp-header, eth, ipv4, tcp…) это крафт и приём произвольных пакетов с компьютера, без телефона.
+// Им же узел «rtl_tcp Server» открывает настоящий порт (tcp.listen 1234) для SDR++ / GQRX.
 //   node tools/net-bridge.mjs [--port 8765] [--host 127.0.0.1] [--token секрет] [--origin https://мой.сайт]
 // В узле Network: url = ws://127.0.0.1:8765. Принимает только страницы с разрешённым Origin (по умолчанию localhost и fagci.github.io).
 import http from 'node:http';
