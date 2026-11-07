@@ -1511,7 +1511,7 @@ clearAll();
 const nt=addNode('note',40,40,{text:'Android app (tools/android): the phone microphone as a signal (output mic, 16 kHz by default, raw input when the phone has one) — also with the screen locked; cell towers (operator, cell id, band, RSRP / RSRQ / SINR; the serving cell goes to cdbm / crsrp); motion triggers (stationary / motion → still).\n'+
   'Packet capture (tick «packet capture», needs root + tcpdump and «Allow packet capture» in the app Settings): every frame as hex in rec (Ethernet / IP header fields included) → Rec Log. Without root Android gives no access to frames. The permissions are asked when an option is ticked.'});
 nt.size.w=800; nt.size.h=150; applySize(nt);
-const tx=addNode('termux',40,220,{url:'ws://127.0.0.1:8765',gps:false,battery:false,mic:true,micHz:'16000',cell:true,cellEvery:5,stationary:true,motion:true});
+const tx=addNode('termux',40,220,{url:'ws://127.0.0.1:8765',gps:false,battery:false,micOn:true,micHz:'16000',cell:true,cellEvery:5,stationary:true,motion:true});
 tx.size.w=380; tx.size.h=560; applySize(tx);
 const sc=addNode('scope',460,220,{});
 sc.size.w=380; sc.size.h=170; applySize(sc);
@@ -1533,7 +1533,7 @@ const nt=addNode('note',40,40,{text:'The microphone straight from Android (DSP a
   '«microphone: source» — auto (the raw UNPROCESSED input when the phone has one, else mic), camcorder, voice_recognition… Noise suppression, AGC and echo cancellation are switched off in any case. «sample rate» up to 192 kHz: a phone mic usually gives 48 kHz (a USB microphone or sound card — 96 / 192; the real rate is in the record, sr); for ultrasound or the band above 8 kHz take 44100+ and set the spectrum to the full range. «preferred input» picks a USB / wired / Bluetooth / built-in one.\n'+
   'With root («Allow root features» in the app Settings) there are sources closed to apps: voice_call (both sides of a call), downlink (the other side), uplink (your voice), submix (what the phone plays). A helper runs under su and opens them; whether it works depends on the phone\'s audio HAL — if not, the reason is shown in the status. The microphone stays on with the screen locked.'});
 nt.size.w=1000; nt.size.h=190; applySize(nt);
-const tx=addNode('termux',40,250,{url:'ws://127.0.0.1:8765',gps:false,battery:false,mic:true,micHz:'48000',micSrc:'auto',micDev:'auto'});
+const tx=addNode('termux',40,250,{url:'ws://127.0.0.1:8765',gps:false,battery:false,micOn:true,micHz:'48000',micSrc:'auto',micDev:'auto'});
 tx.size.w=380; tx.size.h=520; applySize(tx);
 const sc=addNode('scope',460,250,{});
 sc.size.w=420; sc.size.h=180; applySize(sc);
@@ -1551,7 +1551,7 @@ clearAll();
 const nt=addNode('note',40,40,{text:'Two microphones of the phone as one stereo signal (DSP app): «microphone: channels» = stereo makes the app open ONE AudioRecord with two channels, so the samples of «mic» (left) and «micB» (right) come from the same ADC frame — no delay between the microphones, unlike two separate inputs (two getUserMedia streams or two devices, which start and drift apart). The phase difference you see is real and comes only from the sound path (the distance between the microphones).\n'+
   'Source: unprocessed (no noise suppression, AGC, equalizer) or camcorder — many phones put the two microphones in a stereo pair there; mono = a single microphone as before. «preferred input» picks usb / wired / bluetooth / built-in (a USB stereo sound card gives two channels as well). Which microphone is left depends on the phone; if it has no stereo input, the app falls back to mono and says so in the node status (micB is then a copy of mic). While the microphone runs, the node lists the phone\'s inputs and microphones (where each is on the body and which recording channel it feeds) — look there to see what your phone supports: two lines «mic 1 / mic 2» with channels 0 and 1 mean a real pair. If the phone lists several built-in inputs by address, pick it in «input of the phone» (e.g. bottom; the list fills once the microphone runs). Cross-Correlation shows the arrival-time difference (lagMs, at 48 kHz one sample = 0.02 ms), the sound travels 34 cm per ms.'});
 nt.size.w=1000; nt.size.h=210; applySize(nt);
-const tx=addNode('termux',40,270,{url:'ws://127.0.0.1:8765',gps:false,battery:false,mic:true,micCh:'stereo',micHz:'48000',micSrc:'unprocessed',micDev:'auto'});
+const tx=addNode('termux',40,270,{url:'ws://127.0.0.1:8765',gps:false,battery:false,micOn:true,micCh:'stereo',micHz:'48000',micSrc:'unprocessed',micDev:'auto'});
 tx.size.w=380; tx.size.h=540; applySize(tx);
 const sc=addNode('scope',460,270,{});
 sc.size.w=420; sc.size.h=190; applySize(sc);
@@ -1586,7 +1586,7 @@ const nt=addNode('note',40,40,{text:'The microphone of the phone to the headphon
   'Where the delay comes from (the Phone sensors node shows the sum: «mic → output ≈ N ms»): the phone\'s microphone buffer and the bridge → the smoothing reserve on the page («microphone: smoothing reserve», 250 ms normally, 40 ms here) → the engine queue (Block size in the toolbar: 128 is the shortest) → the audio output of the device. «microphone: low latency» switches the pieces to 10 ms, the bridge sends them at once and the buffer on the phone is small. The rate of 48 kHz is the native one on most phones — no resampling. A wired headset or USB sound card has less output delay than Bluetooth (100+ ms). Too short a reserve gives clicks: raise «smoothing reserve» until they go.\n'+
   'Not below what the phone\'s own audio path gives (usually 20–40 ms out + 10–20 ms in); for a pure pass-through without the graph a native monitor would be needed.'});
 nt.size.w=1000; nt.size.h=200; applySize(nt);
-const tx=addNode('termux',40,280,{url:'ws://127.0.0.1:8765',gps:false,battery:false,mic:true,micHz:'48000',micSrc:'auto',micLow:true,micLag:40});
+const tx=addNode('termux',40,280,{url:'ws://127.0.0.1:8765',gps:false,battery:false,micOn:true,micHz:'48000',micSrc:'auto',micLow:true,micLag:40});
 tx.size.w=380; tx.size.h=540; applySize(tx);
 const dc=addNode('dac',460,280,{vol:.5,mode:'mono'});
 const sc=addNode('scope',460,440,{});

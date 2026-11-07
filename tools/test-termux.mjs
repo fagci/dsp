@@ -85,20 +85,20 @@ if(fs.existsSync(kf)){
   ok('apply rotation → yaw −90 (CCW 90° about Z), pitch/roll 0',Math.abs(o.yaw+90)<1e-9 && Math.abs(o.pitch)<1e-9 && Math.abs(o.roll)<1e-9 && o.humid===41 && o.steps===1234,JSON.stringify(o));
   const pcm=K.termuxPcm({pcm:Buffer.from(new Int16Array([0,16384,-32768,32767]).buffer).toString('base64')});
   ok('mic pcm decode',pcm.length===4 && pcm[1]===.5 && pcm[2]===-1 && Math.abs(pcm[3]-.99997)<1e-4 && K.termuxPcm({})===null && K.termuxPcm({pcm:'!!'})===null);
-  const mm=K.termuxSubMsg({mic:true,micHz:'48000',cell:true,cellEvery:3,pkt:true,iface:' wlan0 ',filter:'tcp port 80',snap:'512',hz:'0'});
+  const mm=K.termuxSubMsg({micOn:true,micHz:'48000',cell:true,cellEvery:3,pkt:true,iface:' wlan0 ',filter:'tcp port 80',snap:'512',hz:'0'});
   ok('sub message: mic, cell, capture',mm.micHz===48000 && mm.cellEvery===3 && mm.iface==='wlan0' && mm.filter==='tcp port 80' && mm.snap===512 && mm.sub.join()==='cell,mic,pkt',JSON.stringify(mm));
-  const ms=K.termuxSubMsg({mic:true,micHz:'96000',micSrc:'unprocessed',micDev:'usb'});
+  const ms=K.termuxSubMsg({micOn:true,micHz:'96000',micSrc:'unprocessed',micDev:'usb'});
   ok('sub message: microphone source and device',ms.micHz===96000 && ms.micSrc==='unprocessed' && ms.micDev==='usb' && ms.sub.join()==='mic',JSON.stringify(ms))
   const pst=K.termuxPcm({ch:2,pcm:Buffer.from(new Int16Array([16384,-16384,8192,-8192]).buffer).toString('base64')});
   ok('stereo pcm: interleaved L,R decode',pst.length===4 && pst[0]===.5 && pst[1]===-.5 && pst[2]===.25 && pst[3]===-.25);
   ok('mic channels: mono by default, stereo → 2 and sent to the app',K.termuxMicK({})===1 && K.termuxMicK({micCh:'mono'})===1 && K.termuxMicK({micCh:'stereo'})===2 && K.termuxMicK(null)===1
-    && K.termuxSubMsg({mic:true,micCh:'stereo'}).micCh==='stereo' && !('micCh' in K.termuxSubMsg({mic:true,micCh:'mono'})) && !('micCh' in K.termuxSubMsg({gps:true,micCh:'stereo'})));
-  ok('mic address list: auto, device addresses (name when none), the chosen one kept',K.termuxMicAddrs({devs:[{addr:'bottom',name:'B'},{addr:'',name:'USB audio'},{addr:'bottom',name:'B2'}]},'old').join()==='auto,bottom,USB audio,old' && K.termuxMicAddrs(null,'').join()==='auto' && K.termuxSubMsg({mic:true,micDev:'usb',micAddr:'auto'}).micDev==='usb');
-  ok('mic input address: type:addr, any:addr, plain type',K.termuxSubMsg({mic:true,micDev:'builtin',micAddr:' bottom '}).micDev==='builtin:bottom' && K.termuxSubMsg({mic:true,micDev:'auto',micAddr:'back'}).micDev==='any:back'
-    && K.termuxSubMsg({mic:true,micDev:'usb',micAddr:''}).micDev==='usb' && !('micDev' in K.termuxSubMsg({mic:true,micDev:'auto'})) && !('micDev' in K.termuxSubMsg({gps:true,micAddr:'x'})));
+    && K.termuxSubMsg({micOn:true,micCh:'stereo'}).micCh==='stereo' && !('micCh' in K.termuxSubMsg({micOn:true,micCh:'mono'})) && !('micCh' in K.termuxSubMsg({gps:true,micCh:'stereo'})));
+  ok('mic address list: auto, device addresses (name when none), the chosen one kept',K.termuxMicAddrs({devs:[{addr:'bottom',name:'B'},{addr:'',name:'USB audio'},{addr:'bottom',name:'B2'}]},'old').join()==='auto,bottom,USB audio,old' && K.termuxMicAddrs(null,'').join()==='auto' && K.termuxSubMsg({micOn:true,micDev:'usb',micAddr:'auto'}).micDev==='usb');
+  ok('mic input address: type:addr, any:addr, plain type',K.termuxSubMsg({micOn:true,micDev:'builtin',micAddr:' bottom '}).micDev==='builtin:bottom' && K.termuxSubMsg({micOn:true,micDev:'auto',micAddr:'back'}).micDev==='any:back'
+    && K.termuxSubMsg({micOn:true,micDev:'usb',micAddr:''}).micDev==='usb' && !('micDev' in K.termuxSubMsg({micOn:true,micDev:'auto'})) && !('micDev' in K.termuxSubMsg({gps:true,micAddr:'x'})));
   const mi=K.termuxMicInfo({active:true,devs:[{id:1,type:15,addr:'bottom',name:'Built-in'},{id:2,type:11,addr:'',name:'USB'}],mics:[{id:'mic0',desc:'bottom',addr:'bottom',loc:1,pos:[0.01,-0.07,0],ch:[[0,1]]},{id:'mic1',desc:'top',addr:'top',loc:1,pos:[0.01,0.07,0],ch:[[1,1]]}]});
   ok('mic info lines: inputs and two microphones with their channels',mi.length===3 && mi[0]==='inputs: builtin «bottom», usb' && mi[1].includes('mic 1: bottom') && mi[1].includes('channel 0 direct') && mi[2].includes('channel 1 direct') && mi[2].includes('0.070') && K.termuxMicInfo(null).length===0 && K.termuxMicInfo({}).length===0,JSON.stringify(mi));
-  const md=K.termuxSubMsg({mic:true,micSrc:'auto',micDev:'auto'});
+  const md=K.termuxSubMsg({micOn:true,micSrc:'auto',micDev:'auto'});
   ok('sub message: auto source and device are not sent',!('micSrc' in md) && !('micDev' in md))
   ok('sub message: source only with the microphone on',!('micSrc' in K.termuxSubMsg({gps:true,micSrc:'downlink'})))
   ok('cell Timing Advance → distance (LTE 78 m step, GSM 553 m step)',(c=>c.dist===351.5 && c.distSigma===50)(K.termuxTaDist({type:'LTE',ta:4})) && (c=>c.dist===39.1)(K.termuxTaDist({type:'LTE',ta:0})) &&
@@ -107,8 +107,8 @@ if(fs.existsSync(kf)){
     Object.keys(K.termuxTaDist({type:'LTE',ta:5000})).length===0 && Object.keys(K.termuxTaDist({type:'NR',ta:3})).length===0 && Object.keys(K.termuxTaDist({type:'GSM',ta:99})).length===0);
   const cd=K.termuxDev({src:'cell',type:'LTE',mcc:250,mnc:2,cid:5,ta:3,reg:1,rsrp:-90});
   ok('the cell device record carries dist and distSigma',cd.dist===273.4 && cd.distSigma===50 && cd.dev==='cell:LTE:250-2:5',JSON.stringify(cd));
-  ok('sub message: low latency only with the microphone on',K.termuxSubMsg({mic:true,micLow:true}).micLow===true && !('micLow' in K.termuxSubMsg({gps:true,micLow:true})) && !('micLow' in K.termuxSubMsg({mic:true})))
-  ok('mic lag: 250 ms normally, micLag in low latency (20…300)',K.termuxMicLag({mic:true})===.25 && K.termuxMicLag({micLow:true})===.06 && K.termuxMicLag({micLow:true,micLag:40})===.04 && K.termuxMicLag({micLow:true,micLag:1})===.02 && K.termuxMicLag({micLow:true,micLag:9999})===.3 && K.termuxMicLag(null)===.25)
+  ok('sub message: low latency only with the microphone on',K.termuxSubMsg({micOn:true,micLow:true}).micLow===true && !('micLow' in K.termuxSubMsg({gps:true,micLow:true})) && !('micLow' in K.termuxSubMsg({micOn:true})))
+  ok('mic lag: 250 ms normally, micLag in low latency (20…300)',K.termuxMicLag({micOn:true})===.25 && K.termuxMicLag({micLow:true})===.06 && K.termuxMicLag({micLow:true,micLag:40})===.04 && K.termuxMicLag({micLow:true,micLag:1})===.02 && K.termuxMicLag({micLow:true,micLag:9999})===.3 && K.termuxMicLag(null)===.25)
   ok('sub message: nothing extra when off',Object.keys(K.termuxSubMsg({gps:true,micHz:'48000',cellEvery:3,iface:'x'})).join()==='sub');
   const oc={}; K.termuxApply(oc,{src:'cell',reg:0,dbm:-120}); K.termuxApply(oc,{src:'cell',reg:1,type:'LTE',dbm:-85,rsrp:-95,rsrq:-9,sinr:12});
   K.termuxApply(oc,{src:'mic',rms:-30}); K.termuxApply(oc,{src:'sensor',sensor:'stationary',x:1}); K.termuxApply(oc,{src:'sensor',sensor:'devorient',x:1});
