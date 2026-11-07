@@ -13,10 +13,10 @@
 
 function rtcClose(n){
   n.gen=(n.gen|0)+1;
-  const dc=n.dc, fc=n.fc, sc=n.sc, tc=n.tun, pc=n.pc;
-  n.dc=n.fc=n.sc=n.tun=n.pc=null; n.open=false; n.fopen=false; n.sopen=false; n.tunOpen=false; n.rx=null; n.txQ=[]; n.tx=null;
+  const dc=n.dc, fc=n.fc, sc=n.sc, tc=n.tun, rc=n.rtl, pc=n.pc;
+  n.dc=n.fc=n.sc=n.tun=n.rtl=n.pc=null; n.rtlOpen=false; n.rtlQ=[]; n.open=false; n.fopen=false; n.sopen=false; n.tunOpen=false; n.rx=null; n.txQ=[]; n.tx=null;
   n.snd={}; n.making=false; n.remote=null; n.rmask=0; n.mediaDirty=true; n.rlabel={}; n.sentLabels=null;      // свои треки (n.loc) живут: после переподключения уйдут снова
-  for(const c of [dc,fc,sc,tc]) if(c){ c.onopen=c.onclose=c.onmessage=null; try{ c.close(); }catch(e){} }
+  for(const c of [dc,fc,sc,tc,rc]) if(c){ c.onopen=c.onclose=c.onmessage=null; try{ c.close(); }catch(e){} }
   if(pc){ pc.onconnectionstatechange=pc.ondatachannel=pc.ontrack=pc.onnegotiationneeded=null; try{ pc.close(); }catch(e){} }
   n.status='closed';
 }
@@ -27,7 +27,7 @@ function rtcMake(n){
   if(typeof RTCPeerConnection==='undefined'){ n.status='WebRTC is not supported by this browser'; return null; }
   const ice=String(n.p.ice||'').split(/[\s,]+/).filter(Boolean).map(urls=>({urls}));
   const pc=new RTCPeerConnection({iceServers:ice}), gen=n.gen;
-  n.pc=pc; rtcSigChannel(n,pc); rtcTunChannel(n,pc);
+  n.pc=pc; rtcSigChannel(n,pc); rtcTunChannel(n,pc); rtcRtlChannel(n,pc);
   pc.ontrack=e=>rtcTrackIn(n,e,gen);
   pc.onnegotiationneeded=()=>{ if(n.gen===gen && n.sopen) rtcNegotiate(n); };
   pc.onconnectionstatechange=()=>{
@@ -171,6 +171,22 @@ function rtcTunChannel(n,pc){
   tc.onopen=()=>{ if(n.gen===gen) n.tunOpen=true; };
   tc.onclose=()=>{ if(n.gen===gen) n.tunOpen=false; };
   tc.onmessage=e=>{ if(n.gen===gen) rtcTunIn(n,e.data); };
+}
+/* ---- байтовый канал rtl_tcp (rtlserve.js, iqnet.js) ----
+   Канал rtl (negotiated, id 3), надёжный и упорядоченный — как TCP-соединение rtl_tcp: туда идут команды клиента
+   (5 байт), обратно — заголовок «RTL0» и поток IQ. Пришедшее копится в n.rtlQ (Uint8Array), забирает узел.
+   Отправка с контролем буфера: rtcRtlSend возвращает false, если канал забит (кто шлёт IQ — выбрасывает блок). */
+const RTL_HIGH=1<<20;
+function rtcRtlChannel(n,pc){
+  const gen=n.gen, rc=pc.createDataChannel('rtl',{negotiated:true,id:3}); n.rtl=rc; rc.binaryType='arraybuffer';
+  rc.onopen=()=>{ if(n.gen===gen){ n.rtlOpen=true; n.rtlQ=[]; n.rtlEv=(n.rtlEv|0)+1; } };
+  rc.onclose=()=>{ if(n.gen===gen){ n.rtlOpen=false; n.rtlEv=(n.rtlEv|0)+1; } };
+  rc.onmessage=e=>{ if(n.gen===gen && typeof e.data!=='string'){ n.rtlQ.push(new Uint8Array(e.data)); if(n.rtlQ.length>4096) n.rtlQ.shift(); } };
+}
+function rtcRtlSend(n,u8,force){
+  const c=n?.rtl; if(!c || c.readyState!=='open') return false;
+  if(!force && c.bufferedAmount>RTL_HIGH) return false;
+  try{ c.send(u8); return true; }catch(e){ return false; }
 }
 function rtcTunReg(n,key,label){ const e=n.tunReg.get(key); if(e) e.label=label; else n.tunReg.set(key,{label,q:[]}); }
 function rtcTunUnreg(n,key){ n.tunReg.delete(key); }
@@ -376,7 +392,7 @@ def({ id:'rtcdata', title:'WebRTC Data', cat:'Sources', kw:'webrtc peer data cha
     {n:'sendpick',t:'button',label:'Send file…',fn:n=>rtcPickSend(n)},
     {n:'maxMB',t:'num',d:200,label:'refuse incoming files over, MB'},
   ],
-  init:n=>{ n.pc=n.dc=null; n.open=false; n.gen=0; n.code=''; n.lineQ=[]; n.recQ=[]; n.lastLine=''; n.fc=null; n.fopen=false; n.rx=null; n.tx=null; n.txQ=[]; n.recvQ=[]; n.lastFile=-1; n.prog=0; n.fstat=''; n.lastSendId=undefined; n.sc=null; n.sopen=false; n.snd={}; n.loc={}; n.ext=new Map(); n.rlabel={}; n.sentLabels=null; n.linkObj={node:n}; n.making=false; n.polite=false; n.remote=null; n.rmask=0; n.mstat=''; n.mediaDirty=true; n.msBusy=false; n.vbox=null; n.tun=null; n.tunOpen=false; n.tunReg=new Map();
+  init:n=>{ n.pc=n.dc=null; n.open=false; n.gen=0; n.code=''; n.lineQ=[]; n.recQ=[]; n.lastLine=''; n.fc=null; n.fopen=false; n.rx=null; n.tx=null; n.txQ=[]; n.recvQ=[]; n.lastFile=-1; n.prog=0; n.fstat=''; n.lastSendId=undefined; n.sc=null; n.sopen=false; n.snd={}; n.loc={}; n.ext=new Map(); n.rlabel={}; n.sentLabels=null; n.linkObj={node:n}; n.making=false; n.polite=false; n.remote=null; n.rmask=0; n.mstat=''; n.mediaDirty=true; n.msBusy=false; n.vbox=null; n.tun=null; n.tunOpen=false; n.tunReg=new Map(); n.rtl=null; n.rtlOpen=false; n.rtlQ=[]; n.rtlEv=0;
             n.sig=null; n.sigOn=false; n.hiT=null; n.neg=0; n.myId=''; n.peerId=null; n.auto=false; n.msgs=0; n.count=0;
             n.lastSend=undefined; n.status=typeof RTCPeerConnection==='undefined' ? 'WebRTC is not supported by this browser' : 'not connected'; },
   dispose:n=>{ rtcAutoStop(n); rtcClose(n); rtcMediaStopAll(n); n.vbox?.remove(); },
