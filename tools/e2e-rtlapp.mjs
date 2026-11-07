@@ -1,4 +1,4 @@
-// Сквозная проверка: узел rtl_tcp Server (Phone app) ↔ мост-имитатор приложения на сокетах Node ↔ обычный TCP-клиент.
+// Сквозная проверка: узел rtl_tcp Server (TCP-порт) ↔ мост-имитатор приложения на сокетах Node ↔ обычный TCP-клиент.
 // Нужны Playwright и статика на :8123 (python3 -m http.server 8123): node tools/e2e-rtlapp.mjs
 import net from 'node:net';
 import { createRequire } from 'node:module';
@@ -16,7 +16,7 @@ await pg.waitForFunction(() => typeof addNode === 'function', null, { timeout: 9
 await pg.evaluate(async ([wsPort, port]) => {
   clearAll();
   const gen = addNode('iqGen', 40, 40, { sr: '1024000', fc: 100000000, mode: 'carrier' });
-  const srv = addNode('rtlserve', 400, 40, { transport: 'Phone app (TCP port)', url: 'ws://127.0.0.1:' + wsPort, port, lan: false });
+  const srv = addNode('rtlserve', 400, 40, { transport: 'TCP port (phone app / net-bridge)', url: 'ws://127.0.0.1:' + wsPort, port, lan: false });
   addEdge(gen.id, 'iq', srv.id, 'iq'); markWiresDirty();
   window.__srv = srv; rtlsStart(srv); await Eng.start();
 }, [bridge.port, PORT]);
@@ -40,6 +40,10 @@ ok('client left → waiting again', /waiting for a client/.test(await pg.evaluat
 const cli3 = net.connect(PORT, '127.0.0.1'); const c3 = []; cli3.on('data', (d) => c3.push(d)); await wait(800);
 ok('new client gets a fresh header', Buffer.concat(c3).subarray(0, 4).toString() === 'RTL0');
 cli3.destroy();
+await pg.evaluate(() => rtlsStop(__srv)); await wait(300);
+// старый патч с transport «WebSocket (bridge)» тоже работает через мост приложения
+await pg.evaluate(() => { __srv.p.transport = 'WebSocket (bridge)'; rtlsStart(__srv); }); await wait(1000);
+ok('legacy transport value still listens', /listening on port/.test(await pg.evaluate(() => __srv.status)), await pg.evaluate(() => __srv.status));
 await pg.evaluate(() => rtlsStop(__srv)); await wait(300);
 const c4 = net.connect(PORT, '127.0.0.1'); const refused = await new Promise((r) => { c4.on('error', () => r(true)); c4.on('connect', () => { c4.destroy(); r(false); }); });
 ok('Stop releases the port', refused);
