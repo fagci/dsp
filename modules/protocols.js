@@ -1669,20 +1669,31 @@ const FT8_GP=(()=>{ const N=96, c=Math.PI*2*Math.sqrt(2/Math.LN2), t=new Float32
   for(let i=0;i<=N;i++){ const x=(i/N)*3-1.5; t[i]=.5*(erf(c*(x+.5))-erf(c*(x-.5))); }
   return t; })();
 const FT8_TX_SEC=79*.16, FT8_TX_DELAY=.5;
+// «CQ R6HABA KO85» не лезет в одно сообщение (в типе 4 нет места для локатора): второй слот — свободный текст «R6HABA KO85»
+function ft8GridMsg(text){
+  const w=(text||'').toUpperCase().trim().split(/\s+/);
+  if(w.length!==3 || w[0]!=='CQ' || !/^[A-R]{2}\d\d$/.test(w[2]) || ft8PackCall(w[1])!==null) return null;
+  const m=w[1]+' '+w[2], b=ft8Pack('CQ '+w[1]+' '+w[2]);
+  return b && ft8Unpack(b).indexOf('CQ')===0 && m.length<=13 ? m : null; }
+
 def({ id:'ft8Tx', title:'FT8: Transmit', cat:'Protocols',
   ins:[{n:'text',t:'txt'},{n:'freq',t:'num'}], outs:[{n:'out',t:'sig'}], readout:true,
   params:[{n:'text',t:'text',d:'CQ K1ABC FN42'},
           {n:'freq',t:'range',min:200,max:3000,step:1,d:1500,label:'tone 0 frequency, Hz'},
           {n:'slots',t:'select',opts:['every','even','odd'],d:'every',label:'15 s slots (UTC) to transmit in'},
           {n:'lvl',t:'range',min:.05,max:1,step:.05,d:.5,label:'level'}],
-  init:n=>{ n.slot=-1; n.t=-99; n.ph=0; n.key=null; n.tones=null; n.msg='';n.text=''; },
+  init:n=>{ n.slot=-1; n.t=-99; n.ph=0; n.key=null; n.tones=null; n.msg='';n.text=''; n.alt=0; n.tones0=n.tones1=null; },
   process(n,I){
     if(typeof I.freq==='number') setMod(n,'freq',I.freq);
     const o=buf(n,'out'), sr=Eng.sr, txt=(typeof I.text==='string'&&I.text) ? I.text : n.p.text;
-    if(n.key!==txt){ n.key=txt; const b=ft8Pack(txt); n.tones=b ? ft8Tones(b) : null; n.msg=b ? ft8Unpack(b) : null; }
-    const now=Date.now(), slot=Math.floor(now/15000);
-    if(slot!==n.slot){ n.slot=slot; n.t=(now-slot*15000)/1000-FT8_TX_DELAY; }
-    const on=n.tones && (n.p.slots==='every' || (slot%2===0)===(n.p.slots==='even')), tn=n.tones, f0=n.p.freq, a=n.p.lvl;
+    if(n.key!==txt){ n.key=txt; const b=ft8Pack(txt); n.tones0=b ? ft8Tones(b) : null; n.msg0=b ? ft8Unpack(b) : null;
+      const g=ft8GridMsg(txt), b2=g ? ft8Pack(g) : null;         // «CQ НЕСТАНДАРТНЫЙ ЛОКАТОР»: локатор уходит отдельным слотом
+      n.tones1=b2 ? ft8Tones(b2) : null; n.msg1=b2 ? ft8Unpack(b2) : null; n.tones=n.tones0; n.msg=n.msg0; }
+    const now=Date.now(), slot=Math.floor(now/15000), want=n.p.slots==='every' || (slot%2===0)===(n.p.slots==='even');
+    if(slot!==n.slot){ n.slot=slot; n.t=(now-slot*15000)/1000-FT8_TX_DELAY;
+      if(want && n.tones1){ n.alt^=1; n.tones=n.alt ? n.tones1 : n.tones0; n.msg=n.alt ? n.msg1 : n.msg0; }
+      else { n.tones=n.tones0; n.msg=n.msg0; } }
+    const on=n.tones && want, tn=n.tones, f0=n.p.freq, a=n.p.lvl;
     for(let i=0;i<BLOCK;i++,n.t+=1/sr){
       if(!on || n.t<0 || n.t>=FT8_TX_SEC){ o[i]=0; continue; }
       const u=n.t/.16, k=Math.floor(u);
