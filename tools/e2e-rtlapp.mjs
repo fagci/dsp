@@ -6,7 +6,7 @@ import { mockBridgeWs } from './netmock-ws.mjs';
 const { chromium } = createRequire(import.meta.url)('playwright');
 let bad = 0; const ok = (n, c, x = '') => { if (!c) { bad++; console.log('FAIL', n, x); } else console.log('ok  ', n); };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-const bridge = await mockBridgeWs(0);
+const bridge = await mockBridgeWs(0, { app: true });        // строго как приложение: подписка на net и пачки-массивы
 const closed403 = await mockBridgeWs(0, { forbid: true });
 const PORT = 21234;
 const b = await chromium.launch(); const pg = await b.newPage(); const errs = [];
