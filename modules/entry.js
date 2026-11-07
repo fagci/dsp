@@ -158,12 +158,30 @@ def({ id:'freqdigits', lazy:'proc', touch:true, title:'Frequency Digits', cat:'I
     const posX=idx=>{ let sepsBefore=0; for(let q=1;q<=idx;q++) if((N-q)%3===0) sepsBefore++; return x0+(idx+.5)*cw+sepsBefore*sw*cw; };
     const kAt=x=>{ let best=-1,bd=1e9; for(let idx=0;idx<N;idx++){ const d=Math.abs(x-posX(idx)); if(d<bd){ bd=d; best=idx; } } return bd<=cw*.62 ? N-1-best : -1; };
     const stepF=(k,dir)=>{ n.f=fdStep(n.f,k,dir,lo,hi); n.p.state=String(n.f); };
-    indWire(n,cv,{
-      down:(x,y)=>{ const k=kAt(x); if(k<0) return; n.drag={k,y0:y,acc:0,moved:false,half:y<cv.height/2}; n.fl={k,t:performance.now()}; },
+    // indWire вешает обработчики один раз, а геометрия (ширина, число цифр) меняется — каждый кадр кладём свежие в n._fdh
+    n._fdh={
+      down:(x,y)=>{ const k=kAt(x); if(k<0) return; cv.focus({preventScroll:true}); n.fdSel=k;            // клик выделяет разряд — дальше стрелки и цифры с клавиатуры
+        n.drag={k,y0:y,acc:0,moved:false,z:y<cv.height*.34 ? 1 : y>cv.height*.66 ? -1 : 0}; n.fl={k,t:performance.now()}; redraw(n); },
       move:(x,y)=>{ const d=n.drag; if(!d) return; const stp=Math.max(10,cv.height*.28), c=Math.trunc((d.y0-y)/stp);
         if(c!==d.acc){ d.moved=true; stepF(d.k,c-d.acc); d.acc=c; redraw(n); } },
-      up:()=>{ const d=n.drag; n.drag=null; if(d && !d.moved){ stepF(d.k,d.half ? 1 : -1); } redraw(n); },
-      wheel:(x,y,ev)=>{ const k=kAt(x); if(k<0) return; stepF(k,ev.deltaY<0 ? 1 : -1); redraw(n); }});
+      up:()=>{ const d=n.drag; n.drag=null; if(d && !d.moved && d.z){ stepF(d.k,d.z); } redraw(n); },   // тап по стрелке (верх/низ) — шаг; по самой цифре — только выделение
+      wheel:(x,y,ev)=>{ const k=kAt(x); if(k<0) return; n.fdSel=k; stepF(k,ev.deltaY<0 ? 1 : -1); redraw(n); },
+      // клавиатура: ↑/↓ — шаг выделенного разряда, ←/→ — соседний разряд, цифра — ввод и переход вправо, Backspace — влево, Esc — снять выделение
+      key:ev=>{
+        if(ev.ctrlKey||ev.metaKey||ev.altKey) return;
+        let k=n.fdSel; const kk=ev.key; let ok=true;
+        if(k==null||k>=N) k=N-1-(N>>1);
+        if(kk==='ArrowUp'||kk==='ArrowDown'){ n.fdSel=k; stepF(k,kk==='ArrowUp'?1:-1); }
+        else if(kk==='ArrowLeft'||kk==='Backspace'){ n.fdSel=Math.min(N-1,k+1); }
+        else if(kk==='ArrowRight'){ n.fdSel=Math.max(0,k-1); }
+        else if(kk==='Home'){ n.fdSel=N-1; } else if(kk==='End'){ n.fdSel=0; }
+        else if(kk==='Escape'){ n.fdSel=null; cv.blur(); }
+        else if(/^[0-9]$/.test(kk)){ const r=fdSetDigit(n.f,k,+kk,lo,hi); if(r!=null){ n.f=r; n.p.state=String(r); } n.fdSel=Math.max(0,k-1); n.fl={k,t:performance.now()}; }
+        else ok=false;
+        if(ok){ ev.preventDefault(); ev.stopPropagation(); redraw(n); } }};
+    indWire(n,cv,{down:(x,y,e)=>n._fdh.down(x,y,e), move:(x,y,e)=>n._fdh.move(x,y,e), up:(x,y)=>n._fdh.up(x,y), wheel:(x,y,e)=>n._fdh.wheel(x,y,e)});
+    if(!cv._fdKey){ cv._fdKey=true; cv.tabIndex=0; cv.style.outline='none';          // фокус на канве — стрелки и цифры идут сюда, а не в хоткеи холста
+      cv.addEventListener('keydown',ev=>n._fdh.key(ev)); cv.addEventListener('blur',()=>redraw(n)); }
     cx.clearRect(0,0,W,H);
     cx.fillStyle='#0b0f0c'; cx.strokeStyle=themeColor('--axis'); cx.lineWidth=1.5; cx.beginPath(); cx.roundRect(1,1,W-2,H-2,Math.min(8,H*.12)); cx.fill(); cx.stroke();
     const ds=fdDigits(n.f,N); let lead=0; while(lead<N-1 && ds[lead]==='0') lead++;
@@ -174,6 +192,8 @@ def({ id:'freqdigits', lazy:'proc', touch:true, title:'Frequency Digits', cat:'I
       indFont(cx,fs); cx.save();
       cx.fillStyle=col; cx.globalAlpha=on ? 1 : .16; if(on){ cx.shadowColor=col; cx.shadowBlur=hot ? 14 : 6; }
       cx.fillText(ds[idx],x,cy); cx.restore();
+      if(n.fdSel===k && n.fdSel!=null){ const f=document.activeElement===cv; cx.fillStyle=col; cx.globalAlpha=f ? .2 : .08; cx.beginPath(); cx.roundRect(x-cw*.5,H*.1,cw,H*.8,4); cx.fill();
+        if(f){ cx.globalAlpha=.9; cx.fillRect(x-cw*.4,cy+fs*.46,cw*.8,2); } cx.globalAlpha=1; }
       if(hot){ cx.fillStyle=col; cx.globalAlpha=.14; cx.beginPath(); cx.roundRect(x-cw*.5,H*.1,cw,H*.8,4); cx.fill(); cx.globalAlpha=1; }
       if(idx<N-1 && (N-1-idx)%3===0 && sep){ cx.fillStyle=col; cx.globalAlpha=on ? .85 : .2; indFont(cx,fs*.8); cx.fillText(sep,x+cw*.5+sw*cw*.5,cy+fs*.12); cx.globalAlpha=1; }
     }
