@@ -33,12 +33,18 @@ function rtlsAppOpen(n,url){
   let ws;
   try{ ws=new WebSocket(url); }catch(e){ n.status='error: '+e.message; rtlsRetry(n,url); return; }
   n.ws=ws; n.status='connecting to the app…'; n.server=0; n.conn=0; n.aq=[]; n.aqN=0; n.inflight=0; n.cid=0;
-  ws.onopen=()=>{ n.listenAt=performance.now(); n.listenWarn=0; n.listenId=rtlsAppCmd(n,{cmd:'tcp.listen',port:Math.round(+n.p.port)||1234,lan:!!n.p.lan}); n.status='asking the app to listen on :'+(Math.round(+n.p.port)||1234)+'…'; };
+  ws.onopen=()=>{ ws.send(JSON.stringify({sub:['net']}));                              // события accept / data / close приложение шлёт только подписавшимся
+    n.listenAt=performance.now(); n.listenWarn=0; n.listenId=rtlsAppCmd(n,{cmd:'tcp.listen',port:Math.round(+n.p.port)||1234,lan:!!n.p.lan}); n.status='asking the app to listen on :'+(Math.round(+n.p.port)||1234)+'…'; };
   ws.onerror=()=>{ n.status='connection error'; };
   ws.onclose=()=>{ if(n.ws!==ws) return; n.ws=null; n.cli=false; n.conn=0; n.server=0; n.status='app closed'+(n.p.reconnect ? ' — reconnecting…' : ''); rtlsRetry(n,url); };
   ws.onmessage=e=>{
     if(typeof e.data!=='string') return;
-    let m; try{ m=JSON.parse(e.data); }catch(x){ return; }
+    let j; try{ j=JSON.parse(e.data); }catch(x){ return; }
+    for(const m of Array.isArray(j) ? j : [j]) rtlsAppMsg(n,m);                    // записи приходят пачками-массивами (~40 мс)
+  };
+}
+function rtlsAppMsg(n,m){
+  {
     if(m.src==='cmd'){
       if(m.cmd==='tcp.listen' && m.id===n.listenId){
         if(m.ok){ n.server=m.server; n.status='listening on port '+m.port+(n.p.lan ? ' (LAN)' : ' (this phone only)')+' — waiting for a client'; }
@@ -56,11 +62,11 @@ function rtlsAppOpen(n,url){
       if(n.conn){ rtlsAppCmd(n,{cmd:'tcp.close',conn:m.conn}); return; }              // как настоящий rtl_tcp — один клиент за раз
       n.conn=m.conn; n.peer=m.peer||''; rtlsClient(n,true);
     } else if(m.ev==='data' && m.conn===n.conn && n.conn){ rtlsRx(n,rtlsFromHex(m.hex||'')); }
-    else if(m.ev==='close' && m.conn===n.conn && n.conn){ rtlsAppDrop(n); rtlsClient(n,false); }
+    else if(m.ev==='close' && m.conn===n.conn && n.conn){ rtlsAppDrop(n); }
     else if(m.ev==='close' && m.server && m.server===n.server){ n.server=0; n.status='the app closed the listener'; }
-  };
+  }
 }
-function rtlsAppDrop(n){ n.aq=[]; n.aqN=0; n.inflight=0; if(n.conn){ n.conn=0; n.cli=false; } }
+function rtlsAppDrop(n){ n.aq=[]; n.aqN=0; n.inflight=0; if(n.conn){ n.conn=0; rtlsClient(n,false); } }       // клиент ушёл (событие close или ошибка tcp.send)
 function rtlsAppSend(n,u8,force){
   if(!n.ws || n.ws.readyState!==1 || !n.conn) return false;
   if(!force && n.aqN>RTLS_QMAX) return false;
