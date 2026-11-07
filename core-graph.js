@@ -336,7 +336,7 @@ e.addEventListener('dblclick',ev=>pinPicker(ev,n,p.n,dir)); };
 // появление/исчезновение пина параметра сдвигало бы соседние базовые порты туда-сюда.
 const paramNames=mergeableParamNames(d);
 // .sort() стабилен (ES2019+) — внутри каждой группы относительный порядок из module.ins/outs сохраняется
-const lowPri=p=>(paramNames.has(p.n) && !p.show) || !!p.hide;   // show:true — пин виден всегда, даже если имя совпало с параметром (выход mic у Phone sensors)               // hide:true — пин скрыт, пока не подключён (старые I/Q при едином iq)
+const lowPri=p=>paramNames.has(p.n) || !!p.hide;               // hide:true — пин скрыт, пока не подключён (старые I/Q при едином iq)
 const baseFirst=ps=>[...ps].sort((a,b)=>lowPri(a)-lowPri(b));
 for(const p of baseFirst(portsOf(n,'ins'))){
 const e=portEl(p,'i'); ci.append(e); n.ports.i[p.n]=e; wire(e,p,'i');
@@ -547,8 +547,8 @@ s.t==='range2' ? s.keys : (s.t==='button'||s.t==='file') ? [] : [s.n]));
 function midWidth(n){
 const d=MOD[n.type];
 const paramNames=mergeableParamNames(d);
-const insShown=portsOf(n,'ins').some(p=>!paramNames.has(p.n)||p.show);
-const outsShown=portsOf(n,'outs').some(p=>!paramNames.has(p.n)||p.show);
+const insShown=portsOf(n,'ins').some(p=>!paramNames.has(p.n));
+const outsShown=portsOf(n,'outs').some(p=>!paramNames.has(p.n));
 const lw=insShown?58:0, rw=outsShown?58:0;
 return Math.max(90, n.size.w-2-lw-rw-18);
 }
@@ -2692,6 +2692,9 @@ const src=o.edges.filter(e=>gone.has(e.to)), outs=o.edges.filter(e=>gone.has(e.f
 o.edges=o.edges.filter(e=>!gone.has(e.to) && !gone.has(e.from));
 for(const q of outs) for(const e of src) if(e.to===q.from) o.edges.push({from:e.from,fp:e.fp,to:q.to,tp:q.tp});
 o.nodes=o.nodes.filter(n=>!gone.has(n.id)); } }
+{ const tx=new Set(); for(const n of o.nodes) if(n.type==='termux'){ tx.add(n.id);   // чекбокс и пин микрофона mic → micOn: имя mic осталось только у выхода-сигнала
+if(n.p && 'mic' in n.p){ n.p.micOn=n.p.mic; delete n.p.mic; } }
+for(const e of o.edges) if(tx.has(e.to) && e.tp==='mic') e.tp='micOn'; }
 { const maps=new Set(o.nodes.filter(n=>n.type==='geoMap').map(n=>n.id));
 for(const e of o.edges) if(maps.has(e.to) && (e.tp==='rec2'||e.tp==='rec3')) e.tp='rec'; }
 { const sas=new Set(o.nodes.filter(n=>n.type==='sa').map(n=>n.id));   // входы row / rec анализатора спектра → marksTxt / marksRec

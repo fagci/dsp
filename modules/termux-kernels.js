@@ -4,7 +4,7 @@
 const TERMUX_SUBS=['gps','battery','accel','gyro','mag','light','pressure','gravity','linear','rotation','gamerot','georot','accelraw','gyroraw','magraw','proximity','ambtemp','humidity','steps','step','devorient','sigmotion','stationary','motion','heading','hinge','wifi','cell','ble','bt','gnss','gnssraw','nmea','mic','pkt','power','bstat','usage','ext','activity','pickup','wakegest','glance','tilt','offbody'];
 
 // какие источники просить у моста по чекбоксам узла
-function termuxSub(p){ return TERMUX_SUBS.filter(k=>p[k]); }
+function termuxSub(p){ return TERMUX_SUBS.filter(k=>p[k==='mic'?'micOn':k]); }   // подписка «mic» моста включается параметром micOn
 
 // сообщение подписки: источники и частота датчиков (hz — только приложению DSP, Termux-мост её не знает)
 function termuxSubMsg(p){
@@ -14,12 +14,12 @@ function termuxSubMsg(p){
   if(+p.cellEvery>0 && p.cell) m.cellEvery=+p.cellEvery;
   if(+p.statEvery>0 && (p.bstat || p.usage)) m.statEvery=+p.statEvery;
   if(p.ble && typeof plScanOpts==='function'){ const bo=plScanOpts(p); if(bo) m.ble=bo; }
-  if(+p.micHz>0 && p.mic) m.micHz=+p.micHz;
-  if(p.mic && p.micSrc && p.micSrc!=='auto') m.micSrc=String(p.micSrc);          // источник: unprocessed / mic / camcorder / … (voice_call, downlink, uplink, submix — с root)
-  if(p.mic){ const dv=p.micDev && p.micDev!=='auto' ? String(p.micDev) : '', ad=p.micAddr==='auto' ? '' : String(p.micAddr||'').trim().replace(/:/g,'');
+  if(+p.micHz>0 && p.micOn) m.micHz=+p.micHz;
+  if(p.micOn && p.micSrc && p.micSrc!=='auto') m.micSrc=String(p.micSrc);          // источник: unprocessed / mic / camcorder / … (voice_call, downlink, uplink, submix — с root)
+  if(p.micOn){ const dv=p.micDev && p.micDev!=='auto' ? String(p.micDev) : '', ad=p.micAddr==='auto' ? '' : String(p.micAddr||'').trim().replace(/:/g,'');
     if(dv || ad) m.micDev=ad ? (dv||'any')+':'+ad : dv; }                            // тип[:адрес] — адрес устройства из списка входов (builtin:bottom)
-  if(p.mic && p.micCh==='stereo') m.micCh='stereo';                                 // два микрофона одним AudioRecord: L и R из одного кадра, без сдвига
-  if(p.mic && p.micLow) m.micLow=true;                                              // порции по 10 мс и немедленная отправка моста          // устройство: usb / wired / bluetooth / builtin
+  if(p.micOn && p.micCh==='stereo') m.micCh='stereo';                                 // два микрофона одним AudioRecord: L и R из одного кадра, без сдвига
+  if(p.micOn && p.micLow) m.micLow=true;                                              // порции по 10 мс и немедленная отправка моста          // устройство: usb / wired / bluetooth / builtin
   if(p.pkt){ m.iface=String(p.iface||'any').trim(); m.filter=String(p.filter||'').trim(); m.snap=+p.snap||256; }
   return m;
 }
