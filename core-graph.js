@@ -336,7 +336,7 @@ e.addEventListener('dblclick',ev=>pinPicker(ev,n,p.n,dir)); };
 // появление/исчезновение пина параметра сдвигало бы соседние базовые порты туда-сюда.
 const paramNames=mergeableParamNames(d);
 // .sort() стабилен (ES2019+) — внутри каждой группы относительный порядок из module.ins/outs сохраняется
-const lowPri=p=>paramNames.has(p.n) || !!p.hide;               // hide:true — пин скрыт, пока не подключён (старые I/Q при едином iq)
+const lowPri=p=>(paramNames.has(p.n) && !p.show) || !!p.hide;   // show:true — пин виден всегда, даже если имя совпало с параметром (выход mic у Phone sensors)               // hide:true — пин скрыт, пока не подключён (старые I/Q при едином iq)
 const baseFirst=ps=>[...ps].sort((a,b)=>lowPri(a)-lowPri(b));
 for(const p of baseFirst(portsOf(n,'ins'))){
 const e=portEl(p,'i'); ci.append(e); n.ports.i[p.n]=e; wire(e,p,'i');
@@ -547,8 +547,8 @@ s.t==='range2' ? s.keys : (s.t==='button'||s.t==='file') ? [] : [s.n]));
 function midWidth(n){
 const d=MOD[n.type];
 const paramNames=mergeableParamNames(d);
-const insShown=portsOf(n,'ins').some(p=>!paramNames.has(p.n));
-const outsShown=portsOf(n,'outs').some(p=>!paramNames.has(p.n));
+const insShown=portsOf(n,'ins').some(p=>!paramNames.has(p.n)||p.show);
+const outsShown=portsOf(n,'outs').some(p=>!paramNames.has(p.n)||p.show);
 const lw=insShown?58:0, rw=outsShown?58:0;
 return Math.max(90, n.size.w-2-lw-rw-18);
 }
