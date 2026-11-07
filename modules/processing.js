@@ -1488,8 +1488,8 @@ function saChannels(n,cx,W,H,plotH){
     // границы — по целым пикселям; полоса симметрична вокруг линии маркера (иначе края «гуляют» на пиксель вправо/влево)
     let xl=Math.round(x1), xr=Math.round(x2);
     if(Math.abs((c.lo+c.hi)/2-c.f)<(c.hi-c.lo)*.02){ const xc=Math.round(saPos(n,c.f)*W), h=Math.max(1,Math.round((x2-x1)/2)); xl=xc-h; xr=xc+h; }
-    cx.globalAlpha=.08; cx.fillStyle=col; cx.fillRect(xl,TOP,Math.max(1,xr-xl+1),H-TOP);
-    cx.globalAlpha=.9; cx.strokeStyle=col; cx.lineWidth=1;
+    cx.globalAlpha=.1; cx.fillStyle=col; cx.fillRect(xl,TOP,Math.max(1,xr-xl+1),H-TOP);
+    cx.globalAlpha=.5; cx.strokeStyle=col; cx.lineWidth=1;            // края шторки приглушены: главная линия — маркер в центре
     const e1=xl+.5, e2=xr+.5;
     cx.beginPath(); cx.moveTo(e1,TOP); cx.lineTo(e1,H); cx.moveTo(e2,TOP); cx.lineTo(e2,H); cx.stroke();
     // шумоподавитель: пунктир — порог, сплошная — текущий средний уровень в полосе канала
@@ -2124,12 +2124,13 @@ function saMarkers(n,cx,W,H){
     // линия начинается НИЖЕ потолка (см. TOP_H) — там теперь подписи закладок (см. saBandPlan), и
     // полоса маркера не должна наезжать на них своим цветом поверх
     // целая ширина и центр на границе/середине пикселя — линия чёткая, без размытия (нечётная — на x+.5, чётная — на x)
-    const w1=act?4:3, w2=act?2:1;
-    cx.strokeStyle=themeColor('--screen'); cx.lineWidth=w1; cx.globalAlpha=.55;   // тёмная обводка под линией
-    cx.beginPath(); cx.moveTo(w1%2?x+.5:x,TOP_H); cx.lineTo(w1%2?x+.5:x,H); cx.stroke();
-    cx.globalAlpha=1;
+    // маркер — одна тонкая линия (физический пиксель); тёмная подложка только у активного и только для контраста на светлом фоне
+    const w1=3, w2=1;
+    if(act){ cx.strokeStyle=themeColor('--screen'); cx.lineWidth=w1; cx.globalAlpha=.4;
+      cx.beginPath(); cx.moveTo(x+.5,TOP_H); cx.lineTo(x+.5,H); cx.stroke(); }
+    cx.globalAlpha=act?1:.75;
     cx.strokeStyle=MK_COL(k); cx.lineWidth=w2;
-    cx.beginPath(); cx.moveTo(w2%2?x+.5:x,TOP_H); cx.lineTo(w2%2?x+.5:x,H); cx.stroke();
+    cx.beginPath(); cx.moveTo(x+.5,TOP_H); cx.lineTo(x+.5,H); cx.stroke(); cx.globalAlpha=1;
     const tb=n.p.trk&&n._trkWin?.[k];                 // окно поиска несущей
     if(tb){ const x1=saPos(n,f-tb/2)*W, x2=saPos(n,f+tb/2)*W;
       cx.globalAlpha=.12; cx.fillStyle=MK_COL(k); cx.fillRect(x1,TOP_H,Math.max(2,x2-x1),H-TOP_H); cx.globalAlpha=1; }
