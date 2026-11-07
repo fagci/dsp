@@ -1457,7 +1457,8 @@ function ft8Ldpc(llr,iters){                        // распростране�
 }
 const A1=' 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', A2='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ',
       A3='0123456789', A4=' ABCDEFGHIJKLMNOPQRSTUVWXYZ',
-      AF=' 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+-./?';
+      AF=' 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+-./?',
+      AN=' 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/';      // алфавит нестандартного позывного (тип 4)
 function ft8Call(n28){
   const NTOK=2063592, MAX22=4194304;
   if(n28<NTOK){
@@ -1506,6 +1507,13 @@ function ft8Unpack(b77){
     const s1=ft8Call(c1)+(r1?'/R':''), s2=ft8Call(c2)+(r2?'/R':'');
     const g=ft8Grid(g15,R);
     return (s1+' '+s2+(g?' '+g:'')).trim(); }
+  if(i3===4){                                       // нестандартный позывной: 12-бит хэш + 58 бит (до 11 знаков)
+    let n=0n; for(let i=0;i<58;i++) n=n*2n+BigInt(b77[12+i]);
+    let c=''; for(let i=0;i<11;i++){ c=AN[Number(n%38n)]+c; n/=38n; }
+    c=c.trim(); const flip=b77[70], rr=bitsNum(b77,71,2), cq=b77[73];
+    const tail=['','RRR','RR73','73'][rr];
+    const s=cq ? 'CQ '+c : flip ? c+' <...>' : '<...> '+c;
+    return (s+(tail?' '+tail:'')).trim(); }
   return '(type i3='+i3+')';
 }
 
@@ -1611,6 +1619,13 @@ function ft8Pack(text){
       put(0,28,c1); b[28]=+r1; put(29,28,c2); b[57]=+r2; b[58]=R; put(59,15,g15); put(74,3,1);
       return b; }
   }
+  // тип 4: «CQ ПОЗЫВНОЙ» с нестандартным позывным (до 11 знаков, напр. R6HABA, PJ4/K1ABC); локатор в нём не передаётся
+  if(w.length>=2 && w.length<=3 && w[0]==='CQ' && w[1].length<=11 && [...w[1]].every(c=>AN.indexOf(c)>0 || c===' ')
+     && (w.length===2 || ft8PackGrid(w[2])!==null) && ft8PackCall(w[1])===null){
+    let n=0n; for(const c of w[1].padEnd(11,' ')) n=n*38n+BigInt(AN.indexOf(c));
+    for(let i=57;i>=0;i--){ b[12+i]=Number(n&1n); n>>=1n; }
+    b[70]=1; b[73]=1; put(74,3,4);                  // c58 — первый позывной, CQ, хэш не нужен
+    return b; }
   if(t.length>13 || [...t].some(c=>AF.indexOf(c)<0)) return null;
   let n=0n; for(const c of t.padEnd(13,' ')) n=n*42n+BigInt(AF.indexOf(c));
   for(let i=70;i>=0;i--){ b[i]=Number(n&1n); n>>=1n; }

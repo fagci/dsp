@@ -10,7 +10,7 @@ const ctx=vm.createContext({Math,Float32Array,Float64Array,Array,Set,Number,Stri
 const cut=(s,a,b)=>s.slice(s.indexOf(a),s.indexOf(b));
 vm.runInContext(`function setMod(){} const Eng={turbo:1}; function def(){} function ft8Stamp(){return ''} function ft8Text(){}`+
   rd('core-dsp.js')+cut(pr,'/* ---------- FT8: LDPC',"def({ id:'ft8Rx'")+cut(pr,'/* ---------- FT8: упаковка',"def({ id:'ft8Tx'")+
-  cut(out,'function ft8Spec','/* ---------- вывод')+';this.K={ft8Run,ft8Pack,ft8Tones,FT8_SR}',ctx,{filename:'ft8'});
+  cut(out,'function ft8Spec','/* ---------- вывод')+';this.K={ft8Run,ft8Pack,ft8Tones,FT8_SR};this.ft8Unpack=ft8Unpack',ctx,{filename:'ft8'});
 const K=ctx.K;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n); };
 
@@ -29,6 +29,13 @@ function slot(msgs,mirror,noise){                      // 15 с при 6400 Гц
 function run(x,side){
   const n={buf:x,wp:0,p:{fmin:200,fmax:2800,top:20,thr:1.6,budget:5000,side,tones:false,decode:true,keep:5},recQ:[],log:[],grids:new Map()};
   ctx.n=n; vm.runInContext('K.ft8Run(n,true,0)',ctx); return n.log[0].list.filter(e=>e.msg);
+}
+{ // тип 4: нестандартный позывной (R6HABA — 4 буквы суффикса), локатор не передаётся
+  const un=t=>{ const b=K.ft8Pack(t); return b && ctx.ft8Unpack(b); };
+  ok('type 4: CQ R6HABA KO85 packs (grid dropped)',un('CQ R6HABA KO85')==='CQ R6HABA',un('CQ R6HABA KO85'));
+  ok('type 4: CQ PJ4/K1ABC',un('CQ PJ4/K1ABC')==='CQ PJ4/K1ABC',un('CQ PJ4/K1ABC'));
+  ok('type 1 still wins for standard',un('CQ K1ABC FN42')==='CQ K1ABC FN42');
+  ok('garbage still refused',K.ft8Pack('CQ R6HABA @@@')===null);
 }
 const M=[['CQ K1ABC FN42',1000,0],['K1ABC W9XYZ -12',1800,0.2]];
 let got=run(slot(M,false,0.05),'auto');

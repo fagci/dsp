@@ -3609,7 +3609,7 @@ const h2=addNode('textsrc',380,800,{text:'dtmf'});
 h2.size.w=240; h2.size.h=110; applySize(h2);
 const u2=addNode('udec',640,660,{mode:'auto',audio:true});
 u2.size.w=480; u2.size.h=300; applySize(u2);
-const s3=addNode('ft8Tx',40,1000,{text:'CQ K1ABC FN42',freq:1000});
+const s3=addNode('ft8Tx',40,1000,{text:'CQ R6HABA KO85',freq:1000});
 s3.size.w=300; s3.size.h=140; applySize(s3);
 const m3=addNode('iqMod',380,1000,{mode:'USB',sr:'audio',off:0,lvl:-6});
 const h3=addNode('textsrc',380,1160,{text:'ft8'});
