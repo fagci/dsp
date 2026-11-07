@@ -105,7 +105,7 @@ def({ id:'plink', title:'Packet Link', cat:'Sources', kw:'packets capture transp
   readout:true, tall:true, w:380, resize:true,
   params:[
     {n:'via',t:'select',opts:['websocket','http stream','serial','ble uart','inputs only'],d:'websocket',label:'channel'},
-    {n:'url',t:'text',d:'ws://127.0.0.1:8767',label:'URL (ws:// wss:// http:// https://)'},
+    {n:'url',t:'text',d:'ws://127.0.0.1:8767',dev:true,label:'URL (ws:// wss:// http:// https://) — or @name from Settings → Devices (the token stays there)'},
     {n:'frame',t:'select',opts:LK_FRAMES,d:'message',label:'frame (how the stream is cut into packets)'},
     {n:'schema',t:'text',d:'auto',label:'HEX schema of the packets (auto, eth, wifi, …)'},
     {n:'src',t:'text',d:'link',label:'source label'},

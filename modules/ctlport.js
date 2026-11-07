@@ -22,12 +22,14 @@ async function cpOpen(n,o){
     n.connected=true; n.status='simulator'; return;
   }
   if(o.via==='websocket'){
-    const bad=cpUrlBlock(o.url); if(bad){ n.status=bad; return; }
+    const url=gwUrl(String(o.url||'').trim());
+    if(!url){ n.status=gwErr(o.url)||'enter a URL'; return; }
+    const bad=cpUrlBlock(url); if(bad){ n.status=bad; return; }
     n.status='connecting…';
     await new Promise(res=>{
       let ws, done=false;
       const fin=ok=>{ if(!done){ done=true; res(ok); } };
-      try{ ws=new WebSocket(o.url); }catch(e){ n.status='error: '+e.message; fin(false); return; }
+      try{ ws=new WebSocket(url); }catch(e){ n.status='error: '+e.message; fin(false); return; }
       ws.binaryType='arraybuffer';
       const dec=new TextDecoder();
       const me={kind:'ws',write:s=>{ if(ws.readyState===1) ws.send(CP_ENC.encode(s)); },close:()=>{ ws.onclose=ws.onerror=ws.onmessage=null; try{ ws.close(); }catch(e){} }};

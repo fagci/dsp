@@ -216,7 +216,7 @@ function iqnSync(n){
 def({ id:'iqnet', title:'IQ over Network', cat:'Sources', kw:'rtl_tcp rtl-tcp remote sdr iq stream websocket websockify websocat raspberry pi soapy hackrf rtl_sdr',
   ins:[{n:'rtc',t:'rtc'}],
   outs:[{n:'iq',t:'iq'},{n:'sr',t:'num'}], readout:true, tall:true,
-  params:[{n:'url',t:'text',d:'ws://127.0.0.1:8766',label:'WebSocket: ws:// wss:// (rtl_tcp: through a bridge, e.g. websockify 8766 host:1234)'},
+  params:[{n:'url',t:'text',d:'ws://127.0.0.1:8766',dev:true,label:'WebSocket: ws:// wss:// (rtl_tcp: through a bridge, e.g. websockify 8766 host:1234, or node tools/rtltcp-bridge.mjs) — or @name from Settings → Devices (the token stays there)'},
           {n:'proto',t:'select',opts:['rtl_tcp','rtl_tcp (WebRTC)','raw stream','SpyServer'],d:'rtl_tcp',label:'protocol (rtl_tcp (WebRTC): through the WebRTC Data connection, the server is the rtl_tcp Server node on the other device; wire its link to rtc)'},
           {n:'fmt',t:'select',opts:Object.keys(IQN_FRAME),d:'uint8',label:'raw stream: sample format (interleaved I, Q)'},
           {n:'sr',t:'num',d:1024000,label:'sample rate, Hz (rtl_tcp: sent to the server; SpyServer: nearest decimation step)'},

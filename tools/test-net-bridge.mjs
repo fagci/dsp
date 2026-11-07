@@ -41,4 +41,12 @@ ws.send({ cmd: 'tcp.send', id: 2, conn: conn.conn, hex: '0105f5e100' });
 await wait(300);
 ok('sent hex packet reached the server', got.join('') === '0105f5e100', got.join());
 ws.s.destroy(); fake.close(); br.stop();
+{
+  const tb = createNetBridge({ port: 0, token: 'sekret' });
+  const tp = await tb.start();
+  const hs = (q) => new Promise((res) => { const s = net.connect(tp, '127.0.0.1'); s.once('data', (d) => { res(d.toString().split('\r\n')[0]); s.destroy(); }); s.write('GET /' + q + ' HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ' + crypto.randomBytes(16).toString('base64') + '\r\nSec-WebSocket-Version: 13\r\n\r\n'); });
+  ok('net bridge: no token → 401', (await hs('')).includes('401'));
+  ok('net bridge: right token → 101', (await hs('?token=sekret')).includes('101'));
+  tb.stop();
+}
 process.exit(bad ? 1 : 0);

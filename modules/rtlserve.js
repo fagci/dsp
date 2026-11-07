@@ -66,7 +66,7 @@ def({ id:'rtlserve', title:'rtl_tcp Server (any SDR)', cat:'IQ', kw:'rtl_tcp rtl
   readout:true, tall:true,
   params:[
     {n:'transport',t:'select',opts:['WebRTC','WebSocket (bridge)'],d:'WebRTC',label:'transport: WebRTC (wire WebRTC Data → rtc; the client is IQ over Network «rtl_tcp (WebRTC)») or WebSocket to tools/rtltcp-bridge.mjs (a real TCP port for SDR++, GQRX…)'},
-    {n:'url',t:'text',d:'ws://127.0.0.1:8767',label:'WebSocket: bridge address (node tools/rtltcp-bridge.mjs)'},
+    {n:'url',t:'text',d:'ws://127.0.0.1:8767',dev:true,label:'bridge: ws://host:8767/?token=… (node tools/rtltcp-bridge.mjs) — or @name from Settings → Devices (the token stays there)'},
     {n:'tuner',t:'select',opts:RTLS_TUNERS.slice(1),d:'R820T',label:'tuner type in the header (what the client thinks it talks to)'},
     {n:'gains',t:'num',d:29,label:'gain steps in the header (R820T — 29)'},
     {n:'reconnect',t:'check',d:true,label:'reconnect'},

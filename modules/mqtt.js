@@ -15,8 +15,8 @@ function mqSend(n,bytes){ if(n.ws && n.ws.readyState===1) n.ws.send(bytes); }
 function mqNextId(n){ n.pid=(n.pid%65535)+1; return n.pid; }
 function mqStart(n){
   mqStop(n);
-  const url=String(n.p.url||'').trim();
-  if(!/^wss?:\/\//i.test(url)){ n.status='URL must start with ws:// or wss://'; return; }
+  const url=gwUrl(String(n.p.url||'').trim());
+  if(!/^wss?:\/\//i.test(url)){ n.status=gwErr(n.p.url)||'URL must start with ws:// or wss://'; return; }
   n.warn=netInsecure(url) ? NET_INSECURE_MSG : '';
   n.want=true; n.refused=false; mqOpen(n,url);
 }
@@ -80,7 +80,7 @@ function mqInMessage(n,p){
 }
 def({ id:'mqttIn', title:'MQTT In', cat:'Sources', kw:'mqtt subscribe broker iot tasmota esphome home assistant sensor',
   outs:[{n:'text',t:'txt'},{n:'topic',t:'txt'},{n:'value',t:'num'},{n:'rec',t:'rec'},{n:'new',t:'num'},{n:'bin',t:'bin'}], readout:true, tall:true,
-  params:[{n:'url',t:'text',d:'ws://127.0.0.1:9001',label:'broker WebSocket: ws:// wss://'},
+  params:[{n:'url',t:'text',d:'ws://127.0.0.1:9001',dev:true,label:'broker WebSocket: ws:// wss:// — or @name from Settings → Devices (the token stays there)'},
           {n:'topic',t:'text',d:'#',label:'topic filters (space or comma separated; + and # allowed)'},
           {n:'user',t:'text',d:'',label:'user (optional)'},
           {n:'pass',t:'text',d:'',label:'password (saved with the patch!)'},
@@ -116,7 +116,7 @@ function mqOutPublish(n,topic,payload){
 }
 def({ id:'mqttOut', title:'MQTT Out', cat:'Output', kw:'mqtt publish broker iot tasmota esphome home assistant relay',
   ins:[{n:'text',t:'txt'},{n:'value',t:'num'},{n:'topic',t:'txt'},{n:'bin',t:'bin'}], outs:[{n:'ok',t:'num'}], readout:true,
-  params:[{n:'url',t:'text',d:'ws://127.0.0.1:9001',label:'broker WebSocket: ws:// wss://'},
+  params:[{n:'url',t:'text',d:'ws://127.0.0.1:9001',dev:true,label:'broker WebSocket: ws:// wss:// — or @name from Settings → Devices (the token stays there)'},
           {n:'topic',t:'text',d:'dsp/out',label:'topic (a wire on `topic` overrides)'},
           {n:'template',t:'text',d:'{v}',label:'value template, {v} or {v:N}'},
           {n:'qos',t:'select',opts:['0','1'],d:'0',label:'QoS'},
