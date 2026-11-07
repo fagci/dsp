@@ -268,6 +268,7 @@ const PRESET_CATS={
   'Echo Repeater: Record the Transmission, Play It Back (USB SDR)':'SDR Receivers',
   'USB SDR: Channel Scan (Channel Scanner + squelch)':'SDR Receivers',
   'USB SDR: Chain by Typing (Ctrl+K, usb>(dac,sa,…))':'SDR Receivers',
+  'Spectrum Analyzer: Gradient Fill and Waterfall Brightness':'Analysis & Measurement',
   'USB SDR: Channel Scan + Decoder Switch (digital voice / analog)':'SDR Receivers',
   'Signal Catalog: Pick a Type, the SDR Tunes and Decodes (USB SDR)':'SDR Receivers',
   'Signal Database: What Is It and How to Decode (USB SDR)':'SDR Receivers',
@@ -1674,6 +1675,19 @@ sa.size.w=520; sa.size.h=300; applySize(sa);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(sa.id,'f1',rx.id,'tuneFreq');
 addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
+markWiresDirty();
+});
+preset('Spectrum Analyzer: Gradient Fill and Waterfall Brightness', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Spectrum Analyzer › View: «fill» — flat, gradient (brightest at the strongest peak, fading to the floor) or none; «fill strength» (advanced) sets how strong.\n'+
+  'Waterfall (own group): «waterfall brightness» lifts weak signals out of the noise and «waterfall contrast» narrows the colour window — independent of the dB window of the trace above. Changing them repaints the whole history.\n'+
+  'Here: a quiet oscillator on top of the noise — try brightness +20 dB and contrast 2×.'});
+nt.size.w=720; nt.size.h=130; applySize(nt);
+const os=addNode('osc',40,200,{});
+const ff=addNode('fft',300,200,{size:'4096'});
+const sa=addNode('sa',560,180,{auto:true,floor:-110,top:-20,fill:'gradient',fillAlpha:35,wfBright:12,wfContrast:1.5});
+sa.size.w=640; sa.size.h=360; applySize(sa);
+addEdge(os.id,'out',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
 markWiresDirty();
 });
 preset('Phone App: Power, Heat and Events from Other Apps (Tasker)', function(){
