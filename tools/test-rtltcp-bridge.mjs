@@ -55,5 +55,15 @@ await wait(100); lone.destroy(); page.destroy(); await wait(150);
 const c3 = net.connect(tcp, '127.0.0.1');
 await new Promise((r) => c3.on('close', r));
 ok('no page → tcp refused', !br.stats().page);
+// токен: без него и с чужим — 401, с верным — 101
+{
+  const tb = createRtlBridge({ tcp: 0, ws: 0, token: 'sekret' });
+  const tp = (await tb.start()).ws;
+  const hs = (q) => new Promise((res) => { const s = net.connect(tp, '127.0.0.1'); s.once('data', (d) => { res(d.toString().split('\r\n')[0]); s.destroy(); }); s.write('GET /' + q + ' HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ' + crypto.randomBytes(16).toString('base64') + '\r\nSec-WebSocket-Version: 13\r\n\r\n'); });
+  ok('no token → 401', (await hs('')).includes('401'));
+  ok('wrong token → 401', (await hs('?token=nope')).includes('401'));
+  ok('right token → 101', (await hs('?token=sekret')).includes('101'));
+  tb.stop();
+}
 br.stop();
 process.exit(bad ? 1 : 0);

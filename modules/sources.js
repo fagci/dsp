@@ -571,7 +571,8 @@ function wssStop(n){
 }
 function wssStart(n){
   wssStop(n);
-  const base=String(n.p.url||'').trim().replace(/\/+$/,'');
+  const base=gwUrl(String(n.p.url||'').trim()).replace(/\/+$/,'');
+  if(!base){ n.status=gwErr(n.p.url)||'enter a URL'; return; }
   const url=/\/sensors?\/connect/.test(base)? base
     : base+'/sensor/connect?type=android.sensor.'+n.p.type;
   ssInit(n,3); n.sExact=true; n.sLag=.25; n.msgs=0;
@@ -593,7 +594,7 @@ function wssStart(n){
 def({ id:'wssensor', title:'Sensor (WebSocket)', cat:'Sources',
   outs:SS_XYZ, readout:true,
   params:[
-    {n:'url',t:'text',d:'ws://127.0.0.1:8080',label:'SensorServer address'},
+    {n:'url',t:'text',d:'ws://127.0.0.1:8080',dev:true,label:'SensorServer address — or @name from Settings → Devices (the token stays there)'},
     {n:'type',t:'select',opts:WSS_TYPES,d:'accelerometer',fn:n=>{ if(n.ws) wssStart(n); }},
     {n:'go',t:'button',label:'Connect',fn:n=>wssStart(n)},
     {n:'stop',t:'button',label:'Disconnect',fn:n=>wssStop(n)},
@@ -1328,7 +1329,7 @@ def({ id:'nettext', title:'Text over Network', cat:'Sources',
   outs:[{n:'line',t:'txt'},{n:'go',t:'num'},{n:'rec',t:'rec'},{n:'count',t:'num'},{n:'bin',t:'bin'}],
   readout:true, tall:true,
   params:[
-    {n:'url',t:'text',d:'ws://127.0.0.1:8765',label:'ws:// wss:// http:// https://'},
+    {n:'url',t:'text',d:'ws://127.0.0.1:8765',dev:true,label:'ws:// wss:// http:// https:// — or @name from Settings → Devices (the token stays there)'},
     {n:'poll',t:'range',min:0.2,max:600,step:0.1,d:5,label:'HTTP poll every, s'},
     {n:'stream',t:'check',d:false,label:'HTTP stream (SSE / NDJSON) instead of polling'},
     {n:'binary',t:'check',d:false,label:'WebSocket: binary messages go to the bin output (not read as text)'},

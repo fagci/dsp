@@ -102,7 +102,7 @@ def({ id:'rigctl', lazy:'manual', title:'Rig Control (Hamlib rigctld)', cat:'Sou
   params:[{n:'connect',t:'button',label:'Connect',fn:n=>rgConnect(n)},
           {n:'disconnect',t:'button',label:'Disconnect',fn:n=>{ rgStop(n); n.status='disconnected'; }},
           {n:'via',t:'select',opts:['websocket','simulator'],d:'websocket',label:'channel (websocket — bridge to rigctld; simulator — no hardware)'},
-          {n:'url',t:'text',d:'ws://127.0.0.1:8768',label:'bridge URL: rigctld -m <model> -r <port> -t 4532, then websockify 8768 127.0.0.1:4532'},
+          {n:'url',t:'text',d:'ws://127.0.0.1:8768',dev:true,label:'bridge URL — or @name from Settings → Devices (the token stays there): rigctld -m <model> -r <port> -t 4532, then websockify 8768 127.0.0.1:4532'},
           {n:'poll',t:'select',opts:['1','2','5','10'],d:'2',label:'poll rate, Hz'},
           {n:'stepm',t:'button',label:'− step',fn:n=>rgSetFreq(n,(rgFreq(n)||0)-n.p.step)},
           {n:'stepp',t:'button',label:'+ step',fn:n=>rgSetFreq(n,(rgFreq(n)||0)+n.p.step)},
