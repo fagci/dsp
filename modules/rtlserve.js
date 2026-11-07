@@ -27,12 +27,14 @@ function rtlsStart(n){
 }
 // ---- приложение Android: слушаем порт командой tcp.listen, клиент приходит событиями accept / data / close ----
 // Команды приложения идут в пуле потоков, порядок не гарантирован: следующий tcp.send — после ответа на предыдущий.
-const RTLS_CHUNK=16384, RTLS_QMAX=1<<20;
+// Одна отправка в приложение (tcp.send) не больше 65535 байт. Новое приложение держит отправки соединения по порядку и говорит об этом
+// в ответе tcp.listen (ordered) — тогда в полёте несколько блоков сразу; старое (пул потоков без порядка) — по одному, но блоками покрупнее.
+const RTLS_QMAX=1<<20, RTLS_CHUNK_ORD=32768, RTLS_CHUNK_OLD=60000, RTLS_WIN=8;
 function rtlsAppCmd(n,o){ if(n.ws && n.ws.readyState===1){ o.id=++n.cid; n.ws.send(JSON.stringify(o)); return o.id; } return 0; }
 function rtlsAppOpen(n,url){
   let ws;
   try{ ws=new WebSocket(url); }catch(e){ n.status='error: '+e.message; rtlsRetry(n,url); return; }
-  n.ws=ws; n.status='connecting to the app…'; n.server=0; n.conn=0; n.aq=[]; n.aqN=0; n.inflight=0; n.cid=0;
+  n.ws=ws; n.status='connecting to the app…'; n.server=0; n.conn=0; n.aq=[]; n.aqN=0; n.inflight=0; n.cid=0; n.ordered=false;
   ws.onopen=()=>{ ws.send(JSON.stringify({sub:['net']}));                              // события accept / data / close приложение шлёт только подписавшимся
     n.listenAt=performance.now(); n.listenWarn=0; n.listenId=rtlsAppCmd(n,{cmd:'tcp.listen',port:Math.round(+n.p.port)||1234,lan:!!n.p.lan}); n.status='asking the app to listen on :'+(Math.round(+n.p.port)||1234)+'…'; };
   ws.onerror=()=>{ n.status='connection error'; };
@@ -47,14 +49,14 @@ function rtlsAppMsg(n,m){
   {
     if(m.src==='cmd'){
       if(m.cmd==='tcp.listen' && m.id===n.listenId){
-        if(m.ok){ n.server=m.server; n.status='listening on port '+m.port+(n.p.lan ? ' (LAN)' : ' (this phone only)')+' — waiting for a client'; }
+        if(m.ok){ n.server=m.server; n.ordered=m.ordered===true; n.status='listening on port '+m.port+(n.p.lan ? ' (LAN)' : ' (this phone only)')+' — waiting for a client'; }
         else{
           n.listenWarn=1; n.want=false;
           n.status= m.err==='forbidden'
             ? 'the app refused tcp.listen: a page from another device may not open sockets — in the DSP app Settings turn on «Let any page use actions (network sockets, Bluetooth connections, …)», then Start again'
             : 'tcp.listen: '+(m.msg||m.err||'refused')+' (ports 1024…65535, 4 servers at most; is the port free?)';
         }
-      } else if(m.cmd==='tcp.send'){ n.inflight=0; if(m.ok===false){ rtlsAppDrop(n); } else rtlsAppPump(n); }
+      } else if(m.cmd==='tcp.send'){ n.inflight=Math.max(0,n.inflight-1); if(m.ok===false){ rtlsAppDrop(n); } else rtlsAppPump(n); }
       return;
     }
     if(m.src!=='net') return;
@@ -70,15 +72,19 @@ function rtlsAppDrop(n){ n.aq=[]; n.aqN=0; n.inflight=0; if(n.conn){ n.conn=0; r
 function rtlsAppSend(n,u8,force){
   if(!n.ws || n.ws.readyState!==1 || !n.conn) return false;
   if(!force && n.aqN>RTLS_QMAX) return false;
-  for(let o=0;o<u8.length;o+=RTLS_CHUNK){ const c=u8.subarray(o,o+RTLS_CHUNK); n.aq.push(c); n.aqN+=c.length; }
+  const ch=n.ordered ? RTLS_CHUNK_ORD : RTLS_CHUNK_OLD;
+  for(let o=0;o<u8.length;o+=ch){ const c=u8.subarray(o,o+ch); n.aq.push(c); n.aqN+=c.length; }
   rtlsAppPump(n); return true;
 }
 function rtlsAppPump(n){
-  if(n.inflight || !n.aq.length || !n.conn || !n.ws || n.ws.readyState!==1) return;
-  const u=n.aq.shift(); n.aqN-=u.length; n.inflight=performance.now();
-  rtlsAppCmd(n,{cmd:'tcp.send',conn:n.conn,hex:rtlsHexC(u)});
+  const win=n.ordered ? RTLS_WIN : 1;
+  while(n.inflight<win && n.aq.length && n.conn && n.ws && n.ws.readyState===1){
+    const u=n.aq.shift(); n.aqN-=u.length;
+    if(!n.inflight) n.inflightT=performance.now();
+    n.inflight++;
+    rtlsAppCmd(n,{cmd:'tcp.send',conn:n.conn,hex:rtlsHexC(u)});
+  }
 }
-function rtlsRetry(n,url){ if(n.want && n.p.reconnect){ clearTimeout(n.timer); n.timer=setTimeout(()=>{ if(n.want) rtlsAppOpen(n,url); },3000); } }
 function rtlsSend(n,u8,force){
   if(rtlsWebrtc(n)) return rtcRtlSend(n.rn,u8,force);
   return rtlsAppSend(n,u8,force);
@@ -114,7 +120,7 @@ def({ id:'rtlserve', title:'rtl_tcp Server (any SDR)', cat:'IQ', kw:'rtl_tcp rtl
     {n:'start',t:'button',label:'Start',fn:n=>rtlsStart(n)},
     {n:'stop',t:'button',label:'Stop',fn:n=>rtlsStop(n)}],
   init:n=>{ n.ws=null; n.want=false; n.cli=false; n.timer=null; n.parser=new RtlsParser(); n.st=rtlsNewState(); n.got={}; n.recs=[]; n.log=[];
-            n.cmds=0; n.bytes=0; n.sent=0; n.server=0; n.conn=0; n.aq=[]; n.aqN=0; n.inflight=0; n.cid=0; n.listenId=0; n.listenAt=0; n.listenWarn=0; n.peer=''; n.dropped=0; n.rn=null; n.rtlEv=-1; n.status='stopped'; n.warn=''; n.srIn=0; n.rate=0; n.rateT=performance.now(); n.rateB=0; },
+            n.cmds=0; n.bytes=0; n.sent=0; n.server=0; n.conn=0; n.aq=[]; n.aqN=0; n.inflight=0; n.cid=0; n.listenId=0; n.listenAt=0; n.listenWarn=0; n.peer=''; n.ordered=false; n.inflightT=0; n.dropped=0; n.rn=null; n.rtlEv=-1; n.status='stopped'; n.warn=''; n.srIn=0; n.rate=0; n.rateT=performance.now(); n.rateB=0; },
   dispose:n=>rtlsStop(n),
   process(n,I){
     const rtc=n.p.transport==='WebRTC';
@@ -128,7 +134,7 @@ def({ id:'rtlserve', title:'rtl_tcp Server (any SDR)', cat:'IQ', kw:'rtl_tcp rtl
     }
     // IQ клиенту: только пока он подключён; переполнение — выбрасываем блок, как делает rtl_tcp при медленном клиенте
     if(n.want && !rtlsWebrtc(n) && n.ws && n.ws.readyState===1 && !n.server && n.listenAt && performance.now()-n.listenAt>4000 && !n.listenWarn){ n.listenWarn=1; n.status='the bridge did not answer tcp.listen — is this the DSP app (ws://phone:8765) or node tools/net-bridge.mjs?'; }
-    if(n.inflight && performance.now()-n.inflight>3000){ n.inflight=0; rtlsAppPump(n); }      // ответ на tcp.send потерян — не зависаем
+    if(n.inflight && performance.now()-n.inflightT>3000){ n.inflight=0; rtlsAppPump(n); }      // ответ на tcp.send потерян — не зависаем
     const s=iqIn(I,'iq');
     n.srIn=s ? s.sr : 0;
     if(s && n.cli && n.hello && n.want){

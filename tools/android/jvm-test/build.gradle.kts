@@ -35,6 +35,9 @@ tasks.register<JavaExec>("runVpnEngineTest") {
 tasks.register<JavaExec>("runTlsTest") {
     classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.tlstest.TlsTestKt")
 }
+tasks.register<JavaExec>("runNetTxTest") {
+    classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.nettxtest.NetTxTestKt")
+}
 tasks.register<JavaExec>("runTlsStoreTest") {
     classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.tlsstoretest.TlsStoreTestKt")
 }
@@ -87,4 +90,4 @@ tasks.register<JavaExec>("runTorrentTest") {
 tasks.register<JavaExec>("runVlcTest") {
     classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.vlctest.VlcTestKt")
 }
-tasks.register("runTests") { dependsOn("runVlcTest", "runTorrentTest", "runScanDiagTest", "runStatsTest", "runShortcutTest", "runScreenTest", "runDialTest", "runFsTest", "runCallTest", "runMicTest", "runServerTest", "runRecordsTest", "runAlarmTest", "runBootTest", "runCalTest", "runRecTest", "runProxyTest", "runVpnEngineTest", "runTlsTest", "runTlsStoreTest") }
+tasks.register("runTests") { dependsOn("runVlcTest", "runTorrentTest", "runScanDiagTest", "runStatsTest", "runShortcutTest", "runScreenTest", "runDialTest", "runFsTest", "runCallTest", "runMicTest", "runServerTest", "runRecordsTest", "runAlarmTest", "runBootTest", "runCalTest", "runRecTest", "runProxyTest", "runVpnEngineTest", "runTlsTest", "runTlsStoreTest", "runNetTxTest") }

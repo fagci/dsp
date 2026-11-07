@@ -29,6 +29,7 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
     private class TcpConn(@Volatile var s: Socket, val server: Int?) {
         @Volatile var upgradeTo: String? = null
         @Volatile var upReply: ((String?) -> Unit)? = null
+        val tx = SerialTx()                                   // tcp.send этого соединения идут по порядку (страница шлёт несколько подряд)
     }
     private val tcp = ConcurrentHashMap<Int, TcpConn>()
     private val servers = ConcurrentHashMap<Int, ServerSocket>()
@@ -55,11 +56,14 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
 
     fun exec(c: BridgeServer.Client, j: JSONObject) {
         val cmd = j.optString("cmd"); val id = j.opt("id")
-        pool.execute {
+        val task = Runnable {
             try { run(c, id, cmd, j) }
             catch (e: SecurityException) { Reply.done(c, id, cmd, "permission: ${e.message}", "permission") }
             catch (e: Exception) { Reply.done(c, id, cmd, e.message ?: e.javaClass.simpleName) }
         }
+        // Пул не гарантирует порядок, а потоку байт он нужен: отправки в одно соединение — в его очередь, всё остальное — в общий пул
+        val tx = if (cmd == "tcp.send") tcp[j.optInt("conn")]?.tx else null
+        if (tx != null) tx.execute(task) else pool.execute(task)
     }
 
     private fun run(c: BridgeServer.Client, id: Any?, cmd: String, j: JSONObject) {
@@ -87,7 +91,7 @@ class NetHub(private val ctx: Context, private val cfg: Config, private val emit
                 val ss = ServerSocket(); ss.reuseAddress = true
                 ss.bind(InetSocketAddress(if (j.optBoolean("lan", true)) InetAddress.getByName("0.0.0.0") else InetAddress.getByName("127.0.0.1"), port))
                 val sid = ids.incrementAndGet(); servers[sid] = ss
-                Reply.done(c, id, cmd, null, extra = arrayOf("server" to sid.toString(), "port" to ss.localPort.toString()))
+                Reply.done(c, id, cmd, null, extra = arrayOf("server" to sid.toString(), "port" to ss.localPort.toString(), "ordered" to "true"))
                 pool.execute {
                     try {
                         while (true) {
@@ -332,4 +336,10 @@ object RawMain {
             println("ok")
         } catch (e: Throwable) { println("error: ${e.message}"); System.exit(1) }
     }
+}
+
+/** Очередь отправки одного соединения: задачи выполняются одна за другой в одном потоке, поток засыпает через 5 с простоя. */
+class SerialTx {
+    private val ex = java.util.concurrent.ThreadPoolExecutor(0, 1, 5L, java.util.concurrent.TimeUnit.SECONDS, java.util.concurrent.LinkedBlockingQueue<Runnable>(), java.util.concurrent.ThreadFactory { r -> Thread(r, "dsp-net-tx").also { it.isDaemon = true } })
+    fun execute(r: Runnable) { ex.execute(r) }
 }
