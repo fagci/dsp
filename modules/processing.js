@@ -2114,9 +2114,9 @@ function saMarkersWf(n,cx,W,hs,H){
     }
     cx.globalAlpha=.85; cx.strokeStyle=col; cx.lineWidth=1; cx.setLineDash([3,3]);
     cx.beginPath(); cx.moveTo(xr,hs); cx.lineTo(xr,H); cx.stroke(); cx.setLineDash([]);
-    // подпись маркера на водопаде — только частота и только если на спектре для неё не нашлось места (ширина полосы — отдельная плашка, saChannelLabels)
+    // подпись маркера на водопаде — частота, уровень и SNR (как на спектре) и только если на спектре для неё не нашлось места (ширина полосы — отдельная плашка, saChannelLabels)
     if(n._mkFits?.[k]!==false) return;
-    const t=(k+1)+':'+fmtHz(f,3).replace(/[kMG]$/,'');
+    const t=n._mkTxt?.[k] || (k+1)+':'+fmtHz(f,3).replace(/[kMG]$/,'');   // с уровнем и SNR, как на спектре
     const tw=Math.ceil(cx.measureText(t).width)+6;
     let lx=clamp(Math.round(x-tw/2),2,W-tw-2), ly=hs+3+(n._bwWfRows||0)*13;
     for(let i=0;i<4;i++){ const hit=placed.find(q=>lx<q.x+q.w+1&&lx+tw+1>q.x&&ly<q.y+13&&ly+12>q.y); if(!hit) break; ly=hit.y+13; }
@@ -2182,6 +2182,7 @@ function saMarkers(n,cx,W,H){
     // подпись (частота, уровень/SNR) — только если в стопке над лентой есть место; нет — частота уходит в подпись на водопаде (saMarkersWf)
     const room=ty>=Math.max(TOP_H+1,(n._chLblBottom||0)+1);              // ниже подписей каналов (saChannelLabels, прошлый кадр) и потолка
     (n._mkFits||(n._mkFits={}))[k]=room;
+    (n._mkTxt||(n._mkTxt={}))[k]=t2;                                         // тот же текст (частота, уровень/SNR) уйдёт на водопад, если тут не влезло
     if(room){
       cx.globalAlpha=hovered?1:(act?.95:.75); cx.fillStyle=MK_COL(k);
       cx.fillRect(tx-3,ty,tw+6,12);
