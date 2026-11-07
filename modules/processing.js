@@ -1724,27 +1724,31 @@ function saChanAtMarker(n,f){
 // подпись на плашке цвета канала; не влезает в шторку — выносим вбок от неё
 function saChannelLabels(n,cx,W){
   const list=saChans(n); if(!list) return;
-  cx.font=BP_FONT;
+  cx.font=BW_FONT;
   const used=[...(n._sgRects||[])];                 // метки сигналов уже стоят — подписи каналов обходят их
-  n._chLblBottom=0;
+  n._chLblBottom=0; n._bwWfRows=0;
+  const hs=n._hs|0, Hc=n.cv.height, showWf=n.p.show!=='spectrum' && hs<Hc-6;
   for(const c of list){
     const x1=saPos(n,c.lo)*W, x2=saPos(n,c.hi)*W;
     if(x2<0||x1>W) continue;
-    // ширина полосы — числом на шторке, если влезает; нет — только режим, а число уйдёт в подпись маркера на водопаде (saMarkersWf)
-    const col=MK_COL(c.idx), bw=c.hi-c.lo, sq=c.sql ? (c.sqOpen?' SQL open':' SQL closed') : '';
-    const tFull=c.mode+' '+fmtHz(bw, bw%1000?1:0)+sq, fits=x2-x1>=Math.ceil(cx.measureText(tFull).width)+8;
-    (n._chBw||(n._chBw={}))[c.idx]=fits;
-    const t=fits ? tFull : c.mode+sq;
-    const tw=Math.ceil(cx.measureText(t).width);
-    let tx=(x1+x2-tw)/2;
-    if(x2-x1<tw+8) tx = x2+4+tw<=W ? x2+4 : x1-tw-4;
-    tx=clamp(Math.round(tx), 3, W-tw-3);
-    let ty=Math.max(16,n._topH||0)+4+c.idx*15;
-    for(let k=0;k<8 && used.some(u=>tx-3<u.x+u.w && tx+tw+3>u.x && ty<u.y+u.h && ty+14>u.y);k++) ty+=15;
-    used.push({x:tx-3,y:ty,w:tw+6,h:14});
-    n._chLblBottom=Math.max(n._chLblBottom||0,ty+14);
-    cx.globalAlpha=1; cx.fillStyle=col; cx.fillRect(tx-3,ty,tw+6,14);
-    cx.fillStyle=contrastText(col); cx.fillText(t,tx,ty+11);
+    // ширина полосы — одной мелкой плашкой и только в одном месте: на шторке спектра, если влезает, иначе на водопаде (отдельно от плашки частоты маркера)
+    const col=MK_COL(c.idx), bw=c.hi-c.lo, t=c.mode+' '+fmtHz(bw, bw%1000?1:0)+(c.sql ? (c.sqOpen?' SQL open':' SQL closed') : '');
+    const tw=Math.ceil(cx.measureText(t).width), fits=x2-x1>=tw+8 && n.p.show!=='waterfall';
+    let tx=(x1+x2-tw)/2, ty;
+    if(fits || !showWf){                              // на спектре (если водопада нет и не влезает — сбоку от шторки)
+      if(!fits && x2-x1<tw+8) tx = x2+4+tw<=W ? x2+4 : x1-tw-4;
+      ty=Math.max(16,n._topH||0)+4+c.idx*13;
+      tx=clamp(Math.round(tx), 3, W-tw-3);
+      for(let k=0;k<8 && used.some(u=>tx-3<u.x+u.w && tx+tw+3>u.x && ty<u.y+u.h && ty+12>u.y);k++) ty+=13;
+      used.push({x:tx-3,y:ty,w:tw+6,h:12});
+      n._chLblBottom=Math.max(n._chLblBottom,ty+12);
+    } else {                                          // на водопаде: у верхнего края зоны, плашки частоты маркеров встают ниже (saMarkersWf)
+      if(x2-x1<tw+8) tx = x2+4+tw<=W ? x2+4 : x1-tw-4;
+      tx=clamp(Math.round(tx), 3, W-tw-3);
+      ty=hs+3+n._bwWfRows++*13;
+    }
+    cx.globalAlpha=.9; cx.fillStyle=col; cx.fillRect(tx-3,ty,tw+6,12);
+    cx.globalAlpha=1; cx.fillStyle=contrastText(col); cx.fillText(t,tx,ty+9);
   }
 }
 function saBandPlanLabels(n,cx){
@@ -1757,6 +1761,7 @@ function saBandPlanLabels(n,cx){
 }
 // шрифт подписей полос/каналов: обычное начертание — bold моноширинный на 10-11px мажется
 const BP_FONT='11px monospace';
+const BW_FONT='9px monospace';                      // подпись ширины полосы канала — мельче остальных
 
 // Полосы (band plan) и точечные закладки — из узла 'bandplan'/'bookmarks', список {lo,hi,label,color}.
 // hi===lo — точка (закладка), иначе — полоса. Пересекающиеся полосы раскладываем по "дорожкам"
@@ -2109,14 +2114,11 @@ function saMarkersWf(n,cx,W,hs,H){
     }
     cx.globalAlpha=.85; cx.strokeStyle=col; cx.lineWidth=1; cx.setLineDash([3,3]);
     cx.beginPath(); cx.moveTo(xr,hs); cx.lineTo(xr,H); cx.stroke(); cx.setLineDash([]);
-    // подпись на водопаде — только то, что не влезло на спектр: частота (нет места под подписью маркера) и ширина (нет места в шторке канала)
-    const chw=saChanAtMarker(n,f), bwOnSpec=chw && n._chBw?.[chw.idx], fOnSpec=n._mkFits?.[k]!==false;
-    const parts=[]; if(!fOnSpec) parts.push(fmtHz(f,3).replace(/[kMG]$/,''));
-    if(bw && !bwOnSpec) parts.push(fmtHz(bw[1]-bw[0],bw[1]-bw[0]<1e4?1:0)+'Hz');
-    if(!parts.length) return;
-    const t=(k+1)+':'+parts.join(' · ');
+    // подпись маркера на водопаде — только частота и только если на спектре для неё не нашлось места (ширина полосы — отдельная плашка, saChannelLabels)
+    if(n._mkFits?.[k]!==false) return;
+    const t=(k+1)+':'+fmtHz(f,3).replace(/[kMG]$/,'');
     const tw=Math.ceil(cx.measureText(t).width)+6;
-    let lx=clamp(Math.round(x-tw/2),2,W-tw-2), ly=hs+3;
+    let lx=clamp(Math.round(x-tw/2),2,W-tw-2), ly=hs+3+(n._bwWfRows||0)*13;
     for(let i=0;i<4;i++){ const hit=placed.find(q=>lx<q.x+q.w+1&&lx+tw+1>q.x&&ly<q.y+13&&ly+12>q.y); if(!hit) break; ly=hit.y+13; }
     placed.push({x:lx,y:ly,w:tw});
     cx.globalAlpha=.9; cx.fillStyle=col; cx.fillRect(lx,ly,tw,12);
@@ -2245,6 +2247,11 @@ function saMarkerTabs(n,cx,W){
     cx.globalAlpha=1; cx.fillStyle=themeColor('--screen'); cx.fillText(lbl,x0+w/2,y0+TH/2+1);
     n._autoBox={x0,y0,x1:x0+w,y1:y0+TH};
   }
+  // «S+W / S / W» — что показывать: спектр с водопадом, только спектр, только водопад (клик — следующий)
+  { const m=n.p.show||'both', lbl=m==='spectrum'?'S':m==='waterfall'?'W':'S+W', w=Math.ceil(cx.measureText(lbl).width)+8, x0=4+TH+3, y0=2;
+    cx.globalAlpha=m==='both'?.65:1; cx.fillStyle=themeColor('--acc'); cx.fillRect(x0,y0,w,TH);
+    cx.globalAlpha=1; cx.fillStyle=themeColor('--screen'); cx.fillText(lbl,x0+w/2,y0+TH/2+1);
+    n._viewBox={x0,y0,x1:x0+w,y1:y0+TH}; }
   cx.textAlign='left'; cx.textBaseline='alphabetic'; cx.globalAlpha=1;
 }
 
