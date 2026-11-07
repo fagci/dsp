@@ -1485,12 +1485,14 @@ function saChannels(n,cx,W,H,plotH){
     const x1=saPos(n,c.lo)*W, x2=saPos(n,c.hi)*W;
     if(x2<0||x1>W) continue;
     const col=MK_COL(c.idx);
-    // границы — по целым пикселям; полоса симметрична вокруг линии маркера (иначе края «гуляют» на пиксель вправо/влево)
-    let xl=Math.round(x1), xr=Math.round(x2);
-    if(Math.abs((c.lo+c.hi)/2-c.f)<(c.hi-c.lo)*.02){ const xc=Math.round(saPos(n,c.f)*W), h=Math.max(1,Math.round((x2-x1)/2)); xl=xc-h; xr=xc+h; }
-    cx.globalAlpha=.08; cx.fillStyle=col; cx.fillRect(xl,TOP,Math.max(1,xr-xl+1),H-TOP);
-    cx.globalAlpha=.9; cx.strokeStyle=col; cx.lineWidth=1;
-    const e1=xl+.5, e2=xr+.5;
+    // всё считаем в физических пикселях (sc): центр — тот же, что у линии маркера, края — ровно на h пикселей в обе стороны
+    const sc=(n.cv.pxW||n.cv.width)/n.cv.width;
+    let dl=Math.floor(x1*sc), dr=Math.floor(x2*sc);
+    if(Math.abs((c.lo+c.hi)/2-c.f)<(c.hi-c.lo)*.02){ const dc=Math.floor(saPos(n,c.f)*W*sc), h=Math.max(1,Math.round((x2-x1)*sc/2)); dl=dc-h; dr=dc+h; }
+    const xl=dl/sc;
+    cx.globalAlpha=.1; cx.fillStyle=col; cx.fillRect(xl,TOP,Math.max(1,dr-dl+1)/sc,H-TOP);
+    cx.globalAlpha=.5; cx.strokeStyle=col; cx.lineWidth=1;            // края шторки приглушены: главная линия — маркер в центре
+    const e1=(dl+.5)/sc, e2=(dr+.5)/sc;
     cx.beginPath(); cx.moveTo(e1,TOP); cx.lineTo(e1,H); cx.moveTo(e2,TOP); cx.lineTo(e2,H); cx.stroke();
     // шумоподавитель: пунктир — порог, сплошная — текущий средний уровень в полосе канала
     // (в той же шкале, что трасса); сплошная выше пунктира — открыт (с гистерезисом 3 дБ и hang)
@@ -1670,8 +1672,8 @@ function saUserMarks(n,cx,W,hs,hw,dpr){
   if(step>0 && tB-tA<step*400){
     const ink=themeColor('--scr-hi')||'#fff', bg=themeColor('--screen')||'#000';
     for(let t=Math.ceil(tA/step)*step; t<=tB; t+=step){
-      const y=Math.round(yOf(saWfLower(C,t,first,last)))+.5;
-      cx.globalAlpha=.55; cx.strokeStyle=bg; cx.beginPath(); cx.moveTo(0,y+1); cx.lineTo(W,y+1); cx.stroke();      // тёмная кромка — линия видна и на светлом водопаде
+      const y=(Math.round(hs*dpr)+(last-saWfLower(C,t,first,last))+.5)/dpr;               // строка водопада = целый физический пиксель — линия едет вместе с ним без дрожания
+      cx.globalAlpha=.55; cx.strokeStyle=bg; cx.beginPath(); cx.moveTo(0,y+1/dpr); cx.lineTo(W,y+1/dpr); cx.stroke();      // тёмная кромка — линия видна и на светлом водопаде
       cx.globalAlpha=.9; cx.strokeStyle=ink; cx.setLineDash([3,3]); cx.beginPath(); cx.moveTo(0,y); cx.lineTo(W,y); cx.stroke(); cx.setLineDash([]);
       const lb=new Date(t).toLocaleTimeString([], {hour12:false}), tw=Math.ceil(cx.measureText(lb).width)+6;
       cx.globalAlpha=.8; cx.fillStyle=bg; cx.fillRect(W-tw-1,y-11,tw,11);
@@ -1687,7 +1689,8 @@ function saUserMarks(n,cx,W,hs,hw,dpr){
     if(i0>last) continue;
     const i1=Math.max(i0, saWfLower(C,tb+1,first,last)-1);
     const col=m.color || (m.label ? saMarkColor(m.label) : themeColor('--hi'));
-    const y=yOf(i1), h=Math.max(2,(i1-i0+1)/dpr), txt=m.label || new Date(m.t0).toLocaleTimeString([], {hour12:false});
+    const dTop=Math.round(hs*dpr)+(last-i1), dH=Math.max(2,i1-i0+1);          // границы метки — по строкам водопада (целые физические пиксели)
+    const y=dTop/dpr, h=dH/dpr, txt=m.label || new Date(m.t0).toLocaleTimeString([], {hour12:false});
     let x1=0, x2=W;
     if(!m.full){
       x1=saPos(n,m.lo)*W; x2=saPos(n,m.hi)*W; if(x1>x2){ const t=x1; x1=x2; x2=t; }
@@ -1696,14 +1699,15 @@ function saUserMarks(n,cx,W,hs,hw,dpr){
     }
     cx.setLineDash(m===n._umDrag?[4,3]:[]); cx.strokeStyle=col;
     if(m.full){                                   // без диапазона — линия во всю ширину
-      const yy=Math.round(y+h/2)+.5;
+      const yy=(dTop+Math.floor(dH/2)+.5)/dpr;
       cx.globalAlpha=.9; cx.beginPath(); cx.moveTo(0,yy); cx.lineTo(W,yy); cx.stroke();
     } else {
       cx.globalAlpha=.14; cx.fillStyle=col; cx.fillRect(x1,y,x2-x1,h);
-      cx.globalAlpha=.95; cx.strokeRect(Math.round(x1)+.5,Math.round(y)+.5,Math.max(1,x2-x1),h);
+      const xa=(Math.floor(x1*dpr)+.5)/dpr, xb=(Math.max(Math.floor(x1*dpr)+1,Math.floor(x2*dpr))+.5)/dpr, ya=(dTop+.5)/dpr, yb=(dTop+dH-.5)/dpr;
+      cx.globalAlpha=.95; cx.beginPath(); cx.moveTo(xa,ya); cx.lineTo(xb,ya); cx.lineTo(xb,yb); cx.lineTo(xa,yb); cx.lineTo(xa,ya); cx.stroke();
     }
     if(txt){
-      const tw=Math.ceil(cx.measureText(txt).width)+6, lx=Math.max(1,Math.min(W-tw-1,x1)), ly=Math.max(hs,m.full?y+h/2-11:y);
+      const tw=Math.ceil(cx.measureText(txt).width)+6, lx=Math.max(1,Math.min(W-tw-1,x1)), ly=Math.round(Math.max(hs,m.full?y+h/2-11:y)*dpr)/dpr;
       cx.setLineDash([]); cx.globalAlpha=.8; cx.fillStyle=themeColor('--screen'); cx.fillRect(lx,ly,tw,12);
       cx.globalAlpha=1; cx.fillStyle=col; cx.fillText(txt,lx+3,ly+9);
     }
@@ -2087,12 +2091,15 @@ function saMarkersWf(n,cx,W,hs,H){
   const placed=[];
   present.forEach(k=>{
     const f=n.mk[k], x=saPos(n,f)*W; if(x<-2||x>W+2) return;
-    const col=MK_COL(k), bw=saMarkerBw(n,k), xr=Math.round(x)+.5;
+    const sc=(n.cv.pxW||n.cv.width)/n.cv.width, dc=Math.floor(x*sc);        // физические пиксели: центр и края полосы — симметрично
+    const col=MK_COL(k), bw=saMarkerBw(n,k), xr=(dc+.5)/sc;
     if(bw){
       const x1=saPos(n,bw[0])*W, x2=saPos(n,bw[1])*W;
-      cx.globalAlpha=.12; cx.fillStyle=col; cx.fillRect(x1,hs,Math.max(2,x2-x1),H-hs);
-      if(x2-x1>=3){ cx.globalAlpha=.8; cx.strokeStyle=col; cx.lineWidth=1; cx.beginPath();
-        cx.moveTo(Math.round(x1)+.5,hs); cx.lineTo(Math.round(x1)+.5,H); cx.moveTo(Math.round(x2)-.5,hs); cx.lineTo(Math.round(x2)-.5,H); cx.stroke(); }
+      let dl=Math.floor(x1*sc), dr=Math.floor(x2*sc);
+      if(Math.abs((bw[0]+bw[1])/2-f)<(bw[1]-bw[0])*.02){ const h=Math.max(1,Math.round((x2-x1)*sc/2)); dl=dc-h; dr=dc+h; }
+      cx.globalAlpha=.12; cx.fillStyle=col; cx.fillRect(dl/sc,hs,Math.max(1,dr-dl+1)/sc,H-hs);
+      if(dr-dl>=3){ cx.globalAlpha=.8; cx.strokeStyle=col; cx.lineWidth=1; cx.beginPath();
+        cx.moveTo((dl+.5)/sc,hs); cx.lineTo((dl+.5)/sc,H); cx.moveTo((dr+.5)/sc,hs); cx.lineTo((dr+.5)/sc,H); cx.stroke(); }
     }
     cx.globalAlpha=.85; cx.strokeStyle=col; cx.lineWidth=1; cx.setLineDash([3,3]);
     cx.beginPath(); cx.moveTo(xr,hs); cx.lineTo(xr,H); cx.stroke(); cx.setLineDash([]);
@@ -2124,12 +2131,14 @@ function saMarkers(n,cx,W,H){
     // линия начинается НИЖЕ потолка (см. TOP_H) — там теперь подписи закладок (см. saBandPlan), и
     // полоса маркера не должна наезжать на них своим цветом поверх
     // целая ширина и центр на границе/середине пикселя — линия чёткая, без размытия (нечётная — на x+.5, чётная — на x)
-    const w1=act?4:3, w2=act?2:1;
-    cx.strokeStyle=themeColor('--screen'); cx.lineWidth=w1; cx.globalAlpha=.55;   // тёмная обводка под линией
-    cx.beginPath(); cx.moveTo(w1%2?x+.5:x,TOP_H); cx.lineTo(w1%2?x+.5:x,H); cx.stroke();
-    cx.globalAlpha=1;
+    // маркер — одна тонкая линия (физический пиксель); тёмная подложка только у активного и только для контраста на светлом фоне
+    const w1=3, w2=1;
+    const sc=(n.cv.pxW||n.cv.width)/n.cv.width, xm=(Math.floor(saPos(n,f)*W*sc)+.5)/sc;   // центр — на физическом пикселе, как у шторки канала
+    if(act){ cx.strokeStyle=themeColor('--screen'); cx.lineWidth=w1; cx.globalAlpha=.4;
+      cx.beginPath(); cx.moveTo(xm,TOP_H); cx.lineTo(xm,H); cx.stroke(); }
+    cx.globalAlpha=act?1:.75;
     cx.strokeStyle=MK_COL(k); cx.lineWidth=w2;
-    cx.beginPath(); cx.moveTo(w2%2?x+.5:x,TOP_H); cx.lineTo(w2%2?x+.5:x,H); cx.stroke();
+    cx.beginPath(); cx.moveTo(xm,TOP_H); cx.lineTo(xm,H); cx.stroke(); cx.globalAlpha=1;
     const tb=n.p.trk&&n._trkWin?.[k];                 // окно поиска несущей
     if(tb){ const x1=saPos(n,f-tb/2)*W, x2=saPos(n,f+tb/2)*W;
       cx.globalAlpha=.12; cx.fillStyle=MK_COL(k); cx.fillRect(x1,TOP_H,Math.max(2,x2-x1),H-TOP_H); cx.globalAlpha=1; }
