@@ -10,7 +10,7 @@ const ctx=vm.createContext({Math,Float32Array,Float64Array,Array,Set,Number,Stri
 const cut=(s,a,b)=>s.slice(s.indexOf(a),s.indexOf(b));
 vm.runInContext(`function setMod(){} const Eng={turbo:1}; function def(){} function ft8Stamp(){return ''} function ft8Text(){}`+
   rd('core-dsp.js')+cut(pr,'/* ---------- FT8: LDPC',"def({ id:'ft8Rx'")+cut(pr,'/* ---------- FT8: упаковка',"def({ id:'ft8Tx'")+
-  cut(out,'function ft8Spec','/* ---------- вывод')+';this.K={ft8Run,ft8Pack,ft8Tones,FT8_SR};this.ft8Unpack=ft8Unpack;this.ft8Hash=ft8Hash;this.ft8GridMsg=ft8GridMsg;this.FT8_H12=FT8_H12',ctx,{filename:'ft8'});
+  cut(out,'function ft8Spec','/* ---------- вывод')+';this.K={ft8Run,ft8Pack,ft8Tones,FT8_SR};this.ft8Unpack=ft8Unpack;this.ft8Hash=ft8Hash;this.FT8_H22=FT8_H22;this.ft8GridMsg=ft8GridMsg;this.FT8_H12=FT8_H12',ctx,{filename:'ft8'});
 const K=ctx.K;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n); };
 
@@ -45,6 +45,8 @@ function run(x,side){
   ok('hash is 12 bit',(()=>{ const h=ctx.ft8Hash('K1ABC',12); return h>=0&&h<4096; })());
   ok('unknown hash shows <...>',(()=>{ const b=K.ft8Pack('<K1ABC> R6HABA'); ctx.FT8_H12.clear(); return ctx.ft8Unpack(b)==='<...> R6HABA'; })());
   ok('grid goes in a second slot as free text',ctx.ft8GridMsg('CQ R6HABA KO85')==='R6HABA KO85' && un('R6HABA KO85')==='R6HABA KO85' && ctx.ft8GridMsg('CQ K1ABC FN42')===null && ctx.ft8GridMsg('CQ R6HABA')===null);
+  ok('grid slot, hashed CQ mode',ctx.ft8GridMsg('CQ R6HABA KO85',true)==='CQ <R6HABA> KO85' && un('CQ <R6HABA> KO85')==='CQ <R6HABA> KO85');
+  ok('hashed CQ: call restored from the type-4 slot',(()=>{ const b=K.ft8Pack('CQ <R6HABA> KO85'); ctx.FT8_H12.clear(); ctx.FT8_H22.clear(); ctx.ft8Unpack(K.ft8Pack('CQ R6HABA')); return ctx.ft8Unpack(b)==='CQ <R6HABA> KO85'; })());
   ok('garbage still refused',K.ft8Pack('CQ R6HABA @@@')===null);
 }
 const M=[['CQ K1ABC FN42',1000,0],['K1ABC W9XYZ -12',1800,0.2]];
