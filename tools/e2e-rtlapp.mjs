@@ -48,6 +48,23 @@ ok('legacy transport value still listens', /listening on port/.test(await pg.eva
 await pg.evaluate(() => rtlsStop(__srv)); await wait(300);
 const c4 = net.connect(PORT, '127.0.0.1'); const refused = await new Promise((r) => { c4.on('error', () => r(true)); c4.on('connect', () => { c4.destroy(); r(false); }); });
 ok('Stop releases the port', refused);
+
+// скорость через «Wi-Fi» с задержкой 40 мс в каждую сторону: новое приложение (ordered) держит несколько блоков в полёте, старое — по одному
+async function rate(opt, port) {
+  const br = await mockBridgeWs(0, { app: true, latency: 40, ...opt });
+  await pg.evaluate(([wp, pt]) => { __srv.p.url = 'ws://127.0.0.1:' + wp; __srv.p.port = pt; rtlsStart(__srv); }, [br.port, port]);
+  await wait(1500);
+  const c = net.connect(port, '127.0.0.1'); let got = 0; c.on('data', (d) => { got += d.length; });
+  await wait(600); const g0 = got; await wait(3000); const bps = (got - g0) / 3;
+  const info = await pg.evaluate(() => ({ ordered: __srv.ordered, dropped: __srv.dropped }));
+  c.destroy(); await pg.evaluate(() => rtlsStop(__srv)); await wait(300); br.close();
+  return { bps, ...info };
+}
+const fast = await rate({}, 21301), slow = await rate({ legacy: true }, 21302);
+console.log('rate with 40 ms each way: new app', Math.round(fast.bps / 1000), 'kB/s, old app', Math.round(slow.bps / 1000), 'kB/s');
+ok('new app (ordered) carries the full 1.024 MS/s through 80 ms of latency', fast.ordered && fast.bps > 1.9e6, JSON.stringify(fast));
+ok('old app still works, bigger blocks, but slower', !slow.ordered && slow.bps > 2e5 && slow.bps < fast.bps / 3, JSON.stringify(slow));
+
 // приложение с выключенным «Let any page use actions» отвечает forbidden — узел говорит, что включить
 await pg.evaluate((port) => { __srv.p.url = 'ws://127.0.0.1:' + port; rtlsStart(__srv); }, closed403.port); await wait(1200);
 const fst = await pg.evaluate(() => __srv.status);

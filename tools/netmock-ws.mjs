@@ -11,7 +11,8 @@ export function mockBridgeWs(port = 0, opt = {}) {
     sock.write('HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-accept: ' + wsAccept(key) + '\r\n\r\n');
     // opt.app — как настоящее приложение: записи src:'net' и др. только подписавшимся ({sub:['net']}) и пачками-массивами раз в 40 мс; ответы src:'cmd' сразу
     const subs = new Set(); let buf = [], tm = null;
-    const raw = (t) => { try { sock.write(wsFrame(t)); } catch (e) { /* закрыт */ } };
+    const lat = opt.latency | 0;                                   // задержка в каждую сторону, мс (Wi-Fi между ноутбуком и телефоном)
+    const raw = (t) => { const w = () => { try { sock.write(wsFrame(t)); } catch (e) { /* закрыт */ } }; if (lat) setTimeout(w, lat); else w(); };
     const send = (o) => {
       if (!opt.app || o.src === 'cmd') return raw(JSON.stringify(o));
       if (!subs.has(o.src)) return;
@@ -19,7 +20,7 @@ export function mockBridgeWs(port = 0, opt = {}) {
     };
     const app = mockApp(send, opt); apps.add(app);
     const par = wsParser({
-      onMsg: (t) => { let m; try { m = JSON.parse(t); } catch (e) { return; } if (m && Array.isArray(m.sub)) { subs.clear(); for (const x of m.sub) subs.add(x); } else if (m && m.cmd) app.send(m); },
+      onMsg: (t) => { let m; try { m = JSON.parse(t); } catch (e) { return; } if (m && Array.isArray(m.sub)) { subs.clear(); for (const x of m.sub) subs.add(x); } else if (m && m.cmd) { if (lat) setTimeout(() => app.send(m), lat); else app.send(m); } },
       onClose: () => { try { sock.end(wsFrame('', 8)); } catch (e) { /* закрыт */ } },
       onPing: (p) => { try { sock.write(wsFrame(p.toString(), 10)); } catch (e) { /* закрыт */ } },
     });

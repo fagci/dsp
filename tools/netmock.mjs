@@ -53,7 +53,7 @@ export function mockApp(feed, opt = {}) {
           setImmediate(() => watch(n, s));
         });
         ss.on('error', (e) => reply(id, cmd, e.code || e.message));
-        ss.listen(j.port, j.lan === false ? '127.0.0.1' : '0.0.0.0', () => { servers.set(sid, ss); reply(id, cmd, null, { server: sid, port: ss.address().port }); });
+        ss.listen(j.port, j.lan === false ? '127.0.0.1' : '0.0.0.0', () => { servers.set(sid, ss); reply(id, cmd, null, { server: sid, port: ss.address().port, ...(opt.legacy ? {} : { ordered: true }) }); });
         ss.on('close', () => { if (servers.delete(sid)) ev({ ev: 'close', server: sid, proto: 'tcp' }); });
         return;
       }
