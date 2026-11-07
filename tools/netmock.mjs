@@ -26,6 +26,7 @@ export function mockApp(feed, opt = {}) {
   };
   const run = (j) => {
     const { cmd, id } = j;
+    if (opt.forbid && /^(tcp|udp|net)\./.test(cmd)) return reply(id, cmd, 'not allowed for this page — only the page of the DSP app (or any page, if allowed in the app Settings) may use it', { err: 'forbidden' });   // как приложение без «Let any page use actions»
     switch (cmd) {
       case 'tcp.connect': {
         if (tcp.size >= 32) return reply(id, cmd, '32 connections at most');

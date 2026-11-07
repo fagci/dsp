@@ -7,6 +7,7 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 let bad = 0; const ok = (n, c, x = '') => { if (!c) { bad++; console.log('FAIL', n, x); } else console.log('ok  ', n); };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const bridge = await mockBridgeWs(0);
+const closed403 = await mockBridgeWs(0, { forbid: true });
 const PORT = 21234;
 const b = await chromium.launch(); const pg = await b.newPage(); const errs = [];
 pg.on('pageerror', (e) => errs.push(e.message));
@@ -47,6 +48,11 @@ ok('legacy transport value still listens', /listening on port/.test(await pg.eva
 await pg.evaluate(() => rtlsStop(__srv)); await wait(300);
 const c4 = net.connect(PORT, '127.0.0.1'); const refused = await new Promise((r) => { c4.on('error', () => r(true)); c4.on('connect', () => { c4.destroy(); r(false); }); });
 ok('Stop releases the port', refused);
+// приложение с выключенным «Let any page use actions» отвечает forbidden — узел говорит, что включить
+await pg.evaluate((port) => { __srv.p.url = 'ws://127.0.0.1:' + port; rtlsStart(__srv); }, closed403.port); await wait(1200);
+const fst = await pg.evaluate(() => __srv.status);
+ok('forbidden → tells to turn on «Let any page use actions»', /Let any page use actions/.test(fst), fst);
+await pg.evaluate(() => rtlsStop(__srv));
 console.log('page errors:', errs.slice(0, 3));
-await b.close(); bridge.close();
+await b.close(); bridge.close(); closed403.close();
 process.exit(bad ? 1 : 0);

@@ -42,7 +42,12 @@ function rtlsAppOpen(n,url){
     if(m.src==='cmd'){
       if(m.cmd==='tcp.listen' && m.id===n.listenId){
         if(m.ok){ n.server=m.server; n.status='listening on port '+m.port+(n.p.lan ? ' (LAN)' : ' (this phone only)')+' — waiting for a client'; }
-        else{ n.listenWarn=1; n.status='tcp.listen: '+(m.msg||m.err||'refused')+' (ports 1024…65535, 4 servers at most)'; n.want=false; }
+        else{
+          n.listenWarn=1; n.want=false;
+          n.status= m.err==='forbidden'
+            ? 'the app refused tcp.listen: a page from another device may not open sockets — in the DSP app Settings turn on «Let any page use actions (network sockets, Bluetooth connections, …)», then Start again'
+            : 'tcp.listen: '+(m.msg||m.err||'refused')+' (ports 1024…65535, 4 servers at most; is the port free?)';
+        }
       } else if(m.cmd==='tcp.send'){ n.inflight=0; if(m.ok===false){ rtlsAppDrop(n); } else rtlsAppPump(n); }
       return;
     }
