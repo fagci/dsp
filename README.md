@@ -12,7 +12,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 
 - **A full DSP lab in the browser** — hundreds of modules wired on a canvas with typed ports: signal in → process → see, hear, decode. No install, no build step, works offline as a PWA.
 - **Fuzzy everywhere, chains like Emmet** — the palette, the **Ctrl+K** command palette and the help search forgive typos and abbreviations (`phose` finds Phone sensors); build a chain by typing `mic>fft>sa`, with a live preview on the canvas before you press Enter.
-- **Real radio** — USB SDRs (RTL-SDR, HackRF, Airspy, SDRplay, RX-888), remote SDRs (rtl_tcp, SpyServer, KiwiSDR, OpenWebRX), tinySA: [SDR and receivers](help/sdr.md)
+- **Real radio** — USB SDRs (RTL-SDR, HackRF, Airspy, SDRplay, RX-888), remote SDRs (rtl_tcp over WebSocket or WebRTC, SpyServer, KiwiSDR, OpenWebRX), your own SDR shared as rtl_tcp (rtl_tcp Server: WebRTC or a TCP bridge for SDR++ / GQRX), tinySA: [SDR and receivers](help/sdr.md)
 - **The analysis bench** — spectrum, waterfall, oscilloscope, persistence, CFAR signal detector, band scanners, signal identification: [Analysis](help/analysis.md)
 - **Decoders as nodes** — GSM, ADS-B, DMR, TETRA, POCSAG, AIS, ACARS, Inmarsat, JS8Call, digital voice and more, wired like any other module: [Radio](help/radio.md) · [Satellites](help/satellites.md)
 - **Your phone is a node** — the Android app feeds GPS, Wi-Fi, BLE, cells and sensors (with the screen locked), scans networks, traces routes, runs automations: [Phone](help/phone.md) · [Network](help/network.md)

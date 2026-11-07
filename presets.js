@@ -317,6 +317,8 @@ const PRESET_CATS={
   'USB SDR: FM Receiver from Blocks':'SDR Receivers',
   'USB SDR: FM Radio with RDS':'SDR Receivers',
   'Remote SDR: FM Receiver (rtl_tcp over WebSocket)':'SDR Receivers',
+  'Remote SDR: FM Receiver (rtl_tcp over WebRTC)':'SDR Receivers',
+  'USB SDR: rtl_tcp Server (WebRTC / SDR++)':'SDR Receivers',
   'Remote SDR: FM Receiver (SpyServer over WebSocket)':'SDR Receivers',
   'USB SDR: HF AM / SSB from Blocks':'SDR Receivers',
   'Sound Card IQ: HF Receiver (SoftRock-style)':'SDR Receivers',
@@ -3856,6 +3858,55 @@ addEdge(dcb.id,'out',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
 addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',sp.id,'in'); addEdge(sp.id,'spec',s2.id,'spec');
 addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'stereo',au.id,'in');
 addEdge(au.id,'out',dc.id,'L'); addEdge(au.id,'q',dc.id,'R');
+markWiresDirty();
+});
+preset('Remote SDR: FM Receiver (rtl_tcp over WebRTC)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The same broadcast FM receiver, but the RTL-SDR (or any other SDR) is on another device and the link is WebRTC, no TCP bridge or server: there open the preset «USB SDR: rtl_tcp Server (WebRTC / SDR++)».\n'+
+  'Connect the two WebRTC Data nodes (1. Create offer on one side, 2. Accept offer on the other, 3. Apply answer; or the auto-connect room). Then press Connect here and Start there: IQ over Network speaks rtl_tcp through the rtl channel of the connection (DTLS-encrypted), tunes and sets the gain over it.\n'+
+  'About 2 MB/s per 1 MS/s: on a slow link lower the sample rate on the server. Tap a station on the upper spectrum.'});
+nt.size.w=760; nt.size.h=170; applySize(nt);
+const rx=addNode('iqnet',40,260,{proto:'rtl_tcp (WebRTC)',sr:1024000,freq:100000000});
+rx.size.w=300; rx.size.h=180; applySize(rx);
+const rt=addNode('rtcdata',40,470,{});
+addEdge(rt.id,'link',rx.id,'rtc');
+const dcb=addNode('iqDc',400,260,{});
+const w0=addNode('iqSpec',400,400,{size:'4096'});
+const sa=addNode('sa',720,260,{auto:true,floor:-90,top:-20,split:.4});
+sa.size.w=640; sa.size.h=300; applySize(sa);
+const sh=addNode('iqShift',400,560,{});
+const d1=addNode('iqDecim',400,720,{M:'4',cut:.45});
+const sp=addNode('iqSpec',400,900,{size:'2048'});
+const s2=addNode('sa',720,600,{auto:true,floor:-100,top:-20,split:.4});
+s2.size.w=640; s2.size.h=260; applySize(s2);
+const de=addNode('iqDemod',40,900,{mode:'WFM',deemph:'50 µs',stereo:true});
+de.size.w=360; applySize(de);
+const au=addNode('iqAudio',720,900,{});
+const dc=addNode('dac',980,900,{vol:.4});
+addEdge(rx.id,'iq',dcb.id,'in'); addEdge(dcb.id,'out',w0.id,'in'); addEdge(w0.id,'spec',sa.id,'spec');
+addEdge(dcb.id,'out',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',sp.id,'in'); addEdge(sp.id,'spec',s2.id,'spec');
+addEdge(d1.id,'out',de.id,'in'); addEdge(de.id,'stereo',au.id,'in');
+addEdge(au.id,'out',dc.id,'L'); addEdge(au.id,'q',dc.id,'R');
+markWiresDirty();
+});
+preset('USB SDR: rtl_tcp Server (WebRTC / SDR++)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Shares the USB SDR as rtl_tcp. The node «rtl_tcp Server» sends the client the «RTL0» header and the IQ stream (uint8) and decodes the client\'s 5-byte commands [code][uint32 BE] (01 frequency, 02 rate, 04 gain in tenths of dB, 05 ppm, 0E bias-T…): the Hz / dB it gets go through the wires to the USB SDR inputs freq / sr / gainDb, and every command is listed in hex in its readout and on the rec output.\n'+
+  '1) Another browser: WebRTC Data → link → rtc (offer / answer or the room), there «Remote SDR: FM Receiver (rtl_tcp over WebRTC)». 2) SDR++, GQRX, rtl_power: run `node tools/rtltcp-bridge.mjs` on this computer, set transport «WebSocket (bridge)» and press Start; the client connects to TCP port 1234 (source «RTL-TCP»).\n'+
+  'Connect the SDR first, then press Start. The link carries about 2 MB/s per 1 MS/s: lower the rate for the internet.'});
+nt.size.w=760; nt.size.h=200; applySize(nt);
+const rx=addNode('rtlsdr',40,300,{sr:'1024000',auto:false,gainDb:30,demod:'WFM',freq:100000000});
+rx.size.w=320; rx.size.h=260; applySize(rx);
+const sv=addNode('rtlserve',420,300,{transport:'WebRTC'});
+sv.size.w=340; sv.size.h=300; applySize(sv);
+const rt=addNode('rtcdata',420,640,{});
+const sp=addNode('iqSpec',40,620,{size:'4096'});
+const sa=addNode('sa',800,300,{auto:true,floor:-90,top:-20,split:.4});
+sa.size.w=640; sa.size.h=300; applySize(sa);
+addEdge(rx.id,'iq',sv.id,'iq'); addEdge(rt.id,'link',sv.id,'rtc');
+addEdge(sv.id,'freq',rx.id,'freq'); addEdge(sv.id,'sr',rx.id,'sr'); addEdge(sv.id,'gain',rx.id,'gainDb');
+addEdge(rx.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
 markWiresDirty();
 });
 preset('Remote SDR: FM Receiver (SpyServer over WebSocket)', function(){

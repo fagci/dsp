@@ -1,6 +1,7 @@
 "use strict";
 /* ============================ IQ по сети ============================
    Поток IQ из WebSocket на выход 'iq' — для любого приёмника, который умеет отдавать отсчёты в трубу.
+   rtl_tcp (WebRTC): тот же протокол по каналу rtl соединения WebRTC Data — сервер узел rtl_tcp Server (rtlserve.js) на другом устройстве.
    rtl_tcp: браузер не открывает TCP, нужен мост «TCP → WebSocket» (websockify 8766 host:1234, websocat, любой прокси);
    заголовок «RTL0» и команды (частота, частота дискретизации, усиление, ppm, bias-T, прямая выборка) — как у rtl_tcp.
    raw stream: просто байты IQ (uint8 / int8 / int16 LE / float32 LE) на заданной частоте дискретизации и центре:
@@ -13,16 +14,19 @@ const IQN_FRAME={'uint8':2,'int8':2,'int16 LE':4,'float32 LE':8};               
 const IQN_TUNERS=['unknown','E4000','FC0012','FC0013','FC2580','R820T','R828D'];
 const IQN_SPY_VER=(2<<24)|1700;                                                           // версия протокола SpyServer 2.0.1700
 const IQN_SPY_DEV=['invalid','Airspy One','Airspy HF+','RTL-SDR'];
+const iqnRtl=n=>n.p.proto==='rtl_tcp' || n.p.proto==='rtl_tcp (WebRTC)';                    // оба варианта говорят одним протоколом
+const iqnRtc=n=>n.p.proto==='rtl_tcp (WebRTC)';                                          // транспорт — канал rtl узла WebRTC Data
 const iqnSr=n=>(n.sp && n.sp.sr) || +n.p.sr || 1e6;                                     // у SpyServer частоту задаёт сервер
 const IQN_QMAX_S=2;                                                                      // сколько секунд держим в очереди, дальше выбрасываем старое
 function iqnStop(n){
-  n.want=false; clearTimeout(n.timer); n.timer=null;
+  n.want=false; n.ok=false; n.rtcEv=-1; clearTimeout(n.timer); n.timer=null;
   const ws=n.ws; n.ws=null; n.ok=false;
   if(ws){ ws.onopen=ws.onclose=ws.onerror=ws.onmessage=null; try{ ws.close(); }catch(e){} }
   n.status='disconnected';
 }
 function iqnStart(n){
   iqnStop(n);
+  if(iqnRtc(n)){ n.want=true; n.bad=false; n.rtcEv=-1; n.sp=null; n.status='waiting for the WebRTC connection'; return; }
   const url=gwUrl(String(n.p.url||'').trim());
   if(!/^wss?:\/\//i.test(url)){ n.status=gwErr(n.p.url)||'URL must start with ws:// or wss://'; return; }
   n.warn=netInsecure(url) ? NET_INSECURE_MSG : '';
@@ -33,12 +37,12 @@ function iqnOpen(n,url){
   try{ ws=new WebSocket(url); }
   catch(e){ n.status='error: '+e.message; iqnRetry(n,url); return; }
   ws.binaryType='arraybuffer'; n.ws=ws; n.status='connecting…';
-  n.q=[]; n.qN=0; n.carry=new Uint8Array(0); n.hdr=n.p.proto==='rtl_tcp' ? new Uint8Array(0) : null; n.ap={}; n.tuner='';
+  n.q=[]; n.qN=0; n.carry=new Uint8Array(0); n.hdr=iqnRtl(n) ? new Uint8Array(0) : null; n.ap={}; n.tuner='';
   n.sp=n.p.proto==='SpyServer' ? {buf:new Uint8Array(0), info:null, go:false, ap:{}, sr:0, can:true} : null;
   ws.onopen=()=>{
     n.ok=true;
     if(n.sp){ n.status='connected, waiting for SpyServer…'; iqnSpyCmd(n,0,iqnSpyHello()); }
-    else n.status=n.p.proto==='rtl_tcp' ? 'connected, waiting for the rtl_tcp header…' : 'connected';
+    else n.status=iqnRtl(n) ? 'connected, waiting for the rtl_tcp header…' : 'connected';
   };
   ws.onerror=()=>{ n.status='connection error'; };
   ws.onclose=e=>{
@@ -62,12 +66,12 @@ function iqnIn(n,u){
     n.hdr=null; n.status='connected, '+n.tuner; u=m.subarray(12);
     if(!u.length) return;
   }
-  const fs=IQN_FRAME[n.p.proto==='rtl_tcp' ? 'uint8' : n.p.fmt]||2;
+  const fs=IQN_FRAME[iqnRtl(n) ? 'uint8' : n.p.fmt]||2;
   if(n.carry.length){ const m=new Uint8Array(n.carry.length+u.length); m.set(n.carry); m.set(u,n.carry.length); u=m; n.carry=new Uint8Array(0); }
   const use=u.length-(u.length%fs);
   if(use<u.length) n.carry=u.slice(use);
   if(!use) return;
-  const body=u.slice(0,use), fmt=n.p.proto==='rtl_tcp' ? 'uint8' : n.p.fmt, k=use/fs;
+  const body=u.slice(0,use), fmt=iqnRtl(n) ? 'uint8' : n.p.fmt, k=use/fs;
   let c;
   if(fmt==='uint8') c={raw:body,fmt:'u8',n:k};
   else if(fmt==='int16 LE') c={raw:new Int16Array(body.buffer,0,k*2),fmt:'s16',n:k};
@@ -180,13 +184,27 @@ function iqnSpySync(n){
   }
 }
 function iqnCmd(n,cmd,val){
+  const b=new Uint8Array(5); b[0]=cmd; new DataView(b.buffer).setUint32(1,val>>>0,false);
+  if(iqnRtc(n)){ rtcRtlSend(n.rn,b,true); return; }
   if(!n.ws || n.ws.readyState!==1) return;
-  const b=new Uint8Array(5); b[0]=cmd; new DataView(b.buffer).setUint32(1,val>>>0,false); n.ws.send(b);
+  n.ws.send(b);
+}
+// WebRTC-транспорт: канал открылся — «подключились» (сервер сам шлёт заголовок), закрылся — ждём; байты забираем из очереди канала
+function iqnRtcPump(n,rn){
+  if(rn!==n.rn){ n.rn=rn; n.rtcEv=-1; }
+  if(!rn){ if(n.want) n.status='wire WebRTC Data → rtc'; n.ok=false; return; }
+  if(rn.rtlEv!==n.rtcEv){
+    n.rtcEv=rn.rtlEv;
+    if(rn.rtlOpen && n.want){ n.ok=true; n.q=[]; n.qN=0; n.carry=new Uint8Array(0); n.hdr=new Uint8Array(0); n.ap={}; n.tuner=''; n.status='connected, waiting for the rtl_tcp header…';
+      rtcRtlSend(rn,new Uint8Array(5),true); }                                       // «привет»: команда 0x00 (настоящий rtl_tcp её игнорирует) — сервер присылает заголовок
+    else{ n.ok=false; if(n.want) n.status='waiting for the WebRTC connection'; }
+  }
+  if(n.ok) for(const u of rn.rtlQ.splice(0)) iqnIn(n,u);
 }
 // параметры → команды rtl_tcp: отправляем только изменившееся (провод на параметр работает так же)
 function iqnSync(n){
   if(n.sp) return iqnSpySync(n);
-  if(n.p.proto!=='rtl_tcp' || !n.ok || n.hdr) return;
+  if(!iqnRtl(n) || !n.ok || n.hdr) return;
   const p=n.p, g=+p.gain||0;
   const want=[['sr',0x02,Math.round(+p.sr)],['freq',0x01,Math.round(+p.freq)],['gm',0x03,g>0 ? 1 : 0],['gain',0x04,g>0 ? Math.round(g*10) : null],
               ['ppm',0x05,Math.round(+p.ppm)||0],['agc',0x08,p.agc ? 1 : 0],['direct',0x09,p.direct==='I' ? 1 : p.direct==='Q' ? 2 : 0],['bias',0x0e,p.bias ? 1 : 0]];
@@ -196,9 +214,10 @@ function iqnSync(n){
   }
 }
 def({ id:'iqnet', title:'IQ over Network', cat:'Sources', kw:'rtl_tcp rtl-tcp remote sdr iq stream websocket websockify websocat raspberry pi soapy hackrf rtl_sdr',
+  ins:[{n:'rtc',t:'rtc'}],
   outs:[{n:'iq',t:'iq'},{n:'sr',t:'num'}], readout:true, tall:true,
   params:[{n:'url',t:'text',d:'ws://127.0.0.1:8766',label:'WebSocket: ws:// wss:// (rtl_tcp: through a bridge, e.g. websockify 8766 host:1234)'},
-          {n:'proto',t:'select',opts:['rtl_tcp','raw stream','SpyServer'],d:'rtl_tcp',label:'protocol'},
+          {n:'proto',t:'select',opts:['rtl_tcp','rtl_tcp (WebRTC)','raw stream','SpyServer'],d:'rtl_tcp',label:'protocol (rtl_tcp (WebRTC): through the WebRTC Data connection, the server is the rtl_tcp Server node on the other device; wire its link to rtc)'},
           {n:'fmt',t:'select',opts:Object.keys(IQN_FRAME),d:'uint8',label:'raw stream: sample format (interleaved I, Q)'},
           {n:'sr',t:'num',d:1024000,label:'sample rate, Hz (rtl_tcp: sent to the server; SpyServer: nearest decimation step)'},
           {n:'freq',t:'num',d:100000000,label:'center frequency, Hz (rtl_tcp, SpyServer: tuned; raw stream: only labels the stream)'},
@@ -212,9 +231,10 @@ def({ id:'iqnet', title:'IQ over Network', cat:'Sources', kw:'rtl_tcp rtl-tcp re
           {n:'connect',t:'button',label:'Connect',fn:n=>iqnStart(n)},
           {n:'disconnect',t:'button',label:'Disconnect',fn:n=>iqnStop(n)}],
   init:n=>{ n.ws=null; n.want=false; n.ok=false; n.timer=null; n.q=[]; n.qN=0; n.carry=new Uint8Array(0); n.hdr=null; n.ap={}; n.tuner=''; n.sp=null;
-            n.gap=false; n.dropped=0; n.bytes=0; n.rate=0; n.rateT=performance.now(); n.rateB=0; n.fc=null; n.status='not connected'; n.warn=''; },
+            n.rn=null; n.rtcEv=-1; n.gap=false; n.dropped=0; n.bytes=0; n.rate=0; n.rateT=performance.now(); n.rateB=0; n.fc=null; n.status='not connected'; n.warn=''; },
   dispose:n=>iqnStop(n),
-  process(n){
+  process(n,I){
+    if(iqnRtc(n) && n.want) iqnRtcPump(n,rtcLinked(I.rtc));
     iqnSync(n);
     if(n._iqOrd!==Graph.order){ n._iqOrd=Graph.order; n._iqWired=Graph.edges.some(e=>e.from===n.id && e.fp==='iq'); }
     const sr=iqnSr(n), fc=+n.p.freq||0;
@@ -230,7 +250,7 @@ def({ id:'iqnet', title:'IQ over Network', cat:'Sources', kw:'rtl_tcp rtl-tcp re
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     const now=performance.now();
     if(now-n.rateT>1000){ n.rate=(n.bytes-n.rateB)/((now-n.rateT)/1000); n.rateB=n.bytes; n.rateT=now; }
-    const fs=n.sp ? 4 : IQN_FRAME[n.p.proto==='rtl_tcp' ? 'uint8' : n.p.fmt]||2;
+    const fs=n.sp ? 4 : IQN_FRAME[iqnRtl(n) ? 'uint8' : n.p.fmt]||2;
     const t=(n.warn && !n.ok ? '⚠ '+n.warn+'\n' : '')+n.status+(n.ok ? ' · '+(n.rate/fs/1e6).toFixed(3)+' MS/s received (set '+(iqnSr(n)/1e6).toFixed(3)+')' : '')+
       (n.dropped ? ' · overflows '+n.dropped : '');
     if(r.textContent!==t) r.textContent=t; }
