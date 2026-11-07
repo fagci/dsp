@@ -29,12 +29,12 @@ function rtlsStart(n){
 // Команды приложения идут в пуле потоков, порядок не гарантирован: следующий tcp.send — после ответа на предыдущий.
 // Одна отправка в приложение (tcp.send) не больше 65535 байт. Новое приложение держит отправки соединения по порядку и говорит об этом
 // в ответе tcp.listen (ordered) — тогда в полёте несколько блоков сразу; старое (пул потоков без порядка) — по одному, но блоками покрупнее.
-const RTLS_QMAX=1<<20, RTLS_CHUNK_ORD=32768, RTLS_CHUNK_OLD=60000, RTLS_WIN=8;
+const RTLS_QMAX=1<<20, RTLS_CHUNK_ORD=32768, RTLS_CHUNK_OLD=60000, RTLS_WIN=8, RTLS_CHUNK_BIN=32768;
 function rtlsAppCmd(n,o){ if(n.ws && n.ws.readyState===1){ o.id=++n.cid; n.ws.send(JSON.stringify(o)); return o.id; } return 0; }
 function rtlsAppOpen(n,url){
   let ws;
   try{ ws=new WebSocket(url); }catch(e){ n.status='error: '+e.message; rtlsRetry(n,url); return; }
-  n.ws=ws; n.status='connecting to the app…'; n.server=0; n.conn=0; n.aq=[]; n.aqN=0; n.inflight=0; n.cid=0; n.ordered=false;
+  n.ws=ws; n.status='connecting to the app…'; n.server=0; n.conn=0; n.aq=[]; n.aqN=0; n.inflight=0; n.cid=0; n.ordered=false; n.binary=false;
   ws.onopen=()=>{ ws.send(JSON.stringify({sub:['net']}));                              // события accept / data / close приложение шлёт только подписавшимся
     n.listenAt=performance.now(); n.listenWarn=0; n.listenId=rtlsAppCmd(n,{cmd:'tcp.listen',port:Math.round(+n.p.port)||1234,lan:!!n.p.lan}); n.status='asking the app to listen on :'+(Math.round(+n.p.port)||1234)+'…'; };
   ws.onerror=()=>{ n.status='connection error'; };
@@ -49,7 +49,7 @@ function rtlsAppMsg(n,m){
   {
     if(m.src==='cmd'){
       if(m.cmd==='tcp.listen' && m.id===n.listenId){
-        if(m.ok){ n.server=m.server; n.ordered=m.ordered===true; n.status='listening on port '+m.port+(n.p.lan ? ' (LAN)' : ' (this phone only)')+' — waiting for a client'; }
+        if(m.ok){ n.server=m.server; n.ordered=m.ordered===true; n.binary=m.binary===true; n.status='listening on port '+m.port+(n.p.lan ? ' (LAN)' : ' (this phone only)')+' — waiting for a client'; }
         else{
           n.listenWarn=1; n.want=false;
           n.status= m.err==='forbidden'
@@ -71,6 +71,15 @@ function rtlsAppMsg(n,m){
 function rtlsAppDrop(n){ n.aq=[]; n.aqN=0; n.inflight=0; if(n.conn){ n.conn=0; rtlsClient(n,false); } }       // клиент ушёл (событие close или ошибка tcp.send)
 function rtlsAppSend(n,u8,force){
   if(!n.ws || n.ws.readyState!==1 || !n.conn) return false;
+  if(n.binary){                                                                          // двоичные кадры [1][conn u32 BE][данные]: без hex и без ответа на каждый блок
+    if(!force && n.ws.bufferedAmount>RTLS_QMAX) return false;                            // канал забит — блок пропускаем, как медленному клиенту
+    for(let o=0;o<u8.length;o+=RTLS_CHUNK_BIN){
+      const c=u8.subarray(o,o+RTLS_CHUNK_BIN), f=new Uint8Array(5+c.length);
+      f[0]=1; new DataView(f.buffer).setUint32(1,n.conn>>>0,false); f.set(c,5);
+      n.ws.send(f);
+    }
+    return true;
+  }
   if(!force && n.aqN>RTLS_QMAX) return false;
   const ch=n.ordered ? RTLS_CHUNK_ORD : RTLS_CHUNK_OLD;
   for(let o=0;o<u8.length;o+=ch){ const c=u8.subarray(o,o+ch); n.aq.push(c); n.aqN+=c.length; }
@@ -144,7 +153,7 @@ def({ id:'rtlserve', title:'rtl_tcp Server (any SDR)', cat:'IQ', kw:'rtl_tcp rtl
     n.srIn=s ? s.sr : 0;
     if(s && n.cli && n.hello && n.want){
       // клиент попросил частоту ниже, чем даёт поток (SDR++ — 250 kS/s, USB SDR — от 960 kS/s): пересэмплируем, а не врём о частоте
-      const want=n.got.sr ? n.st.sr : 0, rs= want>0 && s.sr>want*1.005 ? rtlsRs(n,s.sr,want) : null;
+      const want=n.got.sr ? n.st.sr : 0, rs= want>0 && Math.abs(s.sr-want)>want*0.005 && s.sr*1.3>=want ? rtlsRs(n,s.sr,want) : null;
       n.resamp= rs ? s.sr+'>'+want : '';
       for(const c of s.chunks){
         let u;
@@ -164,10 +173,10 @@ def({ id:'rtlserve', title:'rtl_tcp Server (any SDR)', cat:'IQ', kw:'rtl_tcp rtl
     if(now-n.rateT>1000){ n.rate=(n.sent-n.rateB)/((now-n.rateT)/1000); n.rateB=n.sent; n.rateT=now; }
     const st=n.st, g=n.got;
     const t=(n.warn && !n.ws ? '⚠ '+n.warn+'\n' : '')+n.status+(n.cli ? ' · '+(n.peer ? n.peer+' · ' : '')+(n.rate/2e6).toFixed(3)+' MS/s sent' : '')+(n.dropped ? ' · dropped '+n.dropped : '')+
-      (n.cli && !rtlsWebrtc(n) && n.ws ? '\nlink: '+(n.ordered ? 'pipelined (8 blocks in flight)' : 'one block at a time — the DSP app is old, update it for a full rate') : '')+
+      (n.cli && !rtlsWebrtc(n) && n.ws ? '\nlink: '+(n.binary ? 'binary frames (no hex)' : n.ordered ? 'pipelined hex (8 blocks in flight) — update the DSP app for binary frames, half the Wi-Fi traffic' : 'one block at a time — the DSP app is old, update it for a full rate') : '')+
       (n.cli && !n.srIn ? '\n⚠ no IQ on the input — wire USB SDR → iq' : '')+
       (n.cmds ? '\nclient wants: '+(g.freq ? (st.freq/1e6).toFixed(6)+' MHz ' : '')+(g.sr ? (st.sr/1e6).toFixed(3)+' MS/s ' : '')+(g.gain ? st.gain+' dB' : '')+
-        (n.srIn && g.sr && n.resamp ? '\nresampling '+(n.srIn/1e6).toFixed(3)+' → '+(st.sr/1e6).toFixed(3)+' MS/s for the client' : n.srIn && g.sr && Math.abs(n.srIn-st.sr)>1 ? '\n⚠ stream is '+(n.srIn/1e6).toFixed(3)+' MS/s, the client asked more ('+(st.sr/1e6).toFixed(3)+') — raise the SDR rate' : '')+
+        (n.srIn && g.sr && n.resamp ? '\nresampling '+(n.srIn/1e6).toFixed(3)+' → '+(st.sr/1e6).toFixed(3)+' MS/s for the client' : n.srIn && g.sr && Math.abs(n.srIn-st.sr)>st.sr*0.005 ? '\n⚠ stream is '+(n.srIn/1e6).toFixed(3)+' MS/s, the client asked much more ('+(st.sr/1e6).toFixed(3)+') — raise the SDR rate' : '')+
         '\n'+n.log.join('\n') : '');
     if(r.textContent!==t) r.textContent=t; }
 });

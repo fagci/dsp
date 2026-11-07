@@ -53,7 +53,7 @@ export function mockApp(feed, opt = {}) {
           setImmediate(() => watch(n, s));
         });
         ss.on('error', (e) => reply(id, cmd, e.code || e.message));
-        ss.listen(j.port, j.lan === false ? '127.0.0.1' : '0.0.0.0', () => { servers.set(sid, ss); reply(id, cmd, null, { server: sid, port: ss.address().port, ...(opt.legacy ? {} : { ordered: true }) }); });
+        ss.listen(j.port, j.lan === false ? '127.0.0.1' : '0.0.0.0', () => { servers.set(sid, ss); reply(id, cmd, null, { server: sid, port: ss.address().port, ...(opt.legacy ? {} : { ordered: true }), ...(opt.legacy || opt.nobin ? {} : { binary: true }) }); });
         ss.on('close', () => { if (servers.delete(sid)) ev({ ev: 'close', server: sid, proto: 'tcp' }); });
         return;
       }
@@ -102,6 +102,8 @@ export function mockApp(feed, opt = {}) {
   };
   return {
     send: (j) => setImmediate(() => run(j)),
+    // двоичный кадр [1][conn u32 BE][данные] — как BridgeServer.onBinary / NetHub.sendBin приложения
+    sendBin: (b) => { if (b.length <= 5 || b[0] !== 1) return; const s = tcp.get(b.readUInt32BE(1)); if (s) s.write(b.subarray(5)); },
     stop: () => { for (const s of tcp.values()) s.destroy(); for (const s of servers.values()) s.close(); for (const s of udp.values()) s.close(); tcp.clear(); servers.clear(); udp.clear(); },
     counts: () => ({ tcp: tcp.size, servers: servers.size, udp: udp.size }),
   };

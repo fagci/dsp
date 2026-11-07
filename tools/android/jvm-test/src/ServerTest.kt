@@ -249,6 +249,14 @@ fun main() {
     fake.sendText("""{"cmd":"sms.list"}""", true).get()
     ok("a wrong key is not trusted", until { cmds.count { it.second == "sms.list" } == 2 } && cmds.last() == (false to "sms.list"), cmds.toString())
     ok("sensitive command names", BridgeServer.sensitiveCmd("sms.send") && BridgeServer.sensitiveCmd("contacts.find") && !BridgeServer.sensitiveCmd("notify") && !BridgeServer.sensitiveCmd("torch"))
+    // --- двоичные кадры [1][conn u32 BE][данные]: поток байт мимо JSON (rtl_tcp Server страницы) ---
+    val bins = java.util.concurrent.CopyOnWriteArrayList<ByteArray>()
+    srv.onBinary = { _, b -> bins.add(b) }
+    val binFrame = byteArrayOf(1, 0, 0, 0, 7, 10, 20, 30)
+    own.sendBinary(java.nio.ByteBuffer.wrap(binFrame), true).get()
+    ok("binary frame [1][conn][data] reaches onBinary whole", until { bins.size == 1 } && bins[0].contentEquals(binFrame))
+    own.sendBinary(java.nio.ByteBuffer.wrap("""{"cmd":"sms.list"}""".toByteArray()), true).get()
+    ok("JSON sent as a binary frame is still a command", until { cmds.count { it.second == "sms.list" } == 3 } && bins.size == 1)
     guest.abort(); own.abort(); fake.abort()
     srv.stop()
     ok("stopped", !srv.listening)

@@ -68,6 +68,8 @@ class BridgeServer(
 
     /** Команды клиента: {"cmd":"notify|torch|sms.send|…","id":N,…}; ответ — запись {src:'cmd', id, ok, …} только этому клиенту. */
     @Volatile var onCommand: ((Client, JSONObject) -> Unit)? = null
+    /** Двоичный кадр [1][conn u32 BE][данные] — поток байт в TCP-соединение без hex и ответов (rtl_tcp Server страницы). */
+    @Volatile var onBinary: ((Client, ByteArray) -> Unit)? = null
 
     /** USB-бэкенд для /usb; без него путь отвечает 404. */
     @Volatile var usb: UsbBackend? = null
@@ -393,6 +395,7 @@ class BridgeServer(
     private fun readLoop(c: Client) {
         val inp = DataInputStream(BufferedInputStream(c.sock.getInputStream()))
         val msg = ByteArrayOutputStream()
+        var bin = false
         while (!c.dead && running) {
             val b0 = inp.read()
             if (b0 < 0) return
@@ -409,7 +412,16 @@ class BridgeServer(
             when (op) {
                 8 -> return
                 9 -> c.out.offer(frame(pl, 10))
-                0, 1, 2 -> { msg.write(pl); if (fin) { onMessage(c, msg.toString("UTF-8")); msg.reset() } }
+                0, 1, 2 -> {
+                    if (op != 0) bin = op == 2
+                    msg.write(pl)
+                    if (fin) {
+                        val all = msg.toByteArray(); msg.reset()
+                        // двоичный кадр с меткой 1 — поток байт; остальное (в т.ч. JSON, посланный двоичным кадром) — как раньше, текстом
+                        if (bin && all.size > 5 && all[0] == 1.toByte() && onBinary != null) onBinary?.invoke(c, all)
+                        else onMessage(c, String(all, Charsets.UTF_8))
+                    }
+                }
             }
         }
     }
