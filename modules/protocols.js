@@ -1670,24 +1670,28 @@ const FT8_GP=(()=>{ const N=96, c=Math.PI*2*Math.sqrt(2/Math.LN2), t=new Float32
   return t; })();
 const FT8_TX_SEC=79*.16, FT8_TX_DELAY=.5;
 // «CQ R6HABA KO85» не лезет в одно сообщение (в типе 4 нет места для локатора): второй слот — свободный текст «R6HABA KO85»
-function ft8GridMsg(text){
+// или (hashed=true) тип 1 «CQ <R6HABA> KO85» — позывной хэшем, его уже знают те, кто принял слот типа 4
+function ft8GridMsg(text,hashed){
   const w=(text||'').toUpperCase().trim().split(/\s+/);
   if(w.length!==3 || w[0]!=='CQ' || !/^[A-R]{2}\d\d$/.test(w[2]) || ft8PackCall(w[1])!==null) return null;
   const m=w[1]+' '+w[2], b=ft8Pack('CQ '+w[1]+' '+w[2]);
-  return b && ft8Unpack(b).indexOf('CQ')===0 && m.length<=13 ? m : null; }
+  if(!b || ft8Unpack(b).indexOf('CQ')!==0) return null;
+  return hashed ? 'CQ <'+w[1]+'> '+w[2] : m.length<=13 ? m : null; }
 
 def({ id:'ft8Tx', title:'FT8: Transmit', cat:'Protocols',
   ins:[{n:'text',t:'txt'},{n:'freq',t:'num'}], outs:[{n:'out',t:'sig'}], readout:true,
   params:[{n:'text',t:'text',d:'CQ K1ABC FN42'},
           {n:'freq',t:'range',min:200,max:3000,step:1,d:1500,label:'tone 0 frequency, Hz'},
           {n:'slots',t:'select',opts:['every','even','odd'],d:'every',label:'15 s slots (UTC) to transmit in'},
-          {n:'lvl',t:'range',min:.05,max:1,step:.05,d:.5,label:'level'}],
+          {n:'lvl',t:'range',min:.05,max:1,step:.05,d:.5,label:'level'},
+          {n:'gridmode',t:'select',opts:['free text','hashed CQ'],d:'free text',label:'grid of a non-standard call (own slot): «CALL GRID» as free text, or «CQ <CALL> GRID» (type 1; shows the call only to those who decoded the CQ slot)'}],
   init:n=>{ n.slot=-1; n.t=-99; n.ph=0; n.key=null; n.tones=null; n.msg='';n.text=''; n.alt=0; n.tones0=n.tones1=null; },
   process(n,I){
     if(typeof I.freq==='number') setMod(n,'freq',I.freq);
     const o=buf(n,'out'), sr=Eng.sr, txt=(typeof I.text==='string'&&I.text) ? I.text : n.p.text;
-    if(n.key!==txt){ n.key=txt; const b=ft8Pack(txt); n.tones0=b ? ft8Tones(b) : null; n.msg0=b ? ft8Unpack(b) : null;
-      const g=ft8GridMsg(txt), b2=g ? ft8Pack(g) : null;         // «CQ НЕСТАНДАРТНЫЙ ЛОКАТОР»: локатор уходит отдельным слотом
+    const key=txt+'|'+n.p.gridmode;
+    if(n.key!==key){ n.key=key; const b=ft8Pack(txt); n.tones0=b ? ft8Tones(b) : null; n.msg0=b ? ft8Unpack(b) : null;
+      const g=ft8GridMsg(txt,n.p.gridmode==='hashed CQ'), b2=g ? ft8Pack(g) : null;         // «CQ НЕСТАНДАРТНЫЙ ЛОКАТОР»: локатор уходит отдельным слотом
       n.tones1=b2 ? ft8Tones(b2) : null; n.msg1=b2 ? ft8Unpack(b2) : null; n.tones=n.tones0; n.msg=n.msg0; }
     const now=Date.now(), slot=Math.floor(now/15000), want=n.p.slots==='every' || (slot%2===0)===(n.p.slots==='even');
     if(slot!==n.slot){ n.slot=slot; n.t=(now-slot*15000)/1000-FT8_TX_DELAY;
@@ -1705,7 +1709,7 @@ def({ id:'ft8Tx', title:'FT8: Transmit', cat:'Protocols',
       o[i]=a*Math.sin(n.ph); }
     n.ph%=2*Math.PI;
     return {out:o}; },
-  draw(n){ const r=n.el.querySelector('.readout'), t=n.tones ? (n.msg||'')+' · '+(n.t>=0&&n.t<FT8_TX_SEC ? 'sending '+n.t.toFixed(1)+' s' : 'waiting for the slot') : 'cannot pack: '+(n.key||'');
+  draw(n){ const r=n.el.querySelector('.readout'), t=n.tones ? (n.msg||'')+' · '+(n.t>=0&&n.t<FT8_TX_SEC ? 'sending '+n.t.toFixed(1)+' s' : 'waiting for the slot') : 'cannot pack: '+(n.key||'').replace(/\|[^|]*$/,'');
     if(r && r.textContent!==t) r.textContent=t; }});
 
 /* ============================================================
