@@ -56,6 +56,8 @@ class BridgeServer(
         val since = System.currentTimeMillis()
         val out = LinkedBlockingQueue<ByteArray>(4096)
         fun send(text: String) { out.offer(frame(text.toByteArray(Charsets.UTF_8))) }   // переполнена — медленный клиент теряет записи
+        /** Двоичный кадр клиенту (поток байт соединения): очередь выше 512 кадров — блок пропускаем, а не копим. */
+        fun sendBytes(b: ByteArray) { if (out.size < 512) out.offer(frame(b, 2)) }
     }
 
     /** Что просят клиенты: источники и их параметры (при нескольких клиентах — самые частые / первые заданные). */

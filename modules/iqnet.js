@@ -14,11 +14,14 @@ const IQN_FRAME={'uint8':2,'int8':2,'int16 LE':4,'float32 LE':8};               
 const IQN_TUNERS=['unknown','E4000','FC0012','FC0013','FC2580','R820T','R828D'];
 const IQN_SPY_VER=(2<<24)|1700;                                                           // версия протокола SpyServer 2.0.1700
 const IQN_SPY_DEV=['invalid','Airspy One','Airspy HF+','RTL-SDR'];
-const iqnRtl=n=>n.p.proto==='rtl_tcp' || n.p.proto==='rtl_tcp (WebRTC)';                    // оба варианта говорят одним протоколом
+const iqnRtl=n=>n.p.proto==='rtl_tcp' || n.p.proto==='rtl_tcp (WebRTC)' || n.p.proto==='rtl_tcp (DSP app)';   // все варианты говорят одним протоколом
+const iqnApp=n=>n.p.proto==='rtl_tcp (DSP app)';                                           // транспорт — tcp.connect моста приложения DSP / tools/net-bridge.mjs
 const iqnRtc=n=>n.p.proto==='rtl_tcp (WebRTC)';                                          // транспорт — канал rtl узла WebRTC Data
 const iqnSr=n=>(n.sp && n.sp.sr) || +n.p.sr || 1e6;                                     // у SpyServer частоту задаёт сервер
 const IQN_QMAX_S=2;                                                                      // сколько секунд держим в очереди, дальше выбрасываем старое
 function iqnStop(n){
+  if(n.app && n.app.conn && n.ws && n.ws.readyState===1) try{ n.ws.send(JSON.stringify({cmd:'tcp.close',conn:n.app.conn})); }catch(e){}     // соединение с rtl_tcp отпускаем
+  n.app=null;
   n.want=false; n.ok=false; n.rtcEv=-1; clearTimeout(n.timer); n.timer=null;
   const ws=n.ws; n.ws=null; n.ok=false;
   if(ws){ ws.onopen=ws.onclose=ws.onerror=ws.onmessage=null; try{ ws.close(); }catch(e){} }
@@ -30,7 +33,56 @@ function iqnStart(n){
   const url=gwUrl(String(n.p.url||'').trim());
   if(!/^wss?:\/\//i.test(url)){ n.status=gwErr(n.p.url)||'URL must start with ws:// or wss://'; return; }
   n.warn=netInsecure(url) ? NET_INSECURE_MSG : '';
-  n.want=true; n.bad=false; iqnOpen(n,url);
+  n.want=true; n.bad=false; n.sp=null; (iqnApp(n) ? iqnAppOpen : iqnOpen)(n,url);
+}
+// ---- через мост приложения DSP (или tools/net-bridge.mjs): мост сам открывает TCP к rtl_tcp — драйверу RTL-SDR на этом же телефоне (127.0.0.1:1234),
+// Raspberry Pi, другому компьютеру. Байты потока — двоичными кадрами [2][conn u32 BE][данные] (binary:true), команды — [1][conn][5 байт];
+// мост без этого (старое приложение) — записями data с hex, медленнее, но работает. ----
+function iqnAppOpen(n,url){
+  let ws;
+  try{ ws=new WebSocket(url); }catch(e){ n.status='error: '+e.message; iqnAppRetry(n,url); return; }
+  ws.binaryType='arraybuffer'; n.ws=ws; n.status='connecting to the bridge…'; n.ok=false;
+  n.q=[]; n.qN=0; n.carry=new Uint8Array(0); n.hdr=new Uint8Array(0); n.ap={}; n.tuner='';
+  const app=n.app={conn:0,binary:false,id:0};
+  const host=String(n.p.host||'127.0.0.1').trim(), port=Math.round(+n.p.port)||1234;
+  ws.onopen=()=>{
+    ws.send(JSON.stringify({sub:['net']}));                                              // записи close / data (старое приложение) приходят только подписавшимся
+    app.id=1; ws.send(JSON.stringify({cmd:'tcp.connect',id:1,host,port,timeout:5000,binary:true}));
+    n.status='connecting to rtl_tcp '+host+':'+port+'…';
+  };
+  ws.onerror=()=>{ n.status='bridge connection error'; };
+  ws.onclose=()=>{
+    if(n.ws!==ws) return;
+    n.ws=null; n.ok=false; n.app=null;
+    if(!n.bad) n.status='bridge closed'+(n.p.reconnect ? ' — reconnecting…' : '');
+    iqnAppRetry(n,url);
+  };
+  ws.onmessage=e=>{
+    if(typeof e.data!=='string'){                                                          // [2][conn u32 BE][данные]
+      const u=new Uint8Array(e.data);
+      if(u.length>5 && u[0]===2 && app.conn && new DataView(u.buffer,u.byteOffset).getUint32(1,false)===app.conn) iqnIn(n,u.subarray(5));
+      return;
+    }
+    let j; try{ j=JSON.parse(e.data); }catch(x){ return; }
+    for(const m of Array.isArray(j) ? j : [j]) iqnAppMsg(n,app,m,host,port);
+  };
+}
+function iqnAppRetry(n,url){ if(n.want && !n.bad && n.p.reconnect){ clearTimeout(n.timer); n.timer=setTimeout(()=>{ if(n.want) iqnAppOpen(n,url); },3000); } }
+function iqnAppMsg(n,app,m,host,port){
+  if(m.src==='cmd' && m.cmd==='tcp.connect' && m.id===app.id){
+    if(m.ok){ app.conn=m.conn; app.binary=m.binary===true; n.ok=true; n.status='connected to '+host+':'+port+', waiting for the rtl_tcp header…'; }
+    else{
+      n.bad=true;
+      n.status= m.err==='forbidden' ? 'the app refused tcp.connect: a page from another device may not open sockets — turn on «Let any page use actions» in the DSP app Settings'
+        : 'tcp.connect '+host+':'+port+': '+(m.msg||m.err||'refused')+' (is rtl_tcp running there? rtl_tcp -a 0.0.0.0)';
+    }
+    return;
+  }
+  if(m.src!=='net' || !app.conn || m.conn!==app.conn) return;
+  if(m.ev==='data' && typeof m.hex==='string'){                                            // старое приложение: поток записями с hex
+    const u=new Uint8Array(m.hex.length>>1); for(let i=0;i<u.length;i++) u[i]=parseInt(m.hex.substr(i*2,2),16);
+    iqnIn(n,u);
+  } else if(m.ev==='close'){ app.conn=0; n.ok=false; n.hdr=new Uint8Array(0); n.status='the rtl_tcp server closed the connection'+(n.p.reconnect ? ' — reconnecting…' : ''); if(n.ws) try{ n.ws.close(); }catch(e){} }
 }
 function iqnOpen(n,url){
   let ws;
@@ -187,6 +239,12 @@ function iqnCmd(n,cmd,val){
   const b=new Uint8Array(5); b[0]=cmd; new DataView(b.buffer).setUint32(1,val>>>0,false);
   if(iqnRtc(n)){ rtcRtlSend(n.rn,b,true); return; }
   if(!n.ws || n.ws.readyState!==1) return;
+  if(iqnApp(n)){
+    const a=n.app; if(!a || !a.conn) return;
+    if(a.binary){ const f=new Uint8Array(10); f[0]=1; new DataView(f.buffer).setUint32(1,a.conn>>>0,false); f.set(b,5); n.ws.send(f); }
+    else{ let h=''; for(const x of b) h+=(x<16 ? '0' : '')+x.toString(16); n.ws.send(JSON.stringify({cmd:'tcp.send',conn:a.conn,hex:h})); }
+    return;
+  }
   n.ws.send(b);
 }
 // WebRTC-транспорт: канал открылся — «подключились» (сервер сам шлёт заголовок), закрылся — ждём; байты забираем из очереди канала
@@ -217,8 +275,10 @@ def({ id:'iqnet', title:'IQ over Network', cat:'Sources', kw:'rtl_tcp rtl-tcp re
   ins:[{n:'rtc',t:'rtc'}],
   outs:[{n:'iq',t:'iq'},{n:'sr',t:'num'}], readout:true, tall:true,
   params:[{n:'url',t:'text',d:'ws://127.0.0.1:8766',dev:true,label:'WebSocket: ws:// wss:// (rtl_tcp: through a bridge, e.g. websockify 8766 host:1234) — or @name from Settings → Devices (the token stays there)'},
-          {n:'proto',t:'select',opts:['rtl_tcp','rtl_tcp (WebRTC)','raw stream','SpyServer'],d:'rtl_tcp',label:'protocol (rtl_tcp (WebRTC): through the WebRTC Data connection, the server is the rtl_tcp Server node on the other device; wire its link to rtc)'},
+          {n:'proto',t:'select',opts:['rtl_tcp','rtl_tcp (DSP app)','rtl_tcp (WebRTC)','raw stream','SpyServer'],d:'rtl_tcp',label:'protocol (rtl_tcp (DSP app): the app bridge or node tools/net-bridge.mjs opens the TCP connection to a standard rtl_tcp server, no websockify; rtl_tcp (WebRTC): through the WebRTC Data connection, the server is the rtl_tcp Server node on the other device; wire its link to rtc)'},
           {n:'fmt',t:'select',opts:Object.keys(IQN_FRAME),d:'uint8',label:'raw stream: sample format (interleaved I, Q)'},
+          {n:'host',t:'text',d:'127.0.0.1',label:'rtl_tcp (DSP app): server host — 127.0.0.1 is the machine of the bridge itself (the RTL-SDR driver app on the phone), or a Raspberry Pi / another computer: rtl_tcp -a 0.0.0.0'},
+          {n:'port',t:'num',d:1234,label:'rtl_tcp (DSP app): server port'},
           {n:'sr',t:'num',d:1024000,label:'sample rate, Hz (rtl_tcp: sent to the server; SpyServer: nearest decimation step)'},
           {n:'freq',t:'num',d:100000000,label:'center frequency, Hz (rtl_tcp, SpyServer: tuned; raw stream: only labels the stream)'},
           {n:'gain',t:'num',d:0,label:'rtl_tcp: tuner gain, dB (0 — auto)'},
@@ -230,7 +290,7 @@ def({ id:'iqnet', title:'IQ over Network', cat:'Sources', kw:'rtl_tcp rtl-tcp re
           {n:'reconnect',t:'check',d:true,label:'reconnect'},
           {n:'connect',t:'button',label:'Connect',fn:n=>iqnStart(n)},
           {n:'disconnect',t:'button',label:'Disconnect',fn:n=>iqnStop(n)}],
-  init:n=>{ n.ws=null; n.want=false; n.ok=false; n.timer=null; n.q=[]; n.qN=0; n.carry=new Uint8Array(0); n.hdr=null; n.ap={}; n.tuner=''; n.sp=null;
+  init:n=>{ n.app=null; n.ws=null; n.want=false; n.ok=false; n.timer=null; n.q=[]; n.qN=0; n.carry=new Uint8Array(0); n.hdr=null; n.ap={}; n.tuner=''; n.sp=null;
             n.rn=null; n.rtcEv=-1; n.gap=false; n.dropped=0; n.bytes=0; n.rate=0; n.rateT=performance.now(); n.rateB=0; n.fc=null; n.status='not connected'; n.warn=''; },
   dispose:n=>iqnStop(n),
   process(n,I){

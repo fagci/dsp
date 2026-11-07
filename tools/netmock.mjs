@@ -19,8 +19,12 @@ export function mockApp(feed, opt = {}) {
   const reply = (id, cmd, err, extra = {}) => setImmediate(() => feed({ src: 'cmd', cmd, id, ok: !err, ...(err ? { err: 'error', msg: err } : {}), ...extra }));
   const hex = (b) => b.toString('hex');
   const payload = (j) => j.hex != null ? Buffer.from(j.hex, 'hex') : j.text != null ? Buffer.from(j.text, 'utf8') : null;
+  const binConns = new Set();                                     // tcp.connect с binary:true — байты клиенту кадрами [2][conn u32 BE][данные] (opt.feedBin)
   const watch = (n, s) => {
-    s.on('data', (b) => ev({ ev: 'data', conn: n, proto: 'tcp', hex: hex(b), n: b.length, text: b.toString() }));
+    s.on('data', (b) => {
+      if (binConns.has(n) && opt.feedBin) { const f = Buffer.alloc(5 + b.length); f[0] = 2; f.writeUInt32BE(n, 1); b.copy(f, 5); opt.feedBin(f); return; }
+      ev({ ev: 'data', conn: n, proto: 'tcp', hex: hex(b), n: b.length, text: b.toString() });
+    });
     s.on('error', () => {});
     s.on('close', () => { if (tcp.delete(n)) ev({ ev: 'close', conn: n, proto: 'tcp' }); });
   };
@@ -36,8 +40,9 @@ export function mockApp(feed, opt = {}) {
         s.once('connect', () => {
           s.setTimeout(0);
           const n = ++ids; tcp.set(n, s);
+          const bin = !!j.binary && !!opt.feedBin && !opt.legacy && !opt.nobin; if (bin) binConns.add(n);
           ev({ ev: 'open', conn: n, proto: 'tcp', peer: j.host + ':' + j.port });
-          reply(id, cmd, null, { conn: n });
+          reply(id, cmd, null, { conn: n, binary: bin });
           setImmediate(() => watch(n, s));
         });
         return;
