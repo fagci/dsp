@@ -1458,14 +1458,26 @@ function ft8Ldpc(llr,iters){                        // распростране�
 const A1=' 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ', A2='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ',
       A3='0123456789', A4=' ABCDEFGHIJKLMNOPQRSTUVWXYZ',
       AF=' 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ+-./?',
-      AN=' 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/';      // алфавит нестандартного позывного (тип 4)
+      AN=' 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ/';      // алфавит нестандартного позывного (тип 4) и хэша
+// хэш позывного (как ihashcall в WSJT-X): 11 знаков по основанию 38, умножение на 47055833459 по модулю 2^64, старшие m бит
+function ft8Hash(call,m){
+  let n=0n; for(const c of call.padEnd(11,' ').slice(0,11)){ const j=AN.indexOf(c); if(j<0) return -1; n=n*38n+BigInt(j); }
+  return Number(((47055833459n*n)&0xFFFFFFFFFFFFFFFFn)>>BigInt(64-m));
+}
+const FT8_H12=new Map(), FT8_H22=new Map();         // хэш → последний услышанный позывной
+function ft8Remember(call){
+  call=String(call||'').replace(/^<|>$/g,'');
+  if(call.length<3 || call.includes('.')) return;
+  const h12=ft8Hash(call,12); if(h12<0) return;
+  FT8_H12.set(h12,call); FT8_H22.set(ft8Hash(call,22),call);
+}
 function ft8Call(n28){
   const NTOK=2063592, MAX22=4194304;
   if(n28<NTOK){
     if(n28===0) return 'DE'; if(n28===1) return 'QRZ'; if(n28===2) return 'CQ';
     if(n28<=1002) return 'CQ '+String(n28-3).padStart(3,'0');
     return 'CQ'; }
-  if(n28<NTOK+MAX22) return '<'+(n28-NTOK).toString(36)+'>';
+  if(n28<NTOK+MAX22) return '<'+(FT8_H22.get(n28-NTOK)||'...')+'>';
   let n=n28-NTOK-MAX22;
   const i6=n%27; n=(n-i6)/27;
   const i5=n%27; n=(n-i5)/27;
@@ -1504,16 +1516,19 @@ function ft8Unpack(b77){
   if(i3===1||i3===2){
     const c1=bitsNum(b77,0,28), r1=b77[28], c2=bitsNum(b77,29,28), r2=b77[57];
     const R=b77[58], g15=bitsNum(b77,59,15);
-    const s1=ft8Call(c1)+(r1?'/R':''), s2=ft8Call(c2)+(r2?'/R':'');
+    const a1=ft8Call(c1), a2=ft8Call(c2);
+    if(c1>=6257896) ft8Remember(a1); if(c2>=6257896) ft8Remember(a2);
+    const s1=a1+(r1?'/R':''), s2=a2+(r2?'/R':'');
     const g=ft8Grid(g15,R);
     return (s1+' '+s2+(g?' '+g:'')).trim(); }
   if(i3===4){                                       // нестандартный позывной: 12-бит хэш + 58 бит (до 11 знаков)
     let n=0n; for(let i=0;i<58;i++) n=n*2n+BigInt(b77[12+i]);
     let c=''; for(let i=0;i<11;i++){ c=AN[Number(n%38n)]+c; n/=38n; }
     c=c.trim(); const flip=b77[70], rr=bitsNum(b77,71,2), cq=b77[73];
-    const tail=['','RRR','RR73','73'][rr];
-    const s=cq ? 'CQ '+c : flip ? c+' <...>' : '<...> '+c;
-    return (s+(tail?' '+tail:'')).trim(); }
+    const h='<'+(FT8_H12.get(bitsNum(b77,0,12))||'...')+'>';
+    ft8Remember(c);
+    if(cq) return 'CQ '+c;
+    return (flip ? c+' '+h : h+' '+c)+(rr ? ' '+['','RRR','RR73','73'][rr] : ''); }
   return '(type i3='+i3+')';
 }
 
@@ -1587,6 +1602,7 @@ def({ id:'ft8Rx', title:'FT8: Receive Slots', cat:'Decoders',
 // позывной → n28 (стандартные позывные; CQ / DE / QRZ), null — не влезает в формат
 function ft8PackCall(call){
   call=call.toUpperCase();
+  if(/^<[^<>]+>$/.test(call)){ const h=ft8Hash(call.slice(1,-1),22); return h<0 ? null : 2063592+h; }   // хэш-позывной: 22 бита
   if(call==='DE') return 0; if(call==='QRZ') return 1; if(call==='CQ') return 2;
   if(call.length<3 || call.length>6) return null;
   let c=call;
@@ -1608,6 +1624,7 @@ function ft8PackGrid(g){
 // текст → 77 бит (тип 1: «CALL1 CALL2 GRID|отчёт», «R» перед отчётом; иначе свободный текст до 13 знаков), null — не упаковалось
 function ft8Pack(text){
   const t=(text||'').toUpperCase().trim().replace(/\s+/g,' '), w=t.split(' '), b=new Array(77).fill(0);
+  for(const x of w){ const m=/^<([^<>]+)>$/.exec(x); if(m) ft8Remember(m[1]); }   // хэш-позывной запоминаем
   const put=(at,len,v)=>{ for(let i=len-1;i>=0;i--){ b[at+i]=v%2; v=Math.floor(v/2); } };
   if(w.length>=2 && w.length<=3){
     const r1=w[0].endsWith('/R'), r2=w[1].endsWith('/R');
@@ -1619,13 +1636,20 @@ function ft8Pack(text){
       put(0,28,c1); b[28]=+r1; put(29,28,c2); b[57]=+r2; b[58]=R; put(59,15,g15); put(74,3,1);
       return b; }
   }
-  // тип 4: «CQ ПОЗЫВНОЙ» с нестандартным позывным (до 11 знаков, напр. R6HABA, PJ4/K1ABC); локатор в нём не передаётся
-  if(w.length>=2 && w.length<=3 && w[0]==='CQ' && w[1].length<=11 && [...w[1]].every(c=>AN.indexOf(c)>0 || c===' ')
-     && (w.length===2 || ft8PackGrid(w[2])!==null) && ft8PackCall(w[1])===null){
-    let n=0n; for(const c of w[1].padEnd(11,' ')) n=n*38n+BigInt(AN.indexOf(c));
-    for(let i=57;i>=0;i--){ b[12+i]=Number(n&1n); n>>=1n; }
-    b[70]=1; b[73]=1; put(74,3,4);                  // c58 — первый позывной, CQ, хэш не нужен
-    return b; }
+  // тип 4: «CQ ПОЗЫВНОЙ» или «<ХЭШ> ПОЗЫВНОЙ [RRR|RR73|73]» / «ПОЗЫВНОЙ <ХЭШ> …»; нестандартный позывной до 11 знаков, локатор не передаётся
+  if(w.length>=2 && w.length<=3){
+    const plain=x=>x.length>=1 && x.length<=11 && [...x].every(c=>AN.indexOf(c)>0);
+    const rrs=['','RRR','RR73','73'], hash=x=>/^<[^<>]+>$/.test(x) ? ft8Hash(x.slice(1,-1),12) : null;
+    let call=null, h12=0, flip=0, cq=0, rr=0;
+    if(w[0]==='CQ'){
+      if(plain(w[1]) && w[1].length>4 && ft8PackCall(w[1])===null && (w.length===2 || ft8PackGrid(w[2])!==null)){ call=w[1]; cq=1; } }
+    else if(hash(w[0])!==null && plain(w[1])){ call=w[1]; h12=hash(w[0]); rr=rrs.indexOf(w[2]||''); }
+    else if(hash(w[1])!==null && plain(w[0])){ call=w[0]; h12=hash(w[1]); flip=1; rr=rrs.indexOf(w[2]||''); }
+    if(call!==null && rr>=0 && h12>=0){
+      let n=0n; for(const c of call.padStart(11,' ')) n=n*38n+BigInt(AN.indexOf(c));   // позывной прижат вправо (adjustr)
+      put(0,12,h12); for(let i=57;i>=0;i--){ b[12+i]=Number(n&1n); n>>=1n; }
+      b[70]=flip; put(71,2,rr); b[73]=cq; put(74,3,4);
+      return b; } }
   if(t.length>13 || [...t].some(c=>AF.indexOf(c)<0)) return null;
   let n=0n; for(const c of t.padEnd(13,' ')) n=n*42n+BigInt(AF.indexOf(c));
   for(let i=70;i>=0;i--){ b[i]=Number(n&1n); n>>=1n; }
