@@ -87,3 +87,7 @@ function rtlsPick(want,list){
   for(const r of list) if(Math.abs(Math.log(r/want))<Math.abs(Math.log(b/want))) b=r;
   return b;
 }
+
+// байты → hex без пробелов (поле hex команд приложения tcp.send)
+const rtlsHexC=u=>{ let s=''; for(let i=0;i<u.length;i++) s+=(u[i]<16 ? '0' : '')+u[i].toString(16); return s; };
+const rtlsFromHex=h=>{ const o=new Uint8Array(h.length>>1); for(let i=0;i<o.length;i++) o[i]=parseInt(h.substr(i*2,2),16); return o; };

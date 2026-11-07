@@ -3894,12 +3894,12 @@ markWiresDirty();
 preset('USB SDR: rtl_tcp Server (WebRTC / SDR++)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Shares the USB SDR as rtl_tcp. The node «rtl_tcp Server» sends the client the «RTL0» header and the IQ stream (uint8) and decodes the client\'s 5-byte commands [code][uint32 BE] (01 frequency, 02 rate, 04 gain in tenths of dB, 05 ppm, 0E bias-T…): the Hz / dB it gets go through the wires to the USB SDR inputs freq / sr / gainDb, and every command is listed in hex in its readout and on the rec output.\n'+
-  '1) Another browser: WebRTC Data → link → rtc (offer / answer or the room), there «Remote SDR: FM Receiver (rtl_tcp over WebRTC)». 2) SDR++, GQRX, rtl_power: run `node tools/rtltcp-bridge.mjs` on this computer, set transport «WebSocket (bridge)» and press Start; the client connects to TCP port 1234 (source «RTL-TCP»).\n'+
+  '1) Another browser: WebRTC Data → link → rtc (offer / answer or the room), there «Remote SDR: FM Receiver (rtl_tcp over WebRTC)». 2) SDR++, GQRX, rtl_power on the same network: on the phone the DSP app itself listens on TCP port 1234 (transport «Phone app (TCP port)», the app bridge ws://127.0.0.1:8765 or @name from Settings → Devices) — in SDR++ choose the source «RTL-TCP», the phone\'s address, port 1234. On a computer without the app: `node tools/rtltcp-bridge.mjs` and transport «WebSocket (bridge)».\n'+
   'Connect the SDR first, then press Start. The link carries about 2 MB/s per 1 MS/s: lower the rate for the internet.'});
 nt.size.w=760; nt.size.h=200; applySize(nt);
 const rx=addNode('rtlsdr',40,300,{sr:'1024000',auto:false,gainDb:30,demod:'WFM',freq:100000000});
 rx.size.w=320; rx.size.h=260; applySize(rx);
-const sv=addNode('rtlserve',420,300,{transport:'WebRTC'});
+const sv=addNode('rtlserve',420,300,{transport:'Phone app (TCP port)',url:'ws://127.0.0.1:8765',port:1234});
 sv.size.w=340; sv.size.h=300; applySize(sv);
 const rt=addNode('rtcdata',420,640,{});
 const sp=addNode('iqSpec',40,620,{size:'4096'});
