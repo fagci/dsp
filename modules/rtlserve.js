@@ -95,6 +95,11 @@ function rtlsClient(n,on){
   if(on){ n.status='client connected'; if(!rtlsWebrtc(n)) rtlsHello(n); }        // WebRTC: заголовок — по «привету» клиента (команда 0x00)
   else n.status=rtlsWebrtc(n) ? 'waiting for the client' : 'listening on port '+(Math.round(+n.p.port)||1234)+' — waiting for a client';
 }
+function rtlsRs(n,fin,fout){
+  const k=fin+'>'+fout;
+  if(!n.rs || n.rs.k!==k){ n.rs=new RtlsResampler(fin,fout); n.rs.k=k; }
+  return n.rs;
+}
 function rtlsHello(n){ rtlsSend(n,rtlsHeader(rtlsTunerId(n.p.tuner),Math.max(0,+n.p.gains|0)),true); n.hello=true; }
 function rtlsRx(n,u){
   for(const c of n.parser.feed(u)){
@@ -120,7 +125,7 @@ def({ id:'rtlserve', title:'rtl_tcp Server (any SDR)', cat:'IQ', kw:'rtl_tcp rtl
     {n:'start',t:'button',label:'Start',fn:n=>rtlsStart(n)},
     {n:'stop',t:'button',label:'Stop',fn:n=>rtlsStop(n)}],
   init:n=>{ n.ws=null; n.want=false; n.cli=false; n.timer=null; n.parser=new RtlsParser(); n.st=rtlsNewState(); n.got={}; n.recs=[]; n.log=[];
-            n.cmds=0; n.bytes=0; n.sent=0; n.server=0; n.conn=0; n.aq=[]; n.aqN=0; n.inflight=0; n.cid=0; n.listenId=0; n.listenAt=0; n.listenWarn=0; n.peer=''; n.ordered=false; n.inflightT=0; n.dropped=0; n.rn=null; n.rtlEv=-1; n.status='stopped'; n.warn=''; n.srIn=0; n.rate=0; n.rateT=performance.now(); n.rateB=0; },
+            n.cmds=0; n.bytes=0; n.sent=0; n.server=0; n.conn=0; n.aq=[]; n.aqN=0; n.inflight=0; n.cid=0; n.listenId=0; n.listenAt=0; n.listenWarn=0; n.rs=null; n.resamp=''; n.peer=''; n.ordered=false; n.inflightT=0; n.dropped=0; n.rn=null; n.rtlEv=-1; n.status='stopped'; n.warn=''; n.srIn=0; n.rate=0; n.rateT=performance.now(); n.rateB=0; },
   dispose:n=>rtlsStop(n),
   process(n,I){
     const rtc=n.p.transport==='WebRTC';
@@ -138,8 +143,12 @@ def({ id:'rtlserve', title:'rtl_tcp Server (any SDR)', cat:'IQ', kw:'rtl_tcp rtl
     const s=iqIn(I,'iq');
     n.srIn=s ? s.sr : 0;
     if(s && n.cli && n.hello && n.want){
+      // клиент попросил частоту ниже, чем даёт поток (SDR++ — 250 kS/s, USB SDR — от 960 kS/s): пересэмплируем, а не врём о частоте
+      const want=n.got.sr ? n.st.sr : 0, rs= want>0 && s.sr>want*1.005 ? rtlsRs(n,s.sr,want) : null;
+      n.resamp= rs ? s.sr+'>'+want : '';
       for(const c of s.chunks){
-        const u=rtlsToU8(c);
+        let u;
+        if(rs){ const q=rs.push(c.re,c.im); u=rtlsToU8({re:q.re,im:q.im}); } else u=rtlsToU8(c);
         if(rtlsSend(n,u)) n.sent+=u.length; else n.dropped++;
       }
     }
@@ -155,9 +164,10 @@ def({ id:'rtlserve', title:'rtl_tcp Server (any SDR)', cat:'IQ', kw:'rtl_tcp rtl
     if(now-n.rateT>1000){ n.rate=(n.sent-n.rateB)/((now-n.rateT)/1000); n.rateB=n.sent; n.rateT=now; }
     const st=n.st, g=n.got;
     const t=(n.warn && !n.ws ? '⚠ '+n.warn+'\n' : '')+n.status+(n.cli ? ' · '+(n.peer ? n.peer+' · ' : '')+(n.rate/2e6).toFixed(3)+' MS/s sent' : '')+(n.dropped ? ' · dropped '+n.dropped : '')+
+      (n.cli && !rtlsWebrtc(n) && n.ws ? '\nlink: '+(n.ordered ? 'pipelined (8 blocks in flight)' : 'one block at a time — the DSP app is old, update it for a full rate') : '')+
       (n.cli && !n.srIn ? '\n⚠ no IQ on the input — wire USB SDR → iq' : '')+
       (n.cmds ? '\nclient wants: '+(g.freq ? (st.freq/1e6).toFixed(6)+' MHz ' : '')+(g.sr ? (st.sr/1e6).toFixed(3)+' MS/s ' : '')+(g.gain ? st.gain+' dB' : '')+
-        (n.srIn && g.sr && Math.abs(n.srIn-st.sr)>1 ? '\n⚠ stream is '+(n.srIn/1e6).toFixed(3)+' MS/s, client asked '+(st.sr/1e6).toFixed(3) : '')+
+        (n.srIn && g.sr && n.resamp ? '\nresampling '+(n.srIn/1e6).toFixed(3)+' → '+(st.sr/1e6).toFixed(3)+' MS/s for the client' : n.srIn && g.sr && Math.abs(n.srIn-st.sr)>1 ? '\n⚠ stream is '+(n.srIn/1e6).toFixed(3)+' MS/s, the client asked more ('+(st.sr/1e6).toFixed(3)+') — raise the SDR rate' : '')+
         '\n'+n.log.join('\n') : '');
     if(r.textContent!==t) r.textContent=t; }
 });

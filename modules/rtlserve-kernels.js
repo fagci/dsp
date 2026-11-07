@@ -91,3 +91,50 @@ function rtlsPick(want,list){
 // байты → hex без пробелов (поле hex команд приложения tcp.send)
 const rtlsHexC=u=>{ let s=''; for(let i=0;i<u.length;i++) s+=(u[i]<16 ? '0' : '')+u[i].toString(16); return s; };
 const rtlsFromHex=h=>{ const o=new Uint8Array(h.length>>1); for(let i=0;i<o.length;i++) o[i]=parseInt(h.substr(i*2,2),16); return o; };
+
+/* Пересэмплирование потока под частоту, которую попросил клиент (SDR++ просит 250 kS/s, а USB SDR умеет от 960 kS/s).
+   Каскад: ФНЧ (окно Блэкмана, срез 0.47·Fout) + прореживание в D = ⌊Fin/Fout⌋ раз, затем кубическая интерполяция (4 точки, Лагранж)
+   до Fout — линейная на 75 кГц при 256 кС/с занижала амплитуду на четверть. Поточный: состояние (история фильтра, 3 последних
+   отсчёта, фаза) переходит между чанками любой длины. Только Fin > Fout. */
+class RtlsResampler{
+  constructor(fin,fout,tpp){
+    this.fin=fin; this.fout=fout;
+    this.D=Math.max(1,Math.floor(fin/fout+1e-9));
+    const D=this.D, L=D*(tpp||24)+1, fc=0.47*fout/fin, mid=(L-1)/2, h=new Float32Array(L);
+    let sum=0;
+    for(let i=0;i<L;i++){
+      const x=i-mid, sinc=x===0 ? 2*fc : Math.sin(2*Math.PI*fc*x)/(Math.PI*x);
+      h[i]=sinc*(0.42-0.5*Math.cos(2*Math.PI*i/(L-1))+0.08*Math.cos(4*Math.PI*i/(L-1))); sum+=h[i];
+    }
+    for(let i=0;i<L;i++) h[i]/=sum;
+    this.h=h; this.hr=new Float32Array(L-1); this.hi=new Float32Array(L-1); this.ph=0;       // история фильтра, фаза прореживания
+    this.ratio=(fin/D)/fout; this.pos=2;                                                     // шаг интерполяции; положение в буфере [3 прошлых | новые]
+    this.tr=new Float32Array(3); this.ti=new Float32Array(3);                                // три последних отсчёта после прореживания
+  }
+  // re, im — Float32Array одной длины (im может быть null — вещественный поток) → {re, im}
+  push(re,im){
+    const h=this.h, L=h.length, H=L-1, D=this.D, K=re.length;
+    const br=new Float32Array(H+K), bi=new Float32Array(H+K);
+    br.set(this.hr); br.set(re,H); bi.set(this.hi); if(im) bi.set(im,H);
+    const cnt=this.ph<K ? Math.floor((K-1-this.ph)/D)+1 : 0, m=cnt;
+    const ar=new Float32Array(3+m), ai=new Float32Array(3+m);
+    ar.set(this.tr); ai.set(this.ti);
+    let p=this.ph;
+    for(let k=0;k<cnt;k++,p+=D){
+      let sr=0, si=0;
+      for(let j=0;j<L;j++){ const g=h[j]; sr+=g*br[p+j]; si+=g*bi[p+j]; }
+      ar[3+k]=sr; ai[3+k]=si;
+    }
+    this.ph=p-K; this.hr.set(br.subarray(K)); this.hi.set(bi.subarray(K));
+    const maxOut=Math.ceil(m/this.ratio)+2, or=new Float32Array(maxOut), oi=new Float32Array(maxOut), len=3+m;
+    let n=0, pos=this.pos;
+    // между отсчётами i и i+1 нужны i-1 … i+2: пока i+2 не пришёл, ждём
+    while(pos<len-2 && n<maxOut){
+      const i=Math.floor(pos), f=pos-i;
+      const w0=-f*(f-1)*(f-2)/6, w1=(f+1)*(f-1)*(f-2)/2, w2=-(f+1)*f*(f-2)/2, w3=(f+1)*f*(f-1)/6;
+      or[n]=w0*ar[i-1]+w1*ar[i]+w2*ar[i+1]+w3*ar[i+2]; oi[n]=w0*ai[i-1]+w1*ai[i]+w2*ai[i+1]+w3*ai[i+2]; n++; pos+=this.ratio;
+    }
+    this.pos=pos-m; this.tr.set(ar.subarray(m)); this.ti.set(ai.subarray(m));
+    return {re:or.subarray(0,n), im:oi.subarray(0,n)};
+  }
+}
