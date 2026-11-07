@@ -55,6 +55,14 @@ Object.assign(HEX_LIB,{
   icmpv6:{ title:'ICMPv6', group:'Network', fields:[
     {n:'type',t:'u8',enum:{1:'unreachable',3:'time exceeded',128:'echo request',129:'echo reply',133:'router solicitation',134:'router advertisement',135:'neighbor solicitation',136:'neighbor advertisement'}},
     {n:'code',t:'u8'}, {n:'csum',t:'u16',fmt:'hex',calc:'inet16',pseudo:{proto:58}}, {n:'body',t:'rest'}]},
+  /* ---------- rtl_tcp: заголовок сервера и команды клиента (big-endian), см. modules/rtlserve-kernels.js ---------- */
+  'rtltcp-header':{ title:'rtl_tcp server header', group:'SDR', endian:'be', fields:[
+    {n:'magic',t:'str',len:4,enc:'ascii'},
+    {n:'tuner',t:'u32',enum:{1:'E4000',2:'FC0012',3:'FC0013',4:'FC2580',5:'R820T',6:'R828D'}},
+    {n:'gains',t:'u32'}]},
+  'rtltcp-cmd':{ title:'rtl_tcp client command', group:'SDR', endian:'be', detect:'_size==5 && cmd>=1 && cmd<=14', fields:[
+    {n:'cmd',t:'u8',fmt:'hex',enum:{1:'set frequency, Hz',2:'set sample rate, Hz',3:'gain mode (0 auto, 1 manual)',4:'tuner gain, tenths of dB',5:'frequency correction, ppm',6:'IF gain (stage<<16 | gain)',7:'test mode',8:'RTL AGC',9:'direct sampling (0 off, 1 I, 2 Q)',10:'offset tuning',11:'RTL xtal, Hz',12:'tuner xtal, Hz',13:'gain by index',14:'bias-T'}},
+    {n:'param',t:'u32'}]},
   icmp:{ title:'ICMP', group:'Network', fields:[
     {n:'type',t:'u8',enum:{0:'echo reply',3:'unreachable',8:'echo request',11:'time exceeded'}}, {n:'code',t:'u8'},
     {n:'csum',t:'u16',fmt:'hex',calc:'inet16'}, {n:'body',t:'rest'}]},

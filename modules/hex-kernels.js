@@ -31,6 +31,16 @@ const HEX_OPS={
   '<<':(a,b)=>a*Math.pow(2,b), '>>':(a,b)=>Math.floor(a/Math.pow(2,b)), '+':(a,b)=>a+b, '-':(a,b)=>a-b,
   '*':(a,b)=>a*b, '/':(a,b)=>b ? Math.trunc(a/b) : 0, '%':(a,b)=>b ? a%b : 0 };
 const HEX_PREC=[['||'],['&&'],['|'],['^'],['&'],['==','!='],['<','<=','>','>='],['<<','>>'],['+','-'],['*','/','%']];
+// разделитель из схемы: строка с \r \n \t \0 \xNN → байты
+function hexDelim(x){
+  if(Array.isArray(x)) return Uint8Array.from(x);
+  const o=[]; const s=String(x);
+  for(let i=0;i<s.length;i++){
+    if(s[i]==='\\' && i+1<s.length){ const n=s[++i]; if(n==='r') o.push(13); else if(n==='n') o.push(10); else if(n==='t') o.push(9); else if(n==='0') o.push(0); else if(n==='x' && /^[0-9a-f]{2}$/i.test(s.substr(i+1,2))){ o.push(parseInt(s.substr(i+1,2),16)); i+=2; } else o.push(n.charCodeAt(0)); }
+    else o.push(s.charCodeAt(i)&255);
+  }
+  return Uint8Array.from(o);
+}
 function hexExpr(src){
   let f=HEX_EXPR.get(src); if(f) return f;
   const T=String(src).match(/0x[0-9a-f]+|\d+|[A-Za-z_][\w.\[\]$]*|<<|>>|<=|>=|==|!=|&&|\|\||[-+*\/%&|^~!<>?:()]/gi)||[];
@@ -251,7 +261,7 @@ function hexSubOf(sub,env,lib){
   return null;
 }
 const HEX_CS6='#ABCDEFGHIJKLMNOPQRSTUVWXYZ#####_###############0123456789######';
-const HEX_SCALAR=new Set(['str6','bits','bytes','str','rest','list','pad','f32','f64']);
+const HEX_SCALAR=new Set(['varint','dname','http','str6','bits','bytes','str','rest','list','pad','f32','f64']);
 // проверка схемы для редактора JSON: список сообщений
 function hexSchemaCheck(s,lib,path){
   const e=[]; path=path||'';
@@ -307,7 +317,8 @@ function hexRun(sch,c,prefix,depth,limit){
   const saveEnd=c.end, saveBit0=c.bit&7 ? (c.bit+7)&~7 : c.bit;
   if(limit!=null) c.end=Math.min(c.end,limit);
   if(c.bit&7) c.bit=saveBit0;
-  const ss=c.bit>>3, recs=[];
+  const ss=c.bit>>3, recs=[], saveBase=c.msgBase;
+  if(sch.msg) c.msgBase=ss;                                    // начало сообщения: от него считаются указатели сжатия имён DNS (t:'dname')
   const env=hexLookup(c,prefix,ss,0);
   for(const f of sch.fields){
     if(c.stop) break;
@@ -320,7 +331,7 @@ function hexRun(sch,c,prefix,depth,limit){
   }
   const se=(c.bit+7)>>3;
   for(const r of recs){ r.ss=ss; r.se=se; r.prefix=prefix; }
-  c.end=saveEnd;
+  c.end=saveEnd; c.msgBase=saveBase;
 }
 
 function hexSub(f,env,c){
@@ -399,8 +410,88 @@ function hexField(f,sch,c,prefix,depth,env,recs,ss){
     push();
     return;
   }
+  if(t==='varint'){                                   // 7 бит на байт, младшие группы первыми, старший бит — «дальше» (MQTT, LEB128, protobuf)
+    if(c.bit&7) c.bit=(c.bit+7)&~7;
+    const p0=c.bit>>3; let v=0, k=0;
+    if(!B){
+      for(;;){
+        if(p0+k>=(c.end>>3) || k>=8){ rec.b0=c.bit; rec.bl=Math.max(0,c.end-c.bit); rec.err='truncated'; push(); c.stop=true; c.trunc=true; return; }
+        const x=c.d[p0+k]; v+=(x&127)*Math.pow(2,7*k); k++;
+        if(!(x&128)) break;
+      }
+      rec.value=v; c.vals[name]=v; rec.b0=c.bit; rec.bl=k*8; rec.text=String(v); c.bit+=k*8; push(); return;
+    }
+    v=hexCoerceNum(c.vals[name],f); if(v===undefined){ c.warn.push(name+': no value, 0 used'); v=0; }
+    v=Math.max(0,Math.floor(v)); const out=[];
+    do{ let x=v%128; v=Math.floor(v/128); out.push(v>0 ? x|128 : x); }while(v>0);
+    rec.b0=c.bit; rec.bl=out.length*8; rec.value=hexCoerceNum(c.vals[name],f)||0; c.vals[name]=rec.value;
+    for(let i=0;i<out.length;i++) c.out[(c.bit>>3)+i]=out[i];
+    c.bit+=out.length*8; hexEnsure(c.out,c.bit); rec.text=String(rec.value); push(); return;
+  }
+  if(t==='dname'){                                    // имя DNS: метки с длиной, 0 в конце, указатель 11xxxxxx xxxxxxxx на любое место сообщения (схема с msg:true)
+    if(c.bit&7) c.bit=(c.bit+7)&~7;
+    if(!B){
+      const base=c.msgBase||0, d=c.d, lim=c.end>>3; let pos=c.bit>>3, used=-1, jumps=0; const labels=[];
+      for(;;){
+        if(pos>=lim){ rec.b0=c.bit; rec.bl=Math.max(0,c.end-c.bit); rec.err='truncated'; push(); c.stop=true; c.trunc=true; return; }
+        const l=d[pos];
+        if(l===0){ pos++; break; }
+        if((l&0xC0)===0xC0){
+          if(pos+1>=lim){ rec.err='truncated'; rec.b0=c.bit; rec.bl=8; push(); c.stop=true; c.trunc=true; return; }
+          if(used<0) used=pos+2-(c.bit>>3);
+          if(++jumps>20){ rec.err='name pointer loop'; break; }
+          pos=base+(((l&0x3F)<<8)|d[pos+1]); continue;
+        }
+        if(l>63 || pos+1+l>lim){ rec.err='bad label'; break; }
+        labels.push(hexDecStr(d.subarray(pos+1,pos+1+l),'ascii')); pos+=1+l;
+      }
+      if(used<0) used=pos-(c.bit>>3);
+      const nm=labels.join('.')||'.';
+      rec.b0=c.bit; rec.bl=used*8; rec.value=nm; rec.text=nm; c.vals[name]=nm; c.bit+=used*8; push(); return;
+    }
+    let nm=c.vals[name]; if(nm===undefined){ c.warn.push(name+': no value, root used'); nm='.'; }
+    nm=String(nm); const out=[];
+    for(const lb of nm==='.' ? [] : nm.replace(/\.$/,'').split('.')){ const b=hexEncStr(lb.slice(0,63),'ascii'); out.push(b.length,...b); }
+    out.push(0);
+    rec.b0=c.bit; rec.bl=out.length*8; rec.value=nm; rec.text=nm; c.vals[name]=nm;
+    for(let i=0;i<out.length;i++) c.out[(c.bit>>3)+i]=out[i];
+    c.bit+=out.length*8; hexEnsure(c.out,c.bit); push(); return;
+  }
+  if(t==='http' && typeof hxTryParse==='function'){  // HTTP/1.x, SIP, RTSP: заголовки и тело (http-kernels.js); имена: <поле>.method, .path, .h.host, .body …
+    if(c.bit&7) c.bit=(c.bit+7)&~7;
+    if(B){
+      let bytes;
+      const raw=c.vals[name];
+      if(typeof raw==='string') bytes=new TextEncoder().encode(raw);
+      else{
+        const g=k=>c.vals[name+'.'+k], h={}, pre=name+'.h.';
+        for(const k of Object.keys(c.vals)) if(k.startsWith(pre)) h[k.slice(pre.length)]=c.vals[k];
+        bytes=hxBuild({method:g('method'),target:g('target')||g('path'),version:g('version'),status:g('status'),reason:g('reason'),proto:g('proto'),h,body:g('body'),host:g('host')});
+      }
+      rec.b0=c.bit; rec.bl=bytes.length*8; rec.value=new TextDecoder().decode(bytes); rec.text=rec.value.split('\n')[0]; c.vals[name]=rec.value;
+      for(let i=0;i<bytes.length;i++) c.out[(c.bit>>3)+i]=bytes[i];
+      c.bit+=bytes.length*8; hexEnsure(c.out,c.bit); push(); return;
+    }
+    const len=(c.end-c.bit)>>3, b=c.d.subarray(c.bit>>3,(c.bit>>3)+len), r=hxTryParse(b,{flush:true});
+    rec.b0=c.bit;
+    if(!r || !r.msg){ rec.bl=len*8; rec.err='not HTTP'; rec.raw=b; rec.value=hexFmtBytes(b.subarray(0,32),'hex'); rec.text=rec.value; c.vals[name]=rec.value; c.bit+=len*8; push(); return; }
+    const m=r.msg, flat=hxRec(m), base=c.bit;
+    rec.bl=r.used*8; rec.sub=true; rec.raw=b.subarray(0,r.used); push();
+    const rng={}; for(const w of m.rows) if(!(w.k in rng)) rng[w.k]=w;
+    const startKeys=new Set(['method','target','path','url','version','status','reason']);
+    for(const k of Object.keys(flat)){
+      if(k==='head' || k==='parts' || k==='proto' || k==='len' || k==='complete') continue;
+      const v=flat[k], r0=startKeys.has(k) ? rng.start : k.startsWith('h.') ? rng[k] : (k==='body' || k.startsWith('form.') || k.startsWith('json')) ? rng.body : k.startsWith('q.') ? rng.start : null;
+      const child={n:name+'.'+k, name:k, t:'str', depth:depth+1, b0:r0 ? base+r0.a*8 : base, bl:r0 ? (r0.z-r0.a)*8 : 0, f:{n:k,t:'str'}, ss, se:0, prefix, value:v, text:String(v)};
+      recs.push(child); c.recs.push(child); c.byName[child.n]=child; c.vals[child.n]=v;
+    }
+    c.vals[name]=undefined; delete c.vals[name];
+    c.bit+=r.used*8;
+    return;
+  }
   if(t==='bytes' || t==='str' || t==='rest'){
     if(c.bit&7) c.bit=(c.bit+7)&~7;
+    const U=f.until!=null ? hexDelim(f.until) : null;                // до разделителя (CRLF, \0, пробел…): текстовые протоколы
     const fixed=HEX_FIXED[f.fmt];
     let len;
     if(t==='rest') len=(c.end-c.bit)>>3;
@@ -426,22 +517,31 @@ function hexField(f,sch,c,prefix,depth,env,recs,ss){
       len=bytes.length;
       rec.b0=c.bit; rec.bl=len*8; rec.value=t==='str' ? hexDecStr(bytes,f.enc||'ascii') : hexFmtBytes(bytes,f.fmt==='ascii'||f.fmt==='bcd' ? f.fmt : f.fmt||'hex');
       for(let i=0;i<len;i++) c.out[(c.bit>>3)+i]=bytes[i];
+      if(U && !f.noDelim){ for(let i=0;i<U.length;i++) c.out[(c.bit>>3)+len+i]=U[i]; c.bit+=U.length*8; }
       c.bit+=len*8; hexEnsure(c.out,c.bit);
       c.vals[name]=rec.value; rec.raw=bytes; push();
       return;
     }
     // разбор
+    let skip=0;
+    if(U){
+      const p0=c.bit>>3, e0=c.end>>3; let k=-1;
+      for(let i=p0;i+U.length<=e0;i++){ let hit=true; for(let j=0;j<U.length;j++) if(c.d[i+j]!==U[j]){ hit=false; break; } if(hit){ k=i; break; } }
+      if(k>=0){ len=k-p0; skip=U.length; }
+      else if(f.optional || t==='rest') len=e0-p0;
+      else{ rec.b0=c.bit; rec.bl=Math.max(0,c.end-c.bit); rec.err='no delimiter'; push(); c.stop=true; c.trunc=true; return; }
+    }
     if(c.bit+len*8>c.end){
       if(t!=='rest'){ rec.b0=c.bit; rec.bl=Math.max(0,c.end-c.bit); rec.err='truncated'; push(); c.stop=true; c.trunc=true; return; }
       len=(c.end-c.bit)>>3;
     }
-    const sub=hexSub(f,env,c);
+    const sub= t==='rest' && len===0 ? null : hexSub(f,env,c);      // пустой хвост (SYN, ACK) подсхемой не разбираем
     rec.b0=c.bit; rec.bl=len*8;
     if(sub){
       rec.sub=true; push();
       const start=c.bit;
       hexRun(sub,c,name+'.',depth+1,start+len*8);
-      if(t!=='rest') c.bit=Math.max(c.bit,start+len*8);
+      if(t!=='rest') c.bit=Math.max(c.bit,start+len*8+skip*8);
       rec.bl=c.bit-start;
       return;
     }
@@ -449,7 +549,7 @@ function hexField(f,sch,c,prefix,depth,env,recs,ss){
     rec.raw=b; rec.value=t==='str' ? hexDecStr(b,f.enc||'ascii') : hexFmtBytes(b,f.fmt||'hex');
     rec.text=t==='str' ? rec.value : f.fmt && f.fmt!=='hex' ? rec.value : Array.from(b.subarray(0,32),hexByte).join(' ')+(b.length>32 ? ' …' : '');
     c.vals[name]=rec.value;
-    c.bit+=len*8;
+    c.bit+=(len+skip)*8;
     push();
     return;
   }

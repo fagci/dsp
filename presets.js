@@ -588,6 +588,7 @@ const PRESET_CATS={
   'Panels: Needle Meter, Speedometer, Counters, Nixie, D-pad and Spectrum Display':'Analysis & Measurement',
   'Panels: Phone Volume and Media Keys (Key Panel → Phone Control)':'Maps & Locating',
   'Packets: Craft, Send and Analyze (SYN sweep, DNS, ping, ARP)':'Maps & Locating',
+  'Packets: HTTP POST — Craft, HEX Structure Layers, Filter':'Maps & Locating',
   'Phone: Mock GPS (Developer Option) — Walk a Route':'Maps & Locating',
   'Phone: Monitor Over Other Apps (Text Panel + 🗔)':'Maps & Locating',
   'Panels: Selector, Jog Wheel, DIP, Flip Clock, Character Displays, Goniometer and Thermometer':'Analysis & Measurement',
@@ -7933,6 +7934,21 @@ addEdge(g2.id,'out',c2.id,'go'); addEdge(c2.id,'rec',a2.id,'rec');
 const vm=addNode('vpnmon',300,1800,{packets:true});
 const a3=addNode('pktsniff',720,1800,{filter:'udp || tcp',link:'101 raw IP'}); a3.size.w=520; a3.size.h=260; applySize(a3);
 addEdge(vm.id,'rec',a3.id,'rec');
+markWiresDirty();
+});
+preset('Packets: HTTP POST — Craft, HEX Structure Layers, Filter', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'HEX Structure parses and builds a packet layer by layer, like Wireshark: Ethernet → IPv4 → TCP → payload by port → HTTP (method, path, host, headers h.*, query q.*, form, JSON json.*, cookies) — the same for DNS, DHCP, NTP, TFTP, MQTT, Modbus TCP, CoAP, TLS (SNI), WebSocket, HTTP/2, SIP, RTSP, LLDP, VLAN, GRE, VXLAN… (the schema list). Text protocols use the http field type and `until` delimiters.\n'+
+  'Packet Crafter makes a TCP segment to port 8080 with an HTTP POST. HEX Structure (schema eth) shows every field with its bytes; edit a field and the packet is rebuilt (lengths, checksums). Packet Analyzer filters the same packets: http.method == "POST" && http.host contains api && http.content_type contains json (also http.h.<header>, http.q.<param>, http.json.<path>). Change the method in the Crafter payload to GET — the second Analyzer stops showing it.\n'+
+  'To send for real or to receive from the network use Network (DSP app) with the phone app or on a computer `node tools/net-bridge.mjs` (ws://127.0.0.1:8765): its data goes in as hex, answers come back as records with hex.'});
+nt.size.w=1100; nt.size.h=170; applySize(nt);
+const go=addNode('lfo',40,230,{freq:.2,min:0,max:1,wave:'sq'});
+const pc=addNode('pktcraft',300,230,{l2:'eth',l3:'ipv4',l4:'tcp',ipSrc:'10.0.0.5',ipDst:'10.0.0.80',sport:50000,dport:8080,flags:'PSH ACK',ack:1,payloadFmt:'text',count:1,
+  payload:'POST /api/login?next=/home HTTP/1.1\\r\\nHost: api.example.test\\r\\nContent-Type: application/json\\r\\nContent-Length: 29\\r\\n\\r\\n{"user":"demo","pass":"1234"}'});
+const hx=addNode('hexStruct',720,230,{schema:'eth'}); hx.size.w=520; hx.size.h=560; applySize(hx);
+const a1=addNode('pktsniff',300,700,{filter:'http.method == "POST" && http.content_type contains json',show:'last packet: fields'}); a1.size.w=520; a1.size.h=260; applySize(a1);
+const a2=addNode('pktsniff',300,1000,{filter:'http.method == "GET"',show:'list'}); a2.size.w=520; a2.size.h=180; applySize(a2);
+addEdge(go.id,'out',pc.id,'go'); addEdge(pc.id,'bin',hx.id,'bin'); addEdge(pc.id,'rec',a1.id,'rec'); addEdge(pc.id,'rec',a2.id,'rec');
 markWiresDirty();
 });
 preset('Phone: Mock GPS (Developer Option) — Walk a Route', function(){
