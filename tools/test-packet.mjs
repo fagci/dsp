@@ -5,8 +5,8 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Uint8Array,DataView,ArrayBuffer,TextEncoder,TextDecoder,Array,Map,Set,Error,String,Number,BigInt,Object,Date,JSON,isNaN,parseInt,RegExp,btoa,atob,isFinite});
-for(const f of ['hex-kernels.js','hex-formats.js','pcap-kernels.js','packet-kernels.js']) vm.runInContext(fs.readFileSync(path.join(root,'modules',f),'utf8'),ctx,{filename:f});
-vm.runInContext('this.P={pktCraft,pktTemplate,pktTemplates,pktInfo,pktLine,pktFilter,pktExport,pktImport,pcapRead,pcapngWrite,pkBytes,pkHexStr,pkDnsQuery,pkDnsParse,pkFmtBytes,PK_FORMATS}',ctx);
+for(const f of ['httpdis-kernels.js','hex-kernels.js','hex-formats.js','hex-proto.js','pcap-kernels.js','packet-kernels.js']) vm.runInContext(fs.readFileSync(path.join(root,'modules',f),'utf8'),ctx,{filename:f});
+vm.runInContext('this.P={hexParse,pktCraft,pktTemplate,pktTemplates,pktInfo,pktLine,pktFilter,pktExport,pktImport,pcapRead,pcapngWrite,pkBytes,pkHexStr,pkDnsQuery,pkDnsParse,pkFmtBytes,PK_FORMATS}',ctx);
 const P=ctx.P;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 const hx=b=>P.pkHexStr(b);
@@ -69,4 +69,20 @@ ok('hexdump -C style',hx(P.pktImport('00000000  de ad be ef 01 02 03 04  05 06 0
 const js=JSON.parse(new TextDecoder().decode(P.pktExport(pk,'json',1).bytes)); ok('json export',js.length===4 && js[0].proto==='TCP' && js[2].info.startsWith('Who has'));
 const csv=new TextDecoder().decode(P.pktExport(pk,'csv',1).bytes).split('\n'); ok('csv export',csv.length===5 && csv[0].startsWith('t,src,dst,proto'));
 ok('fmt c / python / base64',/0xde, 0xad/.test(P.pkFmtBytes(Uint8Array.from([0xde,0xad]),'c')) && P.pkFmtBytes(Uint8Array.from([0xde,0xad]),'python')==="b'\\xde\\xad'" && P.pkFmtBytes(Uint8Array.from([0xde,0xad,0xbe,0xef]),'base64')==='3q2+7w==');
-console.log(bad?'FAILED '+bad:'all ok'); process.exit(bad?1:0);
+console.log(bad?'FAILED '+bad:'all ok'); 
+// HTTP: поля http.* для фильтра и разбор цепочкой eth → ipv4 → tcp → http
+{
+  const body='{"user":"a","pw":"b"}';
+  const post=P.pktCraft({l2:'eth',l3:'ipv4',l4:'tcp',ipSrc:'10.0.0.1',ipDst:'10.0.0.2',sport:50000,dport:8080,flags:'PSH ACK',seq:1,ack:1,
+    payload:'POST /api/login?x=1 HTTP/1.1\\r\\nHost: api.test\\r\\nContent-Type: application/json\\r\\nContent-Length: '+body.length+'\\r\\n\\r\\n'+body});
+  const get=P.pktCraft({l2:'eth',l3:'ipv4',l4:'tcp',ipSrc:'10.0.0.1',ipDst:'10.0.0.2',sport:50001,dport:80,flags:'PSH ACK',seq:1,ack:1,payload:'GET /index.html HTTP/1.1\\r\\nHost: www.test\\r\\n\\r\\n'});
+  const rp=P.pktInfo(post.bytes,1), rg=P.pktInfo(get.bytes,1);
+  ok('http fields in the packet record',rp['http.method']==='POST' && rp['http.path']==='/api/login' && rp['http.host']==='api.test' && rp['http.json.user']==='a' && rp['http.q.x']==='1',JSON.stringify(rp).slice(0,300));
+  const f1=P.pktFilter('http.method == "POST"'), f2=P.pktFilter('http.method == "POST" && http.host contains api && http.content_type contains json'), f3=P.pktFilter('http.method == "GET"');
+  ok('display filter: POST only',f1(rp) && !f1(rg) && f2(rp) && !f2(rg) && f3(rg) && !f3(rp));
+  ok('filter on a header and a JSON field',P.pktFilter('http.h.host == "api.test" && http.json.user == a')(rp));
+  const tcpOff=14+20+20;                                         // payload tcp.data
+  const pr=P.hexParse('eth',post.bytes);
+  ok('eth → ipv4 → tcp → http in HEX Structure',pr.vals['payload.payload.data.http.method']==='POST' && pr.vals['payload.payload.data.http.path']==='/api/login',Object.keys(pr.vals).filter(k=>/http/.test(k)).slice(0,6).join(','));
+}
+process.exit(bad?1:0);

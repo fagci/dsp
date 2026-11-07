@@ -190,6 +190,14 @@ function pktTemplate(name){
 }
 
 /* ---------- разбор в запись и строку ---------- */
+// Данные TCP/UDP: у поля data с подсхемой (dns, http…) нет raw, поэтому берём байты после заголовка; ошибки разбора прикладного слоя «ok» не портят
+function pkPayload4(res,d,pre,hdr){
+  const f=res.fields.find(r=>r.n===pre+'sport');
+  if(!f) return null;
+  const a=(f.b0>>3)+hdr;
+  return a<=d.length ? d.subarray(a) : null;
+}
+function pkCoreOk(res,pre){ return !res.fields.some(r=>(r.err || r.calcOk===false) && !String(r.n||'').startsWith(pre+'data')); }
 function pktInfo(d,link){
   if(!(d instanceof Uint8Array)) d=Uint8Array.from(d);
   const rec={len:d.length,link:link||1,layers:[],proto:'?',info:'',src:'',dst:''};
@@ -226,14 +234,14 @@ function pktInfo(d,link){
     if(!next) rec.info='next header '+proto;
   } else next=sch;                                      // голый L4
   if(next==='tcp' && V[pre+'sport']!==undefined){
-    rec.layers.push('tcp'); rec.proto='TCP'; const sp=V[pre+'sport'], dp=V[pre+'dport'], fl=V[pre+'flags'], dat=raw(pre+'data');
+    rec.layers.push('tcp'); rec.proto='TCP'; const sp=V[pre+'sport'], dp=V[pre+'dport'], fl=V[pre+'flags'], dat=pkPayload4(res,d,pre,V[pre+'off']*4); rec.ok=pkCoreOk(res,pre);
     rec['tcp.srcport']=rec.sport=sp; rec['tcp.dstport']=rec.dport=dp; rec['tcp.seq']=V[pre+'seq']; rec['tcp.ack']=V[pre+'ack']; rec['tcp.flags']=fl; rec['tcp.win']=V[pre+'win'];
     for(const k of ['FIN','SYN','RST','PSH','ACK','URG']) rec['tcp.flags.'+k.toLowerCase()]=fl&PK_TCPF[k] ? 1 : 0;
     rec.flags=pkFlagsText(fl); rec.payloadLen=dat ? dat.length : 0; rec.text=pkAscii(dat);
     rec.info=sp+' → '+dp+' ['+rec.flags+'] Seq='+V[pre+'seq']+' Ack='+V[pre+'ack']+' Win='+V[pre+'win']+' Len='+rec.payloadLen;
     pkApp(rec,dat,sp,dp);
   } else if(next==='udp' && V[pre+'sport']!==undefined){
-    rec.layers.push('udp'); rec.proto='UDP'; const sp=V[pre+'sport'], dp=V[pre+'dport'], dat=raw(pre+'data');
+    rec.layers.push('udp'); rec.proto='UDP'; const sp=V[pre+'sport'], dp=V[pre+'dport'], dat=pkPayload4(res,d,pre,8); rec.ok=pkCoreOk(res,pre);
     rec['udp.srcport']=rec.sport=sp; rec['udp.dstport']=rec.dport=dp; rec['udp.length']=V[pre+'len']; rec.payloadLen=dat ? dat.length : 0; rec.text=pkAscii(dat);
     rec.info=sp+' → '+dp+' Len='+rec.payloadLen;
     pkApp(rec,dat,sp,dp);
@@ -260,7 +268,20 @@ function pkApp(rec,dat,sp,dp){                          // DNS / HTTP по но�
   }
   const t=pkAscii(dat);
   const m=/^(GET|POST|PUT|HEAD|DELETE|OPTIONS|PATCH|M-SEARCH|NOTIFY) (\S+) HTTP\/1\.[01]/.exec(t) || /^(HTTP\/1\.[01] \d+[^\r\n.]*)/.exec(t);
-  if(m){ rec.layers.push('http'); rec.http=true; rec.proto=/^M-SEARCH|^NOTIFY/.test(t) ? 'SSDP' : 'HTTP'; rec.info=t.split('..')[0].slice(0,120); }
+  if(m){
+    rec.layers.push('http'); rec.http=true; rec.proto=/^M-SEARCH|^NOTIFY/.test(t) ? 'SSDP' : 'HTTP'; rec.info=t.split('..')[0].slice(0,120);
+    if(typeof hxTryParse==='function'){                       // поля для фильтра: http.method == "POST" && http.host contains api && http.content_type contains json
+      const r=hxTryParse(dat,{flush:true});
+      if(r && r.msg){
+        const f=hxRec(r.msg);
+        for(const k of ['method','path','host','status','reason','version','ctype','clen','url','user','pass','files']) if(f[k]!==undefined && f[k]!=='') rec['http.'+k]=f[k];
+        rec['http.uri']=f.target; rec['http.content_type']=f.ctype; rec['http.content_length']=f.clen; rec['http.request']=r.msg.kind==='request' ? 1 : 0; rec['http.response']=r.msg.kind==='response' ? 1 : 0;
+        for(const k of Object.keys(f)) if(/^(h|q|form|json|cookie)\./.test(k)) rec['http.'+k]=f[k];
+        rec['http.body']=f.body;
+        if(r.msg.kind==='request') rec.info=f.method+' '+(f.host||'')+f.target+(f.ctype ? ' ['+f.ctype+']' : '')+(f.clen ? ' '+f.clen+' B' : '');
+      }
+    }
+  }
   else if(dat[0]===0x16 && dat[1]===3 && dat.length>5){ rec.layers.push('tls'); rec.proto='TLS'; rec.info=({1:'Client Hello',2:'Server Hello',11:'Certificate',16:'Client Key Exchange'}[dat[5]]||'Handshake')+' (TLS 1.'+(dat[2]-1)+' record)'; }
 }
 function pktLine(r){
