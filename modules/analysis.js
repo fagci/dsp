@@ -2642,12 +2642,11 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
       // панорамой: pointermove просто проверяет drag.resize и ведёт себя как одно или другое —
       // два независимых состояния драга на одном канвасе только путали бы друг друга.
       let drag=null;
-      // край шторки канала rtlsdr (spec.chans) под курсором в зоне спектра, ±5px
+      // край шторки канала rtlsdr (spec.chans) под курсором, ±5px — в зоне спектра и водопада
       const chanEdgeAt=ev=>{
         const list=saChans(n); if(!list||!n.s.setChanBw) return null;
         const rc=cv.getBoundingClientRect();
-        const x=(ev.clientX-rc.left)/rc.width, y=(ev.clientY-rc.top)/rc.height*cv.height;
-        if(y>(n._hs||0)-6) return null;
+        const x=(ev.clientX-rc.left)/rc.width;                  // края шторки тянутся и на спектре, и на водопаде (линии идут через обе зоны)
         const px=5/Math.max(1,rc.width);
         for(const c of list) for(const side of ['lo','hi']){
           if(c.mode==='USB'&&side==='lo' || c.mode==='LSB'&&side==='hi') continue;   // у SSB край на частоте канала неподвижен

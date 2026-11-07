@@ -1726,10 +1726,15 @@ function saChannelLabels(n,cx,W){
   const list=saChans(n); if(!list) return;
   cx.font=BP_FONT;
   const used=[...(n._sgRects||[])];                 // метки сигналов уже стоят — подписи каналов обходят их
+  n._chLblBottom=0;
   for(const c of list){
     const x1=saPos(n,c.lo)*W, x2=saPos(n,c.hi)*W;
     if(x2<0||x1>W) continue;
-    const col=MK_COL(c.idx), bw=c.hi-c.lo, t=c.mode+' '+fmtHz(bw, bw%1000?1:0)+(c.sql ? (c.sqOpen?' SQL open':' SQL closed') : '');
+    // ширина полосы — числом на шторке, если влезает; нет — только режим, а число уйдёт в подпись маркера на водопаде (saMarkersWf)
+    const col=MK_COL(c.idx), bw=c.hi-c.lo, sq=c.sql ? (c.sqOpen?' SQL open':' SQL closed') : '';
+    const tFull=c.mode+' '+fmtHz(bw, bw%1000?1:0)+sq, fits=x2-x1>=Math.ceil(cx.measureText(tFull).width)+8;
+    (n._chBw||(n._chBw={}))[c.idx]=fits;
+    const t=fits ? tFull : c.mode+sq;
     const tw=Math.ceil(cx.measureText(t).width);
     let tx=(x1+x2-tw)/2;
     if(x2-x1<tw+8) tx = x2+4+tw<=W ? x2+4 : x1-tw-4;
@@ -1737,6 +1742,7 @@ function saChannelLabels(n,cx,W){
     let ty=Math.max(16,n._topH||0)+4+c.idx*15;
     for(let k=0;k<8 && used.some(u=>tx-3<u.x+u.w && tx+tw+3>u.x && ty<u.y+u.h && ty+14>u.y);k++) ty+=15;
     used.push({x:tx-3,y:ty,w:tw+6,h:14});
+    n._chLblBottom=Math.max(n._chLblBottom||0,ty+14);
     cx.globalAlpha=1; cx.fillStyle=col; cx.fillRect(tx-3,ty,tw+6,14);
     cx.fillStyle=contrastText(col); cx.fillText(t,tx,ty+11);
   }
@@ -2103,7 +2109,12 @@ function saMarkersWf(n,cx,W,hs,H){
     }
     cx.globalAlpha=.85; cx.strokeStyle=col; cx.lineWidth=1; cx.setLineDash([3,3]);
     cx.beginPath(); cx.moveTo(xr,hs); cx.lineTo(xr,H); cx.stroke(); cx.setLineDash([]);
-    const t=(k+1)+': '+fmtHz(f,3).replace(/[kMG]$/,'')+(bw?' · '+fmtHz(bw[1]-bw[0],bw[1]-bw[0]<1e4?1:0)+'Hz':'');
+    // подпись на водопаде — только то, что не влезло на спектр: частота (нет места под подписью маркера) и ширина (нет места в шторке канала)
+    const chw=saChanAtMarker(n,f), bwOnSpec=chw && n._chBw?.[chw.idx], fOnSpec=n._mkFits?.[k]!==false;
+    const parts=[]; if(!fOnSpec) parts.push(fmtHz(f,3).replace(/[kMG]$/,''));
+    if(bw && !bwOnSpec) parts.push(fmtHz(bw[1]-bw[0],bw[1]-bw[0]<1e4?1:0)+'Hz');
+    if(!parts.length) return;
+    const t=(k+1)+':'+parts.join(' · ');
     const tw=Math.ceil(cx.measureText(t).width)+6;
     let lx=clamp(Math.round(x-tw/2),2,W-tw-2), ly=hs+3;
     for(let i=0;i<4;i++){ const hit=placed.find(q=>lx<q.x+q.w+1&&lx+tw+1>q.x&&ly<q.y+13&&ly+12>q.y); if(!hit) break; ly=hit.y+13; }
@@ -2149,9 +2160,11 @@ function saMarkers(n,cx,W,H){
     // маркер на канале приёмника — RSSI канала (dBFS) / SNR, ровно те, что сравнивает шумоподавитель;
     // иначе пик в окне ±tol / SNR над шумовой полкой (см. saNoiseFloor)
     const ch=saChanAtMarker(n,f);
-    const t=(k+1)+': '+fv+(ch && ch.rssi!=null
-      ? ' '+(ch.rssi+(n._lvOff||0)).toFixed(0)+(n.p.unit==='dBFS' ? 'dBFS' : '')+' / '+(ch.snr!=null?ch.snr.toFixed(0):'—')
-      : n.db[k]>-119?' '+(n.db[k]+(n._lvOff||0)).toFixed(0)+' / '+Math.max(0,n.snr?.[k]??0).toFixed(0):'');
+    // «1:104.400 -16/19» — номер, частота, уровень / SNR; без «dBFS» (единица по умолчанию — она и на оси) и без пробелов у «:» и «/»
+    const un=n.p.unit==='dBFS' ? '' : n.p.unit;
+    const t=(k+1)+':'+fv+(ch && ch.rssi!=null
+      ? ' '+(ch.rssi+(n._lvOff||0)).toFixed(0)+un+'/'+(ch.snr!=null?ch.snr.toFixed(0):'—')
+      : n.db[k]>-119?' '+(n.db[k]+(n._lvOff||0)).toFixed(0)+un+'/'+Math.max(0,n.snr?.[k]??0).toFixed(0):'');
     const ant=n.p.ant==='antenna'||n.p.ant==='both', hrm=n.p.ant==='harmonics'||n.p.ant==='both';
     let t2=ant ? t+' λ/4 '+fmtLen(antennaDims(f,n.p.antVf).quarter) : t;
     const rk=n.p.dRef==='off' ? -1 : (+n.p.dRef)-1;     // дельта-маркеры: у опорного — метка, у остальных Δf и ΔdB к нему
@@ -2164,12 +2177,17 @@ function saMarkers(n,cx,W,H){
     // по центру линии маркера; дорожка стека — по месту среди выставленных маркеров (present), а не
     // по порядку рисования — иначе позиции соседних подписей "прыгали" бы при каждой смене наведения
     const tx=clamp(Math.round(x-tw/2), 2, W-tw-2), ty=baseY-14-present.indexOf(k)*14;
-    cx.globalAlpha=hovered?1:(act?.95:.75); cx.fillStyle=MK_COL(k);
-    cx.fillRect(tx-3,ty,tw+6,12);
-    cx.globalAlpha=1; cx.fillStyle=contrastText(MK_COL(k));
-    cx.fillText(t2,tx,ty+9);
+    // подпись (частота, уровень/SNR) — только если в стопке над лентой есть место; нет — частота уходит в подпись на водопаде (saMarkersWf)
+    const room=ty>=Math.max(TOP_H+1,(n._chLblBottom||0)+1);              // ниже подписей каналов (saChannelLabels, прошлый кадр) и потолка
+    (n._mkFits||(n._mkFits={}))[k]=room;
+    if(room){
+      cx.globalAlpha=hovered?1:(act?.95:.75); cx.fillStyle=MK_COL(k);
+      cx.fillRect(tx-3,ty,tw+6,12);
+      cx.globalAlpha=1; cx.fillStyle=contrastText(MK_COL(k));
+      cx.fillText(t2,tx,ty+9);
+      boxes.push({x0:tx-3,y0:ty,x1:tx+tw+3,y1:ty+12,idx:k});
+    }
     if(hrm) saHarmTicks(n,cx,W,H,f,k,TOP_H);
-    boxes.push({x0:tx-3,y0:ty,x1:tx+tw+3,y1:ty+12,idx:k});
   }
   cx.lineWidth=1;
 }
