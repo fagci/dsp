@@ -6,7 +6,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float64Array,Float32Array,Set,Map,Number,String,JSON,isFinite,Infinity,Array,Object});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/siteplan-kernels.js'),'utf8')+';this.K={spSolve,spParse,spTilt,spPoly,spDXF,spGeoJSON,spSVG,spCSV,spFrame,spNice,spGridFrame,spToFrame,spFromFrame,spGridLines,spWalls};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/siteplan-kernels.js'),'utf8')+';this.K={spSolve,spParse,spTilt,spPoly,spDXF,spGeoJSON,spSVG,spCSV,spFrame,spNice,spGridFrame,spToFrame,spFromFrame,spGridLines,spWalls,spHouse,spRoof};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -176,4 +176,23 @@ for(const t of ['material Kit2-Kit3 concrete\nroom Hall 4.48 3.74 4.46 3.74\nroo
   ok('house: no errors, all 9 openings placed',R.errors.length===0 && W.opens.length===9,JSON.stringify(R.errors)+W.opens.length);
   ok('house: no holes between the walls and the rooms',holes===0,holes);
   ok('house: no overlapping walls',dbl===0,dbl); }
+// этажи, подвал, перекрытия, крыша
+{ R=K.spSolve('room A 6 4 6 4\nlevel cellar z -2\nroom C 6 4 6 4 h 1.8\nsame C1 A1\nsame C2 A2\nlevel 2\nroom U 6 4 6 4 h 2.5\nsame U1 A1\nsame U2 A2\nroof gable 30 overhang 0.5');
+  ok('levels: no errors, consistent',R.errors.length===0 && R.rms<.1,JSON.stringify(R.errors)+R.rms);
+  ok('levels: numbered from the ground floor, the cellar is −1',JSON.stringify(R.levels.map(q=>[q.name,q.idx]))==='[["cellar",-1],["1",0],["2",1]]',JSON.stringify(R.levels));
+  near('levels: an upper floor without z stands on the floor below + its height + the slab',R.levels[2].z,2.7+.25,1e-9);
+  ok('levels: two «same» corners put the upper floor exactly above',R.pts.filter(p=>/^U/.test(p.name)).every(p=>!p.weak) && Math.abs(P(R,'U3').x-P(R,'A3').x)<.01 && Math.abs(P(R,'U3').y-P(R,'A3').y)<.01);
+  const H=K.spHouse(R,{});
+  ok('house: walls on each level at its floor',[-2,0,2.95].every(z=>H.walls.some(w=>Math.abs(w.z0-z)<1e-9)));
+  ok('house: outer walls under an upper floor reach its floor (no gap in the facade)',H.walls.filter(w=>w.lv===0 && w.kind==='outer').every(w=>Math.abs(w.h-2.95)<1e-6),H.walls.filter(w=>w.lv===0).map(w=>w.h).join());
+  ok('house: slabs under the ground floor and the upper floor, none under the cellar',H.slabs.length===2 && H.slabs.every(q=>q.lv>=0));
+  const r=H.roofs[0], span=4+.8, len=6+.8, tg=Math.tan(30*Math.PI/180);
+  near('roof: over the top floor, eaves = its top − overhang·tan',r.eave,2.95+2.5-.5*tg,1e-6);
+  near('roof: ridge = top + span/2·tan',r.ridge,2.95+2.5+span/2*tg,1e-6);
+  near('roof: gable slope area = 2·(len+2o)·(span/2+o)/cos',r.area,2*(len+1)*(span/2+.5)/Math.cos(30*Math.PI/180),1e-3);
+  ok('roof: gable — 2 slopes and 2 gable walls',r.faces.filter(f=>f.kind==='roof').length===2 && r.faces.filter(f=>f.kind==='gable').length===2);
+  for(const [t,nr] of [['hip',4],['shed',1],['flat',1]]){ R=K.spSolve('room A 6 4 6 4\nroof '+t+' 25'); const q=K.spHouse(R,{}).roofs[0]; ok('roof '+t+': '+nr+' slope(s)',q.faces.filter(f=>f.kind==='roof').length===nr); }
+  R=K.spSolve('room A 6 4 6 4\nroof flat overhang 0.3'); near('flat roof area = (len+2o)(span+2o)',K.spHouse(R,{}).roofs[0].area,(6.8+.6)*(4.8+.6),1e-6);
+  R=K.spSolve('room A 6 4 6 4\nroof dome'); ok('unknown roof type is an error',R.errors.length===1);
+  R=K.spSolve('room A 6 4 6 4\nroof gable 30 level 7'); K.spHouse(R,{}); ok('roof over a missing level is reported',R.errors.some(e=>/no level/.test(e.msg))); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
