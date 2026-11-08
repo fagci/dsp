@@ -2973,6 +2973,16 @@ let lastDraw=0;
 const fpsSel=document.getElementById('fps');
 try{ const v=LS.get('dsp-fps'); if(v==='auto'||v==='max'||v==='min') fpsSel.value=v; }catch(e){}
 fpsSel.onchange=()=>{ try{ LS.set('dsp-fps',fpsSel.value); }catch(e){} wakeDraw(); };
+// В WebView Android DownloadListener не получает имя из <a download> — файл назывался бы uuid.bin.
+// Запоминаем имя по адресу blob: при клике, приложение берёт его из window.dspDlNames (MainActivity.blobJs).
+if(window.DspApp && !window.dspDlNames){
+  window.dspDlNames={};
+  const click=HTMLAnchorElement.prototype.click;
+  HTMLAnchorElement.prototype.click=function(){
+    try{ if(this.download && /^blob:/.test(this.href)) window.dspDlNames[this.href]=this.download; }catch(e){}
+    return click.apply(this,arguments);
+  };
+}
 // панель настроек: кнопка в баре, выпадает вверх, если бар внизу (телефон)
 (()=>{
   const btn=document.getElementById('settings'), panel=document.getElementById('setPanel'), px=document.getElementById('proxy');

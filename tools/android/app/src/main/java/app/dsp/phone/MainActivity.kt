@@ -206,10 +206,12 @@ open class MainActivity : Activity() {
 
     // ---------- скачивание blob: страница читает файл кусками и отдаёт сюда ----------
 
+    // имя — то, что страница задала в <a download> (window.dspDlNames), иначе догадка по адресу; тип — из самого blob
     private fun blobJs(url: String, name: String, mime: String) =
-        "(async()=>{const b=await (await fetch(${JSONObject.quote(url)})).blob(),id=String(Date.now()),N=1<<20;" +
+        "(async()=>{const b=await (await fetch(${JSONObject.quote(url)})).blob(),id=String(Date.now()),N=1<<20," +
+            "nm=(window.dspDlNames&&dspDlNames[${JSONObject.quote(url)}])||${JSONObject.quote(name)},mt=b.type||${JSONObject.quote(mime)};" +
             "for(let o=0;o<b.size||o===0;o+=N){const s=await new Promise(r=>{const f=new FileReader();f.onload=()=>r(f.result.split(',')[1]||'');f.readAsDataURL(b.slice(o,o+N));});" +
-            "DspApp.chunk(id,${JSONObject.quote(name)},${JSONObject.quote(mime)},s,o+N>=b.size);if(b.size===0)break;}})()"
+            "DspApp.chunk(id,nm,mt,s,o+N>=b.size);if(b.size===0)break;}})()"
 
     inner class Downloads {
         /** Адрес USB-API моста для этой страницы (с ключом, который другие сайты не знают); веб-часть строит из него navigator.usb. */
