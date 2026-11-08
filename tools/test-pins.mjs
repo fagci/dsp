@@ -1,6 +1,6 @@
-// Пины наружу: кадры (modules/pins-kernels.js) и мост tools/pin-bridge.mjs: node tools/test-pins.mjs
+// Пины наружу: кадры (modules/pins-kernels.js) и ретрансляция в tools/termux/bridge.mjs: node tools/test-pins.mjs
 import { loadKernels } from './netmock.mjs';
-import { createPinBridge } from './pin-bridge.mjs';
+import { createBridge } from './termux/bridge.mjs';
 let bad = 0; const ok = (n, c, x = '') => { if (!c) { bad++; console.log('FAIL', n, x); } else console.log('ok  ', n); };
 const K = loadKernels(['pins-kernels.js'], 'pinEncode,pinDecode,pinClassify,pinFrames,pinSpecOf,pinName,pinNames,PinRing,PIN_SIG,PIN_IQ,PIN_SPEC,PIN_SPECR,PIN_JSON,PIN_KIND_NAME,pinxParse,pinxWith,pinxName');
 
@@ -88,8 +88,8 @@ ok('reject short / unknown kind / bad length', K.pinDecode(new Uint8Array(10)) =
 }
 
 // ---------- мост ----------
-const bridge = createPinBridge({ port: 0 });
-const port = await bridge.start();
+const bridge = createBridge({ port: 0, sources: [], log: () => {} });
+const port = (await bridge.listen()).port;
 const open = (path) => new Promise((res, rej) => { const ws = new WebSocket('ws://127.0.0.1:' + port + path); ws.binaryType = 'arraybuffer'; ws.msgs = []; ws.onmessage = (e) => ws.msgs.push(e.data); ws.onopen = () => res(ws); ws.onerror = () => rej(new Error('ws error')); });
 const wait = async (f, ms = 1500) => { const t = Date.now(); while (!f() && Date.now() - t < ms) await new Promise((r) => setTimeout(r, 10)); return f(); };
 const txt = (ws) => ws.msgs.filter((m) => typeof m === 'string').map((m) => JSON.parse(m));
@@ -134,11 +134,11 @@ ok('wanted shrinks when clients leave', await wait(() => txt(page).filter((m) =>
 
 // токен и Origin
 {
-  const b2 = createPinBridge({ port: 0, token: 'x' }), p2 = await b2.start();
+  const b2 = createBridge({ port: 0, token: 'x', sources: [] }), p2 = (await b2.listen()).port;
   const t = (q, o) => new Promise((res) => { const w = new WebSocket('ws://127.0.0.1:' + p2 + '/' + q, o); w.onopen = () => { w.close(); res(true); }; w.onerror = () => res(false); });
   ok('token required', !(await t('')) && await t('?token=x'));
-  b2.stop();
+  b2.close();
 }
-page.close(); bridge.stop();
+page.close(); bridge.close();
 console.log(bad ? bad + ' FAILED' : 'all ok');
 process.exit(bad ? 1 : 0);

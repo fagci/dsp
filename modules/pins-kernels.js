@@ -1,6 +1,6 @@
 "use strict";
 /* ============================ Pins: кадры для вывода пинов наружу ============================
-   Чистая логика без DOM (грузится страницей и tools/pin-bridge.mjs; тест — tools/test-pins.mjs).
+   Чистая логика без DOM (грузится страницей и тестами, мост tools/termux/bridge.mjs кадры не разбирает; тест — tools/test-pins.mjs).
    Один формат кадра на любой тип данных: бинарное WebSocket-сообщение, все числа little-endian.
      0  u8   kind   1 sig · 2 iq · 3 spec (комплексный, центр fc) · 4 spec (вещественный 0…sr/2) · 5 json
      1  u8   длина имени
@@ -10,7 +10,7 @@
      20 u32  seq  (счётчик отправленных кадров этого пина; пропуск = потеря)
      24      имя UTF-8, добор нулями до кратного 4 — дальше данные
    Данные: sig — float32; iq — float32 I,Q,I,Q…; spec — float32 мощность по бинам; json — UTF-8 от JSON.stringify.
-   Управление — текстовые JSON-сообщения (см. tools/pin-bridge.mjs). */
+   Управление — текстовые JSON-сообщения (см. tools/termux/bridge.mjs). */
 
 const PIN_SIG=1, PIN_IQ=2, PIN_SPEC=3, PIN_SPECR=4, PIN_JSON=5;
 const PIN_KIND_NAME={1:'sig',2:'iq',3:'spec',4:'spec',5:'json'};

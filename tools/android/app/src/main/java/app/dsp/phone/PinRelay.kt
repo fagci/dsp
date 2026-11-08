@@ -6,7 +6,7 @@ import java.util.concurrent.CopyOnWriteArraySet
 
 /**
  * Пины наружу (узлы Pins Out / Pins In / Pins (custom) страницы DSP, modules/pins.js): ретранслятор кадров по имени пина.
- * То же, что tools/pin-bridge.mjs, на сокетах приложения — страницы на этом и других телефонах видят пины друг друга, внешние клиенты
+ * То же, что createPinRelay в tools/termux/bridge.mjs, на сокетах приложения — страницы на этом и других телефонах видят пины друг друга, внешние клиенты
  * (websocat, GNU Radio, скрипт) читают их и подают на входы. Кадры не разбираются: смотрим только имя пина в заголовке
  * (формат — modules/pins-kernels.js: [kind u8][длина имени u8][0 0][fc f64][sr f64][seq u32][имя, добор до кратного 4][данные]).
  *
@@ -113,7 +113,7 @@ class PinRelay {
 
     companion object {
         const val MAX_NAME = 64
-        /** 2: страницы получают пины друг друга (graph ↔ graph), {t:"make"}, версия в ответе (то же число у tools/pin-bridge.mjs). */
+        /** 2: страницы получают пины друг друга (graph ↔ graph), {t:"make"}, версия в ответе (то же число PIN_VER у tools/termux/bridge.mjs). */
         const val VER = 2
 
         /** Кадр json (kind 5) с именем и значением — так {"t":"set"} доходит до Pins In страницы. */

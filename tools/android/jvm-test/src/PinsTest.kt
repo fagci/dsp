@@ -14,7 +14,7 @@ import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
 import java.util.concurrent.CopyOnWriteArrayList
 
-/** Ретрансляция пинов в мосте приложения (PinRelay.kt) против настоящего BridgeServer: то же, что tools/test-pins.mjs для pin-bridge.mjs. */
+/** Ретрансляция пинов в мосте приложения (PinRelay.kt) против настоящего BridgeServer: то же, что tools/test-pins.mjs для tools/termux/bridge.mjs. */
 private var fails = 0
 private fun ok(name: String, c: Boolean, x: String = "") { if (!c) { fails++; println("FAIL $name $x") } else println("ok   $name") }
 private fun until(ms: Long = 3000, f: () -> Boolean): Boolean { val t = System.currentTimeMillis(); while (System.currentTimeMillis() - t < ms) { if (f()) return true; Thread.sleep(10) }; return f() }

@@ -190,7 +190,7 @@ function rtcRtlSend(n,u8,force){
 }
 /* ---- пины наружу (pins.js: Pins Out / In / custom) ----
    Канал pins (negotiated, id 4), надёжный и упорядоченный: текстовые JSON-сообщения управления и бинарные кадры
-   (modules/pins-kernels.js) — те же, что идут к tools/pin-bridge.mjs. Приходящее отдаётся обработчику n.pnsH(данные),
+   (modules/pins-kernels.js) — те же, что идут к мосту (tools/termux/bridge.mjs, приложение Android). Приходящее отдаётся обработчику n.pnsH(данные),
    открытие / закрытие — счётчик n.pnsEv. rtcPinsSend возвращает false, если канал закрыт или забит (кадр выбрасывается). */
 function rtcPinsChannel(n,pc){
   const gen=n.gen, pn=pc.createDataChannel('pins',{negotiated:true,id:4}); n.pns=pn; pn.binaryType='arraybuffer';
