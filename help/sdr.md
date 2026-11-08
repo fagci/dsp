@@ -113,6 +113,16 @@ The **rtl_tcp Server (any SDR)** node (IQ) makes a USB SDR look like `rtl_tcp` t
 
 Presets: *Remote SDR: FM Receiver (rtl_tcp over WebSocket)*, *Remote SDR: FM Receiver (rtl_tcp over WebRTC)*, *USB SDR: rtl_tcp Server (WebRTC / SDR++)* and *Remote SDR: FM Receiver (SpyServer over WebSocket)*. SoapyRemote and other protocols with their own framing are not supported yet.
 
+### Any pin to the outside (Pins Out / Pins In)
+
+Run `node tools/pin-bridge.mjs` on a computer (default `ws://127.0.0.1:8766`, `--host 0.0.0.0 --token …` for the network). The **Pins Out** node (Data) publishes whatever is wired to its inputs under the names from *names*: `iq` (the channel after shift and decimation), `spec` (the spectrum), audio, numbers, text, records. **Pins In** does the opposite: the names are fed from outside and come out on `val` pins, so a number can drive any control (tuning an SDR is `tune → freq`), IQ and spectra go into ordinary IQ / spectrum nodes. Nothing is sent until a client subscribes to a name.
+
+- `websocat -b ws://127.0.0.1:8766/raw/NAME` — only the data: float32 (`sig`, spectrum), float32 `I Q I Q…` (`iq`), UTF-8 JSON (the rest). The centre frequency and rate are in the list: `GET http://127.0.0.1:8766/pins`.
+- `ws://…:8766/` — frames with a header (kind, centre, rate, sequence number: see the top of `modules/pins-kernels.js`). `{"t":"sub","names":["chan","spectrum"]}` subscribes (`"*"` — all), `{"t":"set","name":"tune","v":100500000}` writes a number into a Pins In, a binary frame with the same name feeds a stream.
+- Another DSP tab (a phone, a second computer) takes the same pins with its own Pins In — a graph split across devices. A slow client loses old frames, nothing piles up. Audio is not resampled: the rates of both engines must match (a warning shows in the node).
+
+Preset: *USB SDR: Pins Out / In (channel IQ + spectrum to outside, OpenWebRX-style)*. Check: `node tools/test-pins.mjs`; in the browser `node tools/e2e-pins.mjs`.
+
 ## tinySA
 
 The **tinySA** node talks to a tinySA or tinySA Ultra over its USB serial console (WebSerial, Chrome/Edge). Wire `spec` to a Spectrum Analyzer to get the trace and a waterfall in dBm.
