@@ -4,7 +4,7 @@
    а команды клиента (частота, частота дискретизации, усиление, ppm, bias-T…) разбирает и выводит на выходы — их проводами
    соединяют со входами приёмника (freq, sr, gainDb у USB SDR), так «чужой» клиент управляет железом через граф.
    Транспорты: TCP-порт — мост с командами приложения DSP (tcp.listen / tcp.send, как у «Network (DSP app)»): приложение Android само слушает
-   порт, SDR++ / GQRX подключаются к телефону (ip:1234); на компьютере то же делает node tools/net-bridge.mjs; WebRTC — клиент iqnet с
+   порт, SDR++ / GQRX подключаются к телефону (ip:1234); на компьютере то же делает node tools/node/bridge.mjs; WebRTC — клиент iqnet с
    протоколом «rtl_tcp (WebRTC)» на другом устройстве (канал rtl узла WebRTC Data, webrtc.js). Разбор протокола — rtlserve-kernels.js. */
 
 const RTLS_MAXLOG=12;
@@ -124,8 +124,8 @@ def({ id:'rtlserve', title:'rtl_tcp Server (any SDR)', cat:'IQ', kw:'rtl_tcp rtl
         {n:'rec',t:'rec'},{n:'client',t:'num'},{n:'cmds',t:'num'}],
   readout:true, tall:true,
   params:[
-    {n:'transport',t:'select',opts:['TCP port (phone app / net-bridge)','WebRTC'],d:'TCP port (phone app / net-bridge)',label:'transport: TCP port (the DSP app on Android — or node tools/net-bridge.mjs on a computer — listens on a real port, SDR++ / GQRX connect to it) or WebRTC (wire WebRTC Data → rtc; the client is IQ over Network «rtl_tcp (WebRTC)»)'},
-    {n:'url',t:'text',d:'ws://127.0.0.1:8765',dev:true,label:'bridge of the DSP app (ws://phone:8765) or node tools/net-bridge.mjs — or @name from Settings → Devices (the token stays there)'},
+    {n:'transport',t:'select',opts:['TCP port (phone app / desktop bridge)','WebRTC'],d:'TCP port (phone app / desktop bridge)',label:'transport: TCP port (the DSP app on Android — or node tools/node/bridge.mjs on a computer — listens on a real port, SDR++ / GQRX connect to it) or WebRTC (wire WebRTC Data → rtc; the client is IQ over Network «rtl_tcp (WebRTC)»)'},
+    {n:'url',t:'text',d:'ws://127.0.0.1:8765',dev:true,label:'bridge of the DSP app (ws://phone:8765) or node tools/node/bridge.mjs — or @name from Settings → Devices (the token stays there)'},
     {n:'port',t:'num',d:1234,label:'TCP port to listen on (1024…65535, the app cannot take lower ones; rtl_tcp default is 1234)'},
     {n:'lan',t:'check',d:true,label:'allow other devices on the network (off — only this device)'},
     {n:'tuner',t:'select',opts:RTLS_TUNERS.slice(1),d:'R820T',label:'tuner type in the header (what the client thinks it talks to)'},
@@ -147,7 +147,7 @@ def({ id:'rtlserve', title:'rtl_tcp Server (any SDR)', cat:'IQ', kw:'rtl_tcp rtl
       }else if(!rn && n.want) n.status='wire WebRTC Data → rtc';
     }
     // IQ клиенту: только пока он подключён; переполнение — выбрасываем блок, как делает rtl_tcp при медленном клиенте
-    if(n.want && !rtlsWebrtc(n) && n.ws && n.ws.readyState===1 && !n.server && n.listenAt && performance.now()-n.listenAt>4000 && !n.listenWarn){ n.listenWarn=1; n.status='the bridge did not answer tcp.listen — is this the DSP app (ws://phone:8765) or node tools/net-bridge.mjs?'; }
+    if(n.want && !rtlsWebrtc(n) && n.ws && n.ws.readyState===1 && !n.server && n.listenAt && performance.now()-n.listenAt>4000 && !n.listenWarn){ n.listenWarn=1; n.status='the bridge did not answer tcp.listen — is this the DSP app (ws://phone:8765) or node tools/node/bridge.mjs (ws://127.0.0.1:8777)?'; }
     if(n.inflight && performance.now()-n.inflightT>3000){ n.inflight=0; rtlsAppPump(n); }      // ответ на tcp.send потерян — не зависаем
     const s=iqIn(I,'iq');
     n.srIn=s ? s.sr : 0;

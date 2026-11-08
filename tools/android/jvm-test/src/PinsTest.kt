@@ -105,6 +105,22 @@ fun main() {
     raw.close(); cli.close(); pageB.close()
     ok("wanted shrinks when everybody leaves", until { page.json("want").last().getJSONArray("names").length() == 0 }, page.json("want").last().toString())
 
+    // замер пропускной способности (DSP_BENCH=1): источник шлёт кадры пина, подписчик считает принятое; ничего не проверяется
+    if (System.getenv("DSP_BENCH") != null) {
+        for (kb in listOf(8, 64, 512)) {
+            val src = Sock(port, "/"); val dst = Sock(port, "/")
+            src.send("""{"t":"hello","role":"graph"}"""); dst.send("""{"t":"sub","names":["bench"]}""")
+            Thread.sleep(300)
+            val f = frame(2, "bench", ByteArray(kb * 1024))
+            val t0 = System.nanoTime(); var sent = 0L
+            while (System.nanoTime() - t0 < 3_000_000_000L) { src.sendBin(f); sent += f.size }
+            Thread.sleep(500)
+            val got = dst.bins.sumOf { it.size.toLong() }; val dt = (System.nanoTime() - t0) / 1e9 - 0.5
+            println("bench ${kb} KB frames: sent ${sent / 1048576} MB, relayed ${got / 1048576} MB = ${(got / 1048576 / dt).toInt()} MB/s, dropped ${(sent - got) / 1048576} MB")
+            src.close(); dst.close()
+        }
+    }
+
     // существующий протокол не ломается: датчики и двоичный поток соединения живут рядом
     val old = Sock(port, "/")
     old.send("""{"sub":["accel"],"hz":50}""")

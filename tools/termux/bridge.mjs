@@ -139,10 +139,26 @@ export function wsFrame(text, op = 1) {
 }
 
 // разбор кадров клиента (всегда с маской); onMsg(text), onClose(), onPing(payload); onBin(buf) — если задан, бинарные сообщения идут в него как есть
+const LE = new Uint32Array(new Uint8Array([1, 2, 3, 4]).buffer)[0] === 0x04030201;
+// снять маску с pl на месте: по 4 байта за раз (pl — свой ArrayBuffer с нуля, см. allocUnsafeSlow), хвост — по байту
+function unmask(pl, mask) {
+  const n = pl.length;
+  let i = 0;
+  if (LE && n >= 64) {
+    const w = new Uint32Array(pl.buffer, pl.byteOffset, n >> 2), m = (mask[0] | mask[1] << 8 | mask[2] << 16 | mask[3] << 24) >>> 0;
+    for (let k = 0; k < w.length; k++) w[k] ^= m;
+    i = w.length << 2;
+  }
+  for (; i < n; i++) pl[i] ^= mask[i & 3];
+}
 export function wsParser({onMsg, onBin, onClose, onPing}) {
-  let buf = Buffer.alloc(0), msg = [], mop = 1;
+  let buf = Buffer.alloc(0), parts = null, have = 0, need = 0, msg = [], mop = 1;
   return chunk => {
-    buf = Buffer.concat([buf, chunk]);
+    // кадр длиннее одного куска сокета (64 КБ): куски копим в списке и склеиваем один раз, когда набралось нужное — иначе каждый кусок
+    // заново копирует весь накопленный буфер (кадр в 512 КБ копировался ~4 раза)
+    if (need && have + chunk.length < need) { parts.push(chunk); have += chunk.length; return; }
+    buf = parts ? Buffer.concat([...parts, chunk]) : buf.length ? Buffer.concat([buf, chunk]) : chunk;
+    parts = null; have = 0; need = 0;
     for (;;) {
       if (buf.length < 2) return;
       const fin = buf[0] & 0x80, op = buf[0] & 15, masked = buf[1] & 0x80;
@@ -150,17 +166,19 @@ export function wsParser({onMsg, onBin, onClose, onPing}) {
       if (len === 126) { if (buf.length < 4) return; len = buf.readUInt16BE(2); o = 4; }
       else if (len === 127) { if (buf.length < 10) return; len = buf.readUInt32BE(2) * 4294967296 + buf.readUInt32BE(6); o = 10; }
       if (len > 1 << 20) { onClose(); return; }
-      if (buf.length < o + (masked ? 4 : 0) + len) return;
+      const total = o + (masked ? 4 : 0) + len;
+      if (buf.length < total) { if (len >= 4096) { parts = [buf]; have = buf.length; need = total; } return; }
       const mask = masked ? buf.subarray(o, o + 4) : null; o += masked ? 4 : 0;
-      const pl = Buffer.from(buf.subarray(o, o + len));
-      if (mask) for (let i = 0; i < len; i++) pl[i] ^= mask[i & 3];
+      const pl = len >= 64 ? Buffer.allocUnsafeSlow(len) : Buffer.allocUnsafe(len);
+      buf.copy(pl, 0, o, o + len);
+      if (mask) unmask(pl, mask);
       buf = buf.subarray(o + len);
       if (op === 8) { onClose(); return; }
       if (op === 9) { onPing(pl); continue; }
       if (op === 1 || op === 2 || op === 0) {
         if (op) mop = op;
         msg.push(pl);
-        if (fin) { const all = Buffer.concat(msg); msg = []; if (mop === 2 && onBin) onBin(all); else onMsg(all.toString()); }
+        if (fin) { const all = msg.length === 1 ? msg[0] : Buffer.concat(msg); msg = []; if (mop === 2 && onBin) onBin(all); else onMsg(all.toString()); }
       }
     }
   };

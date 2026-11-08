@@ -56,6 +56,20 @@ await wait(1500); clearInterval(feed);
 const back = await pg.evaluate(() => ({ spec: !!(__s2.out.spec && __s2.out.spec.mag), fc: __s2.out.spec && __s2.out.spec.freqs && __s2.out.spec.freqs[512], lamp: __l.on && __l.on[0], st: __i.status }));
 ok('Pins In feeds IQ into a downstream IQ Spectrum', back.spec && Math.abs(back.fc - 7e6) < 1, JSON.stringify(back));
 ok('Pins In num drives a lamp', back.lamp === true, JSON.stringify(back));
+// целые форматы: Pins Out шлёт IQ как int16 / int8 (в 2 / 4 раза меньше байт), а Pins In принимает целые кадры
+for (const [fmt, kind, bytes] of [['int16', 6, 4], ['int8', 7, 2]]) {
+  await pg.evaluate((f) => { __o.p.fmt = f; }, fmt); await wait(300); cli.msgs.length = 0; await wait(1200);
+  const fr = cli.msgs.filter((f) => f.name === 'chan1'), smp = fr.reduce((a, f) => a + f.data.length / 2, 0);
+  ok('Pins Out fmt ' + fmt + ': frames are kind ' + kind + ', ' + bytes + ' bytes per sample', fr.length > 3 && fr.every((f) => f.kind === kind && f.sr === 256000 && f.fc === 100e6) && smp > 256000 * 1.2 * 0.7, JSON.stringify(fr[0] && { k: fr[0].kind, n: fr.length, smp }));
+}
+await pg.evaluate(() => { __o.p.fmt = 'float32'; });
+{
+  const d16 = new Int16Array(2 * 256); for (let i = 0; i < 256; i++) { d16[2 * i] = Math.round(Math.cos(i * 0.5) * 20000); d16[2 * i + 1] = Math.round(Math.sin(i * 0.5) * 20000); }
+  let sq = 0; const feed16 = setInterval(() => cli.send(K.pinEncode({ kind: 6, name: 'iqback', fc: 9e6, sr: 128000, seq: sq++, data: d16 })), 20);
+  await wait(1500); clearInterval(feed16);
+  const b16 = await pg.evaluate(() => ({ fc: __s2.out.spec && __s2.out.spec.freqs && __s2.out.spec.freqs[512], peak: __s2.out.spec ? Math.max(...__s2.out.spec.mag) : 0 }));
+  ok('Pins In takes int16 IQ frames (spectrum centred at 9 MHz with a tone)', Math.abs(b16.fc - 9e6) < 1 && b16.peak > 0.1, JSON.stringify(b16));
+}
 // отписка — поток прекращается
 cli.send(JSON.stringify({ t: 'sub', names: [] })); await wait(300);
 const n0 = cli.msgs.length; await wait(600);

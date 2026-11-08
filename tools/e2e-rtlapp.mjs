@@ -17,7 +17,7 @@ await pg.waitForFunction(() => typeof addNode === 'function', null, { timeout: 9
 await pg.evaluate(async ([wsPort, port]) => {
   clearAll();
   const gen = addNode('iqGen', 40, 40, { sr: '1024000', fc: 100000000, mode: 'carrier' });
-  const srv = addNode('rtlserve', 400, 40, { transport: 'TCP port (phone app / net-bridge)', url: 'ws://127.0.0.1:' + wsPort, port, lan: false });
+  const srv = addNode('rtlserve', 400, 40, { transport: 'TCP port (phone app / desktop bridge)', url: 'ws://127.0.0.1:' + wsPort, port, lan: false });
   addEdge(gen.id, 'iq', srv.id, 'iq'); markWiresDirty();
   window.__srv = srv; rtlsStart(srv); await Eng.start();
 }, [bridge.port, PORT]);

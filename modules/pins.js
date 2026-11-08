@@ -49,7 +49,7 @@ function pinsAnnounce(L){
   if(!pinsReady(L)) return;
   const out=[], inn=[];
   for(const n of L.refs){
-    out.push(...n.sNames.map((name,k)=>({name,kind:n.sSt[k].kind||'',fc:n.sSt[k].fc||0,sr:n.sSt[k].sr||0})));
+    out.push(...n.sNames.map((name,k)=>({name,kind:n.sSt[k].kind||'',fmt:n.sSt[k].fmt||'',fc:n.sSt[k].fc||0,sr:n.sSt[k].sr||0})));
     inn.push(...n.rNames.map(name=>({name})));
   }
   pinsCtl(L,{t:'pins',out,in:inn});
@@ -204,12 +204,12 @@ function pinsTx(n,L,I){
     const name=n.sNames[k], st=n.sSt[k], v=I[n.sIds[k]];
     if(v==null || !pinsWanted(L,name)){ st.last=undefined; continue; }
     if(st.gen!==L.gen){ st.gen=L.gen; st.last=undefined; st.rev=undefined; }              // кто-то подписался заново — отправим текущее
-    const c=pinClassify(v,eng);
+    const c=pinClassify(v,eng,n.p.fmt);
     if(!c) continue;
     if(c.kind===PIN_JSON){ if(st.last===v) continue; st.last=v; }                           // числа — по изменению, записи — каждая новая
     else if(c.rev!==undefined){ if(st.rev===c.rev) continue; st.rev=c.rev; }
     const kn=PIN_KIND_NAME[c.kind];
-    if(st.kind!==kn || st.sr!==c.sr || st.fc!==c.fc){ st.kind=kn; st.sr=c.sr; st.fc=c.fc; L.annDirty=true; }
+    if(st.kind!==kn || st.sr!==c.sr || st.fc!==c.fc || st.fmt!==PIN_FMT_NAME[c.kind]){ st.kind=kn; st.fmt=PIN_FMT_NAME[c.kind]; st.sr=c.sr; st.fc=c.fc; L.annDirty=true; }
     for(const f of pinFrames(name,c,st.seq)) if(pinsSend(L,f)) st.seq=(st.seq+1)>>>0;
   }
 }
@@ -221,13 +221,12 @@ function pinsRx(n,res){
     for(const f of fr){
       st.kind=PIN_KIND_NAME[f.kind];
       if(f.kind===PIN_JSON){ st.val=f.data; st.once=typeof f.data==='object' && f.data!==null; }
-      else if(f.kind===PIN_SIG){
+      else if(f.kind===PIN_SIG || f.kind===PIN_SIG16){
         if(!st.ring) st.ring=new PinRing(Math.max(4800,Math.round(Eng.sr)));
         if(f.sr && Math.abs(f.sr-Eng.sr)>1) n.warn='"'+f.name+'": sample rate '+f.sr+' ≠ engine '+Eng.sr;
-        st.ring.push(f.data);
-      }else if(f.kind===PIN_IQ){
-        const m=f.data.length>>1, re=new Float32Array(m), im=new Float32Array(m);
-        for(let i=0;i<m;i++){ re[i]=f.data[2*i]; im[i]=f.data[2*i+1]; }
+        st.ring.push(pinSigOf(f));
+      }else if(f.kind===PIN_IQ || f.kind===PIN_IQ16 || f.kind===PIN_IQ8){
+        const {re,im}=pinIqSplit(f);
         const s=iqStream(n,key,f.sr,f.fc);
         let tag=null;
         if(st.seq!==undefined && f.seq!==((st.seq+1)>>>0)) tag='gap';
@@ -249,15 +248,18 @@ function pinsResize(n){
 }
 const pinsPorts=(n,pre,dflt)=>pinNames(n.p.names,+n.p.count||2,dflt).map((name,k)=>({n:pre+(k+1),t:'val',tip:name}));
 const RTC_PIN={n:'rtc',t:'rtc'};
+const PINS_FMT_PARAM={n:'fmt',t:'select',opts:PIN_FORMATS,d:'float32',label:'IQ and audio on the wire: float32 (exact), int16 (half the bytes, ~−96 dB steps), int8 (a quarter, ~−42 dB: raw 8-bit SDR samples lose nothing). The receiving side detects it'};
 const pinsParams=(kind)=>[
   {n:'on',t:'check',d:false,label:{pinsout:'send: connect and publish the pins',pinsin:'receive: connect and take the pins',pinsx:'connect (the other side creates the pins)'}[kind]},
   {n:'transport',t:'select',opts:PINS_TRANSPORTS,d:PINS_TRANSPORTS[0],label:'transport: bridge (tools/termux/bridge.mjs or the DSP app: scripts, GNU Radio, other tabs) or WebRTC (wire WebRTC Data → rtc: the other end is a Pins node, no bridge)'},
   {n:'url',t:'text',d:PINS_URL,dev:true,label:'bridge: ws://127.0.0.1:8777 on a computer (tools/node/bridge.mjs), ws://phone:8765 on a phone (DSP app) (other device: ws://IP:PORT/?token=…) — or @name from Settings → Devices'},
   ...(kind==='pinsx'
     ? [{n:'pins',t:'text',d:'',fn:pinsResize,label:'pins: ">name" — input (graph → out), "<name" — output (in → graph), comma separated. The other side adds its own'},
-       {n:'grow',t:'check',d:true,label:'let the other side create pins (subscribe to a new name, send a new name, {"t":"make"}, a Pins node over WebRTC)'}]
+       {n:'grow',t:'check',d:true,label:'let the other side create pins (subscribe to a new name, send a new name, {"t":"make"}, a Pins node over WebRTC)'},
+       PINS_FMT_PARAM]
     : [{n:'count',t:'select',opts:PINS_COUNTS,d:'2',label:'pins',fn:pinsResize},
-       {n:'names',t:'text',d:'',label:'names, comma separated ('+(kind==='pinsin' ? 'in1, in2…' : 'out1, out2…')+' by default) — what clients subscribe to'}])];
+       {n:'names',t:'text',d:'',label:'names, comma separated ('+(kind==='pinsin' ? 'in1, in2…' : 'out1, out2…')+' by default) — what clients subscribe to'},
+       ...(kind==='pinsout' ? [PINS_FMT_PARAM] : [])])];
 
 function pinsDraw(n){
   const r=n.el.querySelector('.readout'); if(!r) return;

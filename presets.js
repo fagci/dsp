@@ -3898,7 +3898,7 @@ markWiresDirty();
 });
 preset('Remote SDR: FM Receiver (rtl_tcp via DSP app — phone driver, Raspberry Pi)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'The same broadcast FM receiver, fed by a standard rtl_tcp server without websockify: the DSP app on the phone (or `node tools/net-bridge.mjs` on a computer) opens the TCP connection for the page (tcp.connect) and hands the stream over in binary frames.\n'+
+const nt=addNode('note',40,40,{text:'The same broadcast FM receiver, fed by a standard rtl_tcp server without websockify: the DSP app on the phone (or `node tools/node/bridge.mjs` on a computer) opens the TCP connection for the page (tcp.connect) and hands the stream over in binary frames.\n'+
   '1) The RTL-SDR on this phone (OTG): install an rtl_tcp driver app (e.g. «RTL-SDR driver»), start it — it listens on 127.0.0.1:1234; leave host 127.0.0.1, bridge ws://127.0.0.1:8765 (the page inside the DSP app).\n'+
   '2) A Raspberry Pi / another computer with the SDR: `rtl_tcp -a 0.0.0.0 -s 1024000` there, set host to its address (192.168.x.x), port 1234. From a page on another device the app needs Settings → «Let any page use actions»; the bridge is ws://phone:8765 or @name from Settings → Devices.\n'+
   'Press Connect, tap a station on the upper spectrum. The readout shows the tuner and the stream rate.'});
@@ -3958,12 +3958,12 @@ markWiresDirty();
 preset('USB SDR: rtl_tcp Server (WebRTC / SDR++)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Shares the USB SDR as rtl_tcp. The node «rtl_tcp Server» sends the client the «RTL0» header and the IQ stream (uint8) and decodes the client\'s 5-byte commands [code][uint32 BE] (01 frequency, 02 rate, 04 gain in tenths of dB, 05 ppm, 0E bias-T…): the Hz / dB it gets go through the wires to the USB SDR inputs freq / sr / gainDb, and every command is listed in hex in its readout and on the rec output.\n'+
-  '1) Another browser: WebRTC Data → link → rtc (offer / answer or the room), there «Remote SDR: FM Receiver (rtl_tcp over WebRTC)». 2) SDR++, GQRX, rtl_power on the same network: transport «TCP port (phone app / net-bridge)» — on the phone the DSP app itself listens on port 1234 (bridge ws://127.0.0.1:8765 or @name from Settings → Devices), on a computer run `node tools/net-bridge.mjs`; in SDR++ choose the source «RTL-TCP», the address of that device, port 1234.\n'+
+  '1) Another browser: WebRTC Data → link → rtc (offer / answer or the room), there «Remote SDR: FM Receiver (rtl_tcp over WebRTC)». 2) SDR++, GQRX, rtl_power on the same network: transport «TCP port (phone app / desktop bridge)» — on the phone the DSP app itself listens on port 1234 (bridge ws://127.0.0.1:8765 or @name from Settings → Devices), on a computer run `node tools/node/bridge.mjs`; in SDR++ choose the source «RTL-TCP», the address of that device, port 1234.\n'+
   'Connect the SDR first, then press Start. The link carries about 2 MB/s per 1 MS/s: lower the rate for the internet.'});
 nt.size.w=760; nt.size.h=200; applySize(nt);
 const rx=addNode('rtlsdr',40,300,{sr:'1024000',auto:false,gainDb:30,demod:'WFM',freq:100000000});
 rx.size.w=320; rx.size.h=260; applySize(rx);
-const sv=addNode('rtlserve',420,300,{transport:'TCP port (phone app / net-bridge)',url:'ws://127.0.0.1:8765',port:1234});
+const sv=addNode('rtlserve',420,300,{transport:'TCP port (phone app / desktop bridge)',url:'ws://127.0.0.1:8765',port:1234});
 sv.size.w=340; sv.size.h=300; applySize(sv);
 const rt=addNode('rtcdata',420,640,{});
 const sp=addNode('iqSpec',40,620,{size:'4096'});
@@ -3979,7 +3979,7 @@ clearAll();
 const nt=addNode('note',40,40,{text:'Any pin of the graph to the outside, and from the outside in. Run `node tools/node/bridge.mjs` on the computer (port 8777; on a phone the DSP app is already such a bridge, port 8765), tick «send» / «receive» on both Pins nodes.\n'+
   'Pins Out publishes the names «chan» (IQ of the picked channel: shift + decimation, 64 kS/s) and «spectrum» (the wide spectrum of the SDR). Nothing is sent until a client subscribes, so the idle cost is zero.\n'+
   'Pins In takes «tune» (centre frequency, Hz → the SDR) and «offset» (channel offset, Hz → IQ Frequency Shift): the receiver is re-tuned by a wire, any numeric control of any node can be driven the same way.\n'+
-  'Clients: `websocat -b ws://127.0.0.1:8777/raw/chan | …` (float32 I,Q,I,Q…, no header); ws://127.0.0.1:8777/ with {"t":"sub","names":["chan","spectrum"]} (frames with a header: modules/pins-kernels.js); {"t":"set","name":"tune","v":100500000} re-tunes; GET http://127.0.0.1:8777/pins lists the names. Another DSP tab can take the same pins with Pins In.'});
+  'Clients: `websocat -b ws://127.0.0.1:8777/raw/chan | …` (int16 I,Q,I,Q… here — «fmt» of Pins Out: float32 / int16 / int8 halve or quarter the bytes on a slow link; no header); ws://127.0.0.1:8777/ with {"t":"sub","names":["chan","spectrum"]} (frames with a header: modules/pins-kernels.js); {"t":"set","name":"tune","v":100500000} re-tunes; GET http://127.0.0.1:8777/pins lists the names. Another DSP tab can take the same pins with Pins In.'});
 nt.size.w=820; nt.size.h=240; applySize(nt);
 const rx=addNode('rtlsdr',40,320,{sr:'1024000',auto:false,gainDb:30,demod:'WFM',freq:100000000});
 rx.size.w=320; rx.size.h=260; applySize(rx);
@@ -3988,7 +3988,7 @@ const sa=addNode('sa',720,320,{auto:true,floor:-90,top:-20,split:.4});
 sa.size.w=640; sa.size.h=300; applySize(sa);
 const sh=addNode('iqShift',420,520,{});
 const d1=addNode('iqDecim',420,660,{M:'16',cut:.4});
-const po=addNode('pinsout',720,660,{on:false,url:'ws://127.0.0.1:8777',count:'2',names:'chan, spectrum'});
+const po=addNode('pinsout',720,660,{on:false,url:'ws://127.0.0.1:8777',count:'2',names:'chan, spectrum',fmt:'int16'});
 po.size.w=300; po.size.h=200; applySize(po);
 const pi=addNode('pinsin',40,660,{on:false,url:'ws://127.0.0.1:8777',count:'2',names:'tune, offset'});
 pi.size.w=300; pi.size.h=200; applySize(pi);
@@ -8066,7 +8066,7 @@ preset('Packets: HTTP POST — Craft, HEX Structure Layers, Filter', function(){
 clearAll();
 const nt=addNode('note',40,20,{text:'HEX Structure parses and builds a packet layer by layer, like Wireshark: Ethernet → IPv4 → TCP → payload by port → HTTP (method, path, host, headers h.*, query q.*, form, JSON json.*, cookies) — the same for DNS, DHCP, NTP, TFTP, MQTT, Modbus TCP, CoAP, TLS (SNI), WebSocket, HTTP/2, SIP, RTSP, LLDP, VLAN, GRE, VXLAN… (the schema list). Text protocols use the http field type and `until` delimiters.\n'+
   'Packet Crafter makes a TCP segment to port 8080 with an HTTP POST. HEX Structure (schema eth) shows every field with its bytes; edit a field and the packet is rebuilt (lengths, checksums). Packet Analyzer filters the same packets: http.method == "POST" && http.host contains api && http.content_type contains json (also http.h.<header>, http.q.<param>, http.json.<path>). Change the method in the Crafter payload to GET — the second Analyzer stops showing it.\n'+
-  'To send for real or to receive from the network use Network (DSP app) with the phone app or on a computer `node tools/net-bridge.mjs` (ws://127.0.0.1:8765): its data goes in as hex, answers come back as records with hex.'});
+  'To send for real or to receive from the network use Network (DSP app) with the phone app or on a computer `node tools/node/bridge.mjs` (ws://127.0.0.1:8777): its data goes in as hex, answers come back as records with hex.'});
 nt.size.w=1100; nt.size.h=170; applySize(nt);
 const go=addNode('lfo',40,230,{freq:.2,min:0,max:1,wave:'sq'});
 const pc=addNode('pktcraft',300,230,{l2:'eth',l3:'ipv4',l4:'tcp',ipSrc:'10.0.0.5',ipDst:'10.0.0.80',sport:50000,dport:8080,flags:'PSH ACK',ack:1,payloadFmt:'text',count:1,

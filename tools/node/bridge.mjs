@@ -241,11 +241,11 @@ export function createMsgrBridge(opt) {
     const rawPin = /^\/raw\/(.+)$/.exec(u.pathname);          // /raw/ИМЯ: только данные пина, без приветствия
     if (rawPin) { const p = c.pin = makePinPeer(c, req.headers.origin || ''); try { p.raw = decodeURIComponent(rawPin[1]); } catch (e) { p.raw = rawPin[1]; } pins.add(p); }
     const send = rec => { if (!c.dead) try { sock.write(wsFrame(JSON.stringify(rec))); } catch (e) { c.dead = true; } };
-    c.net = createNetCmds({policy: netpol, send, log: o.log, enabled: o.net !== false});
+    c.net = createNetCmds({policy: netpol, send, sendBin: b => { if (!c.dead && sock.writableLength < 8 << 20) try { sock.write(wsFrame(b, 2)); } catch (e) { c.dead = true; } }, log: o.log, enabled: o.net !== false});
     const stop = () => { if (c.ses) { try { c.ses.close(); } catch (e) { /* закрыт */ } c.ses = null; } };
     const bye = () => { if (clients.delete(c)) { c.dead = true; stop(); c.net.closeAll(); if (c.pin) pins.remove(c.pin); } };
     const par = wsParser({
-      onBin: b => { if (c.pin) pins.binary(c.pin, b); },
+      onBin: b => { if (c.pin) pins.binary(c.pin, b); else c.net.bin(b); },       // пины — кадры пинов, иначе поток байт в TCP-соединение [1][conn][данные]
       onMsg: t => {
         let m; try { m = JSON.parse(t); } catch (e) { return; }
         if (m && typeof m.cmd === 'string') return void c.net.handle(m);       // команды приложения: ping, tcp.* (netcmd.mjs)
@@ -278,7 +278,7 @@ export function createMsgrBridge(opt) {
       onPing: p => { try { sock.write(wsFrame(p.toString(), 10)); } catch (e) { /* закрыт */ } },
     });
     sock.on('data', par); sock.on('close', bye); sock.on('error', bye);
-    if (!rawPin) send({ev: 'hello', ver: 1, host: os.hostname(), protos: ['nostr', 'ntfy', 'matrix', 'telegram', 'irc', 'xmpp', 'aprs', 'email'], cmds: o.net === false ? [] : ['ping', 'tcp.connect', 'tcp.send', 'tcp.close']});
+    if (!rawPin) send({ev: 'hello', ver: 1, host: os.hostname(), protos: ['nostr', 'ntfy', 'matrix', 'telegram', 'irc', 'xmpp', 'aprs', 'email'], cmds: o.net === false ? [] : ['ping', 'net.info', 'tcp.connect', 'tcp.listen', 'tcp.send', 'tcp.close', 'udp.open', 'udp.send', 'udp.request', 'udp.close']});
   };
   const httpSrv = http.createServer(onRequest); httpSrv.on('upgrade', onUpgrade);
   // один порт — и ws:// / http://, и wss:// / https://: по первому байту (0x16 — TLS ClientHello) соединение отдаётся нужному серверу
