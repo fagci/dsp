@@ -199,7 +199,7 @@ class PinRing{
    «>имя» — вход узла (данные из графа уходят наружу), «<имя» — выход узла (данные приходят снаружи); через запятую.
    Имя пина = id пина, поэтому провода переживают добавление и перестановку. */
 const PINX_MAX=64;
-const PINX_RESERVED=new Set(['rtc','on','grow','url','transport','pins','count','names']);   // это id служебных пинов и контролов узла
+const PINX_RESERVED=new Set(['rtc','on','grow','url','transport','pins','count','names','fmt','buf']);   // это id служебных пинов и контролов узла
 function pinxName(s){ return String(s==null ? '' : s).trim().replace(/[^\w.\-\/@]+/g,'_').slice(0,48); }
 function pinxParse(text){
   const send=[], recv=[];

@@ -130,7 +130,7 @@ ok('reject short / unknown kind / bad length', K.pinDecode(new Uint8Array(10)) =
   const x = K.pinxParse('>chan, <tune, >chan, <on, <, junk, >a b');
   ok('pinx parse', x.send.join() === 'chan,a_b' && x.recv.join() === 'tune', JSON.stringify(x));
   ok('pinx add send', K.pinxWith('', 'send', 'x') === '>x' && K.pinxWith('>x, <y', 'recv', 'z') === '>x, <y, <z');
-  ok('pinx add refuses duplicate / reserved / empty', K.pinxWith('>x', 'send', 'x') === null && K.pinxWith('', 'recv', 'rtc') === null && K.pinxWith('', 'recv', '  ') === null);
+  ok('pinx add refuses duplicate / reserved / empty', K.pinxWith('>x', 'send', 'x') === null && K.pinxWith('', 'recv', 'rtc') === null && K.pinxWith('', 'recv', 'buf') === null && K.pinxWith('', 'send', 'fmt') === null && K.pinxWith('', 'recv', '  ') === null);
   ok('pinx same name in both directions is fine', K.pinxWith('>x', 'recv', 'x') === '>x, <x');
   let t = ''; for (let i = 0; i < 70; i++) t = K.pinxWith(t, 'send', 'p' + i) ?? t;
   ok('pinx capped at 64', K.pinxParse(t).send.length === 64);
