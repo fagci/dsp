@@ -34,7 +34,7 @@ await wait(1500);
 const st = await pg.evaluate(() => ({ o: __o.status, i: __i.status }));
 ok('both nodes connected', /connected/.test(st.o) && /connected/.test(st.i), JSON.stringify(st));
 // каталог пинов
-const list = await new Promise((r) => { const w = new WebSocket('ws://127.0.0.1:' + port + '/'); w.onmessage = (e) => { const j = JSON.parse(e.data); if (j.t === 'pins' && j.out.length) r(j); }; });
+const list = await new Promise((r) => { const w = new WebSocket('ws://127.0.0.1:' + port + '/'); w.onopen = () => w.send(JSON.stringify({ t: 'pins' })); w.onmessage = (e) => { const j = JSON.parse(e.data); if (j.t === 'pins' && j.out.length) r(j); }; });
 ok('pin list has names', list.out.map((p) => p.name).join() === 'chan1,spectrum' && list.in.map((p) => p.name).join() === 'iqback,tune', JSON.stringify(list));
 // пока никто не подписан, ничего не шлётся
 await wait(500);
