@@ -623,6 +623,7 @@ const PRESET_CATS={
   'Phone App: Stereo Microphone — Two Phone Mics Without Delay, Phase Difference':'Maps & Locating',
   'Phone App: Low-Latency Microphone — Monitor in Headphones, Delay Readout':'Maps & Locating',
   'Phone App: Locate Wi-Fi, BLE, Bluetooth and Cells (Trilateration)':'Maps & Locating',
+  'Map: Survey Explorer — Walk Data of Wi-Fi, BLE, BT and Cells (Table → Locator)':'Maps & Locating',
   'Phone App: Wi-Fi, BLE and Bluetooth as Three Graphs':'Network & IoT',
   'Network: HTTP Server — Share Files with Any Browser (Phone App)':'Network & IoT',
   'Network: Which App Talks to Where (Phone VPN Monitor)':'Network & IoT',
@@ -1621,6 +1622,21 @@ addEdge(tx.id,'rec',fl.id,'rec'); addEdge(tx.id,'rec',me.id,'rec'); addEdge(nl.i
 addEdge(fl.id,'rec',tb.id,'rec');
 addEdge(tb.id,'rows',lc.id,'rows');
 addEdge(me.id,'rec',mp.id,'rec'); addEdge(tx.id,'pts',mp.id,'rec'); addEdge(lc.id,'rec',mp.id,'rec');
+markWiresDirty();
+});
+preset('Map: Survey Explorer — Walk Data of Wi-Fi, BLE, BT and Cells (Table → Locator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Explore a finished walk: the Table «field/rssi-by-device» (the one the phone preset fills; or import your own CSV: Table menu → Import file…; columns dev, lat, lon, rssi, t, acc, src, name/ssid, ch, mfr are used). Press Run.\n'+
+  'Map → «Survey» panel (top left of the map): chips Wi-Fi / BLE / BT / Cells filter the devices by technology, the search takes a name, MAC, vendor or «ch6»; sort by strongest, most marks or name; level and mark-count filters. The map hides the estimates of devices that do not pass the filter. Click a device in the list (or its estimate on the map): the map flies to it and draws every mark (colour = level, blue weak … red strong, the number is dBm, the white ring is the strongest mark) with a line to the estimate; the info box gives the number of marks, the best level and the spread of the marks (a small spread means a poor estimate).\n'+
+  'The thin light-blue line is the walked track (only fixes with acc ≤ 30 m, GPS jumps dropped). Map › Survey: «survey marks» = filtered shows the marks of all devices that pass the filter at once (a level map of one technology). Locator: path loss n — 2 open field, 3 town, 4+ indoors; cells are far, their circles are large.'});
+nt.size.w=900; nt.size.h=190; applySize(nt);
+const tb=addNode('table',40,260,{list:'field/rssi-by-device',maxRows:5000,rev:true,cols:['t','src','dev','name','rssi','dist','distSigma','txp','lat','lon','acc','ch','band','type']});
+tb.size.w=520; tb.size.h=420; applySize(tb);
+const lc=addNode('geoLocate',600,260,{field:'rssi',method:'auto',group:'dev',labelField:'name',pathN:3,sigmaDb:6,minSpread:15,max:300,rays:false});
+lc.size.w=360; lc.size.h=420; applySize(lc);
+const mp=addNode('geoMap',1000,260,{mz:17,follow:false,labels:true,circles:'selected',cluster:false,trail:2000,maxEnt:20000,svDots:'selected',svTrack:true});
+mp.size.w=860; mp.size.h=700; applySize(mp);
+addEdge(tb.id,'rows',lc.id,'rows'); addEdge(tb.id,'rows',mp.id,'meas'); addEdge(lc.id,'rec',mp.id,'rec');
 markWiresDirty();
 });
 preset('Phone App: Wi-Fi, BLE and Bluetooth as Three Graphs', function(){
