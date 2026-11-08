@@ -119,9 +119,12 @@ Run `node tools/pin-bridge.mjs` on a computer (default `ws://127.0.0.1:8766`, `-
 
 - `websocat -b ws://127.0.0.1:8766/raw/NAME` — only the data: float32 (`sig`, spectrum), float32 `I Q I Q…` (`iq`), UTF-8 JSON (the rest). The centre frequency and rate are in the list: `GET http://127.0.0.1:8766/pins`.
 - `ws://…:8766/` — frames with a header (kind, centre, rate, sequence number: see the top of `modules/pins-kernels.js`). `{"t":"sub","names":["chan","spectrum"]}` subscribes (`"*"` — all), `{"t":"set","name":"tune","v":100500000}` writes a number into a Pins In, a binary frame with the same name feeds a stream.
-- Another DSP tab (a phone, a second computer) takes the same pins with its own Pins In — a graph split across devices. A slow client loses old frames, nothing piles up. Audio is not resampled: the rates of both engines must match (a warning shows in the node).
+- Another DSP tab (a phone, a second computer) takes the same pins with its own Pins In through the same bridge — a graph split across devices. A slow client loses old frames, nothing piles up. Audio is not resampled: the rates of both engines must match (a warning shows in the node).
+- **WebRTC instead of the bridge.** Set *transport* to WebRTC and wire *WebRTC Data → rtc* (channel `pins`); the other end is the same Pins node on another device. No bridge and no open port: connect with an offer / answer or the auto-connect room.
+- **Pins (custom)** (Data) has no fixed list; the other side creates the pins. List in the parameter *pins*: `>name` — input (graph → out), `<name` — output (in → graph). A bridge client adds a pin by subscribing to a new name, by sending a frame with a new name, or `{"t":"make","name":"tune","dir":"pub"}` (`pub` — the client provides it, `sub` — it wants it). Over WebRTC the nodes announce their names to each other, so a pin made on one device appears on the other; only the wires are yours. *let the other side create pins* off — a fixed list (up to 64 pins).
 
-Preset: *USB SDR: Pins Out / In (channel IQ + spectrum to outside, OpenWebRX-style)*. Check: `node tools/test-pins.mjs`; in the browser `node tools/e2e-pins.mjs`.
+
+Presets: *USB SDR: Pins Out / In (channel IQ + spectrum to outside, OpenWebRX-style)* and *Pins (custom): pins made by the other side (WebRTC or bridge)*. Check: `node tools/test-pins.mjs`; in the browser `node tools/e2e-pins.mjs` and `node tools/e2e-pins-custom.mjs` (two pages, bridge and WebRTC).
 
 ## tinySA
 

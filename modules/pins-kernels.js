@@ -121,3 +121,28 @@ class PinRing{
     return out;
   }
 }
+
+/* ---------- узел Pins (custom): список пинов одной строкой ----------
+   «>имя» — вход узла (данные из графа уходят наружу), «<имя» — выход узла (данные приходят снаружи); через запятую.
+   Имя пина = id пина, поэтому провода переживают добавление и перестановку. */
+const PINX_MAX=64;
+const PINX_RESERVED=new Set(['rtc','on','grow','url','transport','pins','count','names']);   // это id служебных пинов и контролов узла
+function pinxName(s){ return String(s==null ? '' : s).trim().replace(/[^\w.\-\/@]+/g,'_').slice(0,48); }
+function pinxParse(text){
+  const send=[], recv=[];
+  for(const raw of String(text||'').split(',')){
+    const t=raw.trim(), d=t[0];
+    if(d!=='>' && d!=='<') continue;
+    const name=pinxName(t.slice(1)), L=d==='>' ? send : recv;
+    if(name && !PINX_RESERVED.has(name) && !L.includes(name) && send.length+recv.length<PINX_MAX) L.push(name);
+  }
+  return {send,recv};
+}
+// text + новый пин → новый text; null — такой уже есть / имя нельзя / список полон
+function pinxWith(text,dir,name){
+  name=pinxName(name);
+  const x=pinxParse(text), L=dir==='send' ? x.send : x.recv;
+  if(!name || PINX_RESERVED.has(name) || L.includes(name) || x.send.length+x.recv.length>=PINX_MAX) return null;
+  const t=String(text||'').trim().replace(/,+$/,'');
+  return (t ? t+', ' : '')+(dir==='send' ? '>' : '<')+name;
+}

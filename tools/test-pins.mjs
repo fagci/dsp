@@ -2,7 +2,7 @@
 import { loadKernels } from './netmock.mjs';
 import { createPinBridge } from './pin-bridge.mjs';
 let bad = 0; const ok = (n, c, x = '') => { if (!c) { bad++; console.log('FAIL', n, x); } else console.log('ok  ', n); };
-const K = loadKernels(['pins-kernels.js'], 'pinEncode,pinDecode,pinClassify,pinFrames,pinSpecOf,pinName,pinNames,PinRing,PIN_SIG,PIN_IQ,PIN_SPEC,PIN_SPECR,PIN_JSON,PIN_KIND_NAME');
+const K = loadKernels(['pins-kernels.js'], 'pinEncode,pinDecode,pinClassify,pinFrames,pinSpecOf,pinName,pinNames,PinRing,PIN_SIG,PIN_IQ,PIN_SPEC,PIN_SPECR,PIN_JSON,PIN_KIND_NAME,pinxParse,pinxWith,pinxName');
 
 // имена
 ok('names', K.pinNames('a, b ,,x y', 5, 'out').join('|') === 'a|b|out3|x_y|out5', K.pinNames('a, b ,,x y', 5, 'out').join('|'));
@@ -63,6 +63,17 @@ ok('reject short / unknown kind / bad length', K.pinDecode(new Uint8Array(10)) =
   r.push(new Float32Array([1, 2, 3, 4, 5, 6])); r.push(new Float32Array([7, 8, 9, 10]));
   const o2 = new Float32Array(8); r.pull(o2);
   ok('ring overflow drops oldest', Array.from(o2).join() === '3,4,5,6,7,8,9,10' && r.over === 1, Array.from(o2).join());
+}
+
+// узел Pins (custom): список пинов строкой
+{
+  const x = K.pinxParse('>chan, <tune, >chan, <on, <, junk, >a b');
+  ok('pinx parse', x.send.join() === 'chan,a_b' && x.recv.join() === 'tune', JSON.stringify(x));
+  ok('pinx add send', K.pinxWith('', 'send', 'x') === '>x' && K.pinxWith('>x, <y', 'recv', 'z') === '>x, <y, <z');
+  ok('pinx add refuses duplicate / reserved / empty', K.pinxWith('>x', 'send', 'x') === null && K.pinxWith('', 'recv', 'rtc') === null && K.pinxWith('', 'recv', '  ') === null);
+  ok('pinx same name in both directions is fine', K.pinxWith('>x', 'recv', 'x') === '>x, <x');
+  let t = ''; for (let i = 0; i < 70; i++) t = K.pinxWith(t, 'send', 'p' + i) ?? t;
+  ok('pinx capped at 64', K.pinxParse(t).send.length === 64);
 }
 
 // ---------- мост ----------
