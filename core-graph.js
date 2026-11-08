@@ -250,10 +250,18 @@ HiDPICanvases.set(cv,restretch);
 if(n && MOD[n.type]?.crisp) crispCtx(cx,()=>cv.pxW/logW);
 // Chrome на Android сбрасывает 2D-контекст в фоне; после восстановления матрица сброшена
 cv.addEventListener('contextrestored',()=>restretch(true));
+// Модуль/applySize ставит логический размер по оценке (midWidth), а реальный CSS-размер может отличаться;
+// ResizeObserver молчит, если сам CSS-бокс не менялся, — буфер остаётся в чужом масштабе и картинка растягивается.
+// После установки размера сверяем с фактическим боксом (один раз на кадр).
+let syncQ=0;
+const syncCss=()=>{ syncQ=0; if(!cv.isConnected) return;
+const w=cv.clientWidth, h=cv.clientHeight;
+if(w>0 && h>0 && (w!==logW||h!==logH)){ logW=w; logH=h; restretch(); } };
+const syncSoon=()=>{ if(!syncQ) syncQ=requestAnimationFrame(syncCss); };
 Object.defineProperty(cv,'width',{configurable:true, get:()=>logW,
-set:v=>{ logW=v; restretch(true); }});
+set:v=>{ logW=v; restretch(true); syncSoon(); }});
 Object.defineProperty(cv,'height',{configurable:true, get:()=>logH,
-set:v=>{ logH=v; restretch(true); }});
+set:v=>{ logH=v; restretch(true); syncSoon(); }});
 // В панельном режиме canvas.view растянут через CSS (width:100%), а ширина .node
 // плавает вслед за окном — attribute-размер (и DPR-буфер) этого не видит, отсюда
 // размытие при ресайзе. ResizeObserver держит logW/logH в реальном CSS-размере.
