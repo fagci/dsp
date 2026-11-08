@@ -80,7 +80,7 @@ class BridgeServer(
 
     private val clients = CopyOnWriteArraySet<Client>()
 
-    /** Пины наружу: страницы с узлами Pins ↔ внешние клиенты (то же, что tools/pin-bridge.mjs). */
+    /** Пины наружу: страницы с узлами Pins ↔ внешние клиенты (то же, что в tools/termux/bridge.mjs). */
     private val pins = PinRelay()
     private fun pinPeer(c: Client): PinRelay.Peer = c.pin ?: PinRelay.Peer({ c.send(it) }, { c.sendBytes(it) }).also { c.pin = it }
 

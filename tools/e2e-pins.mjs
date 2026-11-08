@@ -1,13 +1,13 @@
-// Сквозная проверка Pins Out / Pins In в браузере: граф ↔ tools/pin-bridge.mjs ↔ внешний клиент.
+// Сквозная проверка Pins Out / Pins In в браузере: граф ↔ tools/termux/bridge.mjs ↔ внешний клиент.
 // Нужны Playwright и статика на :8123 (python3 -m http.server 8123): node tools/e2e-pins.mjs
 import { createRequire } from 'node:module';
 import { loadKernels } from './netmock.mjs';
-import { createPinBridge } from './pin-bridge.mjs';
+import { createBridge } from './termux/bridge.mjs';
 const { chromium } = createRequire(import.meta.url)('playwright');
 let bad = 0; const ok = (n, c, x = '') => { if (!c) { bad++; console.log('FAIL', n, x); } else console.log('ok  ', n); };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const K = loadKernels(['pins-kernels.js'], 'pinEncode,pinDecode,PIN_JSON,PIN_SIG,PIN_IQ');
-const bridge = createPinBridge({ port: 0 }), port = await bridge.start();
+const bridge = createBridge({ port: 0, sources: [], log: () => {} }), port = (await bridge.listen()).port;
 const cli = await new Promise((res) => { const w = new WebSocket('ws://127.0.0.1:' + port + '/'); w.binaryType = 'arraybuffer'; w.msgs = []; w.onmessage = (e) => { if (typeof e.data !== 'string') w.msgs.push(K.pinDecode(new Uint8Array(e.data))); }; w.onopen = () => res(w); });
 const b = await chromium.launch(); const pg = await b.newPage(); const errs = [];
 pg.on('pageerror', (e) => errs.push(e.message));
@@ -64,5 +64,5 @@ ok('unsubscribe stops the stream', cli.msgs.length === n0);
 await pg.evaluate(() => { __o.p.on = false; __i.p.on = false; }); await wait(500);
 ok('nodes off → link released', await pg.evaluate(() => !__o.lk && !__i.lk));
 ok('no page errors', errs.length === 0, errs.join(' | '));
-await b.close(); bridge.stop(); cli.close();
+await b.close(); bridge.close(); cli.close();
 console.log(bad ? bad + ' FAILED' : 'all ok'); process.exit(bad ? 1 : 0);
