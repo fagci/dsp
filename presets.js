@@ -3979,7 +3979,7 @@ clearAll();
 const nt=addNode('note',40,40,{text:'Any pin of the graph to the outside, and from the outside in. Run `node tools/node/bridge.mjs` on the computer (port 8777; on a phone the DSP app is already such a bridge, port 8765), tick «send» / «receive» on both Pins nodes.\n'+
   'Pins Out publishes the names «chan» (IQ of the picked channel: shift + decimation, 64 kS/s) and «spectrum» (the wide spectrum of the SDR). Nothing is sent until a client subscribes, so the idle cost is zero.\n'+
   'Pins In takes «tune» (centre frequency, Hz → the SDR) and «offset» (channel offset, Hz → IQ Frequency Shift): the receiver is re-tuned by a wire, any numeric control of any node can be driven the same way.\n'+
-  'Clients: `websocat -b ws://127.0.0.1:8777/raw/chan | …` (float32 I,Q,I,Q…, no header); ws://127.0.0.1:8777/ with {"t":"sub","names":["chan","spectrum"]} (frames with a header: modules/pins-kernels.js); {"t":"set","name":"tune","v":100500000} re-tunes; GET http://127.0.0.1:8777/pins lists the names. Another DSP tab can take the same pins with Pins In.'});
+  'Clients: `websocat -b ws://127.0.0.1:8777/raw/chan | …` (int16 I,Q,I,Q… here — «fmt» of Pins Out: float32 / int16 / int8 halve or quarter the bytes on a slow link; no header); ws://127.0.0.1:8777/ with {"t":"sub","names":["chan","spectrum"]} (frames with a header: modules/pins-kernels.js); {"t":"set","name":"tune","v":100500000} re-tunes; GET http://127.0.0.1:8777/pins lists the names. Another DSP tab can take the same pins with Pins In.'});
 nt.size.w=820; nt.size.h=240; applySize(nt);
 const rx=addNode('rtlsdr',40,320,{sr:'1024000',auto:false,gainDb:30,demod:'WFM',freq:100000000});
 rx.size.w=320; rx.size.h=260; applySize(rx);
@@ -3988,7 +3988,7 @@ const sa=addNode('sa',720,320,{auto:true,floor:-90,top:-20,split:.4});
 sa.size.w=640; sa.size.h=300; applySize(sa);
 const sh=addNode('iqShift',420,520,{});
 const d1=addNode('iqDecim',420,660,{M:'16',cut:.4});
-const po=addNode('pinsout',720,660,{on:false,url:'ws://127.0.0.1:8777',count:'2',names:'chan, spectrum'});
+const po=addNode('pinsout',720,660,{on:false,url:'ws://127.0.0.1:8777',count:'2',names:'chan, spectrum',fmt:'int16'});
 po.size.w=300; po.size.h=200; applySize(po);
 const pi=addNode('pinsin',40,660,{on:false,url:'ws://127.0.0.1:8777',count:'2',names:'tune, offset'});
 pi.size.w=300; pi.size.h=200; applySize(pi);

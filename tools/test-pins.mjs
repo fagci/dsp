@@ -3,7 +3,7 @@ import { loadKernels } from './netmock.mjs';
 import { createBridge } from './termux/bridge.mjs';
 import { createMsgrBridge } from './node/bridge.mjs';
 let bad = 0; const ok = (n, c, x = '') => { if (!c) { bad++; console.log('FAIL', n, x); } else console.log('ok  ', n); };
-const K = loadKernels(['pins-kernels.js'], 'pinEncode,pinDecode,pinClassify,pinFrames,pinSpecOf,pinName,pinNames,PinRing,PIN_SIG,PIN_IQ,PIN_SPEC,PIN_SPECR,PIN_JSON,PIN_KIND_NAME,pinxParse,pinxWith,pinxName');
+const K = loadKernels(['pins-kernels.js'], 'pinEncode,pinDecode,pinClassify,pinFrames,pinSpecOf,pinName,pinNames,PinRing,PIN_SIG,PIN_IQ,PIN_SPEC,PIN_SPECR,PIN_JSON,PIN_KIND_NAME,pinxParse,pinxWith,pinxName,pinIqSplit,pinSigOf,PIN_IQ16,PIN_IQ8,PIN_SIG16,PIN_FMT_NAME,PIN_FORMATS');
 
 // имена
 ok('names', K.pinNames('a, b ,,x y', 5, 'out').join('|') === 'a|b|out3|x_y|out5', K.pinNames('a, b ,,x y', 5, 'out').join('|'));
@@ -64,6 +64,33 @@ ok('reject short / unknown kind / bad length', K.pinDecode(new Uint8Array(10)) =
   r.push(new Float32Array([1, 2, 3, 4, 5, 6])); r.push(new Float32Array([7, 8, 9, 10]));
   const o2 = new Float32Array(8); r.pull(o2);
   ok('ring overflow drops oldest', Array.from(o2).join() === '3,4,5,6,7,8,9,10' && r.over === 1, Array.from(o2).join());
+}
+
+// целые форматы на проводе: int16 / int8 вдвое / вчетверо меньше, ошибка не больше полушага, выбросы обрезаются, приёмник узнаёт по kind
+{
+  const N = 5000, re = new Float32Array(N), im = new Float32Array(N);
+  for (let i = 0; i < N; i++) { re[i] = Math.cos(i * 0.01) * 0.9; im[i] = Math.sin(i * 0.013) * 0.7; }
+  re[0] = 3; im[0] = -3; re[1] = 1; im[1] = -1;                              // выбросы и ровно полная шкала
+  const stream = { sr: 250000, fc: 1e8, chunks: [{ re, im }] };
+  const f32 = K.pinFrames('x', K.pinClassify(stream, 0, 'float32'), 0)[0];
+  for (const [fmt, kind, step, bytes] of [['int16', K.PIN_IQ16, 1 / 32767, 4], ['int8', K.PIN_IQ8, 1 / 127, 2]]) {
+    const fr = K.pinFrames('x', K.pinClassify(stream, 0, fmt), 0)[0], f = K.pinDecode(fr), q = K.pinIqSplit(f);
+    ok(fmt + ': kind, size ' + (8 / bytes) + '× smaller', f.kind === kind && K.PIN_FMT_NAME[f.kind] === fmt && fr.length - 24 - 4 === N * bytes && (f32.length - fr.length) > N * (8 - bytes) - 8, String(fr.length));
+    let err = 0; for (let i = 2; i < N; i++) err = Math.max(err, Math.abs(q.re[i] - re[i]), Math.abs(q.im[i] - im[i]));
+    ok(fmt + ': error within half a step', err <= step / 2 + 1e-7, String(err));
+    ok(fmt + ': clipped to ±1, full scale kept', q.re[0] === 1 && q.im[0] === -1 && q.re[1] === 1 && q.im[1] === -1, q.re[0] + ' ' + q.im[0]);
+    ok(fmt + ': fc / sr / seq preserved', f.fc === 1e8 && f.sr === 250000 && f.seq === 0);
+    const sh = new Uint8Array(fr.length + 1); sh.set(fr, 1);                  // кадр лежит в буфере с нечётного смещения — тоже читается
+    ok(fmt + ': odd buffer offset', Math.abs(K.pinIqSplit(K.pinDecode(sh.subarray(1))).re[100] - q.re[100]) < 1e-9);
+    const N2 = 700000, big = { sr: 1e6, fc: 0, chunks: [{ re: new Float32Array(N2).fill(0.5), im: new Float32Array(N2).fill(-0.5) }] };
+    const parts = K.pinFrames('big', K.pinClassify(big, 0, fmt), 7).map(K.pinDecode);
+    ok(fmt + ': split into frames ≤ 512 KB, no sample lost', parts.every((p, i) => p.seq === 7 + i && p.data.byteLength <= 512 * 1024 && p.data.length % 2 === 0) && parts.reduce((a, p) => a + p.data.length / 2, 0) === N2, parts.map((p) => p.data.length).join());
+  }
+  const sig = new Float32Array([0, 0.5, -0.5, 1, -1, 2, -2]);
+  const sf = K.pinDecode(K.pinFrames('s', K.pinClassify(sig, 48000, 'int16'), 0)[0]);
+  ok('sig int16: kind and values', sf.kind === K.PIN_SIG16 && Array.from(K.pinSigOf(sf)).every((v, i) => Math.abs(v - Math.max(-1, Math.min(1, sig[i]))) < 1 / 32767), Array.from(K.pinSigOf(sf)).join());
+  ok('sig int8 falls back to int16 (audio has no 8-bit format)', K.pinDecode(K.pinFrames('s', K.pinClassify(sig, 48000, 'int8'), 0)[0]).kind === K.PIN_SIG16);
+  ok('odd-sized int payload is rejected', K.pinDecode(new Uint8Array([K.PIN_IQ16, 1, 0, 0, ...new Array(20).fill(0), 120, 0, 0, 0, 1, 2, 3])) === null);
 }
 
 // узел Pins (custom): список пинов строкой

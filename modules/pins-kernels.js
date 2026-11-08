@@ -3,17 +3,21 @@
    Чистая логика без DOM (грузится страницей и тестами, мост tools/termux/bridge.mjs кадры не разбирает; тест — tools/test-pins.mjs).
    Один формат кадра на любой тип данных: бинарное WebSocket-сообщение, все числа little-endian.
      0  u8   kind   1 sig · 2 iq · 3 spec (комплексный, центр fc) · 4 spec (вещественный 0…sr/2) · 5 json
+                    6 iq int16 · 7 iq int8 · 8 sig int16 (в 2 / 4 / 2 раза меньше байт: Pins Out, параметр fmt; полная шкала ±1)
      1  u8   длина имени
      2  u16  0
      4  f64  fc   (iq: центр, spec: частота бина N/2)
      12 f64  sr   (iq / sig: частота дискретизации, spec: полоса всех бинов, а у вещественного — частота исходного потока)
      20 u32  seq  (счётчик отправленных кадров этого пина; пропуск = потеря)
      24      имя UTF-8, добор нулями до кратного 4 — дальше данные
-   Данные: sig — float32; iq — float32 I,Q,I,Q…; spec — float32 мощность по бинам; json — UTF-8 от JSON.stringify.
+   Данные: sig — float32; iq — float32 I,Q,I,Q…; spec — float32 мощность по бинам; json — UTF-8 от JSON.stringify;
+   iq int16 / int8 — I,Q,I,Q… целые (±32767 / ±127 = ±1.0), sig int16 — целые (±32767 = ±1.0). Приёмник узнаёт формат по kind.
    Управление — текстовые JSON-сообщения (см. tools/termux/bridge.mjs). */
 
-const PIN_SIG=1, PIN_IQ=2, PIN_SPEC=3, PIN_SPECR=4, PIN_JSON=5;
-const PIN_KIND_NAME={1:'sig',2:'iq',3:'spec',4:'spec',5:'json'};
+const PIN_SIG=1, PIN_IQ=2, PIN_SPEC=3, PIN_SPECR=4, PIN_JSON=5, PIN_IQ16=6, PIN_IQ8=7, PIN_SIG16=8;
+const PIN_KIND_NAME={1:'sig',2:'iq',3:'spec',4:'spec',5:'json',6:'iq',7:'iq',8:'sig'};
+const PIN_FMT_NAME={1:'float32',2:'float32',3:'float32',4:'float32',5:'json',6:'int16',7:'int8',8:'int16'};
+const PIN_FORMATS=['float32','int16','int8'];
 const PIN_MAX_BYTES=512*1024;                          // данных в одном кадре; ws-разбор моста режет всё, что больше 1 МиБ
 const PIN_ENC=new TextEncoder(), PIN_DEC=new TextDecoder();
 
@@ -44,32 +48,51 @@ function pinEncode(f){
 function pinDecode(u8){
   if(!u8 || u8.length<24) return null;
   const dv=new DataView(u8.buffer,u8.byteOffset,u8.byteLength), kind=u8[0], nl=u8[1], hl=pinHdrLen(nl);
-  if(kind<1 || kind>5 || u8.length<hl) return null;
+  if(kind<1 || kind>8 || u8.length<hl) return null;
   const f={kind, name:PIN_DEC.decode(u8.subarray(24,24+nl)), fc:dv.getFloat64(4,true), sr:dv.getFloat64(12,true), seq:dv.getUint32(20,true), data:null};
   const n=u8.length-hl;
   if(kind===PIN_JSON){ try{ f.data=JSON.parse(PIN_DEC.decode(u8.subarray(hl))); }catch(e){ return null; } }
   else{
-    if(n&3) return null;
-    f.data=((u8.byteOffset+hl)&3)===0 ? new Float32Array(u8.buffer,u8.byteOffset+hl,n>>2) : new Float32Array(u8.slice(hl).buffer);
+    if(kind===PIN_IQ8){ if(n&1) return null; f.data=new Int8Array(u8.buffer,u8.byteOffset+hl,n); }
+    else if(kind===PIN_IQ16 || kind===PIN_SIG16){
+      if(n&1 || (kind===PIN_IQ16 && n&3)) return null;
+      f.data=((u8.byteOffset+hl)&1)===0 ? new Int16Array(u8.buffer,u8.byteOffset+hl,n>>1) : new Int16Array(u8.slice(hl).buffer);
+    }else{
+      if(n&3) return null;
+      f.data=((u8.byteOffset+hl)&3)===0 ? new Float32Array(u8.buffer,u8.byteOffset+hl,n>>2) : new Float32Array(u8.slice(hl).buffer);
+    }
   }
   return f;
 }
 
-// значение с пина графа → {kind,fc,sr,data[,rev]} | null (нечего отправлять / тип не поддержан)
-function pinClassify(v,engSr){
+// значение с пина графа → {kind,fc,sr,data[,rev]} | null (нечего отправлять / тип не поддержан). fmt: 'float32' | 'int16' | 'int8' — для iq и sig
+function pinClassify(v,engSr,fmt){
   if(v==null) return null;
   if(typeof v==='number') return isFinite(v) ? {kind:PIN_JSON,fc:0,sr:0,data:v} : null;
   if(typeof v==='string' || typeof v==='boolean') return {kind:PIN_JSON,fc:0,sr:0,data:v};
-  if(pinIsF32(v)) return v.length ? {kind:PIN_SIG,fc:0,sr:+engSr||0,data:v} : null;
+  if(pinIsF32(v)){
+    if(!v.length) return null;
+    if(fmt==='int16' || fmt==='int8'){ const q=new Int16Array(v.length); for(let i=0;i<v.length;i++){ const x=v[i]; q[i]=x>=1 ? 32767 : x<=-1 ? -32767 : (x*32767+(x>0 ? .5 : -.5))|0; } return {kind:PIN_SIG16,fc:0,sr:+engSr||0,data:q}; }
+    return {kind:PIN_SIG,fc:0,sr:+engSr||0,data:v};
+  }
   if(ArrayBuffer.isView(v)) return null;
   if(Array.isArray(v)) return v.length ? {kind:PIN_JSON,fc:0,sr:0,data:v} : null;
   if(typeof v!=='object') return null;
   if(Array.isArray(v.chunks)){                          // поток IQ (iqStream)
     let tot=0; for(const c of v.chunks) tot+=c.re.length;
     if(!tot) return null;
-    const d=new Float32Array(tot*2); let o=0;
-    for(const c of v.chunks){ const re=c.re, im=c.im; for(let i=0;i<re.length;i++){ d[o++]=re[i]; d[o++]=im ? im[i] : 0; } }
-    return {kind:PIN_IQ,fc:+v.fc||0,sr:+v.sr||0,data:d};
+    let o=0, d, kind=PIN_IQ;
+    if(fmt==='int16'){
+      kind=PIN_IQ16; d=new Int16Array(tot*2);
+      for(const c of v.chunks){ const re=c.re, im=c.im; for(let i=0;i<re.length;i++){ const a=re[i], b=im ? im[i] : 0; d[o++]=a>=1 ? 32767 : a<=-1 ? -32767 : (a*32767+(a>0 ? .5 : -.5))|0; d[o++]=b>=1 ? 32767 : b<=-1 ? -32767 : (b*32767+(b>0 ? .5 : -.5))|0; } }
+    }else if(fmt==='int8'){
+      kind=PIN_IQ8; d=new Int8Array(tot*2);
+      for(const c of v.chunks){ const re=c.re, im=c.im; for(let i=0;i<re.length;i++){ const a=re[i], b=im ? im[i] : 0; d[o++]=a>=1 ? 127 : a<=-1 ? -127 : (a*127+(a>0 ? .5 : -.5))|0; d[o++]=b>=1 ? 127 : b<=-1 ? -127 : (b*127+(b>0 ? .5 : -.5))|0; } }
+    }else{
+      d=new Float32Array(tot*2);
+      for(const c of v.chunks){ const re=c.re, im=c.im; for(let i=0;i<re.length;i++){ d[o++]=re[i]; d[o++]=im ? im[i] : 0; } }
+    }
+    return {kind,fc:+v.fc||0,sr:+v.sr||0,data:d};
   }
   if(v.mag && pinIsF32(v.mag)){                         // спектр
     const N=v.mag.length;
@@ -86,9 +109,9 @@ function pinClassify(v,engSr){
 
 // кадры для отправки: IQ длиннее PIN_MAX_BYTES режется по отсчётам. seq0 — номер первого кадра
 function pinFrames(name,c,seq0){
-  if(c.kind===PIN_IQ && c.data.length*4>PIN_MAX_BYTES){
-    const step=(PIN_MAX_BYTES>>3)*2, out=[];
-    for(let o=0,s=seq0;o<c.data.length;o+=step,s++) out.push(pinEncode({kind:PIN_IQ,name,fc:c.fc,sr:c.sr,seq:s,data:c.data.subarray(o,o+step)}));
+  if((c.kind===PIN_IQ || c.kind===PIN_IQ16 || c.kind===PIN_IQ8) && c.data.byteLength>PIN_MAX_BYTES){
+    const step=(PIN_MAX_BYTES/c.data.BYTES_PER_ELEMENT)&~1, out=[];                  // целое число комплексных отсчётов в кадре
+    for(let o=0,s=seq0;o<c.data.length;o+=step,s++) out.push(pinEncode({kind:c.kind,name,fc:c.fc,sr:c.sr,seq:s,data:c.data.subarray(o,o+step)}));
     return out;
   }
   return [pinEncode({kind:c.kind,name,fc:c.fc,sr:c.sr,seq:seq0,data:c.data})];
@@ -101,6 +124,21 @@ function pinSpecOf(f){
   const bin=f.sr/N, freqs=new Float64Array(N);
   for(let i=0;i<N;i++) freqs[i]=f.fc+(i-(N>>1))*bin;
   return {mag:f.data,sr:f.sr,size:N,freqs,rev:0};
+}
+
+// принятые кадры → то, с чем работает граф (с разворотом целых форматов в float)
+function pinIqSplit(f){                                  // kind 2 / 6 / 7 → {re, im} Float32Array
+  const d=f.data, m=d.length>>1, re=new Float32Array(m), im=new Float32Array(m);
+  const k=f.kind===PIN_IQ16 ? 1/32767 : f.kind===PIN_IQ8 ? 1/127 : 1;
+  if(k===1) for(let i=0;i<m;i++){ re[i]=d[2*i]; im[i]=d[2*i+1]; }
+  else for(let i=0;i<m;i++){ re[i]=d[2*i]*k; im[i]=d[2*i+1]*k; }
+  return {re,im};
+}
+function pinSigOf(f){                                    // kind 1 / 8 → Float32Array
+  if(f.kind!==PIN_SIG16) return f.data;
+  const d=f.data, o=new Float32Array(d.length);
+  for(let i=0;i<d.length;i++) o[i]=d[i]/32767;
+  return o;
 }
 
 // Очередь звука: кадры sig приходят не в такт блокам движка. pull(n) отдаёт ровно n отсчётов (нехватку добивает нулями)
