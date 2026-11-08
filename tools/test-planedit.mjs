@@ -155,6 +155,15 @@ ok('the same wall is a bigger obstacle at 5 GHz: the level behind it drops more 
   const behind=run([wall,tbl(1.5,'t')]); ok('a table behind the wall: the point of its top is hidden by the wall’s near face',eq(at(behind,0,1.5,.8),WALL),JSON.stringify(at(behind,0,1.5,.8)));
   const thru=run([wall,tbl(0,'t')]); ok('a table that straddles the wall (intersecting volumes): the south half of its top is visible, the north half is cut by the wall',eq(at(thru,0,-.2,.8),TOP) && eq(at(thru,0,.2,.8),WALL),JSON.stringify([at(thru,0,-.2,.8),at(thru,0,.2,.8)]));
   ok('background is transparent',at(front,-6,-3,0)[3]===0); }
+// монолит: стык двух блоков в одной плоскости не виден, силуэт и смена грани — видны
+{ const E=35*Math.PI/180, ce=Math.cos(E), se=Math.sin(E), W=300, H=300, sc=20, proj=(x,y,z)=>[W/2+x*sc,H*.75-(z*ce+y*se)*sc,y*ce-z*se];
+  const b=(cx,l)=>({cx,cy:0,ux:1,uy:0,l,t:.4,z0:0,z1:2.7,kind:'wall',ref:'w'+cx}), col=()=>[200,200,200];
+  const at=(R,x,y,z)=>{ const q=proj(x,y,z), i=(Math.round(q[1]-.5)*R.w+Math.round(q[0]-.5))*4; return R.data[i]; };
+  const one=K.peZRaster([b(0,6)],proj,W,H,{cam:[0,-1],ce,color:col}), two=K.peZRaster([b(-1.5,3),b(1.5,3)],proj,W,H,{cam:[0,-1],ce,color:col});
+  ok('monolith: two blocks in one plane look like one (byte for byte)',one.data.every((v,i)=>v===two.data[i]));
+  const faces=K.peZRaster([b(-1.5,3),b(1.5,3)],proj,W,H,{cam:[0,-1],ce,color:col,edge:'faces'});
+  ok('«faces» mode still outlines every face (the seam shows)',at(faces,0,-.2,1.3)<at(two,0,-.2,1.3),at(faces,0,-.2,1.3)+' '+at(two,0,-.2,1.3));
+  ok('monolith: the silhouette is outlined',at(two,-3,-.2,1.3)<at(two,-2.5,-.2,1.3) || at(two,-3.02,-.2,1.3)<at(two,-2.5,-.2,1.3)); }
 // приёмная антенна
 { const {s}=room(20,10); const tx=K.peAddAnt(s,2,5,{z:1,eirp:20,f:2400,bw:360}); const rx=K.peAddRx(s,12,5,{z:1,gain:3,sens:-85,f:2400});
   const r=K.peRxLevel(s,rx); near('RX level = EIRP − FSPL(10 m) + RX gain',r.level,20-K.peFspl(10,2400)+3,1e-6); near('margin over the sensitivity',r.margin,r.level+85,1e-9); ok('link ok, from the transmitter',r.ok && r.from===tx.id);

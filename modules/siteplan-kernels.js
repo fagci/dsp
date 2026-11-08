@@ -463,6 +463,18 @@ function spWalls(R,o={}){
       else e.pieces.push({lo,hi,t:best ? best.d : outer,f:best ? best.f : null,inner:!!best}); }
     if(e.pieces.length){ e.pieces[0].lo=0; e.pieces[e.pieces.length-1].hi=e.L; }
   }
+  // фасад ровный: наружная грань не мерилась (она — принятая толщина), поэтому почти совпадающие наружные грани (параллельны, расходятся < align)
+  // сводятся в одну линию, а толщина каждой стены подгоняется; внутренние грани (замер) не двигаются
+  const align=o.align>=0 ? o.align : .08, OP=[]; for(const e of E) for(const pc of e.pieces) if(!pc.inner) OP.push({e,pc});
+  const par=OP.map((_,i)=>i), fd=i=>par[i]===i ? i : (par[i]=fd(par[i]));
+  const face=({e,pc})=>{ const m=(pc.lo+pc.hi)/2; return [e.px+e.ux*m+e.nx*pc.t,e.py+e.uy*m+e.ny*pc.t]; };
+  for(let i=0;i<OP.length;i++) for(let j=i+1;j<OP.length;j++){ const A=OP[i].e, B=OP[j].e; if(A.nx*B.nx+A.ny*B.ny<.9994) continue;
+    const fa=face(OP[i]), fb=face(OP[j]); if(Math.abs((fb[0]-fa[0])*A.nx+(fb[1]-fa[1])*A.ny)<align) par[fd(i)]=fd(j); }
+  const grp=new Map(); OP.forEach((q,i)=>{ const r=fd(i); if(!grp.has(r)) grp.set(r,[]); grp.get(r).push(q); });
+  for(const g of grp.values()){ if(g.length<2) continue;
+    let nx=0, ny=0; for(const {e} of g){ nx+=e.nx; ny+=e.ny; } const nl=Math.hypot(nx,ny); nx/=nl; ny/=nl;
+    let c=0, wsum=0; for(const q of g){ const f=face(q), w=q.pc.hi-q.pc.lo; c+=(f[0]*nx+f[1]*ny)*w; wsum+=w; } c/=wsum;
+    for(const {e,pc} of g){ const m=(pc.lo+pc.hi)/2, d=c-((e.px+e.ux*m)*nx+(e.py+e.uy*m)*ny); if(d>.05) pc.t=d; } }
   // стены: внутренняя — один раз (от комнаты с меньшим номером), наружная — от своей; продление за выпуклые углы
   const walls=[], key=new Map();
   for(const e of E) e.pieces.forEach((pc,k)=>{

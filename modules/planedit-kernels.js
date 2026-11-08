@@ -489,10 +489,11 @@ function peOverlaps(s){
 // каждая грань закрашивает пиксели, где она ближе всего. Проекция ортографическая, значит глубина по экрану линейна, и по каждой грани она задаётся плоскостью.
 // B — блоки (peBoxes), proj(x,y,z) → [sx, sy, depth] (чем меньше depth, тем ближе), W×H — размер, o: {cam:[dx,dy] горизонталь на зрителя, ce: cos угла места, sel: Set ref, color(b)→[r,g,b], edge: true}
 function peZRaster(B,proj,W,H,o){
-  const img=new Uint8ClampedArray(W*H*4), zb=new Float32Array(W*H).fill(Infinity), cam=o.cam, ce=o.ce, L=o.light||[.5,-.8];
+  const img=new Uint8ClampedArray(W*H*4), zb=new Float32Array(W*H).fill(Infinity), gid=new Int32Array(W*H), cam=o.cam, ce=o.ce, L=o.light||[.5,-.8];
   const fill=(V,rgb)=>{
     // плоскость глубины d = a·x + b·y + c по трём несовпадающим вершинам
     const [p0,p1,p2]=V, ux=p1[0]-p0[0], uy=p1[1]-p0[1], vx=p2[0]-p0[0], vy=p2[1]-p0[1], det=ux*vy-uy*vx; if(Math.abs(det)<1e-9) return;
+    const G=(rgb[0]<<16|rgb[1]<<8|rgb[2])+1;                  // группа: один цвет = одна ориентация и вид; одна плоскость двух блоков сливается
     const du=p1[2]-p0[2], dv=p2[2]-p0[2], a=(du*vy-dv*uy)/det, bq=(dv*ux-du*vx)/det, c=p0[2]-a*p0[0]-bq*p0[1];
     let y0=1e9,y1=-1e9; for(const q of V){ if(q[1]<y0)y0=q[1]; if(q[1]>y1)y1=q[1]; }
     const ys=Math.max(0,Math.ceil(y0-.5)), ye=Math.min(H-1,Math.floor(y1-.5));
@@ -500,7 +501,7 @@ function peZRaster(B,proj,W,H,o){
       const yc=y+.5; let xa=1e9,xb=-1e9;
       for(let i=0;i<V.length;i++){ const p=V[i], q=V[(i+1)%V.length]; if((p[1]<=yc&&q[1]>yc)||(q[1]<=yc&&p[1]>yc)){ const x=p[0]+(yc-p[1])/(q[1]-p[1])*(q[0]-p[0]); if(x<xa)xa=x; if(x>xb)xb=x; } }
       const xs=Math.max(0,Math.ceil(xa-.5)), xe=Math.min(W-1,Math.floor(xb-.5));
-      for(let x=xs;x<=xe;x++){ const d=a*(x+.5)+bq*yc+c, k=y*W+x; if(d<=zb[k]){ zb[k]=d; const j=k*4; img[j]=rgb[0]; img[j+1]=rgb[1]; img[j+2]=rgb[2]; img[j+3]=255; } }
+      for(let x=xs;x<=xe;x++){ const d=a*(x+.5)+bq*yc+c, k=y*W+x; if(d<=zb[k]){ zb[k]=d; gid[k]=G; const j=k*4; img[j]=rgb[0]; img[j+1]=rgb[1]; img[j+2]=rgb[2]; img[j+3]=255; } }
     }
   };
   const edge=(p,q,rgb)=>{ const n=Math.ceil(Math.max(Math.abs(q[0]-p[0]),Math.abs(q[1]-p[1]))); for(let i=0;i<=n;i++){ const t=n ? i/n : 0, x=Math.round(p[0]+(q[0]-p[0])*t-.5), y=Math.round(p[1]+(q[1]-p[1])*t-.5); if(x<0||y<0||x>=W||y>=H) continue; const d=p[2]+(q[2]-p[2])*t, k=y*W+x; if(d<=zb[k]+.02){ const j=k*4; img[j]=rgb[0]; img[j+1]=rgb[1]; img[j+2]=rgb[2]; img[j+3]=255; } } };
@@ -513,6 +514,19 @@ function peZRaster(B,proj,W,H,o){
       faces.push([[proj(C[i][0],C[i][1],b.z0),proj(C[j][0],C[j][1],b.z0),proj(C[j][0],C[j][1],b.z1),proj(C[i][0],C[i][1],b.z1)],shade(k)]); }
   }
   for(const [V,rgb] of faces) fill(V,rgb);
-  if(o.edge!==false) for(const [V,rgb] of faces){ const dk=rgb.map(v=>Math.round(v*.45)); for(let i=0;i<V.length;i++) edge(V[i],V[(i+1)%V.length],dk); }
+  if(o.edge===false) return {data:img,w:W,h:H,zb};
+  // монолит (по умолчанию): линии только на настоящих рёбрах — смена ориентации / вида грани или скачок глубины (силуэт, заслонение);
+  // стыки блоков в одной плоскости (угол, перемычка над дверью, общая стена) не видны. o.edge==='faces' — старый вид: контур каждой грани
+  if(o.edge!=='faces'){
+    const thr=o.crease>0 ? o.crease : .04, M=new Uint8Array(W*H), dz=(a,b,c)=>Math.abs(zb[a]-2*zb[b]+zb[c]);
+    for(let y=0;y<H;y++) for(let x=0;x<W;x++){ const k=y*W+x; if(zb[k]===Infinity) continue;
+      for(const [st,ok] of [[1,x+1<W],[W,y+1<H]]){ if(!ok) continue; const n1=k+st;
+        if(zb[n1]===Infinity || gid[n1]!==gid[k]){ M[k]=1; continue; }
+        const okPrev=st===1 ? x>0 : y>0, p0=k-st;
+        if(okPrev && zb[p0]!==Infinity && gid[p0]===gid[k] && dz(p0,k,n1)>thr) M[k]=1; } }
+    for(let k=0;k<W*H;k++) if(M[k]){ const j=k*4; img[j]=img[j]*.45; img[j+1]=img[j+1]*.45; img[j+2]=img[j+2]*.45; }
+    return {data:img,w:W,h:H,zb};
+  }
+  for(const [V,rgb] of faces){ const dk=rgb.map(v=>Math.round(v*.45)); for(let i=0;i<V.length;i++) edge(V[i],V[(i+1)%V.length],dk); }
   return {data:img,w:W,h:H,zb};
 }
