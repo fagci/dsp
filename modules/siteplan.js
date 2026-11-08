@@ -24,6 +24,7 @@ function spRecords(R){
   const rec=[], poly=[], t=new Date().toISOString();
   for(const p of R.pts) rec.push({id:'sp:'+p.name,t,kind:'plan point',label:p.name,x:+p.x.toFixed(3),y:+p.y.toFixed(3),z:+p.z.toFixed(2),
     sigma_m:isFinite(p.sx) ? +Math.hypot(p.sx,p.sy).toFixed(3) : '',...(R.georef ? {lat:+p.lat.toFixed(8),lon:+p.lon.toFixed(8),icon:'dot'} : {})});
+  (R.opens||[]).forEach((o,i)=>rec.push({id:'sp:'+o.kind+':'+o.a+'-'+o.b+':'+o.from,t,kind:'plan opening',type:o.kind,a:o.a,b:o.b,from:o.from,w:o.w,h:o.h,sill:o.sill}));   // для Plan Editor
   R.polys.forEach((pl,i)=>{
     rec.push({id:'sp:room:'+i,t,kind:'plan poly',names:pl.names.slice(),area_m2:+pl.area.toFixed(2),...(pl.h>0 ? {h:pl.h,volume_m3:+pl.volume.toFixed(2)} : {})});     // для Plan Editor: стены по сторонам контура и комната
     if(!R.georef) return;
@@ -107,7 +108,7 @@ def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, lazy:true, kw:'pl
   ins:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'acc',t:'num'},{n:'alt',t:'num'},{n:'rec',t:'rec'},{n:'lines',t:'txt'}],
   outs:[{n:'area',t:'num'},{n:'perim',t:'num'},{n:'slope',t:'num'},{n:'rms',t:'num'},{n:'n',t:'num'},{n:'rec',t:'rec'},{n:'poly',t:'rec'}],
   w:460, view:{h:380}, resize:true, readout:true,
-  params:[{n:'plan',t:'code',plain:true,d:SP_DEF,label:'measurements, one per line: A-B 12.4 · A-B h 12.4 · A-B dz 1.2 · A-B az 45 · A-B-C 90 · A-B tilt 25 15 eye 1.6 · A z 120 · A gps lat lon ±3 · A at x y · poly A B C D · room Hall 4.48 3.74 4.46 3.74 (corners Hall1…, 90° unless «side/angle», «side/?» — not measured; d — diagonal 1-3) · wall Hall2-Hall3 Kit1-Kit4 0.4 [shift s] (rooms across a wall) · room … h 2.65 / height 2.7 (ceiling) · mirror (flip left ↔ right) (± — error, m or °)',fn:n=>{ n.key=''; }},
+  params:[{n:'plan',t:'code',plain:true,d:SP_DEF,label:'measurements, one per line: A-B 12.4 · A-B h 12.4 · A-B dz 1.2 · A-B az 45 · A-B-C 90 · A-B tilt 25 15 eye 1.6 · A z 120 · A gps lat lon ±3 · A at x y · poly A B C D · room Hall 4.48 3.74 4.46 3.74 (corners Hall1…, 90° unless «side/angle», «side/?» — not measured; d — diagonal 1-3) · wall Hall2-Hall3 Kit1-Kit4 0.4 [shift s] (rooms across a wall) · room … h 2.65 / height 2.7 (ceiling) · window zal1-zal2 1.20 1.40 h 1.45 sill 0.85 / door … (from corner, width) · mirror (flip left ↔ right) (± — error, m or °)',fn:n=>{ n.key=''; }},
           {n:'table',t:'text',d:'',label:'Table lists with measurements, comma-separated. Columns: kind (d h dz az tilt ang poly) + a, b, c + value [+ sigma]; or name + lat, lon [+ acc, alt]; or name + x, y [+ z]; or a ready «line»',fn:n=>{ n.tblKey=''; }},
           {n:'view',t:'select',opts:['plan','3D'],d:'plan',label:'view'},
           {n:'grid',t:'select',opts:['north','structure','off'],d:'north',label:'grid: north (E / N axes of the plan) · structure (along the first side of the contour, from its first point) · off'},
@@ -194,6 +195,10 @@ def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, lazy:true, kw:'pl
         let mx=0,my=0; pl.names.forEach(nm=>{ const s=S(idx(nm)); mx+=s[0]/pl.names.length; my+=s[1]/pl.names.length; });
         cx.fillStyle=fg; cx.textAlign='center'; cx.fillText(pl.area.toFixed(1)+' m²',mx,my);
       }
+      for(const o of R.opens||[]){                                     // проёмы: окно — голубым, дверь — коричневым, поверх стены
+        const sa=S(idx(o.a)), sb=S(idx(o.b)), f0=o.from/o.L, f1=(o.from+o.w)/o.L;
+        cx.strokeStyle=o.kind==='door' ? '#c9a06a' : '#6fd0ff'; cx.lineWidth=5; cx.beginPath(); cx.moveTo(sa[0]+(sb[0]-sa[0])*f0,sa[1]+(sb[1]-sa[1])*f0); cx.lineTo(sa[0]+(sb[0]-sa[0])*f1,sa[1]+(sb[1]-sa[1])*f1); cx.stroke();
+      }
       for(const [a,b] of R.edges){
         const sa=S(a), sb=S(b), isBad=bad.has([pts[a].name,pts[b].name].sort().join('|'));
         cx.strokeStyle=isBad ? '#ff5c5c' : 'rgba(150,170,180,.7)'; cx.lineWidth=isBad ? 2 : 1; cx.setLineDash(isBad ? [] : [3,3]);
@@ -216,6 +221,7 @@ def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, lazy:true, kw:'pl
       L.push(R.n+' point'+(R.n===1 ? '' : 's')+' · '+R.res.length+' measurement'+(R.res.length===1 ? '' : 's')+(R.dof>0 ? ' · redundancy '+R.dof+' · residuals '+R.rms.toFixed(2)+'σ'+(R.rms>2 ? ' — inconsistent' : R.rms<1.5 ? ' — consistent' : '') : ' · no redundancy: nothing to cross-check (add a diagonal or a second measurement)'));
       if(gridStep) L.push('grid '+gridStep+' m · '+(F.mode==='structure' ? 'axes along the first side of the contour, origin at its first point' : R.georef ? 'north-aligned (E, N from the local origin)' : 'plan axes x, y from the origin (no north: the plan is not georeferenced)'));
       for(const w of worst) L.push('⚠ line '+w.li+' '+w.a+(w.b ? '-'+w.b : '')+' '+w.k+': off by '+w.r.map(v=>v.toFixed(3)).join(', ')+' ('+w.nmax.toFixed(1)+'σ) — check it');
+      for(const o of R.opens||[]) L.push(o.kind+' '+o.a+'-'+o.b+': '+o.from.toFixed(2)+'…'+(o.from+o.w).toFixed(2)+' m of '+o.L.toFixed(2)+' · '+o.w+'×'+o.h+' m'+(o.sill>0 ? ' · sill '+o.sill+' m' : ''));
       if(R.mirror) L.push('mirrored left ↔ right («mirror» line)');
       else if(R.polys.length && !R.georef) L.push('kitchen on the wrong side? a tape and angles cannot tell a plan from its mirror image — add a line «mirror»');
       for(const pl of R.polys) L.push('contour '+pl.names.join('-')+': plan '+pl.area.toFixed(2)+' m²'+(pl.h>0 ? ' · ceiling '+pl.h+' m · volume '+pl.volume.toFixed(1)+' m³' : '')+' · surface '+pl.surf.toFixed(2)+' m² · perimeter '+pl.perimeter.toFixed(2)+' m'+(pl.slope>.05 ? ' · slope '+pl.slope.toFixed(1)+'° ('+pl.slopePct.toFixed(0)+'%)' : ''));

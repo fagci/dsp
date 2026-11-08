@@ -14,6 +14,7 @@
      A at 10 5                координаты A в локальной системе, м
      poly A B C D             контур — площадь и периметр
      room Hall … h 2.65 · poly … h 2.65 · height 2.7   высота потолка комнаты / по умолчанию для всех (уходит в высоту стен Plan Editor, объём)
+     window A-B 1.20 1.40 [h 1.45] [sill 0.85]   окно в стене A-B: от угла A до ближнего края 1.20, ширина 1.40, высота, подоконник от пола (door — дверь, h 2.05, sill 0)
      mirror                   отразить план слева направо (по рулетке и углам план не отличить от зеркального; с компасом / GPS не нужно)
      wall Hall2-Hall3 Kor4-Kor1 0.37 [shift 0]   стык через стену: Kor4-Kor1 параллельно Hall2-Hall3 по ту сторону стены 0.37, Kor4 напротив Hall2 (shift — сдвиг вдоль), Kor1 — в сторону Hall3
      room Hall 4.48 3.74 4.46 3.74 [d 5.8]   комната обходом: стороны по порядку, углы Hall1…Hall4 по 90° («3.74/95» — свой угол, «/?» — не замерен), d — диагональ 1–3
@@ -37,7 +38,7 @@ function spTilt(d,alphaDeg,eye=0,sd=0.03,sa=1){
 function spNum(t){ if(t==null) return NaN; const s=String(t).replace(/^[±~]|^\+-/,'').replace(/(\d),(\d)/,'$1.$2'); return /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(s) ? +s : NaN; }
 function spParse(text,o={}){
   const sd=o.sd>0 ? o.sd : 0.03, sa=o.sa>0 ? o.sa : 2, sg=o.sg>0 ? o.sg : 5, eye0=o.eye||0;
-  const names=[], idx=new Map(), obs=[], polys=[], errors=[]; let mirror=false, height=NaN;
+  const names=[], idx=new Map(), obs=[], polys=[], errors=[], opens=[]; let mirror=false, height=NaN;
   const pt=n=>{ if(!idx.has(n)){ idx.set(n,names.length); names.push(n); } return idx.get(n); };
   const one=(raw,li,depth=0)=>{
     const line=raw.trim(); if(!line) return;
@@ -56,6 +57,11 @@ function spParse(text,o={}){
       if(h1.length!==2 || h2.length!==2 || !(t>=0)) return bad('wall A-B C-D thickness [shift s] — C-D faces A-B across the wall, C opposite A');
       const a=pt(h1[0]), b=pt(h1[1]), c=pt(h2[0]), e=pt(h2[1]); if(a===b || c===e) return bad('same point');
       const s=sig??sd; obs.push({k:'wd',a,b,c,v:t,s,li},{k:'wd',a,b,c:e,v:t,s,li},{k:'wsh',a,b,c,v:sh,s,li,wall:{e}}); return; }
+    if(/^(window|door)$/i.test(T[0])){                                                       // проём: «window A-B от_угла_A ширина [h высота] [sill подоконник]»
+      const kind=T[0].toLowerCase(), hd=(T[1]||'').split('-'), from=spNum(T[2]), w=spNum(T[3]), o={kind,from,w,h:kind==='door' ? 2.05 : 1.2,sill:kind==='door' ? 0 : .9,li};
+      if(hd.length!==2 || !(from>=0) || !(w>0)) return bad(kind+' A-B from width [h height] [sill height] — from: corner A to the near edge, m');
+      for(let i=4;i<T.length;i+=2){ const k=T[i].toLowerCase(), v=spNum(T[i+1]); if((k!=='h' && k!=='sill') || !(v>=0) || (k==='h' && !(v>0))) return bad(kind+': unknown «'+T[i]+'» (h height, sill height)'); o[k]=v; }
+      o.a=pt(hd[0]); o.b=pt(hd[1]); if(o.a===o.b) return bad('same point'); opens.push(o); return; }
     if(/^height$/i.test(T[0])){ const v=spNum(T[1]); if(!(v>0)) return bad('height needs a number, m'); height=v; return; }     // высота потолка по умолчанию для всех комнат
     if(/^poly$/i.test(T[0])){ let h=NaN; { const i=T.findIndex((t,k)=>k>0 && /^h$/i.test(t)); if(i>0){ h=spNum(T[i+1]); if(!(h>0)) return bad('poly … h needs a height, m'); T.splice(i,2); } }
       const ids=T.slice(1).map(pt); if(ids.length<3){ bad('poly needs 3+ points'); return; } polys.push({ids,h}); return; }
@@ -86,7 +92,7 @@ function spParse(text,o={}){
   String(text||'').split('\n').forEach((raw0,li)=>raw0.replace(/#.*/,'').split(';').forEach(raw=>one(raw,li)));   // # — комментарий до конца строки; «;» — несколько замеров в строке
   { const seen=new Map(); for(const n of names){ const k=n.toLowerCase(); if(seen.has(k) && seen.get(k)!==n) errors.push({line:0,text:n,msg:'«'+seen.get(k)+'» and «'+n+'» are different points — names are case-sensitive'}); else seen.set(k,n); } }
   for(const pl of polys) if(!(pl.h>0) && height>0) pl.h=height;
-  return {names,obs,polys,errors,mirror};
+  return {names,obs,polys,errors,mirror,opens};
 }
 
 // «room ИМЯ 4.48 3.74 4.46 3.74 [d 5.8] [d2 5.9]» — комната обходом по периметру: стороны по порядку, углы ИМЯ1, ИМЯ2… расставляются сами.
@@ -367,6 +373,15 @@ function spSolve(text,opt={}){
   }
   // контуры
   for(const pl of P.polys){ const q=spPoly(pl.ids.map(i=>out.pts[i])); if(pl.h>0){ q.h=pl.h; q.volume=q.area*pl.h; } out.polys.push(q); }
+  // проёмы: по стене между соседними углами контура; не влезает в стену — ошибка
+  out.opens=[];
+  for(const o of P.opens||[]){
+    const A=out.pts[o.a], B=out.pts[o.b], L=Math.hypot(B.x-A.x,B.y-A.y), nm=A.name+'-'+B.name;
+    const side=P.polys.some(pl=>{ const m=pl.ids.length; return pl.ids.some((id,i)=>(id===o.a && pl.ids[(i+1)%m]===o.b) || (id===o.b && pl.ids[(i+1)%m]===o.a)); });
+    if(!side){ out.errors.push({line:o.li+1,text:o.kind+' '+nm,msg:o.kind+': '+nm+' is not a side of a room (use neighbouring corners)'}); continue; }
+    if(o.from+o.w>L+.05){ out.errors.push({line:o.li+1,text:o.kind+' '+nm,msg:o.kind+' '+nm+': '+o.from+' + '+o.w+' m is longer than the wall ('+L.toFixed(2)+' m)'}); continue; }
+    out.opens.push({kind:o.kind,a:A.name,b:B.name,from:o.from,w:o.w,h:o.h,sill:o.sill,L});
+  }
   out.ground=out.pts.length ? out.pts.map(p=>p.z) : [];
   out.edges=[]; { const seen=new Set(); for(const o of obs) if((o.k==='d'||o.k==='h'||o.k==='dz'||o.k==='az') && o.b!==undefined){ const key=Math.min(o.a,o.b)+'-'+Math.max(o.a,o.b); if(!seen.has(key)){ seen.add(key); out.edges.push([o.a,o.b]); } } }
   return out;

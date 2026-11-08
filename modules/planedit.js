@@ -451,7 +451,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     const pose={lat:num(I.lat),lon:num(I.lon),alt:num(I.alt),az:num(I.az),el:num(I.el),fov:num(I.fov)};
     if(JSON.stringify(pose)!==JSON.stringify(n.inPose)){ n.inPose=pose; redraw(n); }
     for(const r of recList(I.rec)){ if(r && r.kind==='underlay' && r.bm){ const sig=JSON.stringify([r.H,r.up,r.w,r.h]); if(!n.under || n.under.sig!==sig){ n.under={bm:r.bm,w:r.w,h:r.h,H:r.H,up:r.up||0,sig,cv:null,b:null,err:''}; peUnderBuild(n); n.vw.fit=false; redraw(n); } else n.under.bm=r.bm; } }
-    if(n.p.imp){ const rows=recList(I.rec).filter(r=>r && ((r.x!=null && r.y!=null && (r.name!=null||r.label!=null)) || r.kind==='plan poly')); if(rows.length){ rows.forEach(r=>{ if(r.name==null && r.label!=null) r.name=r.label; }); if(peImportPoints(n.sc,rows)){ peTouch(n); n.vw.fit=false; } } }
+    if(n.p.imp){ const rows=recList(I.rec).filter(r=>r && ((r.x!=null && r.y!=null && (r.name!=null||r.label!=null)) || r.kind==='plan poly' || r.kind==='plan opening')); if(rows.length){ rows.forEach(r=>{ if(r.name==null && r.label!=null) r.name=r.label; }); if(peImportPoints(n.sc,rows)){ peTouch(n); n.vw.fit=false; } } }
     const now=performance.now();
     if(n.calcRev!==n.rev && now-n.lastEdit>(n.dragging ? 180 : 60)){ peRecalc(n); redraw(n); }
     let rec=null; const every=+n.p.emit*1000;
