@@ -13,6 +13,7 @@
      A gps 55.03 82.92 [±3] [alt 120]   GPS-замер (несколько — усредняются по весу)
      A at 10 5                координаты A в локальной системе, м
      poly A B C D             контур — площадь и периметр
+     mirror                   отразить план слева направо (по рулетке и углам план не отличить от зеркального; с компасом / GPS не нужно)
      wall Hall2-Hall3 Kor4-Kor1 0.37 [shift 0]   стык через стену: Kor4-Kor1 параллельно Hall2-Hall3 по ту сторону стены 0.37, Kor4 напротив Hall2 (shift — сдвиг вдоль), Kor1 — в сторону Hall3
      room Hall 4.48 3.74 4.46 3.74 [d 5.8]   комната обходом: стороны по порядку, углы Hall1…Hall4 по 90° («3.74/95» — свой угол, «/?» — не замерен), d — диагональ 1–3
    Ядро чистое, без DOM: node tools/test-siteplan.mjs */
@@ -35,7 +36,7 @@ function spTilt(d,alphaDeg,eye=0,sd=0.03,sa=1){
 function spNum(t){ if(t==null) return NaN; const s=String(t).replace(/^[±~]|^\+-/,'').replace(/(\d),(\d)/,'$1.$2'); return /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(s) ? +s : NaN; }
 function spParse(text,o={}){
   const sd=o.sd>0 ? o.sd : 0.03, sa=o.sa>0 ? o.sa : 2, sg=o.sg>0 ? o.sg : 5, eye0=o.eye||0;
-  const names=[], idx=new Map(), obs=[], polys=[], errors=[];
+  const names=[], idx=new Map(), obs=[], polys=[], errors=[]; let mirror=false;
   const pt=n=>{ if(!idx.has(n)){ idx.set(n,names.length); names.push(n); } return idx.get(n); };
   const one=(raw,li,depth=0)=>{
     const line=raw.trim(); if(!line) return;
@@ -47,6 +48,7 @@ function spParse(text,o={}){
     let eye=null; { const i=T.indexOf('eye'); if(i>=0){ eye=spNum(T[i+1]); T.splice(i,2); if(!isFinite(eye)){ bad('bad eye'); return; } } }
     let alt=null; { const i=T.indexOf('alt'); if(i>=0){ alt=spNum(T[i+1]); T.splice(i,2); if(!isFinite(alt)){ bad('bad alt'); return; } } }
     if(/^room$/i.test(T[0])){ if(depth) return bad('room inside room'); const L=spRoomLines(T.slice(1)); if(typeof L==='string') return bad(L); L.forEach(l=>one(l,li,1)); return; }
+    if(/^mirror$/i.test(T[0])){ mirror=!mirror; return; }                                   // зеркало: длины и углы его не различают
     if(/^wall$/i.test(T[0])){                                                                // стык комнат через стену: «wall A-B C-D 0.37 [shift s]»
       const h1=(T[1]||'').split('-'), h2=(T[2]||'').split('-'), t=spNum(T[3]); let sh=0;
       { const i=T.indexOf('shift'); if(i>=0){ sh=spNum(T[i+1]); if(!isFinite(sh)) return bad('bad shift'); } }
@@ -80,7 +82,7 @@ function spParse(text,o={}){
   };
   String(text||'').split('\n').forEach((raw0,li)=>raw0.replace(/#.*/,'').split(';').forEach(raw=>one(raw,li)));   // # — комментарий до конца строки; «;» — несколько замеров в строке
   { const seen=new Map(); for(const n of names){ const k=n.toLowerCase(); if(seen.has(k) && seen.get(k)!==n) errors.push({line:0,text:n,msg:'«'+seen.get(k)+'» and «'+n+'» are different points — names are case-sensitive'}); else seen.set(k,n); } }
-  return {names,obs,polys,errors};
+  return {names,obs,polys,errors,mirror};
 }
 
 // «room ИМЯ 4.48 3.74 4.46 3.74 [d 5.8] [d2 5.9]» — комната обходом по периметру: стороны по порядку, углы ИМЯ1, ИМЯ2… расставляются сами.
@@ -353,6 +355,11 @@ function spSolve(text,opt={}){
   }
   out.georef=!!frame && (anchors.size>=2 || (anchors.size>=1 && azCount>0) || anchors.size>=1 && obs.some(o=>o.k==='at'));
   if(out.georef) for(const p of out.pts){ const q=frame.inv(p.x,p.y); p.lat=q[0]; p.lon=q[1]; }
+  // зеркало: рулетка и углы одинаковы у плана и его отражения — по ним не понять, по часовой или против обходили; «mirror» переворачивает план слева направо
+  if(P.mirror){
+    if(anchors.size>=2 || azCount>0) out.errors.push({line:0,text:'mirror',msg:'mirror is ignored: GPS / compass / «at» points already fix which side is which'});
+    else if(N){ const x0=out.pts[0].x; for(const p of out.pts) p.x=2*x0-p.x; out.mirror=true; }
+  }
   // контуры
   for(const pl of P.polys) out.polys.push(spPoly(pl.ids.map(i=>out.pts[i])));
   out.ground=out.pts.length ? out.pts.map(p=>p.z) : [];
