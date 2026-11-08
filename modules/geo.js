@@ -1594,7 +1594,7 @@ function geoTileGet(src,z,x,y,net){
 /* ---------- узел карты ---------- */
 const GEO_TILE_OPTS=['none',...Object.keys(GEO_TILES),'custom'], GEO_OV_OPTS=['none',...Object.keys(GEO_OVERLAYS),'custom'];
 def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
-  ins:[{n:'rec',t:'rec'},{n:'rows',t:'bands'},{n:'links',t:'bands'}],
+  ins:[{n:'rec',t:'rec'},{n:'rows',t:'bands'},{n:'links',t:'bands'},{n:'meas',t:'bands'}],      // meas — замеры по устройствам (слой «съёмка»: трек, фильтр, список)
   outs:[{n:'pick',t:'rec'},{n:'sel',t:'rec'},{n:'edit',t:'rec'},{n:'link',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'count',t:'num'}],
   w:480, view:{h:360}, resize:true,
   params:[{n:'ttl',t:'range',min:0,max:1440,step:1,d:0,label:'keep, min (0 — forever)'},
@@ -1607,6 +1607,8 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
           {n:'labels',t:'check',d:true,label:'labels'},
           {n:'circles',t:'select',opts:['all','selected','off'],d:'all',label:'radius circles (accuracy, error): all faint, only the selected object, or none'},
           {n:'cluster',t:'check',d:true,label:'cluster'},
+          {n:'svDots',t:'select',opts:['selected','filtered'],d:'selected',label:'survey marks (input meas): of the selected device only, or of all devices passing the filter'},
+          {n:'svTrack',t:'check',d:true,label:'survey: the walked track'},
           {n:'follow',t:'check',d:false,label:'follow'},
           {n:'net',t:'check',d:true,label:'online'},
           {n:'mode',t:'select',opts:['view','edit','add','line','polygon','ruler','circle'],d:'view',label:'mode: view / edit (select, drag, form) / add (tap = new point) / line, polygon, ruler, circle (tap = vertex)'},
@@ -1640,6 +1642,7 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
     n.pickLat=null; n.pickLon=null; n.info=null; n.lastPrune=0; n.loadedStore=null;
     geoBaseLoad(); geoPlacesLoad();
     n.vec=null; n.vmsg=''; n.vgen=0; gdVecRestore(n);
+    n.sv=null; n.svSrc=null; n.svF={tech:new Set(),q:'',minPts:0,minRssi:-200,sort:'best'}; n.svPick=null; n.svAllow=null; n.svKey='';
   },
   process(n,I){
     for(const r of recList(I.rec)) geoMapAdd(n,r);
@@ -1649,6 +1652,7 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
     if(!eb) geoMapLinks(n,ea);
     else { if(n._leA!==ea || n._leB!==eb){ n._leA=ea; n._leB=eb; n._leC=[...(ea||[]),...eb]; } geoMapLinks(n,n._leC); }
     geoMapNodes(n,sp&&sp.nodes);
+    geoSvIn(n,Array.isArray(I.meas) ? I.meas : null);
     if(n.p.store!==n.loadedStore) geoMapRestore(n);
     const now=Date.now();
     if(now-n.lastPrune>1000){ n.lastPrune=now; geoMapPrune(n,now); }
@@ -1976,7 +1980,7 @@ function geoMapHit(n,px,py,r){
   const v=geoView(n,n.cv.width,n.cv.height);
   let best=null, bd=r;
   for(const e of n.ents.values()){
-    const p=e.pts[e.pts.length-1]; if(!p) continue;
+    const p=e.pts[e.pts.length-1]; if(!p || geoSvHide(n,e)) continue;
     const s=geoProj(v,p.lat,p.lon,px), d=Math.hypot(s.x-px,s.y-py);
     if(d<bd){ bd=d; best=e; }
   }
@@ -2429,7 +2433,7 @@ function geoCol(){ return geoLight() ? GEO_COL_LIGHT : GEO_COL_DARK; }
 const GEO_BASE_CAP=matchMedia('(pointer:coarse)').matches ? 4e6 : 1.2e7;   // пикселей буфера подложки
 function geoMapDraw(n,cv,cx){
   geoMapWire(n,cv);
-  geoEditSync(n,cv); geoLinkSync(n,cv); geoDraftSync(n,cv); geoToolsSync(n,cv);
+  geoEditSync(n,cv); geoSvSync(n,cv); geoLinkSync(n,cv); geoDraftSync(n,cv); geoToolsSync(n,cv);
   const W=cv.width, H=cv.height, v=geoView(n,W,H), z=v.z;
   // подложка — в отдельную канву с полями M: при панораме сдвигаем готовую картинку,
   // при зуме растягиваем её и перерисовываем, когда зум успокоился
@@ -2754,14 +2758,14 @@ function geoGreatCircle(cx,v,lat,lon,brg,km,refX){
 // кластеры в мировых координатах на целом уровне зума: при панораме не пересчитываются и не прыгают
 function geoClusters(n,z){
   const on=n.p.cluster && z<14, zi=Math.floor(z);
-  const key=on ? n.dirtyGen+'|'+zi+'|'+n.selKey+'|'+n.ents.size : 'off';
+  const key=on ? n.dirtyGen+'|'+zi+'|'+n.selKey+'|'+n.ents.size+'|'+n.svKey : 'off';
   if(n._clKey===key) return n._cl;
   n._clKey=key;
   const out={groups:[], member:new Set()};
   if(on){
     const P=256*2**zi, R=44, grid=new Map(), all=[];
     for(const e of n.ents.values()){
-      const p=e.pts[e.pts.length-1]; if(!p || e.key===n.selKey) continue;   // выбранный — всегда отдельно
+      const p=e.pts[e.pts.length-1]; if(!p || e.key===n.selKey || geoSvHide(n,e)) continue;   // выбранный — всегда отдельно
       const x=mercX(p.lon)*P, y=mercY(p.lat)*P, gx=Math.floor(x/R), gy=Math.floor(y/R);
       let c=null;
       for(let i=-1;i<=1 && !c;i++) for(let j=-1;j<=1 && !c;j++)
@@ -2785,8 +2789,9 @@ function geoDrawObjects(n,cx,v){
   cx.save(); cx.lineJoin='round';
   geoDrawLinks(n,cx,v);
   const labs=[], marks=[], C=geoClusters(n,v.z);
+  geoSvDraw(n,cx,v);
   for(const e of n.ents.values()){
-    const r=e.rec, last=e.pts[e.pts.length-1]; if(!last) continue;
+    const r=e.rec, last=e.pts[e.pts.length-1]; if(!last || geoSvHide(n,e)) continue;
     const col=geoEntColor(r,e);
     const age=ttl>0 ? clamp((now-e.seen)/ttl,0,1) : 0;
     cx.globalAlpha=1-age*0.7;
@@ -2971,8 +2976,10 @@ function geoDrawOverlay(n,cx,v){
     for(const k in e.rec) if(/_(done|total)$/.test(k)) skip.add(k);
     const lines=[...recText(e.rec,skip).split('\n').slice(0,8).map(l=>l.length>cut ? l.slice(0,cut-1)+'…' : l),
       p.lat.toFixed(4)+', '+p.lon.toFixed(4)+' '+latLonToGrid(p.lat,p.lon,6),
-      'seen '+Math.round((Date.now()-e.seen)/1000)+' s ago'+(e.pts.length>1?' · track '+e.pts.length:'')];
+      'seen '+Math.round((Date.now()-e.seen)/1000)+' s ago'+(e.pts.length>1?' · track '+e.pts.length:''),...geoSvInfo(n,e)];
     box(lines,W-6,6,true);
+  } else if(n.svPick && n.sv?.devs.has(n.svPick)){
+    box(geoSvInfo(n,null),W-6,6,true);
   } else if(n.info && Date.now()-n.info.t<8000){
     const g=n.info.ground;
     box([n.info.lat.toFixed(5)+', '+n.info.lon.toFixed(5), latLonToGrid(n.info.lat,n.info.lon,6),
@@ -2980,9 +2987,138 @@ function geoDrawOverlay(n,cx,v){
   }
   cx.restore();
 }
+/* ---------- слой «съёмка»: замеры по устройствам (вход meas из Table) — трек, фильтр, список, замеры выбранного ---------- */
+const SV_COL={wifi:'#4aa3ff',ble:'#b07cff',bt:'#2fd1b3',cell:'#ff9a3c'}, SV_NAME={wifi:'Wi-Fi',ble:'BLE',bt:'BT',cell:'Cells'};
+const svDevOf=e=>e?.rec?.dev!=null ? String(e.rec.dev) : (typeof e?.id==='string' && e.id.startsWith('loc:') ? e.id.slice(4) : null);
+function geoSvIn(n,rows){
+  if(rows===n.svSrc) return;
+  n.svSrc=rows;
+  n.sv=rows ? svIngest(rows) : null;
+  if(!n.sv){ n.svAllow=null; n.svPick=null; }
+  geoSvApply(n);
+}
+function geoSvApply(n){
+  const f=n.svF, act=f.tech.size>0 || f.q.trim()!=='' || f.minPts>0 || f.minRssi>-200;
+  n.svShown=n.sv ? svList(n.sv,f,f.sort) : [];
+  n.svAllow=n.sv && act ? new Set(n.svShown.map(d=>d.dev)) : null;
+  n.svKey=(n.svKey|0)+1; n._svUi=null;
+  geoMapChanged(n);
+}
+const geoSvHide=(n,e)=>{ if(!n.svAllow) return false; const d=svDevOf(e); return d!=null && n.sv.devs.has(d) && !n.svAllow.has(d); };
+function geoSvSel(n){
+  if(!n.sv) return null;
+  const e=n.selKey && n.ents.get(n.selKey), d=svDevOf(e);
+  return n.sv.devs.get(d ?? n.svPick) || null;
+}
+function geoSvEst(n,d){ const e=n.ents.get('id:loc:'+d.dev); return e && e.pts[e.pts.length-1] || null; }
+function geoSvInfo(n,e){
+  const d=geoSvSel(n); if(!d) return [];
+  const sp=svSpread(d), est=geoSvEst(n,d);
+  return ['— survey —',(SV_NAME[d.src]||d.src)+(d.ch!=null?' · ch '+d.ch:'')+(d.mfr?' · '+d.mfr:''),
+    d.pts.length+' marks · best '+d.best+' dBm · spread '+Math.round(sp)+' m',
+    est ? 'estimate: see the circle' : 'no estimate (too few / too close marks)'];
+}
+function geoSvFocus(n,d){
+  let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+  const pts=d.pts.slice(); const est=geoSvEst(n,d); if(est) pts.push(est);
+  for(const p of pts){ const x=mercX(p.lon), y=mercY(p.lat); if(x<x0) x0=x; if(x>x1) x1=x; if(y<y0) y0=y; if(y>y1) y1=y; }
+  const W=n.cv?.width||480, H=n.cv?.height||360, span=Math.max((x1-x0)/(W*.6),(y1-y0)/(H*.6),1e-9);
+  n.p.mz=clamp(Math.log2(1/(256*span)),3,18.5); n.p.mlon=unmercX((x0+x1)/2); n.p.mlat=unmercY((y0+y1)/2); n.p.follow=false;
+}
+function geoSvPick(n,dev,focus){
+  const d=n.sv?.devs.get(dev); if(!d) return;
+  n.svPick=dev; n.selKey=n.ents.has('id:loc:'+dev) ? 'id:loc:'+dev : null; n.selLink=null;
+  if(focus) geoSvFocus(n,d);
+  geoMapChanged(n); redraw(n);
+}
+function geoSvDraw(n,cx,v){
+  const S=n.sv; if(!S) return;
+  const W=v.W, z=v.z;
+  if(n.p.svTrack!==false && S.track.length>1){
+    cx.save(); cx.strokeStyle='rgba(120,200,255,.55)'; cx.lineWidth=2; cx.lineJoin='round'; cx.beginPath();
+    let px=null;
+    for(let i=0;i<S.track.length;i++){ const p=geoProj(v,S.track[i].lat,S.track[i].lon,px??W/2); if(px==null) cx.moveTo(p.x,p.y); else cx.lineTo(p.x,p.y); px=p.x; }
+    cx.stroke(); cx.restore();
+  }
+  const sel=geoSvSel(n);
+  if(n.p.svDots==='filtered'){                       // замеры всех устройств, прошедших фильтр (не больше 4000 точек)
+    let k=0;
+    for(const d of n.svShown){
+      if(d===sel) continue;
+      for(const p of d.pts){
+        if(++k>4000) break;
+        const s=geoProj(v,p.lat,p.lon,W/2); if(s.x<-10||s.x>W+10||s.y<-10||s.y>v.H+10) continue;
+        cx.fillStyle=svColor(p.rssi); cx.globalAlpha=.8; cx.beginPath(); cx.arc(s.x,s.y,3,0,6.2832); cx.fill();
+      }
+      if(k>4000) break;
+    }
+    cx.globalAlpha=1;
+  }
+  if(!sel) return;
+  const est=geoSvEst(n,sel), es=est && geoProj(v,est.lat,est.lon,W/2);
+  cx.save(); cx.font='10px system-ui,sans-serif'; cx.textAlign='center';
+  if(es){ cx.strokeStyle='rgba(255,255,255,.28)'; cx.lineWidth=1; cx.beginPath();
+    for(const p of sel.pts){ const s=geoProj(v,p.lat,p.lon,W/2); cx.moveTo(s.x,s.y); cx.lineTo(es.x,es.y); }
+    cx.stroke(); }
+  sel.pts.forEach((p,i)=>{
+    const s=geoProj(v,p.lat,p.lon,W/2), best=i===sel.bestAt;
+    cx.fillStyle=svColor(p.rssi); cx.strokeStyle=best ? '#fff' : 'rgba(0,0,0,.6)'; cx.lineWidth=best ? 2.5 : 1;
+    cx.beginPath(); cx.arc(s.x,s.y,best ? 7 : 5,0,6.2832); cx.fill(); cx.stroke();
+    if(z>=15.5 || best){ cx.fillStyle='#fff'; cx.strokeStyle='rgba(0,0,0,.7)'; cx.lineWidth=3; cx.strokeText(p.rssi,s.x,s.y-9); cx.fillText(p.rssi,s.x,s.y-9); }
+  });
+  cx.restore();
+}
+function geoSvSync(n,cv){
+  const host=cv.parentElement; if(!host) return;
+  if(!n.sv){ if(n._svEl){ n._svEl.remove(); n._svEl=null; } return; }
+  if(getComputedStyle(host).position==='static') host.style.position='relative';
+  let el=n._svEl;
+  if(!el || !el.isConnected){
+    el=n._svEl=document.createElement('div'); el.className='geo-ov geo-sv';
+    el.style.cssText='position:absolute;width:232px;display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--line);color:var(--txt);font-size:11px;border-radius:4px;z-index:3;touch-action:auto;opacity:.96;';
+    for(const ev of ['pointerdown','pointerup','wheel','dblclick','click','keydown']) el.addEventListener(ev,x=>x.stopPropagation());
+    const b='background:none;border:1px solid var(--line);color:var(--txt);border-radius:3px;font-size:10px;padding:1px 5px;cursor:pointer;';
+    el.innerHTML='<div class="svh" style="padding:3px 6px;cursor:pointer;font-weight:600"></div><div class="svb" style="display:flex;flex-direction:column;min-height:0;padding:0 4px 4px;gap:3px">'+
+      '<div class="svc" style="display:flex;gap:3px;flex-wrap:wrap"></div>'+
+      '<input class="svq" placeholder="search: name, MAC, vendor, ch6…" style="width:100%;box-sizing:border-box;font-size:11px;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:3px;padding:2px 4px">'+
+      '<div style="display:flex;gap:3px;align-items:center"><select class="svs" style="flex:1;font-size:10px"><option value="best">strongest</option><option value="points">most marks</option><option value="name">name</option></select>'+
+      '<select class="svl" style="flex:1;font-size:10px"><option value="-200">any level</option><option value="-90">≥ −90</option><option value="-80">≥ −80</option><option value="-70">≥ −70</option><option value="-60">≥ −60</option></select>'+
+      '<select class="svm" style="font-size:10px"><option value="0">1+</option><option value="3">3+</option><option value="5">5+</option><option value="10">10+</option></select>'+
+      '<button class="svf" style="'+b+'" title="fit the whole survey">⤢</button></div>'+
+      '<div class="svlist" style="overflow:auto;min-height:60px;max-height:320px"></div></div>';
+    host.append(el);
+    const f=n.svF, $=s=>el.querySelector(s);
+    $('.svh').onclick=()=>{ n.svCollapsed=!n.svCollapsed; n._svUi=null; redraw(n); };
+    $('.svq').oninput=e=>{ f.q=e.target.value; geoSvApply(n); redraw(n); };
+    $('.svs').onchange=e=>{ f.sort=e.target.value; geoSvApply(n); redraw(n); };
+    $('.svl').onchange=e=>{ f.minRssi=+e.target.value; geoSvApply(n); redraw(n); };
+    $('.svm').onchange=e=>{ f.minPts=+e.target.value; geoSvApply(n); redraw(n); };
+    $('.svf').onclick=()=>{ const S=n.sv; if(!S) return; const pts=S.track.length ? S.track : [...S.devs.values()].flatMap(d=>d.pts);
+      if(pts.length){ geoSvFocus(n,{pts}); geoMapChanged(n); redraw(n); } };
+    $('.svc').onclick=e=>{ const t=e.target.closest('[data-t]'); if(!t) return; const k=t.dataset.t; f.tech.has(k) ? f.tech.delete(k) : f.tech.add(k); geoSvApply(n); redraw(n); };
+    $('.svlist').onclick=e=>{ const t=e.target.closest('[data-d]'); if(t) geoSvPick(n,t.dataset.d,true); };
+  }
+  el.style.left=(cv.offsetLeft+4)+'px'; el.style.top=(cv.offsetTop+4)+'px'; el.style.maxHeight=Math.max(80,cv.offsetHeight-30)+'px';
+  const sel=geoSvSel(n), ui=n.svKey+'|'+(sel?sel.dev:'')+'|'+n.svCollapsed+'|'+n.sv.n;
+  if(n._svUi===ui) return;
+  n._svUi=ui;
+  const S=n.sv, f=n.svF, $=s=>el.querySelector(s);
+  $('.svh').textContent=(n.svCollapsed?'▸ ':'▾ ')+'Survey · '+n.svShown.length+'/'+S.devs.size+' devices · '+S.n+' marks';
+  $('.svb').style.display=n.svCollapsed ? 'none' : 'flex';
+  $('.svc').innerHTML=SV_NAME_KEYS.filter(k=>S.tech[k]).map(k=>'<button data-t="'+k+'" style="border:1px solid '+SV_COL[k]+';border-radius:10px;font-size:10px;padding:1px 7px;cursor:pointer;color:'+(f.tech.has(k)?'#000':'var(--txt)')+';background:'+(f.tech.has(k)?SV_COL[k]:'none')+'">'+SV_NAME[k]+' '+S.tech[k]+'</button>').join('');
+  const esc=x=>String(x).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const rows=n.svShown.slice(0,300).map(d=>'<div data-d="'+esc(d.dev)+'" style="display:flex;gap:4px;align-items:center;padding:1px 3px;cursor:pointer;border-radius:2px;'+(sel===d?'background:rgba(255,200,60,.25);':'')+'">'+
+    '<span style="width:7px;height:7px;border-radius:50%;flex:none;background:'+(SV_COL[d.src]||'#999')+'"></span>'+
+    '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(d.dev)+'">'+esc(d.name||d.dev)+'</span>'+
+    '<span style="color:'+svColor(d.best)+';flex:none">'+d.best+'</span><span style="opacity:.6;flex:none;min-width:18px;text-align:right">'+d.pts.length+'</span></div>').join('');
+  $('.svlist').innerHTML=rows+(n.svShown.length>300 ? '<div style="opacity:.6;padding:2px 3px">… +'+(n.svShown.length-300)+' more — narrow the filter</div>' : '');
+  const q=$('.svq'); if(document.activeElement!==q && q.value!==f.q) q.value=f.q;
+}
+const SV_NAME_KEYS=['wifi','ble','bt','cell'];
 defGroups('geoMap',[
   {n:'Edit', p:'mode tools addName addIcon drawColor'},
   {n:'Display', p:'ttl tiles tileFallback overlay ovAlpha iconScale grid labels circles cluster follow net'},
+  {n:'Survey', p:'svDots svTrack'},
   {n:'Data layers', p:'vfile vclr osmKind osmGo'},
   {n:'Tracks', p:'trail maxEnt arrows rayKm', open:false},
   {n:'Export', p:'store csv geojson kml gpx', open:false},
