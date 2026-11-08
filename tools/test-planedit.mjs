@@ -3,7 +3,7 @@
 import vm from 'node:vm'; import fs from 'node:fs'; import path from 'node:path'; import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Array,String,Number,Object,JSON,Set,Map,Float32Array,Uint8Array,isFinite,Infinity});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peHistNew,peHistCommit,peHistUndo,peHistRedo,peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peOverlaps,peAddRx,peRxLevel,peMoveWall,peZRaster,peBoxCorners,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints};`,ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peHistNew,peHistCommit,peHistUndo,peHistRedo,peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peOverlaps,peAddRx,peRxLevel,peMoveWall,peZRaster,peBoxCorners,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints,peSnapFace,peHiddenPts};`,ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -180,4 +180,12 @@ ok('an empty scene has no bounds and no grid',K.peGrid(K.peNew())===null);
   ok('history: undo steps back',K.peHistUndo(h,'C')==='B' && K.peHistUndo(h,'B')==='A' && K.peHistUndo(h,'A')===null);
   ok('history: redo steps forward, a new edit drops redo',K.peHistRedo(h,'A')==='B' && (K.peHistCommit(h,'X'),K.peHistRedo(h,'X')===null));
   ok('history: uncommitted state is saved before undo',(K.peHistUndo(h,'Y')==='X') && K.peHistRedo(h,'X')==='Y'); }
+// линейка: привязка к углу и грани стены; служебные точки скрыты; имя комнаты из Site Plan
+{ const q=K.peNew(), R=[{name:'C1',x:0,y:0},{name:'C2',x:4,y:0},{name:'C3',x:4,y:-3},{kind:'plan poly',nowalls:true,name:'zal',names:['C1','C2','C3']},{id:'sp:walls',kind:'plan walls',walls:[{id:'a',x1:-.2,y1:.2,x2:4.2,y2:.2,t:.4,h:2.7,mat:'brick'}],opens:[]}];
+  K.peImportPoints(q,R);
+  const c=K.peSnapFace(q,4.25,.37,.1); ok('snap: to the outer corner of the wall',c && c.kind==='corner' && Math.abs(c.x-4.2)<1e-9 && Math.abs(c.y-.4)<1e-9,JSON.stringify(c));
+  const f=K.peSnapFace(q,2,.03,.1); ok('snap: onto the inner face',f && f.kind==='face' && Math.abs(f.y)<1e-9 && Math.abs(f.x-2)<1e-9,JSON.stringify(f));
+  ok('snap: nothing far away',K.peSnapFace(q,2,-2,.1)===null);
+  const h=K.peHiddenPts(q); ok('hidden: wall ends and the corners of a wall-less room',h.size===5,h.size);
+  ok('room name from Site Plan',q.rooms[0].name==='zal'); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
