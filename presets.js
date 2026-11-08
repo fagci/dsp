@@ -389,6 +389,7 @@ const PRESET_CATS={
   'Site Plan: Room from a Tape Measure → Plan Editor Walls and Wi-Fi':'Maps & Locating',
   'Site Plan: House with a Cellar, Two Floors and a Gable Roof → Wi-Fi Through the Slab':'Maps & Locating',
   'Plan Editor: Wi-Fi with Reflections — Rays to a Receiver':'Maps & Locating',
+  'Site Plan: Plot with a Fence, Road, Bath House and a Cell Tower → Signal Indoors':'Maps & Locating',
   'Clinometer: Tree Height from the Phone Tilt → Site Plan':'Maps & Locating',
   'Signal Paths: Direct and Reflected Between Two Points':'Maps & Locating',
   'Flight Sim: Fly over Terrain (Joystick)':'Aircraft, Satellites & Telemetry',
@@ -8836,6 +8837,20 @@ rw.size.w=420; rw.size.h=560; applySize(rw);
 const sp=addNode('siteplan',960,210,{view:'plan',plan:'# the corners come from Room Walk'});
 sp.size.w=500; sp.size.h=480; applySize(sp);
 addEdge(or.id,'az',rw.id,'az'); addEdge(er.id,'dist',rw.id,'d'); addEdge(er.id,'go',rw.id,'go'); addEdge(rw.id,'lines',sp.id,'lines');
+markWiresDirty();
+});
+preset('Site Plan: Plot with a Fence, Road, Bath House and a Cell Tower → Signal Indoors', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The plot around the house. «fence A B C … [h 2] [sheet|mesh|wood|brick|concrete|block] [closed]» — a fence through the points (Russian names work: профлист, рабица, штакетник…): for the signal it is a wall — corrugated sheet screens about 20 dB and reflects like metal, chain-link mesh costs about 3 dB; above its height the ray passes. '+
+  '«road A B … [w 5] [asphalt|gravel|tile]» — a strip of that width, «area A B C … [grass|asphalt|gravel|tile|garden|water]» — a lawn, a vegetable garden, paving: they only colour the ground; the readout sums the fence length and the areas. Outbuildings (a bath house, a garage) are just more rooms, placed by tape, GPS or a compass. '+
+  '«source NAME POINT [h 30] [eirp 58] [f 1800] [az 145] [bw 65]» — an outside transmitter above a point: a cell tower sector, the neighbour’s router. The point can come from GPS («T gps lat lon» with the house georeferenced) or «at» / tape; it does not stretch the coverage map. Plan Editor then shows where indoors the tower is heard best: through the windows, not the brick, and the fence sheet casts its shadow. Free-space loss to a far tower is optimistic — trees and terrain are not modelled.'});
+nt.size.w=1180; nt.size.h=160; applySize(nt);
+const sp=addNode('siteplan',40,240,{view:'plan',plan:'# the house: two rooms, brick outside, a drywall partition\nouter 0.40 brick\ninner drywall\nroom Liv 5.00 4.00 5.00 4.00\nroom Bed 3.50 4.00 3.50 4.00\nwall Liv2-Liv3 Bed1-Bed4 0.12\nLiv1 at 0 0\nLiv2 at 5 0\nwindow Liv1-Liv2 1.50 1.60 h 1.40 sill 0.85\nwindow Bed2-Bed3 1.20 1.20\ndoor Liv4-Liv1 1.00 0.90\ndoor Liv2-Liv3 2.80 0.80\n# a bath house in the corner of the plot: its corners by tape from the fence posts\nroom Bath 4.00 3.00 4.00 3.00 h 2.30\nBath1 at 12 -9\nBath2 at 16 -9\n# the plot: a corrugated sheet fence, a mesh gate side, the road outside, a lawn and a vegetable garden\nF1 at -6 5\nF2 at 18 5\nF3 at 18 -14\nF4 at -6 -14\nfence F2 F3 F4 F1 h 2.0 профлист\nfence F1 F2 h 1.5 рабица\nR1 at -10 8\nR2 at 24 8\nroad R1 R2 w 5 asphalt\nL1 at -5 -6\nL2 at 10 -6\nL3 at 10 -13\nL4 at -5 -13\narea L1 L2 L3 L4 газон\nG1 at 11 -1\nG2 at 17 -1\nG3 at 17 -7\nG4 at 11 -7\narea G1 G2 G3 G4 огород\n# the cell tower 1 km away to the north-west (by GPS it is «T gps lat lon»), 30 m up, the sector looks at the house\nT at -575 820\nsource BS-1800 T h 30 eirp 58 f 1800 az 145 bw 65'});
+sp.size.w=520; sp.size.h=600; applySize(sp);
+const sc=peNew(); peAddRx(sc,7,-2,{z:1,gain:0,sens:-100,f:1800,name:'phone in the bedroom'}); peAddRx(sc,14,-10.5,{z:1,gain:0,sens:-100,f:1800,name:'phone in the bath'});
+const pe=addNode('planedit',600,240,{scene:JSON.stringify(sc),view:'plan',layer:'signal',refl:'1',thr:-75,snap:'0.1'});
+pe.size.w=680; pe.size.h=680; applySize(pe);
+addEdge(sp.id,'rec',pe.id,'rec');
 markWiresDirty();
 });
 preset('Plan Editor: Wi-Fi with Reflections — Rays to a Receiver', function(){

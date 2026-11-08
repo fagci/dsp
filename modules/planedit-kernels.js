@@ -7,10 +7,10 @@
 
 const PE_D=Math.PI/180;
 // затухание стены, дБ на 10 см толщины: уровень сигнала на пути через стену = мат × толщина / 0,1 м
-const PE_MAT={brick:4,concrete:6,block:3,drywall:1.5,wood:2,glass:1,metal:20};          // block — газо- / пеноблок (ячеистый бетон)
+const PE_MAT={brick:4,concrete:6,block:3,drywall:1.5,wood:2,glass:1,metal:20,mesh:6};          // mesh — сетка-рабица (забор): 0,05 м → 3 дБ          // block — газо- / пеноблок (ячеистый бетон)
 // частотная зависимость: потери = таблица (на 2,4 ГГц) × (f / 2,4 ГГц)^k; k — по материалу (эмпирика типа ITU-R P.2040: плотные материалы растут быстрее, металл почти не зависит)
-const PE_MATCOL={brick:[196,132,104],concrete:[168,174,180],block:[214,206,186],drywall:[230,229,222],wood:[190,146,96],glass:[150,206,232],metal:[118,128,148]};   // цвет стены по материалу (3D / план)
-const PE_MATK={brick:.8,concrete:.9,block:.8,drywall:.5,wood:.6,glass:.6,metal:.1};
+const PE_MATCOL={brick:[196,132,104],concrete:[168,174,180],block:[214,206,186],drywall:[230,229,222],wood:[190,146,96],glass:[150,206,232],metal:[118,128,148],mesh:[160,170,180]};   // цвет стены по материалу (3D / план)
+const PE_MATK={brick:.8,concrete:.9,block:.8,mesh:.3,drywall:.5,wood:.6,glass:.6,metal:.1};
 const PE_OPEN_LOSS={door:3,window:2};                          // проём: тонкая дверь / стекло, дБ на 2,4 ГГц
 const PE_OPEN_K={door:.4,window:.6};
 const peFk=(f,k)=>Math.pow(Math.max(30,Math.min(100000,f||2400))/2400,k);
@@ -20,7 +20,7 @@ const PE_TYPES=['box','column','door','window'];               // примити
 const peWrap180=a=>((a+180)%360+360)%360-180;
 const peWrap360=a=>((a%360)+360)%360;
 
-function peNew(){ return {pts:[],walls:[],objs:[],cams:[],ants:[],rooms:[],slabs:[],roofs:[],levels:[],seq:1}; }
+function peNew(){ return {pts:[],walls:[],objs:[],cams:[],ants:[],rooms:[],slabs:[],roofs:[],levels:[],grounds:[],seq:1}; }
 function peId(s,p){ return p+(s.seq++); }
 const pePt=(s,id)=>s.pts.find(p=>p.id===id);
 function peAddPoint(s,x,y){ const p={id:peId(s,'p'),x,y}; s.pts.push(p); return p; }
@@ -173,7 +173,7 @@ function peWallLoss(s,ax,ay,x,y,f=2400,az,z,skip){
 }
 // ---------- отражения (метод мнимых источников) ----------
 // потери на отражение от грани, дБ (|Γ|² типичных стройматериалов на 1–6 ГГц): металл почти зеркало, гипсокартон — слабо
-const PE_REFL={brick:7,concrete:5,block:8,drywall:11,wood:9,glass:6,metal:1};
+const PE_REFL={brick:7,concrete:5,block:8,drywall:11,wood:9,glass:6,metal:1,mesh:6};
 const peReflLoss=mat=>PE_REFL[mat]??8;
 // отражающие грани: у каждой стены две — по обе стороны оси на t/2; n — наружу от стены на эту сторону
 function peFaces(s){ const F=[]; for(const w of s.walls){ const [a,b]=peWallEnds(s,w), L=Math.hypot(b.x-a.x,b.y-a.y); if(L<.05) continue; const ux=(b.x-a.x)/L, uy=(b.y-a.y)/L;
@@ -228,7 +228,7 @@ function peRxLevel(s,rx,opt={}){
   best.margin=best.level-sens; best.ok=best.margin>=0; return best;
 }
 // ---------- сетка охвата ----------
-function peBounds(s,margin=1){ let x0=1e99,x1=-1e99,y0=1e99,y1=-1e99; const A=[...s.pts,...s.cams,...s.ants,...s.objs.filter(o=>o.type==='box'||o.type==='column')]; for(const p of A){ x0=Math.min(x0,p.x); x1=Math.max(x1,p.x); y0=Math.min(y0,p.y); y1=Math.max(y1,p.y); } return x0<=x1 ? {x0:x0-margin,x1:x1+margin,y0:y0-margin,y1:y1+margin} : null; }
+function peBounds(s,margin=1){ let x0=1e99,x1=-1e99,y0=1e99,y1=-1e99; const A=[...s.pts,...s.cams,...s.ants.filter(a=>!a.ext),...s.objs.filter(o=>o.type==='box'||o.type==='column')]; for(const p of A){ x0=Math.min(x0,p.x); x1=Math.max(x1,p.x); y0=Math.min(y0,p.y); y1=Math.max(y1,p.y); } return x0<=x1 ? {x0:x0-margin,x1:x1+margin,y0:y0-margin,y1:y1+margin} : null; }
 function peGrid(s,cell=.25,maxN=160){ const b=peBounds(s,.5); if(!b) return null; const span=Math.max(b.x1-b.x0,b.y1-b.y0), c=Math.max(cell,span/maxN), nx=Math.ceil((b.x1-b.x0)/c), ny=Math.ceil((b.y1-b.y0)/c); return {x0:b.x0,y0:b.y0,cell:c,nx,ny}; }
 // охват камер: count — сколько камер видит клетку; stats по клеткам внутри комнат (если комнат нет — по всей рамке)
 function peCamCoverage(s,g,zt=1){
@@ -269,8 +269,9 @@ function peImportPoints(s,recs){
   let n=0;
   for(const r of recs||[]){ if(r && r.kind==='plan poly' && Array.isArray(r.names)){ r._poly=true; } }
   for(const r of recs||[]){ if(r && r.kind==='plan opening') r._op=true; }
-  for(const r of recs||[]){ if(r && (r._poly || r._op || r.kind==='plan walls')) continue; const x=+r.x, y=+r.y, name=String(r.name??r.label??''); if(!name||!isFinite(x)||!isFinite(y)) continue;
-    let p=s.pts.find(p=>p.name===name); if(p){ p.x=x; p.y=y; } else { p=peAddPoint(s,x,y); p.name=name; } n++; }
+  for(const r of recs||[]){ if(r && r.ext){ const nm=String(r.name??r.label??''), q=s.pts.find(p=>p.name===nm); if(q && !s.walls.some(w=>w.a===q.id||w.b===q.id)) s.pts=s.pts.filter(p=>p!==q); } }   // точка внешнего источника — не точка плана
+  for(const r of recs||[]){ if(r && (r._poly || r._op || r.kind==='plan walls' || r.ext)) continue; const x=+r.x, y=+r.y, name=String(r.name??r.label??''); if(!name||!isFinite(x)||!isFinite(y)) continue;
+    let p=s.pts.find(p=>p.name===name); if(p){ p.x=x; p.y=y; } else { p=peAddPoint(s,x,y); p.name=name; } p.imp=true; n++; }
   // контуры (kind 'plan poly', names): стены между соседними точками и комната, если их ещё нет
   for(const r of recs||[]){ if(!r || !r._poly) continue; const ids=r.names.map(nm=>s.pts.find(p=>p.name===nm)).filter(Boolean).map(p=>p.id); if(ids.length<3) continue;
     const key=ids.slice().sort().join(); let room=s.rooms.find(q=>q.pts.slice().sort().join()===key);
@@ -290,6 +291,11 @@ function peImportPoints(s,recs){
     s.slabs=Array.isArray(r.slabs) ? r.slabs.map(q=>({z:+q.z,t:+q.t,mat:q.mat,lv:+q.lv||0,poly:q.poly})) : [];          // перекрытия, крыша, этажи — целиком от источника
     s.roofs=Array.isArray(r.roofs) ? r.roofs.map(q=>({...q})) : [];
     s.levels=Array.isArray(r.levels) ? r.levels.map(q=>({name:String(q.name),z:+q.z,idx:+q.idx})) : [];
+    s.grounds=Array.isArray(r.grounds) ? r.grounds.map(g=>({cover:String(g.cover),poly:g.poly})) : [];
+    // внешние источники: антенны-передатчики «ext» (вне рамки карты), набор от источника заменяет прежний
+    const skeep=new Set(); for(const q of r.sources||[]){ const src=pre+'src:'+q.name; skeep.add(src); let a=s.ants.find(x=>x.src===src);
+      if(!a){ a=peAddAnt(s,+q.x,+q.y,{}); a.src=src; a.ext=true; } Object.assign(a,{name:String(q.name),x:+q.x,y:+q.y,z:+q.z,eirp:+q.eirp,f:+q.f,az:+q.az||0,bw:+q.bw||360}); }
+    s.ants=s.ants.filter(a=>!a.src || !a.src.startsWith(pre) || skeep.has(a.src));
     for(const w of s.walls.filter(w=>w.src && w.src.startsWith(pre) && !keep.has(w.src))){ s.walls=s.walls.filter(q=>q!==w); s.objs=s.objs.filter(o=>o.wall!==w.id); s.pts=s.pts.filter(p=>p.src!==w.src); }
     const okeep=new Set();
     (r.opens||[]).forEach((o,i)=>{ const w=s.walls.find(w=>w.src===pre+o.wall); if(!w) return; const src=pre+'o'+i+':'+o.wall, type=o.type==='door' ? 'door' : 'window'; okeep.add(src);
@@ -326,6 +332,7 @@ function peHiddenPts(s){
   const used=new Set(); for(const w of s.walls){ used.add(w.a); used.add(w.b); }
   const h=new Set(); for(const p of s.pts) if(p.src) h.add(p.id);
   for(const r of s.rooms) if(r.free) for(const id of r.pts) if(!used.has(id)) h.add(id);
+  for(const p of s.pts) if(p.imp && !used.has(p.id)) h.add(p.id);                    // пришедшие извне (углы забора, газона, дороги) и не концы стен
   return h;
 }
 // история правок: base — последнее закреплённое состояние (JSON), u / r — стеки отмены и повтора
@@ -333,7 +340,7 @@ function peHistNew(base){ return {base:String(base),u:[],r:[]}; }
 function peHistCommit(h,cur){ if(cur===h.base) return false; h.u.push(h.base); if(h.u.length>100) h.u.shift(); h.r.length=0; h.base=cur; return true; }
 function peHistUndo(h,cur){ peHistCommit(h,cur); if(!h.u.length) return null; h.r.push(h.base); h.base=h.u.pop(); return h.base; }
 function peHistRedo(h,cur){ peHistCommit(h,cur); if(!h.r.length) return null; h.u.push(h.base); h.base=h.r.pop(); return h.base; }
-function peParse(text){ try{ const o=JSON.parse(text); if(o && Array.isArray(o.pts)){ for(const k of ['walls','objs','cams','ants','rooms','slabs','roofs','levels']) if(!Array.isArray(o[k])) o[k]=[]; if(!(o.seq>0)) o.seq=1000; return o; } }catch(e){} return peNew(); }
+function peParse(text){ try{ const o=JSON.parse(text); if(o && Array.isArray(o.pts)){ for(const k of ['walls','objs','cams','ants','rooms','slabs','roofs','levels','grounds']) if(!Array.isArray(o[k])) o[k]=[]; if(!(o.seq>0)) o.seq=1000; return o; } }catch(e){} return peNew(); }
 
 // ---------- привязка к земле (общее пространство с Video Overlay и Map) ----------
 // o: {lat, lon, north, alt} — где точка (0, 0) плана, азимут оси +y плана от севера (по часовой, °) и высота пола над уровнем моря, м

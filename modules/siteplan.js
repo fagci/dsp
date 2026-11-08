@@ -22,7 +22,8 @@ function spOpts(n){
 }
 function spRecords(R){
   const rec=[], poly=[], t=new Date().toISOString();
-  for(const p of R.pts) rec.push({id:'sp:'+p.name,t,kind:'plan point',label:p.name,x:+p.x.toFixed(3),y:+p.y.toFixed(3),z:+p.z.toFixed(2),
+  const extPts=new Set(((R.walls||{}).sources||[]).map(q=>q.at));                       // точки под внешними источниками (вышка за км) — не точки плана
+  for(const p of R.pts) rec.push({id:'sp:'+p.name,t,kind:'plan point',label:p.name,...(extPts.has(p.name) ? {ext:true} : {}),x:+p.x.toFixed(3),y:+p.y.toFixed(3),z:+p.z.toFixed(2),
     sigma_m:isFinite(p.sx) ? +Math.hypot(p.sx,p.sy).toFixed(3) : '',...(R.georef ? {lat:+p.lat.toFixed(8),lon:+p.lon.toFixed(8),icon:'dot'} : {})});
   // для Plan Editor: стены снаружи замера (наружные + общие между комнатами), проёмы на них, комнаты — по замеру, без своих стен
   const W=R.walls||{walls:[],opens:[]};
@@ -30,7 +31,7 @@ function spRecords(R){
   rec.push({id:'sp:walls',t,kind:'plan walls',walls:W.walls.map(w=>({id:w.id,x1:+w.x1.toFixed(3),y1:+w.y1.toFixed(3),x2:+w.x2.toFixed(3),y2:+w.y2.toFixed(3),t:w.t,h:w.h,kind:w.kind,mat:w.mat,z0:w.z0||0,lv:w.lv||0})),
     opens:W.opens.map(o=>({...o,u:+o.u.toFixed(4)})),slabs:(W.slabs||[]).map(q=>({...q,poly:q.poly.map(r3)})),
     roofs:(W.roofs||[]).map(r=>({type:r.type,area:+r.area.toFixed(2),ridge:+r.ridge.toFixed(3),eave:+r.eave.toFixed(3),wallMat:r.wallMat,faces:r.faces.map(f=>({kind:f.kind,pts:f.pts.map(r3)}))})),
-    levels:W.levels||[]});
+    levels:W.levels||[],grounds:(W.grounds||[]).map(g=>({cover:g.cover,poly:g.poly.map(r3)})),sources:(W.sources||[]).map(q=>({name:q.name,x:+q.x.toFixed(3),y:+q.y.toFixed(3),z:+q.z.toFixed(2),eirp:q.eirp,f:q.f,az:q.az,bw:q.bw}))});
   R.polys.forEach((pl,i)=>{
     const nm0=pl.names.map(x=>x.replace(/\d+$/,'')), rname=nm0.every(x=>x && x===nm0[0]) ? nm0[0] : '';
     const lv=(R.levels||[]).find(q=>q.name===(pl.level??'1'));
@@ -43,7 +44,7 @@ function spRecords(R){
 }
 function spRun(n,I){
   const R=spSolve(spText(n),spOpts(n));
-  R.walls=R.polys.length ? spHouse(R,{outer:R.outer}) : null;
+  R.walls=R.polys.length || (R.fences||[]).length || (R.grounds||[]).length || (R.sources||[]).length ? spHouse(R,{outer:R.outer}) : null;
   n.res=R; n.emit=spRecords(R); n.err=R.errors; redraw(n);
 }
 
@@ -199,14 +200,20 @@ def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, lazy:true, kw:'pl
         cx.strokeStyle='rgba(255,183,77,.8)'; cx.fillStyle='rgba(255,183,77,.95)'; cx.lineWidth=1.5; cx.beginPath(); cx.moveTo(o[0],o[1]); cx.lineTo(au[0],au[1]); cx.moveTo(o[0],o[1]); cx.lineTo(av[0],av[1]); cx.stroke();
         cx.textAlign='left'; cx.fillText(unit[0],au[0]+3,au[1]+3); cx.fillText(unit[1],av[0]+3,av[1]-3);
       }
+      // участок: покрытие земли (под всем остальным) и внешние источники
+      const GC={asphalt:'rgba(95,98,104,.55)',gravel:'rgba(170,165,150,.5)',tile:'rgba(196,170,146,.5)',grass:'rgba(120,175,90,.35)',garden:'rgba(150,115,70,.4)',water:'rgba(90,150,210,.45)'};
+      if(R.walls) for(const g of R.walls.grounds||[]){ cx.beginPath(); g.poly.forEach((c,k)=>{ const q=pr({x:c[0],y:c[1],z:zmin}), s=T(q[0],q[1]); k ? cx.lineTo(s[0],s[1]) : cx.moveTo(s[0],s[1]); }); cx.closePath(); cx.fillStyle=GC[g.cover]||GC.grass; cx.fill(); }
       // этаж на плане: p.lvl — номер (0 — первый, −1 — подвал…); остальные этажи — пунктиром
       const lvShow=+p.lvl||0;
       if(R.walls) for(const w of R.walls.walls){                       // стены: толщина снаружи замера, общие — во всю щель
         const dx=w.x2-w.x1, dy=w.y2-w.y1, L=Math.hypot(dx,dy)||1, nx=-dy/L*w.t/2, ny=dx/L*w.t/2, other=(w.lv||0)!==lvShow && !d3;
         cx.beginPath(); [[w.x1+nx,w.y1+ny],[w.x2+nx,w.y2+ny],[w.x2-nx,w.y2-ny],[w.x1-nx,w.y1-ny]].forEach((c,k)=>{ const q=pr({x:c[0],y:c[1],z:zmin}), s=T(q[0],q[1]); if(k) cx.lineTo(s[0],s[1]); else cx.moveTo(s[0],s[1]); });
-        cx.closePath(); cx.fillStyle={brick:'rgba(176,112,86,.8)',concrete:'rgba(130,138,146,.85)',block:'rgba(200,196,180,.8)',drywall:'rgba(225,225,215,.7)',wood:'rgba(170,125,70,.8)',glass:'rgba(120,200,240,.6)',metal:'rgba(90,100,120,.9)'}[w.mat]||'rgba(120,130,140,.75)';
+        cx.closePath(); cx.fillStyle={brick:'rgba(176,112,86,.8)',concrete:'rgba(130,138,146,.85)',block:'rgba(200,196,180,.8)',drywall:'rgba(225,225,215,.7)',wood:'rgba(170,125,70,.8)',glass:'rgba(120,200,240,.6)',metal:'rgba(90,100,120,.9)',mesh:'rgba(150,160,170,.6)'}[w.mat]||'rgba(120,130,140,.75)';
         if(other){ cx.setLineDash([3,3]); cx.strokeStyle=cx.fillStyle; cx.lineWidth=1; cx.stroke(); cx.setLineDash([]); } else cx.fill();
       }
+      if(R.walls) for(const q of R.walls.sources||[]){ const a=pr({x:q.x,y:q.y,z:d3 ? q.z : zmin}), s=T(a[0],a[1]); if(s[0]<-50||s[1]<-50||s[0]>W+50||s[1]>H+50) continue;   // вышка / источник
+        cx.fillStyle='#ffb74d'; cx.strokeStyle='#000'; cx.lineWidth=1; cx.beginPath(); cx.moveTo(s[0],s[1]-7); cx.lineTo(s[0]+6,s[1]); cx.lineTo(s[0],s[1]+7); cx.lineTo(s[0]-6,s[1]); cx.closePath(); cx.fill(); cx.stroke();
+        cx.fillStyle=fg; cx.textAlign='left'; cx.fillText(q.name+' '+q.f+' MHz',s[0]+8,s[1]-6); }
       if(R.walls) for(const r of R.walls.roofs){                       // крыша: края скатов и конёк — пунктиром
         cx.strokeStyle='rgba(255,138,101,.8)'; cx.lineWidth=1; cx.setLineDash([5,3]);
         for(const f of r.faces){ if(f.kind!=='roof') continue; cx.beginPath(); f.pts.forEach((c,k)=>{ const q=pr({x:c[0],y:c[1],z:d3 ? c[2]*1 : zmin}), s=T(q[0],q[1]); if(k) cx.lineTo(s[0],s[1]); else cx.moveTo(s[0],s[1]); }); cx.closePath(); cx.stroke(); }
@@ -246,6 +253,10 @@ def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, lazy:true, kw:'pl
       for(const o of R.opens||[]) L.push(o.kind+' '+o.a+'-'+o.b+': '+o.from.toFixed(2)+'…'+(o.from+o.w).toFixed(2)+' m of '+o.L.toFixed(2)+' · '+o.w+'×'+o.h+' m'+(o.sill>0 ? ' · sill '+o.sill+' m' : ''));
       if(R.walls && R.walls.levels.length>1) L.push('levels: '+R.walls.levels.map(q=>q.name+' ('+(q.idx>0 ? '+' : '')+q.idx+') at '+q.z.toFixed(2)+' m').join(' · ')+(R.walls.slabs.length ? ' · slabs '+R.slab.t+' m '+R.slab.mat : ''));
       if(R.walls) for(const r of R.walls.roofs) L.push('roof '+r.type+' '+r.angle+'°: slopes '+r.area.toFixed(1)+' m² · ridge at '+r.ridge.toFixed(2)+' m · eaves at '+r.eave.toFixed(2)+' m');
+      if(R.walls){ const fl=R.walls.walls.filter(w=>w.kind==='fence').reduce((t,w)=>t+Math.hypot(w.x2-w.x1,w.y2-w.y1),0); if(fl>0) L.push('fence '+fl.toFixed(1)+' m');
+        const pa=gp=>{ let a=0; for(let i=0;i<gp.length;i++){ const p=gp[i], q=gp[(i+1)%gp.length]; a+=p[0]*q[1]-q[0]*p[1]; } return Math.abs(a)/2; }, by={};
+        for(const g of R.walls.grounds||[]) by[g.cover]=(by[g.cover]||0)+pa(g.poly); if(Object.keys(by).length) L.push('ground: '+Object.entries(by).map(([k,v])=>k+' '+v.toFixed(1)+' m²').join(' · '));
+        for(const q of R.walls.sources||[]){ const pl=R.polys[0]; const d=pl ? Math.hypot(q.x-pl.cx,q.y-pl.cy) : 0; L.push('source '+q.name+': '+q.eirp+' dBm EIRP at '+q.f+' MHz, '+q.z.toFixed(1)+' m high'+(pl ? ', '+(d<1000 ? d.toFixed(0)+' m' : (d/1000).toFixed(2)+' km')+' from the house' : '')+(q.bw<360 ? ', looks at '+q.az+'° (beam '+q.bw+'°)' : '')); } }
       if(R.walls && R.walls.walls.length){ const by={}; for(const w of R.walls.walls){ const k=w.kind+' '+w.mat; by[k]=(by[k]||0)+Math.hypot(w.x2-w.x1,w.y2-w.y1); }
         L.push('walls: outer '+R.outer+' m · '+Object.entries(by).map(([k,v])=>k+' '+v.toFixed(1)+' m').join(' · ')); }
       if(R.mirror) L.push('mirrored left ↔ right («mirror» line)');

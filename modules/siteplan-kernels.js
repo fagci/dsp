@@ -21,6 +21,9 @@
      level 2 [z 2.95] · level cellar z -2.2   этаж: комнаты ниже по тексту — на нём (без z — над самым верхним из уже объявленных: его пол + высота комнат + перекрытие); подвал — с минусом
      slab 0.25 concrete       перекрытия между этажами (толщина, материал) · same A B — B ровно над / под A (угол этажа над углом нижнего)
      roof gable|hip|shed|flat [30] [overhang 0.5] [ridge long|short] [level 2]   крыша над этажом (по умолчанию — верхним): угол, свес, конёк вдоль длинной / короткой стороны
+     fence A B C … [h 1.8] [sheet|mesh|wood|brick|concrete|block] [closed]   забор по точкам (профлист, рабица, штакетник…; можно по-русски), для сигнала — стена
+     road A B … [w 3.5] [asphalt|gravel|tile] · area A B C … [grass|asphalt|gravel|tile|garden|water]   дорога (полоса) и площадка — покрытие земли
+     source NAME POINT [h 25] [eirp 43] [f 1800] [az 120] [bw 65]   внешний источник сигнала над точкой (вышка, соседский роутер; точка — по GPS, at или замерам)
      mirror                   отразить план слева направо (по рулетке и углам план не отличить от зеркального; с компасом / GPS не нужно)
      wall Hall2-Hall3 Kor4-Kor1 0.37 [shift 0]   стык через стену: Kor4-Kor1 параллельно Hall2-Hall3 по ту сторону стены 0.37, Kor4 напротив Hall2 (shift — сдвиг вдоль), Kor1 — в сторону Hall3
      room Hall 4.48 3.74 4.46 3.74 [d 5.8]   комната обходом: стороны по порядку, углы Hall1…Hall4 по 90° («3.74/95» — свой угол, «/?» — не замерен), d — диагональ 1–3
@@ -31,6 +34,10 @@ const SP_D=Math.PI/180, SP_R=6371008.8;
 const SP_MAT={brick:'brick',concrete:'concrete',block:'block',drywall:'drywall',wood:'wood',glass:'glass',metal:'metal',
   'кирпич':'brick','бетон':'concrete','газоблок':'block','пеноблок':'block','блок':'block','гипсокартон':'drywall','гкл':'drywall','дерево':'wood','брус':'wood','стекло':'glass','металл':'metal'};
 const spMat=t=>SP_MAT[String(t||'').toLowerCase()]||null;
+// заборы: материал → {mat (Plan Editor), t (толщина, м)}; профлист — металл (сплошной лист экранирует), рабица — сетка (теряет немного, ячейка меньше волны не на всех частотах)
+const SP_FENCE_SPEC={sheet:{mat:'metal',t:.1},mesh:{mat:'mesh',t:.05},wood:{mat:'wood',t:.03},brick:{mat:'brick',t:.25},concrete:{mat:'concrete',t:.15},block:{mat:'block',t:.2}};
+const SP_FENCE={sheet:'sheet',metal:'sheet','профлист':'sheet','металл':'sheet',mesh:'mesh','сетка':'mesh','рабица':'mesh',wood:'wood','дерево':'wood','штакетник':'wood',brick:'brick','кирпич':'brick',concrete:'concrete','бетон':'concrete',block:'block','блок':'block','газоблок':'block'};
+const SP_COVER={asphalt:'asphalt','асфальт':'asphalt',gravel:'gravel','гравий':'gravel','щебень':'gravel',tile:'tile','плитка':'tile',grass:'grass','газон':'grass','трава':'grass',garden:'garden','огород':'garden','грядки':'garden',water:'water','вода':'water','пруд':'water'};
 
 function spFrame(lat0,lon0){
   const ky=SP_R*SP_D, kx=ky*Math.cos(lat0*SP_D);
@@ -49,7 +56,7 @@ function spNum(t){ if(t==null) return NaN; const s=String(t).replace(/^[±~]|^\+
 function spParse(text,o={}){
   const sd=o.sd>0 ? o.sd : 0.03, sa=o.sa>0 ? o.sa : 2, sg=o.sg>0 ? o.sg : 5, eye0=o.eye||0;
   const names=[], idx=new Map(), obs=[], polys=[], errors=[], opens=[]; let mirror=false, height=NaN, outer=NaN, outerMat=null, innerMat=null; const edgeMat=[];
-  const levels=[{name:'1',z:0,zSet:true,li:-1}], roofs=[]; let lvCur=levels[0], slab={t:.25,mat:'concrete'};
+  const levels=[{name:'1',z:0,zSet:true,li:-1}], roofs=[], fences=[], grounds=[], sources=[]; let lvCur=levels[0], slab={t:.25,mat:'concrete'};
   const pt=n=>{ if(!idx.has(n)){ idx.set(n,names.length); names.push(n); } return idx.get(n); };
   const one=(raw,li,depth=0)=>{
     const line=raw.trim(); if(!line) return;
@@ -85,6 +92,27 @@ function spParse(text,o={}){
       lvCur=L; return; }
     if(/^slab$/i.test(T[0])){ for(const t of T.slice(1)){ const v=spNum(t), m=spMat(t); if(v>0 && v<2) slab.t=v; else if(m) slab.mat=m; else return bad('slab [thickness m] [material] — the floors between levels'); } return; }
     if(/^same$/i.test(T[0])){ const a=T[1], b=T[2]; if(!a || !b || T.length>3) return bad('same A B — B stands exactly above / below A (plan position)'); obs.push({k:'same',a:pt(a),b:pt(b),s:sig??.01,li}); return; }
+    // участок: забор, дорога, площадка, внешний источник сигнала
+    if(/^fence$/i.test(T[0])){                                                               // «fence A B C … [h 1.8] [sheet|mesh|wood|brick|concrete|block] [closed]»
+      const f={ids:[],h:1.8,mat:'sheet',closed:false,li};
+      for(let i=1;i<T.length;i++){ const t=T[i].toLowerCase();
+        if(t==='h'){ f.h=spNum(T[++i]); if(!(f.h>0 && f.h<10)) return bad('fence: h — height, m'); }
+        else if(t==='closed') f.closed=true;
+        else if(SP_FENCE[t]) f.mat=SP_FENCE[t];
+        else f.ids.push(pt(T[i])); }
+      if(f.ids.length<2) return bad('fence A B [C …] [h 1.8] [sheet|mesh|wood|brick|concrete|block] [closed]'); fences.push(f); return; }
+    if(/^(road|area)$/i.test(T[0])){                                                         // «road A B … [w 3.5] [asphalt|gravel|tile]» · «area A B C … [grass|asphalt|gravel|tile|garden|water]»
+      const kind=T[0].toLowerCase(), g={kind,ids:[],w:3.5,cover:kind==='road' ? 'asphalt' : 'grass',li};
+      for(let i=1;i<T.length;i++){ const t=T[i].toLowerCase();
+        if(t==='w' && kind==='road'){ g.w=spNum(T[++i]); if(!(g.w>0 && g.w<50)) return bad('road: w — width, m'); }
+        else if(SP_COVER[t]) g.cover=SP_COVER[t];
+        else g.ids.push(pt(T[i])); }
+      if(g.ids.length<(kind==='road' ? 2 : 3)) return bad(kind==='road' ? 'road A B [C …] [w 3.5] [asphalt|gravel|tile]' : 'area A B C [D …] [grass|asphalt|gravel|tile|garden|water]'); grounds.push(g); return; }
+    if(/^source$/i.test(T[0])){                                                              // «source NAME POINT [h 25] [eirp 43] [f 1800] [az 120] [bw 65]»
+      const nm=T[1], at=T[2]; if(!nm || !at) return bad('source NAME POINT [h height above the point, m] [eirp dBm] [f MHz] [az °] [bw °] — e.g. source BS1 T1 h 30 eirp 46 f 1800 az 270 bw 65');
+      const q={name:nm,a:pt(at),h:2,eirp:20,f:2437,az:0,bw:360,li};
+      for(let i=3;i<T.length;i+=2){ const k=T[i].toLowerCase(), v=spNum(T[i+1]); if(!['h','eirp','f','az','bw'].includes(k) || !isFinite(v)) return bad('source: unknown «'+T[i]+'» (h eirp f az bw)'); q[k]=v; }
+      if(!(q.f>0) || !(q.bw>0 && q.bw<=360)) return bad('source: f > 0, bw 1…360'); sources.push(q); return; }
     if(/^roof$/i.test(T[0])){                                                                // крыша: «roof gable 30 [overhang 0.5] [ridge long|short] [level 2]»
       const type=(T[1]||'').toLowerCase(), r={type,angle:30,over:.5,ridge:'long',level:null,li};
       if(!['gable','hip','shed','flat'].includes(type)) return bad('roof gable|hip|shed|flat [angle °] [overhang m] [ridge long|short] [level NAME]');
@@ -129,7 +157,7 @@ function spParse(text,o={}){
   for(let i=0;i<levels.length;i++){ const L=levels[i]; if(L.zSet) continue;                 // над самым верхним из уже известных
     let pv=null; for(let k=0;k<i;k++) if(!pv || levels[k].z>pv.z) pv=levels[k];
     let hh=0; for(const pl of polys) if(pl.lv===pv) hh=Math.max(hh,pl.h>0 ? pl.h : height>0 ? height : 2.7); L.z=pv.z+(hh||2.7)+slab.t; }
-  return {names,obs,polys,errors,mirror,opens,outer,outerMat,innerMat,edgeMat,levels,roofs,slab};
+  return {names,obs,polys,errors,mirror,opens,outer,outerMat,innerMat,edgeMat,levels,roofs,slab,fences,grounds,sources};
 }
 
 // «room ИМЯ 4.48 3.74 4.46 3.74 [d 5.8] [d2 5.9]» — комната обходом по периметру: стороны по порядку, углы ИМЯ1, ИМЯ2… расставляются сами.
@@ -439,6 +467,11 @@ function spSolve(text,opt={}){
   for(const pl of P.polys){ const q=spPoly(pl.ids.map(i=>out.pts[i])); if(pl.h>0){ q.h=pl.h; q.volume=q.area*pl.h; } q.level=pl.lv.name; q.z0=pl.lv.z; out.polys.push(q); }
   { const used=P.levels.filter(L=>P.polys.some(pl=>pl.lv===L)).sort((a,b)=>a.z-b.z), g=Math.max(0,used.findIndex(L=>L.z>=-.5));   // номер этажа: 0 — первый с полом не ниже −0.5 м, подвалы — минус
     out.levels=used.map((L,i)=>({name:L.name,z:L.z,idx:i-g})); out.roofSpecs=P.roofs; out.slab=P.slab; }
+  // участок: точки уже решены
+  const XY=i=>[out.pts[i].x,out.pts[i].y];
+  out.fences=P.fences.map(f=>({...SP_FENCE_SPEC[f.mat],kind:f.mat,h:f.h,closed:f.closed,names:f.ids.map(i=>P.names[i]),pts:f.ids.map(XY)}));
+  out.grounds=P.grounds.map(g=>({kind:g.kind,cover:g.cover,w:g.w,names:g.ids.map(i=>P.names[i]),pts:g.ids.map(XY)}));
+  out.sources=P.sources.map(q=>{ const p=out.pts[q.a]; return {name:q.name,at:p.name,x:p.x,y:p.y,z:p.z+q.h,h:q.h,eirp:q.eirp,f:q.f,az:q.az,bw:q.bw,lat:p.lat,lon:p.lon}; });
   // проёмы: по стене между соседними углами контура; не влезает в стену — ошибка
   out.opens=[];
   for(const o of P.opens||[]){
@@ -586,6 +619,17 @@ function spHouse(R,o={}){
     for(const q of W.opens){ q.wall=pre+q.wall; out.opens.push(q); }
     if(lvs.some(M=>M.z<L.z-.01)) for(const pl of sub) out.slabs.push({lv:L.idx,z:L.z,t:slab.t,mat:slab.mat,poly:pl.names.map(n=>{ const p=R.pts.find(q=>q.name===n); return [p.x,p.y]; })});
   }
+  // участок: заборы — стены (для сигнала и картинки), покрытие земли — плоские многоугольники, внешние источники
+  (R.fences||[]).forEach((f,i)=>{ const P=f.pts.slice(); if(f.closed && P.length>2) P.push(P[0]);
+    for(let k=0;k+1<P.length;k++){ const [x1,y1]=P[k], [x2,y2]=P[k+1]; if(Math.hypot(x2-x1,y2-y1)<.02) continue;
+      out.walls.push({id:'fence:'+i+':'+k,x1,y1,x2,y2,t:f.t,h:f.h,mat:f.mat,kind:'fence',z0:0,lv:0}); } });
+  out.grounds=[];
+  for(const g of R.grounds||[]){
+    if(g.kind==='area'){ out.grounds.push({cover:g.cover,poly:g.pts.map(q=>q.slice())}); continue; }
+    for(let k=0;k+1<g.pts.length;k++){ const [x1,y1]=g.pts[k], [x2,y2]=g.pts[k+1], L=Math.hypot(x2-x1,y2-y1); if(L<.02) continue;       // дорога: полоса из прямоугольников, на стыках — с запасом в полширины
+      const ux=(x2-x1)/L, uy=(y2-y1)/L, nx=-uy*g.w/2, ny=ux*g.w/2, e0=k>0 ? g.w/2 : 0, e1=k+2<g.pts.length ? g.w/2 : 0;
+      const a=[x1-ux*e0,y1-uy*e0], b=[x2+ux*e1,y2+uy*e1]; out.grounds.push({cover:g.cover,poly:[[a[0]+nx,a[1]+ny],[b[0]+nx,b[1]+ny],[b[0]-nx,b[1]-ny],[a[0]-nx,a[1]-ny]]}); } }
+  out.sources=(R.sources||[]).map(q=>({...q}));
   for(const spec of R.roofSpecs||[]){
     const L=spec.level!=null ? lvs.find(q=>q.name===spec.level) : lvs.slice().sort((a,b)=>b.z-a.z)[0];
     if(!L){ (R.errors||[]).push({line:spec.li+1,text:'roof',msg:'roof: no level «'+spec.level+'»'}); continue; }
