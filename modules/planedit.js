@@ -518,6 +518,9 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     const R=peRaster(n);
     if(R){ const g=R.g, sc=P.sc*g.cell, m=P.pt(g.x0,g.y0,0), ux=P.pt(g.x0+g.cell,g.y0,0), uy=P.pt(g.x0,g.y0+g.cell,0);
       cx.save(); /* умножаем матрицу, а не заменяем: у холста приложения есть своя базовая */ cx.transform(ux[0]-m[0],ux[1]-m[1],uy[0]-m[0],uy[1]-m[1],m[0],m[1]); cx.imageSmoothingEnabled=false; cx.drawImage(R.c,0,0); cx.restore(); void sc; }
+    // покрытие участка (дорога, газон…) — на земле, под комнатами
+    const PE_GC={asphalt:[95,98,104],gravel:[170,165,150],tile:[196,170,146],grass:[120,175,90],garden:[150,115,70],water:[90,150,210]};
+    if(!P.d3) for(const g of s.grounds||[]){ cx.beginPath(); g.poly.forEach((q,i)=>{ const A=P.pt(q[0],q[1],0); i ? cx.lineTo(A[0],A[1]) : cx.moveTo(A[0],A[1]); }); cx.closePath(); cx.fillStyle='rgba('+(PE_GC[g.cover]||PE_GC.grass).join(',')+',.45)'; cx.fill(); }
     // комнаты
     const lvOk=peLvShow(p.lv,P.d3);
     for(const r of s.rooms){ if(!lvOk(r.lv)) continue; const poly=peRoomPoly(s,r), rz=r.z0||0; cx.beginPath(); poly.forEach((q,i)=>{ const A=P.pt(q[0],q[1],rz); i ? cx.lineTo(A[0],A[1]) : cx.moveTo(A[0],A[1]); }); cx.closePath(); cx.fillStyle='rgba(79,195,247,.07)'; cx.fill();
@@ -528,6 +531,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     // блоки: стены, ящики, колонны — по глубине издали к близким
     { const raw=peBoxes(s).filter(b=>b.kind!=='wall' || lvOk(b.lv)), cam=[P.sa,-P.ca], sel=n.sel;
       const roofPolys=P.d3 && (p.lv==='all' || p.lv==null) ? (s.roofs||[]).flatMap(r=>r.faces.map(f=>({pts:f.pts,rgb:f.kind==='roof' ? [150,78,64] : (PE_MATCOL[r.wallMat]||[200,208,214])}))) : [];
+      if(P.d3) for(const g of s.grounds||[]) roofPolys.push({pts:g.poly.map(q=>[q[0],q[1],.005]),rgb:PE_GC[g.cover]||PE_GC.grass});
       if(P.d3) for(const sl of s.slabs||[]) if(lvOk(sl.lv)) roofPolys.push({pts:sl.poly.map(q=>[q[0],q[1],sl.z]),rgb:PE_MATCOL[sl.mat]||[168,174,180]});   // перекрытия — пол этажа
       if(P.d3){            // 3D: z-буфер — порядок блоков не важен, пересечения объёмов тоже рисуются верно; пока вид двигают — вдвое грубее, потом дорисовывается начисто
         const fast=performance.now()-(n.fastT||0)<260, k=fast ? .55 : 1, zw=Math.max(8,Math.round(W*k)), zh=Math.max(8,Math.round(H*k));

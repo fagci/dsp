@@ -217,4 +217,16 @@ ok('an empty scene has no bounds and no grid',K.peGrid(K.peNew())===null);
   W[0].mat='metal'; const m=K.pePaths(q,a,7,4,1.5,{refl:1}).find(p=>p.order===1 && Math.abs(p.pts[1][1]-.1)<1e-9), cc=K.pePaths(q,a,7,4,1.5,{refl:1}).find(p=>p.order===1 && Math.abs(p.pts[1][1]-7.9)<1e-9);
   near('metal reflects 4 dB better than concrete (same geometry)',m.level-cc.level,K.peReflLoss('concrete')-K.peReflLoss('metal'),1e-9);
   const out=K.peAddAnt(q,-5,4,{z:1.5,eirp:20,f:2400,bw:360}); const po=K.pePaths(q,out,5,6.5,1.5,{refl:1}); ok('no bounce off a face the source is behind (the inner face of the west wall); through the wall and off the east one — yes',!po.some(p=>p.order===1 && Math.abs(p.pts[1][0]-.1)<1e-9) && po.some(p=>p.order===1 && Math.abs(p.pts[1][0]-9.9)<1e-9)); }
+// участок в Plan Editor: внешний источник не растягивает рамку карты, забор из профлиста экранирует, сетка — почти нет
+{ const q=K.peNew(), R=[{id:'sp:walls',kind:'plan walls',walls:[{id:'f',x1:0,y1:10,x2:20,y2:10,t:.1,h:2,mat:'metal',kind:'fence'}],opens:[],grounds:[{cover:'grass',poly:[[0,0],[20,0],[20,9],[0,9]]}],sources:[{name:'BS',x:300,y:400,z:30,eirp:46,f:1800,az:200,bw:65}]}];
+  K.peImportPoints(q,R); const bs=q.ants.find(a=>a.name==='BS'), b=K.peBounds(q,0);
+  ok('import: the source is an external transmitter',bs && bs.ext && bs.eirp===46 && bs.f===1800 && bs.z===30);
+  ok('import: the ground cover is kept',q.grounds.length===1 && q.grounds[0].cover==='grass');
+  ok('the map frame ignores the far source',b.x1<=20 && b.y1<=10,JSON.stringify(b));
+  near('sheet metal fence: 20 dB (2.4 GHz)',K.peWallLoss(q,10,12,10,8,2400,1,1),20,1e-9);
+  q.walls[0].mat='mesh'; q.walls[0].t=.05; near('chain-link mesh: 3 dB',K.peWallLoss(q,10,12,10,8,2400,1,1),3,1e-9);
+  near('…and nothing above the fence',K.peWallLoss(q,10,12,10,8,2400,3,3),0,1e-9);
+  K.peImportPoints(q,[{name:'L1',x:1,y:1}]); ok('an imported point that is not a wall end is hidden («points: auto»)',K.peHiddenPts(q).has(q.pts.find(p=>p.name==='L1').id) && !K.peHiddenPts(q).has(K.peAddPoint(q,2,2).id));
+  K.peImportPoints(q,[{name:'T',x:300,y:400,ext:true}]); ok('the point under a far source is not a plan point',!q.pts.some(p=>p.name==='T'));
+  R[0].sources=[]; K.peImportPoints(q,R); ok('a source removed in Site Plan goes away',!q.ants.some(a=>a.name==='BS')); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);

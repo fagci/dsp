@@ -195,4 +195,15 @@ for(const t of ['material Kit2-Kit3 concrete\nroom Hall 4.48 3.74 4.46 3.74\nroo
   R=K.spSolve('room A 6 4 6 4\nroof flat overhang 0.3'); near('flat roof area = (len+2o)(span+2o)',K.spHouse(R,{}).roofs[0].area,(6.8+.6)*(4.8+.6),1e-6);
   R=K.spSolve('room A 6 4 6 4\nroof dome'); ok('unknown roof type is an error',R.errors.length===1);
   R=K.spSolve('room A 6 4 6 4\nroof gable 30 level 7'); K.spHouse(R,{}); ok('roof over a missing level is reported',R.errors.some(e=>/no level/.test(e.msg))); }
+// участок: забор, дорога, площадка, внешний источник
+{ R=K.spSolve('H1 at 0 0\nH2 at 6 0\nroom H 6 4 6 4\nF1 at -5 5\nF2 at 15 5\nF3 at 15 -15\nF4 at -5 -15\nfence F1 F2 F3 F4 closed h 2 профлист\nR1 at -5 8\nR2 at 15 8\nroad R1 R2 w 4 asphalt\nG1 at 8 -2\nG2 at 14 -2\nG3 at 14 -12\nG4 at 8 -12\narea G1 G2 G3 G4 газон\nT at 300 400\nsource BS T h 30 eirp 46 f 1800 az 200 bw 65');
+  ok('yard: no errors',R.errors.length===0,JSON.stringify(R.errors));
+  const H=K.spHouse(R,{}), F=H.walls.filter(w=>w.kind==='fence');
+  ok('fence: a closed contour of 4 runs, sheet metal (Russian name), 2 m',F.length===4 && F.every(w=>w.mat==='metal' && w.h===2 && w.t===.1));
+  near('fence length',F.reduce((t,w)=>t+Math.hypot(w.x2-w.x1,w.y2-w.y1),0),80,1e-6);
+  const road=H.grounds.find(g=>g.cover==='asphalt'), lawn=H.grounds.find(g=>g.cover==='grass'), pa=P=>{ let a=0; for(let i=0;i<P.length;i++){ const p=P[i], q=P[(i+1)%P.length]; a+=p[0]*q[1]-q[0]*p[1]; } return Math.abs(a)/2; };
+  near('road: a strip 20 × 4 m',pa(road.poly),80,1e-6); near('lawn area 6 × 10',pa(lawn.poly),60,1e-6);
+  const q=H.sources[0]; ok('source: above its point, with its EIRP, frequency and beam',q.name==='BS' && q.x===300 && q.y===400 && q.z===30 && q.eirp===46 && q.f===1800 && q.bw===65 && q.az===200,JSON.stringify(q));
+  R=K.spSolve('fence A'); ok('fence needs two points',R.errors.length===1);
+  R=K.spSolve('A at 0 0\nsource X A power 5'); ok('source: unknown key is an error',R.errors.length===1); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
