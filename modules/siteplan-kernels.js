@@ -13,6 +13,7 @@
      A gps 55.03 82.92 [±3] [alt 120]   GPS-замер (несколько — усредняются по весу)
      A at 10 5                координаты A в локальной системе, м
      poly A B C D             контур — площадь и периметр
+     room Hall 4.48 3.74 4.46 3.74 [d 5.8]   комната обходом: стороны по порядку, углы Hall1…Hall4 по 90° («3.74/95» — свой угол, «/?» — не замерен), d — диагональ 1–3
    Ядро чистое, без DOM: node tools/test-siteplan.mjs */
 
 const SP_D=Math.PI/180, SP_R=6371008.8;
@@ -35,7 +36,7 @@ function spParse(text,o={}){
   const sd=o.sd>0 ? o.sd : 0.03, sa=o.sa>0 ? o.sa : 2, sg=o.sg>0 ? o.sg : 5, eye0=o.eye||0;
   const names=[], idx=new Map(), obs=[], polys=[], errors=[];
   const pt=n=>{ if(!idx.has(n)){ idx.set(n,names.length); names.push(n); } return idx.get(n); };
-  String(text||'').split('\n').forEach((raw0,li)=>raw0.replace(/#.*/,'').split(';').forEach(raw=>{          // # — комментарий до конца строки; «;» — несколько замеров в строке
+  const one=(raw,li,depth=0)=>{
     const line=raw.trim(); if(!line) return;
     const T=line.replace(/(\d),(\d)/g,'$1.$2').replace(/(±|\+-|~)\s*/g,' ± ').split(/\s+/).filter(Boolean);
     const bad=m=>errors.push({line:li+1,text:line,msg:m});
@@ -44,6 +45,7 @@ function spParse(text,o={}){
     if(sig!=null && !(sig>0)){ bad('bad ±'); return; }
     let eye=null; { const i=T.indexOf('eye'); if(i>=0){ eye=spNum(T[i+1]); T.splice(i,2); if(!isFinite(eye)){ bad('bad eye'); return; } } }
     let alt=null; { const i=T.indexOf('alt'); if(i>=0){ alt=spNum(T[i+1]); T.splice(i,2); if(!isFinite(alt)){ bad('bad alt'); return; } } }
+    if(/^room$/i.test(T[0])){ if(depth) return bad('room inside room'); const L=spRoomLines(T.slice(1)); if(typeof L==='string') return bad(L); L.forEach(l=>one(l,li,1)); return; }
     if(/^poly$/i.test(T[0])){ const ids=T.slice(1).map(pt); if(ids.length<3){ bad('poly needs 3+ points'); return; } polys.push({ids}); return; }
     const head=T[0].split('-'), kw=(T[1]||'').toLowerCase(), v=spNum(T[1]);
     if(head.length===1){                                                                    // одна точка
@@ -68,8 +70,31 @@ function spParse(text,o={}){
     }
     if(head.length===3 && isFinite(v)){ obs.push({k:'ang',a:pt(head[0]),b:pt(head[1]),c:pt(head[2]),v,s:sig??sa,li}); return; }
     bad('unknown: '+line);
-  }));
+  };
+  String(text||'').split('\n').forEach((raw0,li)=>raw0.replace(/#.*/,'').split(';').forEach(raw=>one(raw,li)));   // # — комментарий до конца строки; «;» — несколько замеров в строке
   return {names,obs,polys,errors};
+}
+
+// «room ИМЯ 4.48 3.74 4.46 3.74 [d 5.8] [d2 5.9]» — комната обходом по периметру: стороны по порядку, углы ИМЯ1, ИМЯ2… расставляются сами.
+// Каждый угол — 90°, если не указан свой: «3.74/95» — угол 95° в конце этой стороны, «3.74/?» — угол не замерен (тогда нужна диагональ).
+// d — диагональ ИМЯ1–ИМЯ3, d2 — ИМЯ2–ИМЯ4. → обычные строки (стороны, углы, диагонали, poly) или текст ошибки
+function spRoomLines(T){
+  if(!T.length || isFinite(spNum(T[0]))) return 'room NAME side side side … (e.g. room Hall 4.48 3.74 4.46 3.74)';
+  const nm=T[0], S=[], A=[], D=[];
+  for(let i=1;i<T.length;i++){
+    const t=T[i].toLowerCase();
+    if(t==='d'||t==='d2'){ const v=spNum(T[++i]); if(!(v>0)) return 'room: '+t+' needs a length'; D.push([t,v]); continue; }
+    const [a,b]=T[i].split('/'), v=spNum(a); if(!(v>0)) return 'room: bad side «'+T[i]+'»';
+    const g=b===undefined ? 90 : b==='?' ? null : spNum(b); if(g!==null && !(g>0 && g<360)) return 'room: bad corner angle «'+T[i]+'»';
+    S.push(v); A.push(g);
+  }
+  const n=S.length; if(n<3) return 'room needs 3+ sides';
+  const P=i=>nm+(((i%n)+n)%n+1), L=[];
+  for(let i=0;i<n;i++) L.push(P(i)+'-'+P(i+1)+' '+S[i]);
+  for(let i=0;i<n;i++) if(A[i]!==null) L.push(P(i)+'-'+P(i+1)+'-'+P(i+2)+' '+A[i]);       // угол в конце стороны i
+  for(const [t,v] of D){ if(n<4) return 'room: a diagonal needs 4+ sides'; L.push(t==='d' ? P(0)+'-'+P(2)+' '+v : P(1)+'-'+P(3)+' '+v); }
+  L.push('poly '+[...Array(n).keys()].map(P).join(' '));
+  return L;
 }
 
 // ---------- начальное приближение ----------
@@ -86,6 +111,24 @@ function spInit(P){
   const hd=(o,dzv)=>o.k==='h' ? o.v : Math.sqrt(Math.max(o.v*o.v-dzv*dzv,0));
   const dzOf=(a,b)=>{ for(const o of obs) if(o.k==='dz'){ if(o.a===a&&o.b===b) return o.v; if(o.a===b&&o.b===a) return -o.v; } return 0; };
   let seeds=0;
+  // замеры дают фигуру с точностью до зеркала (D по двум расстояниям — по обе стороны диагонали AC); выбор стороны — по контурам «poly»:
+  // кандидат, при котором контур не перекручен (стороны не пересекаются) и не вывернут (повороты в одну сторону), лучше
+  const segX=(p1,p2,p3,p4)=>{ const d=(a,b,c)=>(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]), e=1e-9;
+    const d1=d(p3,p4,p1), d2=d(p3,p4,p2), d3=d(p1,p2,p3), d4=d(p1,p2,p4); return ((d1>e&&d2<-e)||(d1<-e&&d2>e)) && ((d3>e&&d4<-e)||(d3<-e&&d4>e)); };
+  const polyPen=(p,x,y)=>{
+    let pen=0; const at=i=>i===p ? [x,y] : placed[i] ? [X[3*i],X[3*i+1]] : null;
+    for(const pl of P.polys){
+      const ids=pl.ids, m=ids.length; if(!ids.includes(p)) continue;
+      const E=[]; for(let i=0;i<m;i++){ const a=at(ids[i]), b=at(ids[(i+1)%m]); if(a&&b) E.push([a,b,i]); }
+      for(let i=0;i<E.length;i++) for(let j=i+1;j<E.length;j++){ const di=Math.abs(E[i][2]-E[j][2]); if(di===1||di===m-1) continue; if(segX(E[i][0],E[i][1],E[j][0],E[j][1])) pen+=10; }
+      let pos=0, neg=0; for(let i=0;i<m;i++){ const a=at(ids[(i+m-1)%m]), b=at(ids[i]), c=at(ids[(i+1)%m]); if(!a||!b||!c) continue;
+        const z=(b[0]-a[0])*(c[1]-b[1])-(b[1]-a[1])*(c[0]-b[0]); if(z>1e-9) pos++; else if(z<-1e-9) neg++; }
+      pen+=Math.min(pos,neg);
+    }
+    return pen;
+  };
+  const inPoly=p=>P.polys.some(pl=>pl.ids.includes(p));
+  const pick=(p,C)=>{ let best=C[0], bp=Infinity; for(const c of C){ const v=polyPen(p,c[0],c[1])+(c[2]||0); if(v<bp-1e-9){ bp=v; best=c; } } return best; };
   const stepOnce=()=>{
     let moved=false;
     for(let p=0;p<N;p++){
@@ -107,15 +150,26 @@ function spInit(P){
         let s=(A.r*A.r-B.r*B.r+L*L)/(2*L), h2=A.r*A.r-s*s, h=h2>0 ? Math.sqrt(h2) : 0;
         x=ax+s*dx/L-h*dy/L; y=ay+s*dy/L+h*dx/L;
         const w=nb.find(e=>isFinite(e.az));                          // азимут с уже стоящей точки выбирает сторону (зеркало треугольника)
+        const x2=ax+s*dx/L+h*dy/L, y2=ay+s*dy/L-h*dx/L;
         if(w){
           const gap=(px,py)=>Math.abs(spWrap(Math.atan2(px-X[3*w.q],py-X[3*w.q+1])/SP_D-w.az));
-          const x2=ax+s*dx/L+h*dy/L, y2=ay+s*dy/L-h*dx/L;
           if(gap(x2,y2)<gap(x,y)){ x=x2; y=y2; }
-        }
+        } else if(h>0 && inPoly(p)) [x,y]=pick(p,[[x,y],[x2,y2]]);
       } else if(nb[0].az!==undefined && isFinite(nb[0].az) && isFinite(nb[0].r)){
         const e=nb[0], a=e.az*SP_D; x=X[3*e.q]+e.r*Math.sin(a); y=X[3*e.q+1]+e.r*Math.cos(a);
       } else if(withR.length===1){
-        const e=withR[0], a=(placedCount()-1)*2.4; x=X[3*e.q]+e.r*Math.cos(a); y=X[3*e.q+1]+e.r*Math.sin(a);
+        const e=withR[0], qx=X[3*e.q], qy=X[3*e.q+1], C=[];
+        // угол q-…: «o-q-p v» с уже стоящей o — направление q→p = направление q→o, повёрнутое на ±v
+        for(const o of obs){ if(o.k!=='ang' || o.b!==e.q) continue; const t=o.a===p ? o.c : o.c===p ? o.a : -1; if(t<0 || !placed[t]) continue;
+          const a0=Math.atan2(X[3*t+1]-qy,X[3*t]-qx); for(const sg of [1,-1]){ const a=a0+sg*o.v*SP_D; C.push([qx+e.r*Math.cos(a),qy+e.r*Math.sin(a)]); } }
+        if(!C.length && inPoly(p)){                                   // одно расстояние, но точка в контуре: перебор направлений, при равенстве — прямой угол в q (комнаты обычно прямоугольны)
+          const nb=[]; for(const pl of P.polys){ const m=pl.ids.length; for(let i=0;i<m;i++) if(pl.ids[i]===e.q){ for(const j of [pl.ids[(i+1)%m],pl.ids[(i+m-1)%m]]) if(j!==p && placed[j]) nb.push(j); } }
+          for(let k=0;k<72;k++){ const a=k*5*SP_D, cx=qx+e.r*Math.cos(a), cy=qy+e.r*Math.sin(a); let dev=0;
+            for(const j of nb){ const ux=X[3*j]-qx, uy=X[3*j+1]-qy, cs=(ux*(cx-qx)+uy*(cy-qy))/(Math.hypot(ux,uy)*e.r||1); dev+=Math.abs(cs); }
+            C.push([cx,cy,dev*0.5]); }
+        }
+        if(C.length) [x,y]=pick(p,C);
+        else { const a=(placedCount()-1)*2.4; x=qx+e.r*Math.cos(a); y=qy+e.r*Math.sin(a); }
       } else continue;
       X[3*p]=x; X[3*p+1]=y; placed[p]=true; moved=true;
       if(!zk[p]){ for(const e of nb){ const dz=dzOf(e.q,p); if(dz){ X[3*p+2]=X[3*e.q+2]+dz; break; } else X[3*p+2]=X[3*e.q+2]; } }
