@@ -76,6 +76,17 @@ ok('reject short / unknown kind / bad length', K.pinDecode(new Uint8Array(10)) =
   ok('pinx capped at 64', K.pinxParse(t).send.length === 64);
 }
 
+// https-страница и ws:// на другой хост: браузер блокирует, приложение Android (DspApp → Net.app) разрешает
+{
+  const fs = await import('node:fs'), vm = await import('node:vm');
+  const src = fs.readFileSync(new URL('../modules/sources.js', import.meta.url), 'utf8'), pn = fs.readFileSync(new URL('../modules/pins.js', import.meta.url), 'utf8');
+  const fn = (code, name) => code.slice(code.indexOf('function ' + name), code.indexOf('\n}', code.indexOf('function ' + name)) + 2);
+  const run = (app, proto) => { const c = vm.createContext({ location: { protocol: proto }, Net: { app }, URL }); vm.runInContext(fn(src, 'netInsecure') + fn(pn, 'pinsBlocked'), c); return (u) => vm.runInContext('pinsBlocked(' + JSON.stringify(u) + ')', c); };
+  ok('browser on https: ws:// to another host is blocked', run(false, 'https:')('ws://192.168.1.5:8765') !== '');
+  ok('browser on https: localhost and wss:// are fine', run(false, 'https:')('ws://127.0.0.1:8766') === '' && run(false, 'https:')('wss://h.example:8766') === '');
+  ok('Android app: ws:// to another host is allowed', run(true, 'https:')('ws://192.168.1.5:8765') === '');
+}
+
 // ---------- мост ----------
 const bridge = createPinBridge({ port: 0 });
 const port = await bridge.start();
