@@ -23,7 +23,7 @@ await wait(3000);
 await pg.evaluate((mode) => {
   window.__frames = 0; window.__bytes = 0; window.__cost = [];
   if (mode === 'overlay') {
-    window.DspApp = { floatCan: () => true, floatShow: () => true, floatClose() {}, floatPerm() {}, floatFrame: (id, b64) => { if (!window.__first) window.__first = b64.startsWith('UklGR') ? 'webp' : b64.startsWith('iVBOR') ? 'png' : 'other:' + b64.slice(0, 8); window.__frames++; window.__bytes += b64.length; }, appKey: () => '' };
+    window.DspApp = { floatCan: () => true, floatShow: () => true, floatClose() {}, floatPerm() {}, floatFrame: (id, b64) => { if (!window.__first) window.__first = b64.startsWith('/9j/') ? 'jpeg' : b64.startsWith('iVBOR') ? 'png' : b64.startsWith('UklGR') ? 'webp' : 'other:' + b64.slice(0, 8); window.__frames++; window.__bytes += b64.length; }, appKey: () => '' };
     const orig = floatSend; floatSend = function (s) { const t = performance.now(); try { return orig(s); } finally { window.__cost.push(performance.now() - t); } };
     floatToggle(__sa);
   }
@@ -44,7 +44,7 @@ console.log(mode.padEnd(8), 'cpu×' + rate, JSON.stringify(r));
 globalThis.__r = r;
 
 ok('a cheap frame lets the window run faster than the old 8 per second cap (≥ 10 per second; the encoder roundtrip under CPU ×4 limits it to ~13)', r.overlayFrames >= 120, String(r.overlayFrames));
-ok('frames are WebP / PNG images', r.firstKind === 'webp' || r.firstKind === 'png', String(r.firstKind));
+ok('the spectrum goes as JPEG (opaque canvas, fast encoder)', r.firstKind === 'jpeg', String(r.firstKind));
 ok('a frame costs the main thread under 10 ms at CPU ×4 (28 ms on average with the synchronous toDataURL)', r.frameCostMs && r.frameCostMs.avg < 10 && r.frameCostMs.p95 < 18, JSON.stringify(r.frameCostMs));
 ok('engine ticks stay regular: few gaps over 40 ms (44 with the synchronous encoder, 3 without an overlay)', r.tickGaps_over_40ms < 20, String(r.tickGaps_over_40ms));
 ok('engine keeps real time (86 ticks per second)', r.ticksPerSec > 80, String(r.ticksPerSec));

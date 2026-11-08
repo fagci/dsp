@@ -45,10 +45,12 @@ function floatOff(id){
 // окно закрыли крестиком на самом телефоне
 function floatClosed(id){ id=String(id); const s=flSt.get(id); if(s){ s.n._float=false; flSt.delete(id); } }
 
-// webp сохраняет прозрачность и в несколько раз легче png; если WebView его не умеет, кодировщик отдаёт png.
-// Кодирование — асинхронное (toBlob): синхронный toDataURL('image/webp') держал главный поток ~20 мс на кадр (замер при замедлении CPU в 4 раза,
-// холст 184×176; копирование на промежуточный холст — 0.2 мс, toBlob — 1 мс на главном потоке), 8 раз в секунду — такты движка опаздывали,
-// интернет-радио и другие источники звука затыкались сразу после создания окна. Кадры не накладываются: s.scratch.busy снимается, когда кадр ушёл.
+// Формат кадра и кодирование. Замер (CPU ×4, холст 184×176): toDataURL webp — 21 мс на главном потоке (8 раз в секунду затыкали звук);
+// асинхронный toBlob держит поток ~0.5 мс, но кодировщик webp в фоновом пуле при нагруженном процессоре отдаёт кадр за 190 мс (p95 800 мс) —
+// окно шло ~2 кадра в секунду; PNG — 63 мс (кадр 21 КБ), JPEG — 35 мс (10 КБ). Поэтому: toBlob, а формат — JPEG для узлов с непрозрачным
+// холстом (спектр заливает фон сам), PNG для остальных (сохраняет прозрачность, подложку окна видно сквозь неё).
+// Кадры не накладываются: s.scratch.busy снимается, когда кадр ушёл.
+const FL_OPAQUE=new Set(['sa']);
 function floatSend(s){
   const n=s.n, id=String(n.id), done=()=>{ s.scratch.busy=false; };
   try{
@@ -63,7 +65,7 @@ function floatSend(s){
       const fr=new FileReader();
       fr.onload=()=>{ try{ const url=String(fr.result); if(flSt.get(id)===s) DspApp.floatFrame(id,url.slice(url.indexOf(',')+1)); }catch(e){} done(); };
       fr.onerror=done; fr.readAsDataURL(blob);
-    },'image/webp',.85);
+    },FL_OPAQUE.has(n.type) ? 'image/jpeg' : 'image/png',.85);
   }catch(e){ done(); }
 }
 
