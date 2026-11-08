@@ -426,6 +426,8 @@ const PRESET_CATS={
   'LoRa: Chirp Link (Loopback)':'Modems & Data Links',
   'LoRa: Receive (USB SDR, 868 MHz)':'Modems & Data Links',
   'LoRa: Send a Message (HackRF TX)':'Modems & Data Links',
+  'MeshCore: Advert Loopback (Generator)':'Network & IoT',
+  'MeshCore: Receive (USB SDR, 910.525 MHz)':'Network & IoT',
   'ACARS: VHF Messages (Generator)':'Aircraft, Satellites & Telemetry',
   'ACARS: VHF Messages (USB SDR, 131 MHz)':'Aircraft, Satellites & Telemetry',
   'Inmarsat STD-C: EGC Messages (Generator)':'Aircraft, Satellites & Telemetry',
@@ -4666,6 +4668,44 @@ tx.size.w=420; tx.size.h=300; applySize(tx);
 const hk=addNode('hackrfTx',520,240,{});
 hk.size.w=300; applySize(hk);
 addEdge(tx.id,'iq',hk.id,'in'); addEdge(tx.id,'tx',hk.id,'tx');
+markWiresDirty();
+});
+preset('MeshCore: Advert Loopback (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'MeshCore without a radio: LoRa Modulator sends a real MeshCore ADVERT (a node announcing itself: public key, time, Ed25519 signature, type, position, name) as LoRa IQ every 4 s — SF7, 62.5 kHz, sync word 12, the MeshCore defaults.\n'+
+  'LoRa Decoder reads the frame, MeshCore Sniffer takes it apart: node name and type, position, hops, and checks the signature (sig = valid). Flip one hex digit in the message of the modulator and the advert shows [BAD SIGNATURE] — a forged or damaged advert cannot pass as a real one.\n'+
+  'The advert is a made-up node with a made-up key, built by hand from the MeshCore wire format; real group messages (channel Public, any PSK in the sniffer) arrive the same way from the air.'});
+nt.size.w=820; nt.size.h=130; applySize(nt);
+const tx=addNode('loraTx',40,200,{sr:'250000',sf:'7',bw:'62500',cr:'4/5',sync:'12',fmt:'hex',msg:'1100F353EEEBC0C726546C5632E504A4D2CB98B60E60386274198BEAB32C5158C0C800B95569002F05B1576A76E8AC4FB0C103DB5B761767FA823AE90285CB5C6E57E3D529A7A184A54AEDA5DF6D133094CEB75FBB852C631B5199A8FB469EBFE21CA38BB8059201D07C02679F2FFB44656D6F2D5265706561746572',every:4,off:3000,ppm:5,noise:-45,lvl:-20});
+tx.size.w=420; tx.size.h=300; applySize(tx);
+const de=addNode('loraRx',500,200,{sf:'7',bw:'62500',sync:'12'});
+de.size.w=520; de.size.h=300; applySize(de);
+const mc=addNode('meshcore',500,540,{});
+mc.size.w=520; mc.size.h=300; applySize(mc);
+const log=addNode('recLog',1060,540,{});
+log.size.w=420; applySize(log);
+addEdge(tx.id,'iq',de.id,'in'); addEdge(de.id,'rec',mc.id,'rec'); addEdge(mc.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('MeshCore: Receive (USB SDR, 910.525 MHz)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'MeshCore (LoRa mesh) from the air, passively: tune the SDR to the channel of your region — USA 910.525 MHz (the default here), Europe 869.525 MHz; the LoRa settings are SF7, 62.5 kHz, CR 4/5, sync word 12 — check them against the local MeshCore community, they differ between regions.\n'+
+  'MeshCore Sniffer shows adverts (name, type, position, signature valid / invalid), and group messages of the channel Public (the default key) and of any channel whose PSK you add (base64, comma-separated). Direct messages are encrypted for the recipient and cannot be read passively.\n'+
+  'Take only what the law of your country lets you receive and keep.'});
+nt.size.w=860; nt.size.h=130; applySize(nt);
+const rx=addNode('rtlsdr',40,200,{sr:'1024000',freq:910525000,demod:'IQ'});
+const sa=addNode('sa',760,40,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=600; sa.size.h=280; applySize(sa);
+const sh=addNode('iqShift',340,200,{});
+const de=addNode('loraRx',340,360,{sf:'7',bw:'62500',sync:'12'});
+de.size.w=520; de.size.h=300; applySize(de);
+const mc=addNode('meshcore',900,360,{});
+mc.size.w=520; mc.size.h=300; applySize(mc);
+const log=addNode('recLog',340,720,{});
+log.size.w=520; applySize(log);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sa.id,'f1',sh.id,'freq');
+addEdge(sh.id,'out',de.id,'in'); addEdge(de.id,'rec',mc.id,'rec'); addEdge(mc.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 preset('ACARS: VHF Messages (Generator)', function(){

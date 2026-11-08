@@ -1,8 +1,8 @@
 "use strict";
 /* ============================ MeshCore: ядро ============================
    Разбор пакета MeshCore прямо из эфира (meshcore-dev/meshcore: Packet.cpp, Identity.h, Utils.cpp, AdvertDataHelpers.cpp).
-   В отличие от Meshtastic (protobuf), формат — простые бинарные структуры; подпись Ed25519 у ADVERT не проверяем
-   (её тело и так целиком открытое — подпись лишь подтверждает, что оно от владельца ключа, а не меняет видимость данных).
+   В отличие от Meshtastic (protobuf), формат — простые бинарные структуры. Подпись Ed25519 у ADVERT проверяем сами (BigInt, без Web Crypto —
+   нужна синхронно): тело адверта открытое, подпись лишь отличает настоящий адверт от подделанного (sig valid/invalid, как в SarahRoseLives/MeshCoreSniffer).
    Публичный канал «Public» (см. examples companion_radio MyMesh.cpp) расшифровывается ключом по умолчанию; свои каналы — своим PSK.
    Структурный разбор заголовка/path для HEX Structure — отдельно, modules/hex-formats.js (схема meshcore). */
 
@@ -157,6 +157,93 @@ function mcEncryptThenMac(secret32,plain){                         // обрат
   return Uint8Array.from([mac[0],mac[1],...ct]);
 }
 
+// ---- SHA-512 и Ed25519 (проверка подписи ADVERT). BigInt: адверты редкие, скорость не важна; константы SHA-512 считаем из корней простых ----
+const MC_M64=(1n<<64n)-1n;
+function mcIroot(n,k){ const K=BigInt(k); let x=1n<<BigInt(Math.ceil(n.toString(2).length/k)+1); for(;;){ const y=((K-1n)*x+n/(x**(K-1n)))/K; if(y>=x) return x; x=y; } }
+let MC_S512=null;
+function mcSha512Init(){
+  const pr=[]; for(let q=2;pr.length<80;q++){ let ok=true; for(const d of pr){ if(d*d>q) break; if(q%d===0){ ok=false; break; } } if(ok) pr.push(q); }
+  const K=pr.map(q=>mcIroot(BigInt(q)<<192n,3)&MC_M64), H=pr.slice(0,8).map(q=>mcIroot(BigInt(q)<<128n,2)&MC_M64);
+  return {K,H};
+}
+function mcSha512(msg){
+  if(!MC_S512) MC_S512=mcSha512Init();
+  const {K,H}=MC_S512, rr=(x,n)=>((x>>n)|(x<<(64n-n)))&MC_M64;
+  const len=msg.length, pad=((len+17+127)>>7)<<7, buf=new Uint8Array(pad);
+  buf.set(msg); buf[len]=0x80; let bits=BigInt(len)*8n; for(let i=0;i<16;i++){ buf[pad-1-i]=Number(bits&255n); bits>>=8n; }
+  let h=H.slice(); const w=new Array(80);
+  for(let o=0;o<pad;o+=128){
+    for(let i=0;i<16;i++){ let v=0n; for(let j=0;j<8;j++) v=(v<<8n)|BigInt(buf[o+i*8+j]); w[i]=v; }
+    for(let i=16;i<80;i++){
+      const s0=rr(w[i-15],1n)^rr(w[i-15],8n)^(w[i-15]>>7n), s1=rr(w[i-2],19n)^rr(w[i-2],61n)^(w[i-2]>>6n);
+      w[i]=(w[i-16]+s0+w[i-7]+s1)&MC_M64;
+    }
+    let [a,b,c,d,e,f,g,hh]=h;
+    for(let i=0;i<80;i++){
+      const S1=rr(e,14n)^rr(e,18n)^rr(e,41n), ch=(e&f)^(~e&MC_M64&g), t1=(hh+S1+ch+K[i]+w[i])&MC_M64;
+      const S0=rr(a,28n)^rr(a,34n)^rr(a,39n), mj=(a&b)^(a&c)^(b&c), t2=(S0+mj)&MC_M64;
+      hh=g; g=f; f=e; e=(d+t1)&MC_M64; d=c; c=b; b=a; a=(t1+t2)&MC_M64;
+    }
+    h=[a,b,c,d,e,f,g,hh].map((x,i)=>(x+h[i])&MC_M64);
+  }
+  const out=new Uint8Array(64); h.forEach((x,i)=>{ for(let j=7;j>=0;j--){ out[i*8+j]=Number(x&255n); x>>=8n; } });
+  return out;
+}
+const MC_P=(1n<<255n)-19n, MC_L=(1n<<252n)+27742317777372353535851937790883648493n;
+const mcMod=(a,m=MC_P)=>{ const r=a%m; return r<0n ? r+m : r; };
+function mcPow(b,e,m=MC_P){ let r=1n; b=mcMod(b,m); while(e>0n){ if(e&1n) r=r*b%m; b=b*b%m; e>>=1n; } return r; }
+const mcInv=a=>mcPow(a,MC_P-2n);
+const MC_D=mcMod(-121665n*mcInv(121666n));
+const MC_I=mcPow(2n,(MC_P-1n)/4n);                                  // √−1
+const mcLE=(b)=>{ let v=0n; for(let i=b.length-1;i>=0;i--) v=(v<<8n)|BigInt(b[i]); return v; };
+function mcPointAdd(P,Q){
+  const A=mcMod((P[1]-P[0])*(Q[1]-Q[0])), B=mcMod((P[1]+P[0])*(Q[1]+Q[0])), C=mcMod(2n*MC_D*P[3]*Q[3]), D=mcMod(2n*P[2]*Q[2]);
+  const E=B-A, F=D-C, G=D+C, H=B+A;
+  return [mcMod(E*F),mcMod(G*H),mcMod(F*G),mcMod(E*H)];
+}
+function mcPointMul(P,k){ let R=[0n,1n,1n,0n]; while(k>0n){ if(k&1n) R=mcPointAdd(R,P); P=mcPointAdd(P,P); k>>=1n; } return R; }
+function mcPointDecode(b){                                          // 32 Б → [X,Y,Z,T] или null
+  if(b.length!==32) return null;
+  const sign=(b[31]>>7)&1, c=Uint8Array.from(b); c[31]&=0x7f;
+  const y=mcLE(c); if(y>=MC_P) return null;
+  const y2=y*y%MC_P, x2=mcMod((y2-1n)*mcInv(MC_D*y2+1n));
+  let x=mcPow(x2,(MC_P+3n)/8n);
+  if(mcMod(x*x-x2)!==0n) x=x*MC_I%MC_P;
+  if(mcMod(x*x-x2)!==0n) return null;
+  if(x===0n && sign) return null;
+  if(Number(x&1n)!==sign) x=MC_P-x;
+  return [x,y,1n,x*y%MC_P];
+}
+function mcPointEncode(P){
+  const zi=mcInv(P[2]), x=mcMod(P[0]*zi), y=mcMod(P[1]*zi), out=new Uint8Array(32);
+  let v=y; for(let i=0;i<32;i++){ out[i]=Number(v&255n); v>>=8n; } if(x&1n) out[31]|=0x80;
+  return out;
+}
+let MC_BASE=null;
+function mcEd25519Verify(pub,msg,sig){                              // true, если подпись верна (RFC 8032, без кофактора — как у orlp/ed25519 в MeshCore)
+  if(pub.length!==32 || sig.length!==64) return false;
+  if(!MC_BASE){ const e=new Uint8Array(32); let v=mcMod(4n*mcInv(5n)); for(let i=0;i<32;i++){ e[i]=Number(v&255n); v>>=8n; } MC_BASE=mcPointDecode(e); }
+  const A=mcPointDecode(pub); if(!A) return false;
+  const s=mcLE(sig.subarray(32)); if(s>=MC_L) return false;
+  const inp=new Uint8Array(64+msg.length); inp.set(sig.subarray(0,32)); inp.set(pub,32); inp.set(msg,64);
+  const k=mcLE(mcSha512(inp))%MC_L, negA=[mcMod(-A[0]),A[1],A[2],mcMod(-A[3])];
+  const enc=mcPointEncode(mcPointAdd(mcPointMul(MC_BASE,s),mcPointMul(negA,k)));
+  for(let i=0;i<32;i++) if(enc[i]!==sig[i]) return false;
+  return true;
+}
+const MC_SIGCACHE=new Map();
+function mcAdvertSig(payload){                                      // подпись покрывает pubkey‖timestamp‖appdata; кэш — ретрансляции приходят много раз
+  if(payload.length<100) return null;
+  const key=bytesHex(payload.subarray(0,32))+bytesHex(payload.subarray(36)); let r=MC_SIGCACHE.get(key);
+  if(r===undefined){
+    const msg=new Uint8Array(36+payload.length-100); msg.set(payload.subarray(0,36)); msg.set(payload.subarray(100),36);
+    try{ r=mcEd25519Verify(payload.subarray(0,32),msg,payload.subarray(36,100)); }catch(e){ r=false; }
+    if(MC_SIGCACHE.size>=64) MC_SIGCACHE.delete(MC_SIGCACHE.keys().next().value);
+    MC_SIGCACHE.set(key,r);
+  }
+  return r;
+}
+
 // ---- заголовок и путь пакета (Packet.cpp: writeTo/readFrom) ----
 function mcHeader(b0){ return {route:b0&3, type:(b0>>2)&15, ver:(b0>>6)&3}; }
 function mcPacket(bytes){
@@ -216,11 +303,13 @@ function mcTrace(payload){
   const flags=payload[8], pathHashSize=1<<(flags&3);
   return {tag, auth, flags, pathHashSize, rest:bytesHex(payload.subarray(9))};
 }
-// ---- сборка результата по одному эфирному кадру ----
-function mcDecode(bytes,pskList){
-  const p=mcPacket(bytes); if(!p) return null;
-  const o={route:MC_ROUTE[p.route], type:p.type, typeName:MC_TYPES[p.type]||('type '+p.type), ver:p.ver, hopCount:p.hashCount, path:bytesHex(p.path)};
-  if(p.type===4){ const a=mcAdvert(p.payload); if(a) Object.assign(o,{advert:true},a); }
+// ---- отсев ложных CRC: версия 0, тип не из зарезервированных 0x0C–0x0E, группа — минимум канал+MAC ----
+function mcSane(p){ return p.ver===0 && (p.type<=11 || p.type===15) && !((p.type===5 || p.type===6) && p.payload.length<3); }
+// ---- сборка результата по одному эфирному кадру (opts.verify:false — не проверять подпись ADVERT) ----
+function mcDecode(bytes,pskList,opts){
+  const p=mcPacket(bytes); if(!p || !mcSane(p)) return null;
+  const o={route:MC_ROUTE[p.route], type:p.type, typeName:MC_TYPES[p.type]||('type '+p.type), ver:p.ver, hopCount:p.hashCount, direct:p.hashCount===0, path:bytesHex(p.path)};
+  if(p.type===4){ const a=mcAdvert(p.payload); if(a){ Object.assign(o,{advert:true},a); if(!opts || opts.verify!==false) o.sigOk=mcAdvertSig(p.payload); } }
   else if(p.type===5 || p.type===6){
     const g=mcGroupDecode(p.payload,pskList&&pskList.length ? pskList : [MC_PUBLIC_PSK]);
     if(g){
@@ -238,4 +327,4 @@ function mcDecode(bytes,pskList){
 }
 
 if(typeof module!=='undefined') module.exports={mcSha256,mcHmacSha256,mcAesSchedule,mcAesEncryptBlock,mcAesDecryptBlock,mcEcbDecrypt,mcEcbEncrypt,
-  mcPskSecret,mcMacThenDecrypt,mcEncryptThenMac,mcHeader,mcPacket,mcAdvert,mcGroupText,mcGroupData,mcGroupDecode,mcTrace,mcDecode,MC_PUBLIC_PSK,MC_ROUTE,MC_TYPES,MC_ADV_TYPES};
+  mcPskSecret,mcMacThenDecrypt,mcEncryptThenMac,mcHeader,mcPacket,mcAdvert,mcGroupText,mcGroupData,mcGroupDecode,mcTrace,mcDecode,mcSane,mcSha512,mcEd25519Verify,mcAdvertSig,MC_PUBLIC_PSK,MC_ROUTE,MC_TYPES,MC_ADV_TYPES};

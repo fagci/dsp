@@ -1171,7 +1171,7 @@ Frames of VC5 → packets (M_PDU first-header pointer, packets split across fram
 
 - **In:** `rec` (rec), `hex` (txt)
 - **Out:** `rec` (rec), `text` (txt), `from` (txt), `lat` (num), `lon` (num), `new` (num)
-- **Parameters:** `psk` — channel PSK, base64 (through comma — try several; default — the pre-set "Public" channel); `onlyKnown` — hide group frames that none of the PSKs could decrypt
+- **Parameters:** `psk` — channel PSK, base64 (through comma — try several; default — the pre-set "Public" channel); `onlyKnown` — hide group frames that none of the PSKs could decrypt; `verify` — verify the Ed25519 signature of adverts (sig = valid / invalid in the record); `dropBadSig` — drop adverts whose signature does not verify (forged or damaged)
 
 ### Meshtastic Sniffer (LoRa)
 
