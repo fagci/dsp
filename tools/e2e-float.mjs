@@ -43,9 +43,9 @@ const r = await pg.evaluate(() => {
 console.log(mode.padEnd(8), 'cpu×' + rate, JSON.stringify(r));
 globalThis.__r = r;
 
-ok('a cheap frame lets the window run faster than the old 8 per second cap (≥ 10 per second; the encoder roundtrip under CPU ×4 limits it to ~13)', r.overlayFrames >= 120, String(r.overlayFrames));
-ok('the spectrum goes as JPEG (opaque canvas, fast encoder)', r.firstKind === 'jpeg', String(r.firstKind));
-ok('a frame costs the main thread under 10 ms at CPU ×4 (28 ms on average with the synchronous toDataURL)', r.frameCostMs && r.frameCostMs.avg < 10 && r.frameCostMs.p95 < 18, JSON.stringify(r.frameCostMs));
+ok('a cheap frame lets the window run faster than the old 8 per second cap (≥ 15 per second)', r.overlayFrames >= 180, String(r.overlayFrames));
+ok('the spectrum goes as JPEG (opaque canvas, 3 ms encoder)', r.firstKind === 'jpeg', String(r.firstKind));
+ok('a frame costs the main thread under 10 ms at CPU ×4 (28 ms on average with synchronous webp)', r.frameCostMs && r.frameCostMs.avg < 10 && r.frameCostMs.p95 < 18, JSON.stringify(r.frameCostMs));
 ok('engine ticks stay regular: few gaps over 40 ms (44 with the synchronous encoder, 3 without an overlay)', r.tickGaps_over_40ms < 20, String(r.tickGaps_over_40ms));
 ok('engine keeps real time (86 ticks per second)', r.ticksPerSec > 80, String(r.ticksPerSec));
 // дорогой кадр (слабый телефон) — окно само замедляется, а не отнимает такты у звука
@@ -56,11 +56,6 @@ ok('a 30 ms frame slows the window down (≤ 8 per second) instead of eating the
 await pg.evaluate(() => { floatSend = window.__fsOrig; window.__frames = 0; }); await wait(4000);
 const again = await pg.evaluate(() => window.__frames);
 ok('and it speeds up again when frames are cheap', again >= 40, String(again));
-// кодировщик замолчал — окно не замирает навсегда
-await pg.evaluate(() => { const o = HTMLCanvasElement.prototype.toBlob; let first = true; HTMLCanvasElement.prototype.toBlob = function (cb, t, q) { if (first) { first = false; return; } return o.call(this, cb, t, q); }; window.__frames = 0; });
-await wait(5000);
-const lost = await pg.evaluate(() => ({ f: window.__frames, busy: [...flSt.values()].map((x) => x.scratch.busy), min: [...flSt.values()].map((x) => Math.round(x.minMs)) }));
-ok('a lost encoder callback does not freeze the window', lost.f > 5, JSON.stringify(lost));
 // узел удалили — кадры прекращаются
 await pg.evaluate(() => { floatToggle(__sa); window.__frames = 0; }); await wait(1200);
 ok('closing the window stops the frames', await pg.evaluate(() => window.__frames) === 0);

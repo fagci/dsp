@@ -45,28 +45,23 @@ function floatOff(id){
 // окно закрыли крестиком на самом телефоне
 function floatClosed(id){ id=String(id); const s=flSt.get(id); if(s){ s.n._float=false; flSt.delete(id); } }
 
-// Формат кадра и кодирование. Замер (CPU ×4, холст 184×176): toDataURL webp — 21 мс на главном потоке (8 раз в секунду затыкали звук);
-// асинхронный toBlob держит поток ~0.5 мс, но кодировщик webp в фоновом пуле при нагруженном процессоре отдаёт кадр за 190 мс (p95 800 мс) —
-// окно шло ~2 кадра в секунду; PNG — 63 мс (кадр 21 КБ), JPEG — 35 мс (10 КБ). Поэтому: toBlob, а формат — JPEG для узлов с непрозрачным
-// холстом (спектр заливает фон сам), PNG для остальных (сохраняет прозрачность, подложку окна видно сквозь неё).
-// Кадры не накладываются: s.scratch.busy снимается, когда кадр ушёл.
+// Формат кадра и кодирование. Замер (CPU ×4, холст 184×176): toDataURL webp — 21 мс на главном потоке на кадр (раньше 8 кадров/с по ним
+// затыкали звук); JPEG — 3 мс (10 КБ), PNG — 4.6 мс (21 КБ). Асинхронный toBlob не годится: Chrome кодирует его в холостых слотах главного
+// потока, при нагруженном потоке кадр приходит через сотни миллисекунд (webp 190 мс, p95 800), окно шло ~2 кадра/с. Поэтому синхронно, но
+// быстрым форматом: JPEG для узлов с непрозрачным холстом (спектр заливает фон сам), PNG для остальных (прозрачность сохраняется, подложку
+// окна видно сквозь неё). Долю главного потока держит адаптивный интервал (floatTick).
 const FL_OPAQUE=new Set(['sa']);
 function floatSend(s){
-  const n=s.n, id=String(n.id), done=()=>{ s.scratch.busy=false; };
   try{
-    const c=pipSource(n); if(!c){ done(); return; }
-    const w=c.width, h=c.height; if(!w || !h){ done(); return; }
+    const n=s.n, c=pipSource(n); if(!c) return;
+    const w=c.width, h=c.height; if(!w || !h) return;
     const k=Math.min(1,FL_MAXW/Math.max(w,h)), cv=s.scratch.cv;
     cv.width=Math.max(1,Math.round(w*k)); cv.height=Math.max(1,Math.round(h*k));
     s.scratch.cx.clearRect(0,0,cv.width,cv.height);
     s.scratch.cx.drawImage(c,0,0,cv.width,cv.height);
-    cv.toBlob(blob=>{
-      if(!blob || flSt.get(id)!==s){ done(); return; }
-      const fr=new FileReader();
-      fr.onload=()=>{ try{ const url=String(fr.result); if(flSt.get(id)===s) DspApp.floatFrame(id,url.slice(url.indexOf(',')+1)); }catch(e){} done(); };
-      fr.onerror=done; fr.readAsDataURL(blob);
-    },FL_OPAQUE.has(n.type) ? 'image/jpeg' : 'image/png',.85);
-  }catch(e){ done(); }
+    const url=FL_OPAQUE.has(n.type) ? cv.toDataURL('image/jpeg',.85) : cv.toDataURL('image/png');
+    if(flSt.get(String(n.id))===s) DspApp.floatFrame(String(n.id),url.slice(url.indexOf(',')+1));
+  }catch(e){} finally{ s.scratch.busy=false; }
 }
 
 // дёргается из Eng.tick (core-engine.js) на каждый аудио-такт и из собственного rAF, пока страница видна
@@ -75,7 +70,6 @@ function floatTick(){
   const now=performance.now();
   for(const [id,s] of flSt){
     if(Graph.map[s.n.id]!==s.n){ floatOff(id); continue; }               // узел удалили
-    if(s.scratch.busy && now-s.lastDraw>3000) s.scratch.busy=false;       // кодировщик не ответил (холст потерян) — не замираем навсегда
     if(s.scratch.busy || now-s.lastDraw<(s.minMs||FL_MIN_MS)) continue;
     s.lastDraw=now;
     if(document.visibilityState!=='visible'){
