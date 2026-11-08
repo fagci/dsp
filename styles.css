@@ -1384,6 +1384,9 @@ select.aed-b{padding:0 6px}
 #canvas #content .node.xp .io3>.mid{flex:1 1 0;min-height:0;min-width:0;display:flex!important;flex-direction:column;padding:0;margin:0}
 #canvas #content .node.xp .io3>.mid>:not(canvas.view.main):not(.tbl-ui):not(.chat):not(.sa-ov):not(.vp){display:none!important}
 #canvas #content .node.xp .io3>.mid>.vp{flex:1 1 0;min-height:0}
+/* пины под канву: иначе перекрывают кнопки в углу (A у спектра); торчащая за рамку половинка пина по-прежнему нажимается */
+#canvas #content .node.xp .io3>.col{z-index:0}
+#canvas #content .node.xp .io3>.mid{position:relative;z-index:1}
 .node.xp .vp-stage{flex:1 1 0;aspect-ratio:auto;min-height:0}
 .node.xp .vp-src{display:none}
 #canvas #content .node.xp canvas.view.main{flex:1 1 0;min-height:0;width:100%!important;height:auto!important;aspect-ratio:auto;margin:0;border-radius:0}

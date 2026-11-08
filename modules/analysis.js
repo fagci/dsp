@@ -2885,7 +2885,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
       };
       const autoHit=ev=>{ const b=n._autoBox; if(!b) return false;      // кнопка «Auto dB» на канве (см. saMarkerTabs)
         const rc=cv.getBoundingClientRect(), x=(ev.clientX-rc.left)/rc.width*cv.width, y=(ev.clientY-rc.top)/rc.height*cv.height;
-        return x>=b.x0&&x<=b.x1&&y>=b.y0&&y<=b.y1; };
+        const pad=ev.pointerType==='touch'?7:0;                 // палец крупнее мыши — запас вокруг кнопки
+        return x>=b.x0-pad&&x<=b.x1+pad&&y>=b.y0-pad&&y<=b.y1+pad; };
       const nearBoundary=ev=>{
         const rc=cv.getBoundingClientRect();
         const y=(ev.clientY-rc.top)/rc.height*cv.height;
@@ -2941,8 +2942,10 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
           if(ev.pointerType!=='touch') return;
           const rc=cv.getBoundingClientRect(), x=(ev.clientX-rc.left)/rc.width*cv.width, y=(ev.clientY-rc.top)/rc.height*cv.height;
           lpStop();
+          const onAuto=autoHit(ev);
           lp={x:ev.clientX,y:ev.clientY,t:setTimeout(()=>{
             lp=null;
+            if(onAuto){ n._noTap=true; n.pickT=null; setMod(n,'adTrack',!n.p.adTrack); saAutoDb(n); saOvKick(n); return; }   // долгий тап по A = Shift+клик (залипание)
             if(saTipRows(n,cv.width,x/cv.width,y).length){ n._tipPin={x,y}; n._noTap=true; n.pickT=null; saOvKick(n); }
           },450)};
         });
