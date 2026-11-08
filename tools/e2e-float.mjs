@@ -43,11 +43,18 @@ const r = await pg.evaluate(() => {
 console.log(mode.padEnd(8), 'cpu×' + rate, JSON.stringify(r));
 globalThis.__r = r;
 
-ok('overlay frames keep coming (≥ 4 per second)', r.overlayFrames >= 48, String(r.overlayFrames));
+ok('a cheap frame lets the window run fast (≥ 15 per second; it was capped at 8)', r.overlayFrames >= 180, String(r.overlayFrames));
 ok('frames are WebP / PNG images', r.firstKind === 'webp' || r.firstKind === 'png', String(r.firstKind));
 ok('a frame costs the main thread under 10 ms at CPU ×4 (28 ms on average with the synchronous toDataURL)', r.frameCostMs && r.frameCostMs.avg < 10 && r.frameCostMs.p95 < 18, JSON.stringify(r.frameCostMs));
 ok('engine ticks stay regular: few gaps over 40 ms (44 with the synchronous encoder, 3 without an overlay)', r.tickGaps_over_40ms < 20, String(r.tickGaps_over_40ms));
 ok('engine keeps real time (86 ticks per second)', r.ticksPerSec > 80, String(r.ticksPerSec));
+// дорогой кадр (слабый телефон) — окно само замедляется, а не отнимает такты у звука
+await pg.evaluate(() => { const o = floatSend; window.__fsOrig = o; floatSend = function (s) { const t = performance.now(); while (performance.now() - t < 30) {} return o(s); }; window.__frames = 0; });
+await wait(4000);
+const slow = await pg.evaluate(() => window.__frames);
+ok('a 30 ms frame slows the window down (≤ 8 per second) instead of eating the engine', slow <= 36, String(slow));
+await pg.evaluate(() => { floatSend = window.__fsOrig; window.__frames = 0; }); await wait(4000);
+ok('and it speeds up again when frames are cheap', await pg.evaluate(() => window.__frames) >= 60);
 // кодировщик замолчал — окно не замирает навсегда
 await pg.evaluate(() => { const o = HTMLCanvasElement.prototype.toBlob; let first = true; HTMLCanvasElement.prototype.toBlob = function (cb, t, q) { if (first) { first = false; return; } return o.call(this, cb, t, q); }; window.__frames = 0; });
 await wait(5000);

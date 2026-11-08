@@ -30,7 +30,10 @@ function floatSettingsInit(){
 }
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',floatSettingsInit); else floatSettingsInit();
 
-const FL_MAXW=640, FL_MIN_MS=120;                      // ~8 кадров/с; нативный толкатель (FloatWin.pump) дёргает floatTick каждые ~150 мс, даже когда страница в фоне
+// Частота окна подстраивается под стоимость кадра на главном потоке: интервал = FL_SHARE × стоимость, не короче FL_MIN_MS (~30 кадров/с) и не длиннее
+// FL_MAX_MS. Дешёвый кадр — окно плавное; на слабом телефоне оно само замедляется, а не отнимает такты у звука (раньше стоял постоянный потолок
+// 8 кадров/с из-за синхронного кодирования). Нативный толкатель (FloatWin.pump) дёргает floatTick каждые ~150 мс, даже когда страница в фоне.
+const FL_MAXW=640, FL_MIN_MS=33, FL_MAX_MS=250, FL_SHARE=5;
 const flSt=new Map();                 // id узла → {n, scratch:{cv,cx,busy}, lastDraw}
 let flRaf=0;
 
@@ -71,13 +74,16 @@ function floatTick(){
   for(const [id,s] of flSt){
     if(Graph.map[s.n.id]!==s.n){ floatOff(id); continue; }               // узел удалили
     if(s.scratch.busy && now-s.lastDraw>3000) s.scratch.busy=false;       // кодировщик не ответил (холст потерян) — не замираем навсегда
-    if(s.scratch.busy || now-s.lastDraw<FL_MIN_MS) continue;
+    if(s.scratch.busy || now-s.lastDraw<(s.minMs||FL_MIN_MS)) continue;
     s.lastDraw=now;
     if(document.visibilityState!=='visible'){
       const d=MOD[s.n.type];
       if(d && d.draw) try{ d.draw(s.n,s.n.cv,s.n.cx); }catch(e){}
     }
     s.scratch.busy=true; floatSend(s);
+    const cost=performance.now()-now;                                     // что кадр отнял у главного потока (отрисовка узла в фоне + снятие холста)
+    s.cost=s.cost ? s.cost*.7+cost*.3 : cost;
+    s.minMs=Math.min(FL_MAX_MS,Math.max(FL_MIN_MS,s.cost*FL_SHARE));
   }
 }
 function floatLoop(){
