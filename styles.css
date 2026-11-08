@@ -379,17 +379,17 @@ body.noedit #bar .ed{display:none}
 
 /* ---- узел ---- */
 .node{position:absolute;left:0;top:0;width:212px;background:var(--panel);
-  border-radius:3px;user-select:none;isolation:isolate;box-shadow:0 0 0 1px var(--line),0 2px 8px #0006}
+  border-radius:0;user-select:none;isolation:isolate;box-shadow:0 0 0 1px var(--line),0 2px 8px #0006}   /* углы не скруглены: пины стоят вплотную снаружи */
 /* ---- карточная вёрстка узлов ----
    Порты выведены из потока (position:absolute) и не отжимают контент —
    .mid занимает всю высоту от заголовка до низа, точки просто плавают поверх. */
   #canvas #content .node .io3{position:relative;container:nio/inline-size}
   #canvas #content .node .io3>.col{
-    position:absolute;top:10px;bottom:10px;left:0;width:var(--pov);
+    position:absolute;top:10px;bottom:10px;left:calc(-1*var(--pov));width:var(--pov);
     max-width:none;min-height:0;flex-direction:column;justify-content:flex-start;
     gap:10px;padding:0;background:none;border:0;overflow:visible;pointer-events:none;z-index:3}   /* выше .rz: пин важнее ресайза */
   #canvas #content .node .io3>.col.o{
-    left:auto;right:0;justify-content:flex-start}
+    left:auto;right:calc(-1*var(--pov));justify-content:flex-start}
   /* колонки по ширине узла: 2 на узком, до 4 на широком (см. @container nio ниже) */
   #canvas #content .node .io3>.mid{display:grid;
     grid-template-columns:repeat(2,minmax(0,1fr));gap:11px 10px;padding:10px 14px}
@@ -487,7 +487,7 @@ body.noedit #bar .ed{display:none}
   font-size:9px;font-weight:600;color:#111;white-space:nowrap}
 /* тап-зона шире видимой точки (на мобильном пин мал для пальца) */
 .port .pin::before{content:'';position:absolute;inset:-6px}
-.col:not(.o) .port .pin{right:0}   /* контейнер сам шириной --pov у края узла — точка просто у его дальней стороны */
+.col:not(.o) .port .pin{right:0}   /* контейнер шириной --pov стоит снаружи узла вплотную к краю — точка у его ближней к узлу стороны */
 .col.o .port .pin{left:0}
 .port:hover .pin{box-shadow:0 0 0 1px var(--acc)}
 .port.lit .pin{box-shadow:0 0 0 3px var(--acc)}
