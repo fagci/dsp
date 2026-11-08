@@ -29,7 +29,8 @@ function spRecords(R){
   rec.push({id:'sp:walls',t,kind:'plan walls',walls:W.walls.map(w=>({id:w.id,x1:+w.x1.toFixed(3),y1:+w.y1.toFixed(3),x2:+w.x2.toFixed(3),y2:+w.y2.toFixed(3),t:w.t,h:w.h,kind:w.kind,mat:w.mat})),
     opens:W.opens.map(o=>({...o,u:+o.u.toFixed(4)}))});
   R.polys.forEach((pl,i)=>{
-    rec.push({id:'sp:room:'+i,t,kind:'plan poly',nowalls:true,names:pl.names.slice(),area_m2:+pl.area.toFixed(2),...(pl.h>0 ? {h:pl.h,volume_m3:+pl.volume.toFixed(2)} : {})});
+    const nm0=pl.names.map(x=>x.replace(/\d+$/,'')), rname=nm0.every(x=>x && x===nm0[0]) ? nm0[0] : '';
+    rec.push({id:'sp:room:'+i,t,kind:'plan poly',nowalls:true,name:rname,names:pl.names.slice(),area_m2:+pl.area.toFixed(2),...(pl.h>0 ? {h:pl.h,volume_m3:+pl.volume.toFixed(2)} : {})});
     if(!R.georef) return;
     const q=pl.names.map(nm=>R.pts.find(p=>p.name===nm)), path=q.map(p=>[+p.lat.toFixed(8),+p.lon.toFixed(8)]); path.push(path[0]);
     poly.push({id:'sp:poly:'+i,label:pl.area.toFixed(1)+' m²',lat:path[0][0],lon:path[0][1],icon:'dot',color:'#4fc3f7',path,area_m2:+pl.area.toFixed(2),perimeter_m:+pl.perimeter.toFixed(2),slope_deg:+pl.slope.toFixed(1)});

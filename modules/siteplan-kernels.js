@@ -454,7 +454,8 @@ function spWalls(R,o={}){
       const d0=(f.px-e.px)*e.nx+(f.py-e.py)*e.ny, qx=f.px+f.ux*f.L, qy=f.py+f.uy*f.L, d1=(qx-e.px)*e.nx+(qy-e.py)*e.ny;
       if(!(d0>-.02 && d1>-.02 && d0<maxGap && d1<maxGap)) continue;
       const s0=(f.px-e.px)*e.ux+(f.py-e.py)*e.uy, s1=(qx-e.px)*e.ux+(qy-e.py)*e.uy, lo=Math.max(0,Math.min(s0,s1)), hi=Math.min(e.L,Math.max(s0,s1));
-      if(hi-lo>.05) cov.push({lo,hi,d:Math.max(.01,(d0+d1)/2),f}); }
+      const dAt=x=>Math.abs(s1-s0)<1e-9 ? d0 : d0+(x-s0)*(d1-d0)/(s1-s0);          // щель на краях участка: грани могут быть не строго параллельны — берём большую, чтобы клин закрылся
+      if(hi-lo>.05) cov.push({lo,hi,d:Math.max(.01,dAt(lo),dAt(hi)),f}); }
     const br=[0,e.L]; for(const c of cov){ br.push(c.lo,c.hi); } br.sort((a,b)=>a-b);
     for(let k=0;k+1<br.length;k++){ const lo=br[k], hi=br[k+1]; if(hi-lo<.02) continue; const mid=(lo+hi)/2;
       let best=null; for(const c of cov) if(c.lo<=mid && mid<=c.hi && (!best || c.d<best.d)) best=c;
@@ -476,16 +477,37 @@ function spWalls(R,o={}){
     let c=0, wsum=0; for(const q of g){ const f=face(q), w=q.pc.hi-q.pc.lo; c+=(f[0]*nx+f[1]*ny)*w; wsum+=w; } c/=wsum;
     for(const {e,pc} of g){ const m=(pc.lo+pc.hi)/2, d=c-((e.px+e.ux*m)*nx+(e.py+e.uy*m)*ny); if(d>.05) pc.t=d; } }
   // стены: внутренняя — один раз (от комнаты с меньшим номером), наружная — от своей; продление за выпуклые углы
-  const walls=[], key=new Map();
+  // наружный угол закрывает одна стена — та, что в нём кончается (если её строит эта комната), иначе следующая: без перекрытий, луч через угол
+  // не пересекает две оси (потери не удваиваются)
+  const walls=[], key=new Map(), own=pc=>pc && !(pc.inner && pc.f.ri<pc.ri);
+  for(const e of E) for(const pc of e.pieces) pc.ri=e.ri;
   for(const e of E) e.pieces.forEach((pc,k)=>{
-    if(pc.inner && pc.f.ri<e.ri) return;
+    if(!own(pc)) return;
     let lo=pc.lo, hi=pc.hi;
-    if(lo<.01 && e.prev.convexEnd){ const t=e.prev.pieces[e.prev.pieces.length-1]?.t||0; lo-=t/Math.max(.3,e.prev.sinEnd); }
+    const pe=e.prev, pl=pe.pieces[pe.pieces.length-1];
+    if(lo<.01 && pe.convexEnd && !own(pl)){ const t=pl?.t||0; lo-=t/Math.max(.3,pe.sinEnd); }
     if(hi>e.L-.01 && e.convexEnd){ const t=e.next.pieces[0]?.t||0; hi+=t/Math.max(.3,e.sinEnd); }
     const ox=e.nx*pc.t/2, oy=e.ny*pc.t/2, h=Math.max(e.h,pc.inner ? pc.f.h : 0);
     const w={id:'spw:'+e.a+'-'+e.b+':'+k,x1:e.px+e.ux*lo+ox,y1:e.py+e.uy*lo+oy,x2:e.px+e.ux*hi+ox,y2:e.py+e.uy*hi+oy,t:+pc.t.toFixed(3),h:h>0 ? h : 0,kind:pc.inner ? 'inner' : 'outer',mat:eMat(e)||(pc.inner ? eMat(pc.f)||mIn : mOut),e,lo,hi};
     walls.push(w); key.set(pc,w);
   });
+  // без перекрытий: ось стены не должна заходить в тело другой — иначе луч там пересечёт две оси и потери удвоятся; конец, ушедший в другую стену,
+  // обрезается по её грани (одна и та же область — у одной стены); соосные стены одной линии не налезают друг на друга
+  const geo=w=>{ const dx=w.x2-w.x1, dy=w.y2-w.y1, L=Math.hypot(dx,dy)||1e-9; return {L,ux:dx/L,uy:dy/L}; };
+  const inside=(v,x,y,shrink)=>{ const g=geo(v), a=(x-v.x1)*g.ux+(y-v.y1)*g.uy, b=Math.abs((x-v.x1)*g.uy-(y-v.y1)*g.ux); return a>shrink && a<g.L-shrink && b<v.t/2-shrink; };
+  // отрезок оси w (параметр 0…L) внутри прямоугольника v → [a,b] или null
+  const clip=(w,v)=>{ const g=geo(w), h=geo(v); let lo=0, hi=g.L;
+    for(const [nx,ny,c0,c1] of [[h.ux,h.uy,0,h.L],[h.uy,-h.ux,-v.t/2,v.t/2]]){ const p=(w.x1-v.x1)*nx+(w.y1-v.y1)*ny, d=g.ux*nx+g.uy*ny;
+      if(Math.abs(d)<1e-12){ if(p<c0 || p>c1) return null; continue; } let t0=(c0-p)/d, t1=(c1-p)/d; if(t0>t1) [t0,t1]=[t1,t0]; lo=Math.max(lo,t0); hi=Math.min(hi,t1); }
+    return hi-lo>1e-6 ? [lo,hi] : null; };
+  for(let pass=0;pass<2;pass++) for(const w of walls) for(const v of walls){ if(v===w || w.dead || v.dead) continue;
+    const c=clip(w,v); if(!c) continue; const g=geo(w);
+    const E2=.002;
+    if(c[0]<=E2 && c[1]>=g.L-E2) w.dead=true;                                                // ось целиком внутри v (вставка в стык) — область уже у v
+    else if(c[1]>=g.L-E2 && c[0]>E2){ w.x2=w.x1+g.ux*c[0]; w.y2=w.y1+g.uy*c[0]; }           // конец ушёл в v
+    else if(c[0]<=E2 && c[1]<g.L-E2){ w.x1+=g.ux*c[1]; w.y1+=g.uy*c[1]; }                    // начало в v
+    if(geo(w).L<.02) w.dead=true; }
+  for(let i=walls.length-1;i>=0;i--) if(walls[i].dead){ for(const [k,v] of key) if(v===walls[i]) key.delete(k); walls.splice(i,1); }
   // проём → стена в этом месте (своя или общая, построенная от соседа)
   const opens=[];
   for(const op of R.opens||[]){

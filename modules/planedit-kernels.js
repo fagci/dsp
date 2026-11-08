@@ -9,6 +9,7 @@ const PE_D=Math.PI/180;
 // затухание стены, дБ на 10 см толщины: уровень сигнала на пути через стену = мат × толщина / 0,1 м
 const PE_MAT={brick:4,concrete:6,block:3,drywall:1.5,wood:2,glass:1,metal:20};          // block — газо- / пеноблок (ячеистый бетон)
 // частотная зависимость: потери = таблица (на 2,4 ГГц) × (f / 2,4 ГГц)^k; k — по материалу (эмпирика типа ITU-R P.2040: плотные материалы растут быстрее, металл почти не зависит)
+const PE_MATCOL={brick:[196,132,104],concrete:[168,174,180],block:[214,206,186],drywall:[230,229,222],wood:[190,146,96],glass:[150,206,232],metal:[118,128,148]};   // цвет стены по материалу (3D / план)
 const PE_MATK={brick:.8,concrete:.9,block:.8,drywall:.5,wood:.6,glass:.6,metal:.1};
 const PE_OPEN_LOSS={door:3,window:2};                          // проём: тонкая дверь / стекло, дБ на 2,4 ГГц
 const PE_OPEN_K={door:.4,window:.6};
@@ -97,7 +98,7 @@ function peBoxes(s){
   const out=[];
   for(const w of s.walls){
     const [a,b]=peWallEnds(s,w), P=peWallParts(s,w), ux=(b.x-a.x)/(P.L||1), uy=(b.y-a.y)/(P.L||1);
-    const add=(s0,s1,z0,z1,kind)=>{ if(s1-s0<1e-6||z1-z0<1e-6) return; const m=(s0+s1)/2; out.push({cx:a.x+ux*m,cy:a.y+uy*m,ux,uy,l:s1-s0,t:w.t,z0,z1,kind,ref:w.id}); };
+    const add=(s0,s1,z0,z1,kind)=>{ if(s1-s0<1e-6||z1-z0<1e-6) return; const m=(s0+s1)/2; out.push({cx:a.x+ux*m,cy:a.y+uy*m,ux,uy,l:s1-s0,t:w.t,z0,z1,kind,ref:w.id,mat:w.mat}); };
     for(const [s0,s1] of P.solid) add(s0,s1,0,w.h,'wall');
     for(const o of P.open){ if(o.sill>0) add(o.s0,o.s1,0,o.sill,'wall'); add(o.s0,o.s1,Math.min(w.h,o.sill+o.h),w.h,'wall'); }
   }
@@ -230,7 +231,7 @@ function peImportPoints(s,recs){
     const key=ids.slice().sort().join(); let room=s.rooms.find(q=>q.pts.slice().sort().join()===key);
     if(r.nowalls){                                                // стены придут отдельно (plan walls): комната — только контур по замеру; старые стены по контуру убираем
       for(let i=0;i<ids.length;i++){ const a=ids[i], b=ids[(i+1)%ids.length], w=s.walls.find(w=>!w.src && ((w.a===a&&w.b===b)||(w.a===b&&w.b===a))); if(w){ s.walls=s.walls.filter(q=>q!==w); s.objs=s.objs.filter(o=>o.wall!==w.id); } }
-      if(!room) room=peAddRoom(s,ids); room.free=true; }
+      if(!room) room=peAddRoom(s,ids); room.free=true; if(r.name) room.name=String(r.name); }
     else { for(let i=0;i<ids.length;i++){ const w=peAddWall(s,ids[i],ids[(i+1)%ids.length]); if(w && +r.h>0) w.h=+r.h; }      // h — высота потолка комнаты (Site Plan)
       if(!room) peAddRoom(s,ids); }
     n++; delete r._poly; }
@@ -256,6 +257,23 @@ function peImportPoints(s,recs){
     const src=String(r.id||type+':'+r.a+'-'+r.b+':'+r.from), p={type,wall:w.id,u,w:wd,...(+r.h>0 ? {h:+r.h} : {}),...(isFinite(+r.sill) && r.sill!=='' && r.sill!=null ? {sill:+r.sill} : {})};
     const ob=s.objs.find(o=>o.src===src); if(ob) Object.assign(ob,p); else peAddObj(s,type,{...p,src}); n++; }
   return n;
+}
+// привязка линейки: углы стен (по граням), иначе ближайшая точка на грани стены, иначе null; tol — м
+function peSnapFace(s,x,y,tol){
+  let best=null, bd=tol;
+  for(const w of s.walls){ const [a,b]=peWallEnds(s,w), L=Math.hypot(b.x-a.x,b.y-a.y)||1e-9, ux=(b.x-a.x)/L, uy=(b.y-a.y)/L, nx=-uy*w.t/2, ny=ux*w.t/2;
+    for(const [px,py] of [[a.x+nx,a.y+ny],[a.x-nx,a.y-ny],[b.x+nx,b.y+ny],[b.x-nx,b.y-ny]]){ const d=Math.hypot(px-x,py-y); if(d<bd){ bd=d; best={x:px,y:py,kind:'corner'}; } } }
+  if(best) return best; bd=tol*.7;
+  for(const w of s.walls){ const [a,b]=peWallEnds(s,w), L=Math.hypot(b.x-a.x,b.y-a.y)||1e-9, ux=(b.x-a.x)/L, uy=(b.y-a.y)/L;
+    for(const sg of [1,-1]){ const ox=a.x-uy*w.t/2*sg, oy=a.y+ux*w.t/2*sg, u=Math.max(0,Math.min(L,(x-ox)*ux+(y-oy)*uy)), px=ox+ux*u, py=oy+uy*u, d=Math.hypot(px-x,py-y); if(d<bd){ bd=d; best={x:px,y:py,kind:'face'}; } } }
+  return best;
+}
+// служебные точки, которые не рисуются (при «points: auto»): концы стен из Site Plan и углы комнат, у которых нет своих стен
+function peHiddenPts(s){
+  const used=new Set(); for(const w of s.walls){ used.add(w.a); used.add(w.b); }
+  const h=new Set(); for(const p of s.pts) if(p.src) h.add(p.id);
+  for(const r of s.rooms) if(r.free) for(const id of r.pts) if(!used.has(id)) h.add(id);
+  return h;
 }
 // история правок: base — последнее закреплённое состояние (JSON), u / r — стеки отмены и повтора
 function peHistNew(base){ return {base:String(base),u:[],r:[]}; }

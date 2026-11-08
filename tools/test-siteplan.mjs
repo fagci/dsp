@@ -165,4 +165,15 @@ for(const t of ['material Kit2-Kit3 concrete\nroom Hall 4.48 3.74 4.46 3.74\nroo
   near('facade: the inner face of A stays at 0',top[0].y1-top[0].t/2,0,1e-3); near('…and of B at 0.03',top[1].y1-top[1].t/2,.03,1e-3);
   R=K.spSolve('A1 at 0 0\nA2 at 4 0\nA3 at 4 -3\nA4 at 0 -3\npoly A1 A2 A3 A4\nB1 at 4.3 0.3\nB2 at 7.3 0.3\nB3 at 7.3 -2.7\nB4 at 4.3 -2.7\npoly B1 B2 B3 B4');
   ok('facade: a real step (30 cm) stays a step',new Set(K.spWalls(R,{}).walls.filter(w=>w.kind==='outer' && Math.abs(w.y1-w.y2)<.01 && w.y1>-.1).map(w=>(w.y1+w.t/2).toFixed(3))).size===2); }
+// дом целиком: стены без дыр и без перекрытий (перекрытие удвоило бы потери на луче через стык)
+{ R=K.spSolve('room zal 4.48 3.74 4.46 3.74 h 2.71\nroom kor 1.36 5.9 1.33 5.9\nroom our 3.28 2.98 3.28 3.01\nroom skl 4.45 3.1 4.45 3.1\nroom kit 3.27 3.88 3.25 3.89\nroom toi 1.32 1.04 1.32 1.04\nwall zal2-zal3 kor1-kor4 0.37\nwall kor2-kor3 kit1-kit4 0.38\nwall kor3-kor4 toi2-toi1 0.2\nwall our4-our1 toi3-toi2 0.38\nwall toi4-toi1 skl3-skl2 0.37\nmirror\nwindow zal1-zal4 0.92 2.03 h 1.43 sill 0.69\nwindow kit2-kit3 1.27 1.33 h 1.44 sill 0.72\nwindow our2-our3 0.87 1.32 h 1.45 sill 0.7\ndoor zal2-zal3 0.92 0.86 h 1.88\ndoor kor1-kor2 0.26 0.96 h 1.93\ndoor kor2-kor3 1.02 0.84 h 1.87\ndoor kor2-kor3 4.89 0.88 h 1.88\ndoor kor3-kor4 0.38 0.60 h 1.91\ndoor kor4-kor1 0.10 0.75 h 1.77'); const W=K.spWalls(R,{outer:R.outer});
+  const inW=(x,y,e)=>W.walls.filter(w=>{ const dx=w.x2-w.x1, dy=w.y2-w.y1, L=Math.hypot(dx,dy), u=((x-w.x1)*dx+(y-w.y1)*dy)/L, v=Math.abs((x-w.x1)*dy-(y-w.y1)*dx)/L; return u>=-e && u<=L+e && v<=w.t/2+e; }).length;
+  const Q=R.polys.map(pl=>pl.names.map(n=>{ const p=P(R,n); return [p.x,p.y]; }));
+  const pip=(Z,x,y)=>{ let c=false; for(let i=0,j=Z.length-1;i<Z.length;j=i++) if((Z[i][1]>y)!==(Z[j][1]>y) && x<(Z[j][0]-Z[i][0])*(y-Z[i][1])/(Z[j][1]-Z[i][1])+Z[i][0]) c=!c; return c; };
+  let xs=[], ys=[]; for(const w of W.walls){ xs.push(w.x1,w.x2); ys.push(w.y1,w.y2); }
+  let holes=0, dbl=0; for(let x=Math.min(...xs)+.21;x<Math.max(...xs)-.21;x+=.02) for(let y=Math.min(...ys)+.21;y<Math.max(...ys)-.21;y+=.02){
+    if(!Q.some(Z=>pip(Z,x,y)) && !inW(x,y,.004)) holes++; if(inW(x,y,-.004)>1) dbl++; }
+  ok('house: no errors, all 9 openings placed',R.errors.length===0 && W.opens.length===9,JSON.stringify(R.errors)+W.opens.length);
+  ok('house: no holes between the walls and the rooms',holes===0,holes);
+  ok('house: no overlapping walls',dbl===0,dbl); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
