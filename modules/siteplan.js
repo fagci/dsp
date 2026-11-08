@@ -26,11 +26,15 @@ function spRecords(R){
     sigma_m:isFinite(p.sx) ? +Math.hypot(p.sx,p.sy).toFixed(3) : '',...(R.georef ? {lat:+p.lat.toFixed(8),lon:+p.lon.toFixed(8),icon:'dot'} : {})});
   // для Plan Editor: стены снаружи замера (наружные + общие между комнатами), проёмы на них, комнаты — по замеру, без своих стен
   const W=R.walls||{walls:[],opens:[]};
-  rec.push({id:'sp:walls',t,kind:'plan walls',walls:W.walls.map(w=>({id:w.id,x1:+w.x1.toFixed(3),y1:+w.y1.toFixed(3),x2:+w.x2.toFixed(3),y2:+w.y2.toFixed(3),t:w.t,h:w.h,kind:w.kind,mat:w.mat})),
-    opens:W.opens.map(o=>({...o,u:+o.u.toFixed(4)}))});
+  const r3=a=>a.map(v=>+v.toFixed(3));
+  rec.push({id:'sp:walls',t,kind:'plan walls',walls:W.walls.map(w=>({id:w.id,x1:+w.x1.toFixed(3),y1:+w.y1.toFixed(3),x2:+w.x2.toFixed(3),y2:+w.y2.toFixed(3),t:w.t,h:w.h,kind:w.kind,mat:w.mat,z0:w.z0||0,lv:w.lv||0})),
+    opens:W.opens.map(o=>({...o,u:+o.u.toFixed(4)})),slabs:(W.slabs||[]).map(q=>({...q,poly:q.poly.map(r3)})),
+    roofs:(W.roofs||[]).map(r=>({type:r.type,area:+r.area.toFixed(2),ridge:+r.ridge.toFixed(3),eave:+r.eave.toFixed(3),wallMat:r.wallMat,faces:r.faces.map(f=>({kind:f.kind,pts:f.pts.map(r3)}))})),
+    levels:W.levels||[]});
   R.polys.forEach((pl,i)=>{
     const nm0=pl.names.map(x=>x.replace(/\d+$/,'')), rname=nm0.every(x=>x && x===nm0[0]) ? nm0[0] : '';
-    rec.push({id:'sp:room:'+i,t,kind:'plan poly',nowalls:true,name:rname,names:pl.names.slice(),area_m2:+pl.area.toFixed(2),...(pl.h>0 ? {h:pl.h,volume_m3:+pl.volume.toFixed(2)} : {})});
+    const lv=(R.levels||[]).find(q=>q.name===(pl.level??'1'));
+    rec.push({id:'sp:room:'+i,t,kind:'plan poly',nowalls:true,name:rname,z0:lv ? lv.z : 0,lv:lv ? lv.idx : 0,names:pl.names.slice(),area_m2:+pl.area.toFixed(2),...(pl.h>0 ? {h:pl.h,volume_m3:+pl.volume.toFixed(2)} : {})});
     if(!R.georef) return;
     const q=pl.names.map(nm=>R.pts.find(p=>p.name===nm)), path=q.map(p=>[+p.lat.toFixed(8),+p.lon.toFixed(8)]); path.push(path[0]);
     poly.push({id:'sp:poly:'+i,label:pl.area.toFixed(1)+' m²',lat:path[0][0],lon:path[0][1],icon:'dot',color:'#4fc3f7',path,area_m2:+pl.area.toFixed(2),perimeter_m:+pl.perimeter.toFixed(2),slope_deg:+pl.slope.toFixed(1)});
@@ -39,7 +43,7 @@ function spRecords(R){
 }
 function spRun(n,I){
   const R=spSolve(spText(n),spOpts(n));
-  R.walls=R.polys.length ? spWalls(R,{outer:R.outer}) : null;
+  R.walls=R.polys.length ? spHouse(R,{outer:R.outer}) : null;
   n.res=R; n.emit=spRecords(R); n.err=R.errors; redraw(n);
 }
 
@@ -116,6 +120,7 @@ def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, lazy:true, kw:'pl
   params:[{n:'plan',t:'code',plain:true,d:SP_DEF,label:'measurements, one per line: A-B 12.4 · A-B h 12.4 · A-B dz 1.2 · A-B az 45 · A-B-C 90 · A-B tilt 25 15 eye 1.6 · A z 120 · A gps lat lon ±3 · A at x y · poly A B C D · room Hall 4.48 3.74 4.46 3.74 (corners Hall1…, 90° unless «side/angle», «side/?» — not measured; d — diagonal 1-3) · wall Hall2-Hall3 Kit1-Kit4 0.4 [shift s] (rooms across a wall) · room … h 2.65 / height 2.7 (ceiling) · window zal1-zal2 1.20 1.40 h 1.45 sill 0.85 / door … (from corner, width) · outer 0.45 concrete / inner drywall / material A-B glass (walls) · mirror (flip left ↔ right) (± — error, m or °)',fn:n=>{ n.key=''; }},
           {n:'table',t:'text',d:'',label:'Table lists with measurements, comma-separated. Columns: kind (d h dz az tilt ang poly) + a, b, c + value [+ sigma]; or name + lat, lon [+ acc, alt]; or name + x, y [+ z]; or a ready «line»',fn:n=>{ n.tblKey=''; }},
           {n:'view',t:'select',opts:['plan','3D'],d:'plan',label:'view'},
+          {n:'lvl',t:'select',opts:['-2','-1','0','1','2','3'],d:'0',label:'level on the plan: 0 — the ground floor, −1 — the cellar, 1 — the first upper floor (the others are dashed)'},
           {n:'grid',t:'select',opts:['north','structure','off'],d:'north',label:'grid: north (E / N axes of the plan) · structure (along the first side of the contour, from its first point) · off'},
           {n:'coords',t:'check',d:false,label:'label points with their grid coordinates'},
           {n:'az',t:'range',min:-180,max:180,step:5,d:-30,label:'3D: turn, °'},
@@ -194,11 +199,18 @@ def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, lazy:true, kw:'pl
         cx.strokeStyle='rgba(255,183,77,.8)'; cx.fillStyle='rgba(255,183,77,.95)'; cx.lineWidth=1.5; cx.beginPath(); cx.moveTo(o[0],o[1]); cx.lineTo(au[0],au[1]); cx.moveTo(o[0],o[1]); cx.lineTo(av[0],av[1]); cx.stroke();
         cx.textAlign='left'; cx.fillText(unit[0],au[0]+3,au[1]+3); cx.fillText(unit[1],av[0]+3,av[1]-3);
       }
+      // этаж на плане: p.lvl — номер (0 — первый, −1 — подвал…); остальные этажи — пунктиром
+      const lvShow=+p.lvl||0;
       if(R.walls) for(const w of R.walls.walls){                       // стены: толщина снаружи замера, общие — во всю щель
-        const dx=w.x2-w.x1, dy=w.y2-w.y1, L=Math.hypot(dx,dy)||1, nx=-dy/L*w.t/2, ny=dx/L*w.t/2;
+        const dx=w.x2-w.x1, dy=w.y2-w.y1, L=Math.hypot(dx,dy)||1, nx=-dy/L*w.t/2, ny=dx/L*w.t/2, other=(w.lv||0)!==lvShow && !d3;
         cx.beginPath(); [[w.x1+nx,w.y1+ny],[w.x2+nx,w.y2+ny],[w.x2-nx,w.y2-ny],[w.x1-nx,w.y1-ny]].forEach((c,k)=>{ const q=pr({x:c[0],y:c[1],z:zmin}), s=T(q[0],q[1]); if(k) cx.lineTo(s[0],s[1]); else cx.moveTo(s[0],s[1]); });
-        cx.closePath(); cx.fillStyle={brick:'rgba(176,112,86,.8)',concrete:'rgba(130,138,146,.85)',block:'rgba(200,196,180,.8)',drywall:'rgba(225,225,215,.7)',wood:'rgba(170,125,70,.8)',glass:'rgba(120,200,240,.6)',metal:'rgba(90,100,120,.9)'}[w.mat]||'rgba(120,130,140,.75)'; cx.fill();
+        cx.closePath(); cx.fillStyle={brick:'rgba(176,112,86,.8)',concrete:'rgba(130,138,146,.85)',block:'rgba(200,196,180,.8)',drywall:'rgba(225,225,215,.7)',wood:'rgba(170,125,70,.8)',glass:'rgba(120,200,240,.6)',metal:'rgba(90,100,120,.9)'}[w.mat]||'rgba(120,130,140,.75)';
+        if(other){ cx.setLineDash([3,3]); cx.strokeStyle=cx.fillStyle; cx.lineWidth=1; cx.stroke(); cx.setLineDash([]); } else cx.fill();
       }
+      if(R.walls) for(const r of R.walls.roofs){                       // крыша: края скатов и конёк — пунктиром
+        cx.strokeStyle='rgba(255,138,101,.8)'; cx.lineWidth=1; cx.setLineDash([5,3]);
+        for(const f of r.faces){ if(f.kind!=='roof') continue; cx.beginPath(); f.pts.forEach((c,k)=>{ const q=pr({x:c[0],y:c[1],z:d3 ? c[2]*1 : zmin}), s=T(q[0],q[1]); if(k) cx.lineTo(s[0],s[1]); else cx.moveTo(s[0],s[1]); }); cx.closePath(); cx.stroke(); }
+        cx.setLineDash([]); }
       for(const pl of R.polys){
         cx.beginPath(); pl.names.forEach((nm,k)=>{ const s=S(idx(nm)); if(k) cx.lineTo(s[0],s[1]); else cx.moveTo(s[0],s[1]); }); cx.closePath();
         cx.fillStyle='rgba(79,195,247,.18)'; cx.fill(); cx.strokeStyle='#4fc3f7'; cx.lineWidth=2; cx.stroke();
@@ -232,6 +244,8 @@ def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, lazy:true, kw:'pl
       if(gridStep) L.push('grid '+gridStep+' m · '+(F.mode==='structure' ? 'axes along the first side of the contour, origin at its first point' : R.georef ? 'north-aligned (E, N from the local origin)' : 'plan axes x, y from the origin (no north: the plan is not georeferenced)'));
       for(const w of worst) L.push('⚠ line '+w.li+' '+w.a+(w.b ? '-'+w.b : '')+' '+w.k+': off by '+w.r.map(v=>v.toFixed(3)).join(', ')+' ('+w.nmax.toFixed(1)+'σ) — check it');
       for(const o of R.opens||[]) L.push(o.kind+' '+o.a+'-'+o.b+': '+o.from.toFixed(2)+'…'+(o.from+o.w).toFixed(2)+' m of '+o.L.toFixed(2)+' · '+o.w+'×'+o.h+' m'+(o.sill>0 ? ' · sill '+o.sill+' m' : ''));
+      if(R.walls && R.walls.levels.length>1) L.push('levels: '+R.walls.levels.map(q=>q.name+' ('+(q.idx>0 ? '+' : '')+q.idx+') at '+q.z.toFixed(2)+' m').join(' · ')+(R.walls.slabs.length ? ' · slabs '+R.slab.t+' m '+R.slab.mat : ''));
+      if(R.walls) for(const r of R.walls.roofs) L.push('roof '+r.type+' '+r.angle+'°: slopes '+r.area.toFixed(1)+' m² · ridge at '+r.ridge.toFixed(2)+' m · eaves at '+r.eave.toFixed(2)+' m');
       if(R.walls && R.walls.walls.length){ const by={}; for(const w of R.walls.walls){ const k=w.kind+' '+w.mat; by[k]=(by[k]||0)+Math.hypot(w.x2-w.x1,w.y2-w.y1); }
         L.push('walls: outer '+R.outer+' m · '+Object.entries(by).map(([k,v])=>k+' '+v.toFixed(1)+' m').join(' · ')); }
       if(R.mirror) L.push('mirrored left ↔ right («mirror» line)');

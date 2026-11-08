@@ -265,7 +265,7 @@ function peOrigin(n){ return {lat:+n.p.olat||0,lon:+n.p.olon||0,north:+n.p.north
 function peRecalc(n){
   const s=n.sc, g=peGrid(s,+n.p.cell||.25);
   n.camCov=s.cams.length&&g ? peCamCoverage(s,g) : null;
-  n.antHeat=s.ants.some(a=>!peIsRx(a))&&g ? peAntHeat(s,g,{thr:+n.p.thr,f:+n.p.lfreq||0}) : null;
+  n.antHeat=s.ants.some(a=>!peIsRx(a))&&g ? peAntHeat(s,g,{thr:+n.p.thr,f:+n.p.lfreq||0,zr:peLvZ(s,n.p.lv)+1}) : null;
   n.links={}; n.minMargin=null; for(const a of s.ants) if(peIsRx(a)){ const r=peRxLevel(s,a); n.links[a.id]=r; if(r.from && (n.minMargin===null || r.margin<n.minMargin)) n.minMargin=r.margin; }
   n.calcRev=n.rev; n.rasKey='';
   n.area=s.rooms.reduce((a,r)=>a+peRoomArea(s,r),0);
@@ -410,6 +410,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
           {n:'vel',t:'range',min:5,max:90,step:1,d:40,label:'3D: elevation, °'},
           {n:'snap',t:'select',opts:['0','0.05','0.1','0.25','0.5','1'],d:'0.1',label:'snap to the grid, m (0 — off)'},
           {n:'ortho',t:'check',d:true,label:'walls snap to 15° steps'},
+          {n:'lv',t:'select',opts:['all','-2','-1','0','1','2','3'],d:'all',label:'level: all (3D — the house above the ground with the roof, plan — the ground floor) · a number — that floor (3D — it and the ones below; 0 — ground, −1 — cellar); the signal is computed 1 m above its floor',fn:n=>{ n.rev=(n.rev||0)+1; redraw(n); }},
           {n:'layer',t:'select',opts:['none','cameras','signal'],d:'none',label:'layer: cameras (green — seen, red — blind) · signal (antennas, dBm)'},
           {n:'thr',t:'range',min:-100,max:-30,step:1,d:-70,label:'signal threshold, dBm (below — dim)'},
           {n:'cell',t:'range',min:.1,max:1,step:.05,d:.25,label:'coverage cell, m'},
@@ -515,16 +516,19 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     if(R){ const g=R.g, sc=P.sc*g.cell, m=P.pt(g.x0,g.y0,0), ux=P.pt(g.x0+g.cell,g.y0,0), uy=P.pt(g.x0,g.y0+g.cell,0);
       cx.save(); /* умножаем матрицу, а не заменяем: у холста приложения есть своя базовая */ cx.transform(ux[0]-m[0],ux[1]-m[1],uy[0]-m[0],uy[1]-m[1],m[0],m[1]); cx.imageSmoothingEnabled=false; cx.drawImage(R.c,0,0); cx.restore(); void sc; }
     // комнаты
-    for(const r of s.rooms){ const poly=peRoomPoly(s,r); cx.beginPath(); poly.forEach((q,i)=>{ const A=P.pt(q[0],q[1],0); i ? cx.lineTo(A[0],A[1]) : cx.moveTo(A[0],A[1]); }); cx.closePath(); cx.fillStyle='rgba(79,195,247,.07)'; cx.fill();
-      if(P.sc>10){ const cxm=poly.reduce((a,q)=>a+q[0],0)/poly.length, cym=poly.reduce((a,q)=>a+q[1],0)/poly.length, A=P.pt(cxm,cym,0); cx.fillStyle='rgba(150,170,180,.7)'; cx.font='11px sans-serif'; cx.textAlign='center'; cx.fillText(p.layer==='signal' ? (r.name||'') : (r.name||'')+' '+peRoomArea(s,r).toFixed(1)+' m²',A[0],A[1]); } }
+    const lvOk=peLvShow(p.lv,P.d3);
+    for(const r of s.rooms){ if(!lvOk(r.lv)) continue; const poly=peRoomPoly(s,r), rz=r.z0||0; cx.beginPath(); poly.forEach((q,i)=>{ const A=P.pt(q[0],q[1],rz); i ? cx.lineTo(A[0],A[1]) : cx.moveTo(A[0],A[1]); }); cx.closePath(); cx.fillStyle='rgba(79,195,247,.07)'; cx.fill();
+      if(P.sc>10){ const cxm=poly.reduce((a,q)=>a+q[0],0)/poly.length, cym=poly.reduce((a,q)=>a+q[1],0)/poly.length, A=P.pt(cxm,cym,rz); cx.fillStyle='rgba(150,170,180,.7)'; cx.font='11px sans-serif'; cx.textAlign='center'; cx.fillText(p.layer==='signal' ? (r.name||'') : (r.name||'')+' '+peRoomArea(s,r).toFixed(1)+' m²',A[0],A[1]); } }
     // зоны видимости камер
     const occ=peOccluders(s);
     for(const c of s.cams){ const poly=peVisPoly(c,occ,2); cx.beginPath(); poly.forEach((q,i)=>{ const A=P.pt(q[0],q[1],0); i ? cx.lineTo(A[0],A[1]) : cx.moveTo(A[0],A[1]); }); cx.closePath(); cx.fillStyle='rgba(125,255,154,.10)'; cx.fill(); cx.strokeStyle='rgba(125,255,154,.55)'; cx.lineWidth=1; cx.stroke(); }
     // блоки: стены, ящики, колонны — по глубине издали к близким
-    { const raw=peBoxes(s), cam=[P.sa,-P.ca], sel=n.sel;
+    { const raw=peBoxes(s).filter(b=>b.kind!=='wall' || lvOk(b.lv)), cam=[P.sa,-P.ca], sel=n.sel;
+      const roofPolys=P.d3 && (p.lv==='all' || p.lv==null) ? (s.roofs||[]).flatMap(r=>r.faces.map(f=>({pts:f.pts,rgb:f.kind==='roof' ? [150,78,64] : (PE_MATCOL[r.wallMat]||[200,208,214])}))) : [];
+      if(P.d3) for(const sl of s.slabs||[]) if(lvOk(sl.lv)) roofPolys.push({pts:sl.poly.map(q=>[q[0],q[1],sl.z]),rgb:PE_MATCOL[sl.mat]||[168,174,180]});   // перекрытия — пол этажа
       if(P.d3){            // 3D: z-буфер — порядок блоков не важен, пересечения объёмов тоже рисуются верно; пока вид двигают — вдвое грубее, потом дорисовывается начисто
         const fast=performance.now()-(n.fastT||0)<260, k=fast ? .55 : 1, zw=Math.max(8,Math.round(W*k)), zh=Math.max(8,Math.round(H*k));
-        const R=peZRaster(raw,(x,y,z)=>{ const q=P.pt(x,y,z); return [q[0]*k,q[1]*k,q[2]]; },zw,zh,{cam,ce:P.ce,sel:sel ? new Set([sel.id]) : null,color:b=>b.kind==='wall' ? (PE_MATCOL[b.mat]||[200,208,214]) : b.kind==='box' ? [201,143,90] : [160,168,173]});
+        const R=peZRaster(raw,(x,y,z)=>{ const q=P.pt(x,y,z); return [q[0]*k,q[1]*k,q[2]]; },zw,zh,{cam,ce:P.ce,sel:sel ? new Set([sel.id]) : null,polys:roofPolys,color:b=>b.kind==='wall' ? (PE_MATCOL[b.mat]||[200,208,214]) : b.kind==='box' ? [201,143,90] : [160,168,173]});
         if(!n.zcv){ n.zcv=document.createElement('canvas'); } if(n.zcv.width!==zw||n.zcv.height!==zh){ n.zcv.width=zw; n.zcv.height=zh; }
         n.zcv.getContext('2d').putImageData(new ImageData(R.data,zw,zh),0,0); cx.save(); cx.imageSmoothingEnabled=fast; cx.drawImage(n.zcv,0,0,W,H); cx.restore(); }
       const order=P.d3 ? [] : peBoxOrder(raw,{dx:cam[0],dy:cam[1],h:P.ce},b=>P.pt(b.cx,b.cy,(b.z0+b.z1)/2)[2]);
@@ -540,12 +544,16 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
         const T=C.map(c=>P.pt(c[0],c[1],b.z1)); cx.beginPath(); T.forEach((t,i)=>i ? cx.lineTo(t[0],t[1]) : cx.moveTo(t[0],t[1])); cx.closePath(); cx.fillStyle=col(.92); cx.fill();
         if(P.d3){ cx.strokeStyle='rgba(0,0,0,.4)'; cx.lineWidth=.6; cx.stroke(); }
       } }
+    // крыша на плане — пунктиром (скаты и конёк)
+    if(!P.d3 && (p.lv==='all' || p.lv==null)) for(const r of s.roofs||[]){ cx.strokeStyle='rgba(255,138,101,.75)'; cx.lineWidth=1; cx.setLineDash([6,4]);
+      for(const f of r.faces){ if(f.kind!=='roof') continue; cx.beginPath(); f.pts.forEach((c,k)=>{ const A=P.pt(c[0],c[1],0); k ? cx.lineTo(A[0],A[1]) : cx.moveTo(A[0],A[1]); }); cx.closePath(); cx.stroke(); } cx.setLineDash([]); }
     // символы проёмов в плане
     if(P.se>.75) for(const o of s.objs){ if(o.type!=='door'&&o.type!=='window') continue; const pl=peOpenPlace(s,o); if(!pl) continue; const h=o.w/2, a=P.pt(pl.x-pl.ux*h,pl.y-pl.uy*h,0), b=P.pt(pl.x+pl.ux*h,pl.y+pl.uy*h,0);
       if(o.type==='window'){ cx.strokeStyle='#6fd0ff'; cx.lineWidth=2.5; cx.beginPath(); cx.moveTo(a[0],a[1]); cx.lineTo(b[0],b[1]); cx.stroke(); }
       else { const hinge=a, ang=Math.atan2(-(b[1]-a[1]),b[0]-a[0]), r=Math.hypot(b[0]-a[0],b[1]-a[1]); cx.strokeStyle='#c9a06a'; cx.lineWidth=1.5; cx.beginPath(); cx.arc(hinge[0],hinge[1],r,-ang,-ang-Math.PI/2,true); cx.stroke(); cx.beginPath(); cx.moveTo(hinge[0],hinge[1]); cx.lineTo(hinge[0]+Math.sin(ang)*r*0+Math.cos(-ang-Math.PI/2)*r,hinge[1]+Math.sin(-ang-Math.PI/2)*r); cx.stroke(); } }
     // замки длин и размеры
-    if(P.sc>14) for(const w of s.walls){ const [a,b]=peWallEnds(s,w), A=P.pt(a.x,a.y,P.d3 ? w.h : 0), B=P.pt(b.x,b.y,P.d3 ? w.h : 0), len=peWallLen(s,w); cx.font='10px monospace'; cx.textAlign='center'; cx.fillStyle=w.len>0 ? '#ffb74d' : 'rgba(180,195,200,.8)'; cx.fillText((w.len>0 ? '🔒' : '')+len.toFixed(2),(A[0]+B[0])/2,(A[1]+B[1])/2-5); }
+    const roofOn=P.d3 && (p.lv==='all' || p.lv==null) && (s.roofs||[]).length;                 // под крышей размеры стен не видны — не пишем их поверх
+    if(P.sc>14 && !roofOn) for(const w of s.walls){ if(!lvOk(w.lv)) continue; const [a,b]=peWallEnds(s,w), A=P.pt(a.x,a.y,P.d3 ? (w.z0||0)+w.h : 0), B=P.pt(b.x,b.y,P.d3 ? (w.z0||0)+w.h : 0), len=peWallLen(s,w); cx.font='10px monospace'; cx.textAlign='center'; cx.fillStyle=w.len>0 ? '#ffb74d' : 'rgba(180,195,200,.8)'; cx.fillText((w.len>0 ? '🔒' : '')+len.toFixed(2),(A[0]+B[0])/2,(A[1]+B[1])/2-5); }
     // точки
     const hidPts=p.pts==='all' ? null : peHiddenPts(s);
     for(const q of s.pts){ if(hidPts && hidPts.has(q.id) && !(n.sel && n.sel.k==='pt' && n.sel.id===q.id)) continue; const A=P.pt(q.x,q.y,0), isSel=n.sel && n.sel.k==='pt' && n.sel.id===q.id; cx.fillStyle=isSel ? '#ffb74d' : '#7dff9a'; cx.strokeStyle='#000'; cx.lineWidth=1.5; cx.beginPath(); cx.arc(A[0],A[1],isSel ? 5.5 : 4,0,7); cx.stroke(); cx.fill();

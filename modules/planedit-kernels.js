@@ -20,7 +20,7 @@ const PE_TYPES=['box','column','door','window'];               // примити
 const peWrap180=a=>((a+180)%360+360)%360-180;
 const peWrap360=a=>((a%360)+360)%360;
 
-function peNew(){ return {pts:[],walls:[],objs:[],cams:[],ants:[],rooms:[],seq:1}; }
+function peNew(){ return {pts:[],walls:[],objs:[],cams:[],ants:[],rooms:[],slabs:[],roofs:[],levels:[],seq:1}; }
 function peId(s,p){ return p+(s.seq++); }
 const pePt=(s,id)=>s.pts.find(p=>p.id===id);
 function peAddPoint(s,x,y){ const p={id:peId(s,'p'),x,y}; s.pts.push(p); return p; }
@@ -98,7 +98,7 @@ function peBoxes(s){
   const out=[];
   for(const w of s.walls){
     const [a,b]=peWallEnds(s,w), P=peWallParts(s,w), ux=(b.x-a.x)/(P.L||1), uy=(b.y-a.y)/(P.L||1);
-    const add=(s0,s1,z0,z1,kind)=>{ if(s1-s0<1e-6||z1-z0<1e-6) return; const m=(s0+s1)/2; out.push({cx:a.x+ux*m,cy:a.y+uy*m,ux,uy,l:s1-s0,t:w.t,z0,z1,kind,ref:w.id,mat:w.mat}); };
+    const zb=w.z0||0, add=(s0,s1,z0,z1,kind)=>{ if(s1-s0<1e-6||z1-z0<1e-6) return; const m=(s0+s1)/2; out.push({cx:a.x+ux*m,cy:a.y+uy*m,ux,uy,l:s1-s0,t:w.t,z0:zb+z0,z1:zb+z1,kind,ref:w.id,mat:w.mat,lv:w.lv||0}); };
     for(const [s0,s1] of P.solid) add(s0,s1,0,w.h,'wall');
     for(const o of P.open){ if(o.sill>0) add(o.s0,o.s1,0,o.sill,'wall'); add(o.s0,o.s1,Math.min(w.h,o.sill+o.h),w.h,'wall'); }
   }
@@ -156,20 +156,25 @@ function peVisPoly(c,occ,stepDeg=1){
 function peFspl(d,fMHz){ return 20*Math.log10(Math.max(d,1))+20*Math.log10(fMHz)-27.55; }
 function peAntGain(a,dx,dy){ if(!(a.bw<360)) return 0; const off=Math.abs(peWrap180(Math.atan2(dx,dy)/PE_D-a.az)); return -Math.min(25,12*Math.pow(off/Math.max(1,a.bw),2)); }
 // потери на стенах по пути a→(x,y) на частоте f (МГц), дБ: пересечение оси стены = материал × толщина / 10 см × (f / 2,4 ГГц)^k; проём — потери проёма
-function peWallLoss(s,ax,ay,x,y,f=2400){
-  let loss=0;
+// az, z — высоты концов луча (если заданы): стена считается, только если луч проходит через неё по высоте (этажи, проём — только в его пределах);
+// перекрытия (s.slabs) между az и z добавляют свои потери там, где луч проходит сквозь их контур
+function peWallLoss(s,ax,ay,x,y,f=2400,az,z){
+  let loss=0; const h3=isFinite(az) && isFinite(z);
   for(const w of s.walls){
     const [p,q]=peWallEnds(s,w), t=peSegT(ax,ay,x,y,[p.x,p.y,q.x,q.y]); if(t<0) continue;
+    const hz=h3 ? az+(z-az)*t-(w.z0||0) : NaN; if(h3 && (hz<0 || hz>w.h)) continue;
     const hx=ax+(x-ax)*t, hy=ay+(y-ay)*t, L=Math.hypot(q.x-p.x,q.y-p.y)||1, u=Math.hypot(hx-p.x,hy-p.y)/L; let open=null;
-    for(const o of s.objs) if(o.wall===w.id && (o.type==='door'||o.type==='window') && Math.abs(u-o.u)*L<=o.w/2) open=o;
+    for(const o of s.objs) if(o.wall===w.id && (o.type==='door'||o.type==='window') && Math.abs(u-o.u)*L<=o.w/2 && (!h3 || (hz>=(o.sill||0) && hz<=(o.sill||0)+o.h))) open=o;
     loss+=open ? peOpenLoss(open.type,f) : peMatLoss(w.mat,f,w.t);
   }
+  if(h3 && s.slabs) for(const sl of s.slabs){ const zs=sl.z-(sl.t||0)/2; if((zs-az)*(zs-z)>=0) continue; const k=(zs-az)/(z-az);
+    if(peInPoly(sl.poly,ax+(x-ax)*k,ay+(y-ay)*k)) loss+=peMatLoss(sl.mat||'concrete',f,sl.t||.25); }
   return loss;
 }
 // уровень сигнала антенны в точке, дБм (приёмник на высоте zr)
 function peAntLevel(s,a,x,y,zr=1){
   const dx=x-a.x, dy=y-a.y, d3=Math.hypot(dx,dy,a.z-zr);
-  return a.eirp+peAntGain(a,dx,dy)-peFspl(d3,a.f)-peWallLoss(s,a.x,a.y,x,y,a.f);
+  return a.eirp+peAntGain(a,dx,dy)-peFspl(d3,a.f)-peWallLoss(s,a.x,a.y,x,y,a.f,a.z,zr);
 }
 
 // канал «передатчики → приёмник»: лучший по уровню передатчик на частоте приёмника (допуск max(10 МГц, 1 %)); уровень = EIRP + диаграмма передатчика − потери (дистанция, стены на этой частоте) + усиление и диаграмма приёмника; запас — над чувствительностью
@@ -177,7 +182,7 @@ function peRxLevel(s,rx,opt={}){
   const tol=opt.tol??Math.max(10,rx.f*.01), sens=rx.sens??-90; let best=null;
   for(const t of s.ants){ if(peIsRx(t) || Math.abs(t.f-rx.f)>tol) continue;
     const dx=rx.x-t.x, dy=rx.y-t.y, d3=Math.hypot(dx,dy,t.z-rx.z);
-    const lv=t.eirp+peAntGain(t,dx,dy)-peFspl(d3,t.f)-peWallLoss(s,t.x,t.y,rx.x,rx.y,t.f)+(rx.gain||0)+peAntGain(rx,-dx,-dy);
+    const lv=t.eirp+peAntGain(t,dx,dy)-peFspl(d3,t.f)-peWallLoss(s,t.x,t.y,rx.x,rx.y,t.f,t.z,rx.z)+(rx.gain||0)+peAntGain(rx,-dx,-dy);
     if(!best||lv>best.level) best={level:lv,from:t.id,name:t.name}; }
   if(!best) return {level:-200,from:null,name:'',margin:-200-sens,ok:false};
   best.margin=best.level-sens; best.ok=best.margin>=0; return best;
@@ -231,7 +236,7 @@ function peImportPoints(s,recs){
     const key=ids.slice().sort().join(); let room=s.rooms.find(q=>q.pts.slice().sort().join()===key);
     if(r.nowalls){                                                // стены придут отдельно (plan walls): комната — только контур по замеру; старые стены по контуру убираем
       for(let i=0;i<ids.length;i++){ const a=ids[i], b=ids[(i+1)%ids.length], w=s.walls.find(w=>!w.src && ((w.a===a&&w.b===b)||(w.a===b&&w.b===a))); if(w){ s.walls=s.walls.filter(q=>q!==w); s.objs=s.objs.filter(o=>o.wall!==w.id); } }
-      if(!room) room=peAddRoom(s,ids); room.free=true; if(r.name) room.name=String(r.name); }
+      if(!room) room=peAddRoom(s,ids); room.free=true; if(r.name) room.name=String(r.name); if(+r.z0) room.z0=+r.z0; else delete room.z0; if(+r.lv) room.lv=+r.lv; else delete room.lv; }
     else { for(let i=0;i<ids.length;i++){ const w=peAddWall(s,ids[i],ids[(i+1)%ids.length]); if(w && +r.h>0) w.h=+r.h; }      // h — высота потолка комнаты (Site Plan)
       if(!room) peAddRoom(s,ids); }
     n++; delete r._poly; }
@@ -240,7 +245,11 @@ function peImportPoints(s,recs){
     const pre=String(r.id||'plan')+'|', keep=new Set();
     for(const q of r.walls){ const src=pre+q.id; keep.add(src); let w=s.walls.find(w=>w.src===src);
       if(!w){ const a=peAddPoint(s,+q.x1,+q.y1), b=peAddPoint(s,+q.x2,+q.y2); a.src=b.src=src; w=peAddWall(s,a.id,b.id,{t:+q.t,h:+q.h>0 ? +q.h : 2.7}); w.src=src; }
-      const [a,b]=peWallEnds(s,w); a.x=+q.x1; a.y=+q.y1; b.x=+q.x2; b.y=+q.y2; w.t=+q.t>0 ? +q.t : w.t; if(+q.h>0) w.h=+q.h; if(q.mat && PE_MAT[q.mat]!=null) w.mat=q.mat; }
+      const [a,b]=peWallEnds(s,w); a.x=+q.x1; a.y=+q.y1; b.x=+q.x2; b.y=+q.y2; w.t=+q.t>0 ? +q.t : w.t; if(+q.h>0) w.h=+q.h; if(q.mat && PE_MAT[q.mat]!=null) w.mat=q.mat;
+      if(+q.z0) w.z0=+q.z0; else delete w.z0; if(+q.lv) w.lv=+q.lv; else delete w.lv; }
+    s.slabs=Array.isArray(r.slabs) ? r.slabs.map(q=>({z:+q.z,t:+q.t,mat:q.mat,lv:+q.lv||0,poly:q.poly})) : [];          // перекрытия, крыша, этажи — целиком от источника
+    s.roofs=Array.isArray(r.roofs) ? r.roofs.map(q=>({...q})) : [];
+    s.levels=Array.isArray(r.levels) ? r.levels.map(q=>({name:String(q.name),z:+q.z,idx:+q.idx})) : [];
     for(const w of s.walls.filter(w=>w.src && w.src.startsWith(pre) && !keep.has(w.src))){ s.walls=s.walls.filter(q=>q!==w); s.objs=s.objs.filter(o=>o.wall!==w.id); s.pts=s.pts.filter(p=>p.src!==w.src); }
     const okeep=new Set();
     (r.opens||[]).forEach((o,i)=>{ const w=s.walls.find(w=>w.src===pre+o.wall); if(!w) return; const src=pre+'o'+i+':'+o.wall, type=o.type==='door' ? 'door' : 'window'; okeep.add(src);
@@ -268,6 +277,9 @@ function peSnapFace(s,x,y,tol){
     for(const sg of [1,-1]){ const ox=a.x-uy*w.t/2*sg, oy=a.y+ux*w.t/2*sg, u=Math.max(0,Math.min(L,(x-ox)*ux+(y-oy)*uy)), px=ox+ux*u, py=oy+uy*u, d=Math.hypot(px-x,py-y); if(d<bd){ bd=d; best={x:px,y:py,kind:'face'}; } } }
   return best;
 }
+// какой этаж показывать: sel — 'all' или номер; в плане 'all' — первый этаж (0), в 3D — все и крыша; номер в 3D — он и всё ниже (разрез)
+function peLvShow(sel,d3){ if(sel==='all' || sel==null) return d3 ? lv=>(lv||0)>=0 : lv=>(lv||0)===0;      // «all» в 3D — дом над землёй (подвал — при выборе −1 / 0: земля не непрозрачная) const k=+sel; return d3 ? lv=>(lv||0)<=k : lv=>(lv||0)===k; }
+const peLvZ=(s,sel)=>{ const L=(s.levels||[]).find(q=>q.idx===(sel==='all' ? 0 : +sel)); return L ? L.z : 0; };
 // служебные точки, которые не рисуются (при «points: auto»): концы стен из Site Plan и углы комнат, у которых нет своих стен
 function peHiddenPts(s){
   const used=new Set(); for(const w of s.walls){ used.add(w.a); used.add(w.b); }
@@ -280,7 +292,7 @@ function peHistNew(base){ return {base:String(base),u:[],r:[]}; }
 function peHistCommit(h,cur){ if(cur===h.base) return false; h.u.push(h.base); if(h.u.length>100) h.u.shift(); h.r.length=0; h.base=cur; return true; }
 function peHistUndo(h,cur){ peHistCommit(h,cur); if(!h.u.length) return null; h.r.push(h.base); h.base=h.u.pop(); return h.base; }
 function peHistRedo(h,cur){ peHistCommit(h,cur); if(!h.r.length) return null; h.u.push(h.base); h.base=h.r.pop(); return h.base; }
-function peParse(text){ try{ const o=JSON.parse(text); if(o && Array.isArray(o.pts)){ for(const k of ['walls','objs','cams','ants','rooms']) if(!Array.isArray(o[k])) o[k]=[]; if(!(o.seq>0)) o.seq=1000; return o; } }catch(e){} return peNew(); }
+function peParse(text){ try{ const o=JSON.parse(text); if(o && Array.isArray(o.pts)){ for(const k of ['walls','objs','cams','ants','rooms','slabs','roofs','levels']) if(!Array.isArray(o[k])) o[k]=[]; if(!(o.seq>0)) o.seq=1000; return o; } }catch(e){} return peNew(); }
 
 // ---------- привязка к земле (общее пространство с Video Overlay и Map) ----------
 // o: {lat, lon, north, alt} — где точка (0, 0) плана, азимут оси +y плана от севера (по часовой, °) и высота пола над уровнем моря, м
@@ -511,7 +523,7 @@ function peZRaster(B,proj,W,H,o){
   const fill=(V,rgb)=>{
     // плоскость глубины d = a·x + b·y + c по трём несовпадающим вершинам
     const [p0,p1,p2]=V, ux=p1[0]-p0[0], uy=p1[1]-p0[1], vx=p2[0]-p0[0], vy=p2[1]-p0[1], det=ux*vy-uy*vx; if(Math.abs(det)<1e-9) return;
-    const G=(rgb[0]<<16|rgb[1]<<8|rgb[2])+1;                  // группа: один цвет = одна ориентация и вид; одна плоскость двух блоков сливается
+    const G=((rgb[0]>>3)<<16|(rgb[1]>>3)<<8|(rgb[2]>>3))+1;     // оттенок огрублён: почти параллельные грани (доли градуса) — одна группа                  // группа: один цвет = одна ориентация и вид; одна плоскость двух блоков сливается
     const du=p1[2]-p0[2], dv=p2[2]-p0[2], a=(du*vy-dv*uy)/det, bq=(dv*ux-du*vx)/det, c=p0[2]-a*p0[0]-bq*p0[1];
     let y0=1e9,y1=-1e9; for(const q of V){ if(q[1]<y0)y0=q[1]; if(q[1]>y1)y1=q[1]; }
     const ys=Math.max(0,Math.ceil(y0-.5)), ye=Math.min(H-1,Math.floor(y1-.5));
@@ -524,13 +536,19 @@ function peZRaster(B,proj,W,H,o){
   };
   const edge=(p,q,rgb)=>{ const n=Math.ceil(Math.max(Math.abs(q[0]-p[0]),Math.abs(q[1]-p[1]))); for(let i=0;i<=n;i++){ const t=n ? i/n : 0, x=Math.round(p[0]+(q[0]-p[0])*t-.5), y=Math.round(p[1]+(q[1]-p[1])*t-.5); if(x<0||y<0||x>=W||y>=H) continue; const d=p[2]+(q[2]-p[2])*t, k=y*W+x; if(d<=zb[k]+.02){ const j=k*4; img[j]=rgb[0]; img[j+1]=rgb[1]; img[j+2]=rgb[2]; img[j+3]=255; } } };
   const faces=[];
-  for(const b of B){
+  const seal=o.seal??.01;                                              // стены чуть длиннее (только на картинке): миллиметровые щели стыков не светятся швом
+  for(const b0 of B){
+    const b=b0.kind==='wall' && seal ? {...b0,l:b0.l+2*seal} : b0;
     const C=peBoxCorners(b), base=o.color(b), sel=o.sel&&o.sel.has(b.ref), shade=k=>base.map(v=>Math.round(Math.min(255,v*k+(sel?40:0))));
     const top=C.map(c=>proj(c[0],c[1],b.z1)); faces.push([top,shade(.95)]);
     const nx=-b.uy, ny=b.ux, sides=[[0,1,[b.ux,b.uy]],[1,2,[-nx,-ny]],[2,3,[-b.ux,-b.uy]],[3,0,[nx,ny]]];
     for(const [i,j,nr] of sides){ if((nr[0]*cam[0]+nr[1]*cam[1])*ce<=.02) continue; const k=.5+.2*Math.max(0,nr[0]*L[0]+nr[1]*L[1]);
       faces.push([[proj(C[i][0],C[i][1],b.z0),proj(C[j][0],C[j][1],b.z0),proj(C[j][0],C[j][1],b.z1),proj(C[i][0],C[i][1],b.z1)],shade(k)]); }
   }
+  // произвольные плоские многоугольники (скаты, фронтоны): {pts:[[x,y,z]…], rgb}; тон — по нормали
+  for(const q of o.polys||[]){ const P=q.pts, n=[0,0,0]; for(let i=0;i<P.length;i++){ const a=P[i], b=P[(i+1)%P.length]; n[0]+=(a[1]-b[1])*(a[2]+b[2]); n[1]+=(a[2]-b[2])*(a[0]+b[0]); n[2]+=(a[0]-b[0])*(a[1]+b[1]); }
+    const nl=Math.hypot(...n)||1, k=.55+.4*Math.abs(n[2]/nl)*.6+.25*Math.max(0,Math.abs((n[0]*L[0]+n[1]*L[1])/nl));
+    faces.push([P.map(p=>proj(p[0],p[1],p[2])),q.rgb.map(v=>Math.round(Math.min(255,v*k)))]); }
   for(const [V,rgb] of faces) fill(V,rgb);
   if(o.edge===false) return {data:img,w:W,h:H,zb};
   // монолит (по умолчанию): линии только на настоящих рёбрах — смена ориентации / вида грани или скачок глубины (силуэт, заслонение);

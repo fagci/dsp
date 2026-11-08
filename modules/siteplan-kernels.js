@@ -18,6 +18,9 @@
      outer 0.45 [concrete] · inner drywall · material A-B glass   материалы: наружных стен, стен между комнатами, стены на стороне A-B (и «wall … 0.37 brick»);
                               brick concrete block drywall wood glass metal (или кирпич бетон газоблок гипсокартон дерево стекло металл)
      outer 0.45               толщина наружных стен (0.4 по умолчанию); внутренние — по щели между комнатами (стены строятся снаружи от замера, spWalls)
+     level 2 [z 2.95] · level cellar z -2.2   этаж: комнаты ниже по тексту — на нём (без z — над самым верхним из уже объявленных: его пол + высота комнат + перекрытие); подвал — с минусом
+     slab 0.25 concrete       перекрытия между этажами (толщина, материал) · same A B — B ровно над / под A (угол этажа над углом нижнего)
+     roof gable|hip|shed|flat [30] [overhang 0.5] [ridge long|short] [level 2]   крыша над этажом (по умолчанию — верхним): угол, свес, конёк вдоль длинной / короткой стороны
      mirror                   отразить план слева направо (по рулетке и углам план не отличить от зеркального; с компасом / GPS не нужно)
      wall Hall2-Hall3 Kor4-Kor1 0.37 [shift 0]   стык через стену: Kor4-Kor1 параллельно Hall2-Hall3 по ту сторону стены 0.37, Kor4 напротив Hall2 (shift — сдвиг вдоль), Kor1 — в сторону Hall3
      room Hall 4.48 3.74 4.46 3.74 [d 5.8]   комната обходом: стороны по порядку, углы Hall1…Hall4 по 90° («3.74/95» — свой угол, «/?» — не замерен), d — диагональ 1–3
@@ -46,6 +49,7 @@ function spNum(t){ if(t==null) return NaN; const s=String(t).replace(/^[±~]|^\+
 function spParse(text,o={}){
   const sd=o.sd>0 ? o.sd : 0.03, sa=o.sa>0 ? o.sa : 2, sg=o.sg>0 ? o.sg : 5, eye0=o.eye||0;
   const names=[], idx=new Map(), obs=[], polys=[], errors=[], opens=[]; let mirror=false, height=NaN, outer=NaN, outerMat=null, innerMat=null; const edgeMat=[];
+  const levels=[{name:'1',z:0,zSet:true,li:-1}], roofs=[]; let lvCur=levels[0], slab={t:.25,mat:'concrete'};
   const pt=n=>{ if(!idx.has(n)){ idx.set(n,names.length); names.push(n); } return idx.get(n); };
   const one=(raw,li,depth=0)=>{
     const line=raw.trim(); if(!line) return;
@@ -74,9 +78,26 @@ function spParse(text,o={}){
     if(/^outer$/i.test(T[0])){ for(const t of T.slice(1)){ const v=spNum(t), m=spMat(t); if(v>0 && v<3) outer=v; else if(m) outerMat=m; else return bad('outer [thickness m] [material: '+Object.keys(SP_MAT).slice(0,7).join(' ')+']'); } return; }
     if(/^inner$/i.test(T[0])){ const m=spMat(T[1]); if(!m || T.length>2) return bad('inner material — for the walls between rooms: '+Object.keys(SP_MAT).slice(0,7).join(' ')); innerMat=m; return; }
     if(/^material$/i.test(T[0])){ const hd=(T[1]||'').split('-'), m=spMat(T[2]); if(hd.length!==2 || !m) return bad('material A-B '+Object.keys(SP_MAT).slice(0,7).join('|')+' — the wall on the side A-B of a room'); edgeMat.push({a:pt(hd[0]),b:pt(hd[1]),mat:m,li}); return; }
+    if(/^level$/i.test(T[0])){                                                               // этаж / подвал: «level 2 [z 2.95]» — комнаты ниже по тексту на нём
+      const nm=T[1]; if(!nm) return bad('level NAME [z height of its floor, m] — e.g. level 2, level cellar z -2.2');
+      let z=NaN; const i=T.findIndex((t,k)=>k>1 && /^z$/i.test(t)); if(i>0){ z=spNum(T[i+1]); if(!isFinite(z)) return bad('level: z needs a number'); }
+      let L=levels.find(q=>q.name===nm); if(!L){ L={name:nm,z:isFinite(z) ? z : NaN,zSet:isFinite(z),li}; levels.push(L); } else if(isFinite(z)){ L.z=z; L.zSet=true; }
+      lvCur=L; return; }
+    if(/^slab$/i.test(T[0])){ for(const t of T.slice(1)){ const v=spNum(t), m=spMat(t); if(v>0 && v<2) slab.t=v; else if(m) slab.mat=m; else return bad('slab [thickness m] [material] — the floors between levels'); } return; }
+    if(/^same$/i.test(T[0])){ const a=T[1], b=T[2]; if(!a || !b || T.length>3) return bad('same A B — B stands exactly above / below A (plan position)'); obs.push({k:'same',a:pt(a),b:pt(b),s:sig??.01,li}); return; }
+    if(/^roof$/i.test(T[0])){                                                                // крыша: «roof gable 30 [overhang 0.5] [ridge long|short] [level 2]»
+      const type=(T[1]||'').toLowerCase(), r={type,angle:30,over:.5,ridge:'long',level:null,li};
+      if(!['gable','hip','shed','flat'].includes(type)) return bad('roof gable|hip|shed|flat [angle °] [overhang m] [ridge long|short] [level NAME]');
+      for(let i=2;i<T.length;i++){ const t=T[i].toLowerCase(), v=spNum(T[i]);
+        if(isFinite(v)){ if(!(v>=0 && v<75)) return bad('roof: angle 0…75°'); r.angle=v; }
+        else if(t==='overhang'){ r.over=spNum(T[++i]); if(!(r.over>=0 && r.over<3)) return bad('roof: overhang 0…3 m'); }
+        else if(t==='ridge'){ r.ridge=(T[++i]||'').toLowerCase(); if(r.ridge!=='long' && r.ridge!=='short') return bad('roof: ridge long|short'); }
+        else if(t==='level'){ r.level=T[++i]; }
+        else return bad('roof: unknown «'+T[i]+'»'); }
+      roofs.push(r); return; }
     if(/^height$/i.test(T[0])){ const v=spNum(T[1]); if(!(v>0)) return bad('height needs a number, m'); height=v; return; }     // высота потолка по умолчанию для всех комнат
     if(/^poly$/i.test(T[0])){ let h=NaN; { const i=T.findIndex((t,k)=>k>0 && /^h$/i.test(t)); if(i>0){ h=spNum(T[i+1]); if(!(h>0)) return bad('poly … h needs a height, m'); T.splice(i,2); } }
-      const ids=T.slice(1).map(pt); if(ids.length<3){ bad('poly needs 3+ points'); return; } polys.push({ids,h}); return; }
+      const ids=T.slice(1).map(pt); if(ids.length<3){ bad('poly needs 3+ points'); return; } polys.push({ids,h,lv:lvCur}); return; }
     const head=T[0].split('-'), kw=(T[1]||'').toLowerCase(), v=spNum(T[1]);
     if(head.length===1){                                                                    // одна точка
       const a=pt(head[0]);
@@ -104,7 +125,11 @@ function spParse(text,o={}){
   String(text||'').split('\n').forEach((raw0,li)=>raw0.replace(/#.*/,'').split(';').forEach(raw=>one(raw,li)));   // # — комментарий до конца строки; «;» — несколько замеров в строке
   { const seen=new Map(); for(const n of names){ const k=n.toLowerCase(); if(seen.has(k) && seen.get(k)!==n) errors.push({line:0,text:n,msg:'«'+seen.get(k)+'» and «'+n+'» are different points — names are case-sensitive'}); else seen.set(k,n); } }
   for(const pl of polys) if(!(pl.h>0) && height>0) pl.h=height;
-  return {names,obs,polys,errors,mirror,opens,outer,outerMat,innerMat,edgeMat};
+  // отметки этажей без z: над предыдущим (по тексту) — его пол + высота его комнат + перекрытие
+  for(let i=0;i<levels.length;i++){ const L=levels[i]; if(L.zSet) continue;                 // над самым верхним из уже известных
+    let pv=null; for(let k=0;k<i;k++) if(!pv || levels[k].z>pv.z) pv=levels[k];
+    let hh=0; for(const pl of polys) if(pl.lv===pv) hh=Math.max(hh,pl.h>0 ? pl.h : height>0 ? height : 2.7); L.z=pv.z+(hh||2.7)+slab.t; }
+  return {names,obs,polys,errors,mirror,opens,outer,outerMat,innerMat,edgeMat,levels,roofs,slab};
 }
 
 // «room ИМЯ 4.48 3.74 4.46 3.74 [d 5.8] [d2 5.9]» — комната обходом по периметру: стороны по порядку, углы ИМЯ1, ИМЯ2… расставляются сами.
@@ -159,8 +184,11 @@ function spInit(P){
       pen+=Math.min(pos,neg);
     }
     // комнаты не налезают друг на друга: точка внутри чужого контура или сторона, пересекающая его сторону
+    const myLv=new Set(P.polys.filter(pl=>pl.ids.includes(p)).map(pl=>pl.lv));            // налезать нельзя только на комнаты своего этажа
+    { let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9; for(const pl of P.polys) if(!myLv.has(pl.lv)) for(const id of pl.ids) if(placed[id] && id!==p){ x0=Math.min(x0,X[3*id]); x1=Math.max(x1,X[3*id]); y0=Math.min(y0,X[3*id+1]); y1=Math.max(y1,X[3*id+1]); }
+      if(x1>x0 && !(x>=x0-1 && x<=x1+1 && y>=y0-1 && y<=y1+1)) pen+=2; }                    // этажи стоят друг над другом: угол вне плана других этажей — хуже
     for(const pl of P.polys){
-      if(pl.ids.includes(p)) continue; const Q=pl.ids.map(at); if(Q.some(q=>!q)) continue;
+      if(pl.ids.includes(p) || !myLv.has(pl.lv)) continue; const Q=pl.ids.map(at); if(Q.some(q=>!q)) continue;
       let ins=false; for(let i=0,j=Q.length-1;i<Q.length;j=i++) if((Q[i][1]>y)!==(Q[j][1]>y) && x<(Q[j][0]-Q[i][0])*(y-Q[i][1])/(Q[j][1]-Q[i][1])+Q[i][0]) ins=!ins;
       if(ins) pen+=10;
       for(const own of P.polys){ const m=own.ids.length; if(!own.ids.includes(p)) continue;      // взгляд вперёд: недостающие углы — достройкой параллелограмма, центр комнаты не должен попасть в чужую
@@ -176,7 +204,7 @@ function spInit(P){
   };
   const inPoly=p=>P.polys.some(pl=>pl.ids.includes(p));
   const pick=(p,C)=>{ let best=C[0], bp=Infinity; for(const c of C){ const v=polyPen(p,c[0],c[1])+(c[2]||0); if(v<bp-1e-9){ bp=v; best=c; } } return best; };
-  const stepOnce=()=>{
+  const stepOnce=(guess=false)=>{                                    // guess — можно поставить одну точку наугад (по одному расстоянию), когда уверенных нет
     let moved=false;
     for(const o of obs){                                         // стена: C-D — параллельно A-B по ту сторону, C напротив A (+сдвиг), D в сторону B
       if(o.k!=='wsh' || !placed[o.a] || !placed[o.b] || (placed[o.c] && placed[o.wall.e])) continue;
@@ -205,6 +233,8 @@ function spInit(P){
     }
     for(let p=0;p<N;p++){
       if(placed[p]) continue;
+      const sp=sameOf[p]||[], sq=sp.find(q=>placed[q]);                  // есть пара «same» и она уже стоит — сюда же
+      if(sq!==undefined){ X[3*p]=X[3*sq]; X[3*p+1]=X[3*sq+1]; placed[p]=true; moved=true; continue; }
       const nb=[];                                                  // {q, r, az}
       for(const o of obs){
         if(o.k!=='d' && o.k!=='h' && o.k!=='az') continue;
@@ -230,10 +260,13 @@ function spInit(P){
       } else if(nb[0].az!==undefined && isFinite(nb[0].az) && isFinite(nb[0].r)){
         const e=nb[0], a=e.az*SP_D; x=X[3*e.q]+e.r*Math.sin(a); y=X[3*e.q+1]+e.r*Math.cos(a);
       } else if(withR.length===1){
+        if(sp.length) continue;                                          // точка с «same» ждёт свою пару, а не встаёт наугад по одному расстоянию
         const e=withR[0], qx=X[3*e.q], qy=X[3*e.q+1], C=[];
+        let sure=false;
         // угол q-…: «o-q-p v» с уже стоящей o — направление q→p = направление q→o, повёрнутое на ±v
         for(const o of obs){ if(o.k!=='ang' || o.b!==e.q) continue; const t=o.a===p ? o.c : o.c===p ? o.a : -1; if(t<0 || !placed[t]) continue;
-          const a0=Math.atan2(X[3*t+1]-qy,X[3*t]-qx); for(const sg of [1,-1]){ const a=a0+sg*o.v*SP_D; C.push([qx+e.r*Math.cos(a),qy+e.r*Math.sin(a)]); } }
+          const a0=Math.atan2(X[3*t+1]-qy,X[3*t]-qx); for(const sg of [1,-1]){ const a=a0+sg*o.v*SP_D; C.push([qx+e.r*Math.cos(a),qy+e.r*Math.sin(a)]); } sure=true; }
+        if(!sure && !guess) continue;
         if(!C.length && inPoly(p)){                                   // одно расстояние, но точка в контуре: перебор направлений, при равенстве — прямой угол в q (комнаты обычно прямоугольны)
           const nb=[]; for(const pl of P.polys){ const m=pl.ids.length; for(let i=0;i<m;i++) if(pl.ids[i]===e.q){ for(const j of [pl.ids[(i+1)%m],pl.ids[(i+m-1)%m]]) if(j!==p && placed[j]) nb.push(j); } }
           for(let k=0;k<72;k++){ const a=k*5*SP_D, cx=qx+e.r*Math.cos(a), cy=qy+e.r*Math.sin(a); let dev=0;
@@ -243,14 +276,19 @@ function spInit(P){
         if(C.length) [x,y]=pick(p,C);
         else { const a=(placedCount()-1)*2.4; x=qx+e.r*Math.cos(a); y=qy+e.r*Math.sin(a); }
       } else continue;
-      X[3*p]=x; X[3*p+1]=y; placed[p]=true; moved=true;
+      X[3*p]=x; X[3*p+1]=y; placed[p]=true; moved=true; const guessed=withR.length===1 && !nb.some(e=>isFinite(e.az)) && guess;
       if(!zk[p]){ for(const e of nb){ const dz=dzOf(e.q,p); if(dz){ X[3*p+2]=X[3*e.q+2]+dz; break; } else X[3*p+2]=X[3*e.q+2]; } }
+      if(guessed) return true;
     }
     return moved;
   };
   const placedCount=()=>placed.filter(Boolean).length;
+  // «same» (над / под) — только когда замеры этажа исчерпаны: иначе угол, поставленный наугад, утащит за собой этаж, к которому привязан
+  const sameOf=[]; for(const o of obs) if(o.k==='same'){ (sameOf[o.a]=sameOf[o.a]||[]).push(o.b); (sameOf[o.b]=sameOf[o.b]||[]).push(o.a); }
+  const sameOnce=()=>{ for(const o of obs){ if(o.k!=='same') continue; const [p,q]=placed[o.a] && !placed[o.b] ? [o.a,o.b] : placed[o.b] && !placed[o.a] ? [o.b,o.a] : [-1,-1];
+    if(p>=0){ X[3*q]=X[3*p]; X[3*q+1]=X[3*p+1]; placed[q]=true; return true; } } return false; };
   for(;;){
-    while(stepOnce());
+    while(stepOnce() || sameOnce() || stepOnce(true));
     const rest=placed.indexOf(false); if(rest<0) break;
     X[3*rest]=10*(++seeds); X[3*rest+1]=-10*seeds; placed[rest]=true;     // несвязная часть — отдельным островком
   }
@@ -276,6 +314,7 @@ function spResid(o,X,frame,gz){                       // → нормирова�
     case 'ang': { const b=o.b, ux=ax-X[3*b], uy=ay-X[3*b+1], uz=az-X[3*b+2], vx=X[3*o.c]-X[3*b], vy=X[3*o.c+1]-X[3*b+1], vz=X[3*o.c+2]-X[3*b+2];
       const c=(ux*vx+uy*vy+uz*vz)/(Math.hypot(ux,uy,uz)*Math.hypot(vx,vy,vz)||1e-12); return [(Math.acos(Math.max(-1,Math.min(1,c)))/SP_D-o.v)/o.s]; }
     case 'fix': return [(X[o.i]-o.v)/o.s];
+    case 'same': return [(X[3*o.b]-ax)/o.s,(X[3*o.b+1]-ay)/o.s];
     case 'wd': case 'wsh': { const bx=X[3*o.b]-ax, by=X[3*o.b+1]-ay, L=Math.hypot(bx,by)||1e-9, cx=X[3*o.c]-ax, cy=X[3*o.c+1]-ay;   // расстояние от C до прямой AB / сдвиг вдоль неё
       return [o.k==='wd' ? (Math.abs(bx*cy-by*cx)/L-o.v)/o.s : ((bx*cx+by*cy)/L-o.v)/o.s]; }
   }
@@ -329,7 +368,8 @@ function spSolve(text,opt={}){
   // «калибровочные» псевдо-измерения: убирают свободу сдвига / поворота; когда измерений для этого достаточно — не добавляются
   const gauge=[];
   if(!anchors.size){ gauge.push({k:'fix',i:0,v:X[0],s:1e-4},{k:'fix',i:1,v:X[1],s:1e-4}); }
-  if(anchors.size<2 && !azCount){ const q=[...Array(N).keys()].find(i=>i!==(anchors.size ? [...anchors][0] : 0)); if(q!==undefined) gauge.push({k:'fix',i:3*q+1,v:X[3*q+1],s:1e-4}); }
+  if(anchors.size<2 && !azCount){ const o0=anchors.size ? [...anchors][0] : 0, q=[...Array(N).keys()].find(i=>i!==o0);     // поворот: у второй точки — координата поперёк направления на первую
+    if(q!==undefined){ const ax=Math.abs(X[3*q]-X[3*o0])>=Math.abs(X[3*q+1]-X[3*o0+1]) ? 1 : 0; gauge.push({k:'fix',i:3*q+ax,v:X[3*q+ax],s:1e-4}); } }
   if(!has3D){ for(let i=0;i<N;i++) gauge.push({k:'fix',i:3*i+2,v:0,s:1e-6}); }
   else if(!zAnch) gauge.push({k:'fix',i:2,v:X[2],s:1e-4});
   // высоты: точки, связанные цепочкой dz, образуют группу; группа без абсолютной высоты (z / GPS alt) — «как у соседа» ±1 м для одной её точки (рулетка без dz считается почти горизонтальной)
@@ -396,7 +436,9 @@ function spSolve(text,opt={}){
     else if(N){ const x0=out.pts[0].x; for(const p of out.pts) p.x=2*x0-p.x; out.mirror=true; }
   }
   // контуры
-  for(const pl of P.polys){ const q=spPoly(pl.ids.map(i=>out.pts[i])); if(pl.h>0){ q.h=pl.h; q.volume=q.area*pl.h; } out.polys.push(q); }
+  for(const pl of P.polys){ const q=spPoly(pl.ids.map(i=>out.pts[i])); if(pl.h>0){ q.h=pl.h; q.volume=q.area*pl.h; } q.level=pl.lv.name; q.z0=pl.lv.z; out.polys.push(q); }
+  { const used=P.levels.filter(L=>P.polys.some(pl=>pl.lv===L)).sort((a,b)=>a.z-b.z), g=Math.max(0,used.findIndex(L=>L.z>=-.5));   // номер этажа: 0 — первый с полом не ниже −0.5 м, подвалы — минус
+    out.levels=used.map((L,i)=>({name:L.name,z:L.z,idx:i-g})); out.roofSpecs=P.roofs; out.slab=P.slab; }
   // проёмы: по стене между соседними углами контура; не влезает в стену — ошибка
   out.opens=[];
   for(const o of P.opens||[]){
@@ -439,7 +481,7 @@ function spPoly(pts){
 function spWalls(R,o={}){
   const M=o.mats||R.mats||{}, mOut=M.outer||'brick', mIn=M.inner||mOut, eMat=e=>(M.edge||{})[[e.a,e.b].sort().join('|')];
   const outer=o.outer>0 ? o.outer : .4, maxGap=o.maxGap>0 ? o.maxGap : .8, P=n=>R.pts.find(p=>p.name===n), E=[], rooms=[];
-  R.polys.forEach((pl,ri)=>{
+  (o.polys||R.polys).forEach((pl,ri)=>{
     const V=pl.names.map(P), m=V.length; let a2=0; for(let i=0;i<m;i++){ const p=V[i], q=V[(i+1)%m]; a2+=p.x*q.y-q.x*p.y; }
     const sg=a2>0 ? 1 : -1, es=[];                                      // против часовой — наружу справа от стороны
     for(let i=0;i<m;i++){ const p=V[i], q=V[(i+1)%m], L=Math.hypot(q.x-p.x,q.y-p.y)||1e-9, ux=(q.x-p.x)/L, uy=(q.y-p.y)/L;
@@ -484,9 +526,11 @@ function spWalls(R,o={}){
   for(const e of E) e.pieces.forEach((pc,k)=>{
     if(!own(pc)) return;
     let lo=pc.lo, hi=pc.hi;
+    // кто закрывает угол: наружная стена важнее внутренней (фасад сплошной), при равенстве — та, что в углу кончается; строит только «своя» комната
+    const byEnd=ed=>{ const L=ed.pieces[ed.pieces.length-1], F=ed.next.pieces[0]; if(!own(L)) return false; if(own(F) && L.inner && !F.inner) return false; return true; };
     const pe=e.prev, pl=pe.pieces[pe.pieces.length-1];
-    if(lo<.01 && pe.convexEnd && !own(pl)){ const t=pl?.t||0; lo-=t/Math.max(.3,pe.sinEnd); }
-    if(hi>e.L-.01 && e.convexEnd){ const t=e.next.pieces[0]?.t||0; hi+=t/Math.max(.3,e.sinEnd); }
+    if(lo<.01 && pe.convexEnd && !byEnd(pe)){ const t=pl?.t||0; lo-=t/Math.max(.3,pe.sinEnd); }
+    if(hi>e.L-.01 && e.convexEnd && byEnd(e)){ const t=e.next.pieces[0]?.t||0; hi+=t/Math.max(.3,e.sinEnd); }
     const ox=e.nx*pc.t/2, oy=e.ny*pc.t/2, h=Math.max(e.h,pc.inner ? pc.f.h : 0);
     const w={id:'spw:'+e.a+'-'+e.b+':'+k,x1:e.px+e.ux*lo+ox,y1:e.py+e.uy*lo+oy,x2:e.px+e.ux*hi+ox,y2:e.py+e.uy*hi+oy,t:+pc.t.toFixed(3),h:h>0 ? h : 0,kind:pc.inner ? 'inner' : 'outer',mat:eMat(e)||(pc.inner ? eMat(pc.f)||mIn : mOut),e,lo,hi};
     walls.push(w); key.set(pc,w);
@@ -500,7 +544,8 @@ function spWalls(R,o={}){
     for(const [nx,ny,c0,c1] of [[h.ux,h.uy,0,h.L],[h.uy,-h.ux,-v.t/2,v.t/2]]){ const p=(w.x1-v.x1)*nx+(w.y1-v.y1)*ny, d=g.ux*nx+g.uy*ny;
       if(Math.abs(d)<1e-12){ if(p<c0 || p>c1) return null; continue; } let t0=(c0-p)/d, t1=(c1-p)/d; if(t0>t1) [t0,t1]=[t1,t0]; lo=Math.max(lo,t0); hi=Math.min(hi,t1); }
     return hi-lo>1e-6 ? [lo,hi] : null; };
-  for(let pass=0;pass<2;pass++) for(const w of walls) for(const v of walls){ if(v===w || w.dead || v.dead) continue;
+  const order=walls.slice().sort((a,b)=>(a.kind==='inner' ? 0 : 1)-(b.kind==='inner' ? 0 : 1));   // сначала режем внутренние: стык достаётся наружной (фасад сплошной)
+  for(let pass=0;pass<2;pass++) for(const w of order) for(const v of order){ if(v===w || w.dead || v.dead) continue;
     const c=clip(w,v); if(!c) continue; const g=geo(w);
     const E2=.002;
     if(c[0]<=E2 && c[1]>=g.L-E2) w.dead=true;                                                // ось целиком внутри v (вставка в стык) — область уже у v
@@ -523,6 +568,60 @@ function spWalls(R,o={}){
     opens.push({wall:w.id,u:Math.max(0,Math.min(1,u)),w:op.w,h:op.h,sill:op.sill,type:op.kind});
   }
   return {walls:walls.map(({e,lo,hi,...w})=>w),opens};
+}
+
+// ---------- дом: этажи, перекрытия, крыша ----------
+// Стены — по каждому этажу отдельно (spWalls), с отметкой пола z0 и номером этажа lv; перекрытие — пол этажа, под которым есть другой этаж
+// (контуры комнат, толщина и материал из «slab»); крыша — по наружному контуру стен этажа (spRoof). → {walls, opens, slabs, roofs, levels}
+function spHouse(R,o={}){
+  const out={walls:[],opens:[],slabs:[],roofs:[],levels:R.levels||[{name:'1',z:0,idx:0}]};
+  const lvs=out.levels, slab=R.slab||{t:.25,mat:'concrete'};
+  for(const L of lvs){
+    const sub=R.polys.filter(pl=>(pl.level??'1')===L.name); if(!sub.length) continue;
+    const W=spWalls(R,{...o,polys:sub}), pre=lvs.length>1 ? 'L'+L.name+':' : '';
+    // есть этаж выше — наружные стены доходят до его пола (сквозь толщину перекрытия), иначе по фасаду пустая полоса
+    const up=lvs.filter(M=>M.z>L.z+.01).sort((a,b)=>a.z-b.z)[0];
+    let Hl=0; for(const pl of sub) Hl=Math.max(Hl,pl.h>0 ? pl.h : 0); if(!(Hl>0)) Hl=2.7;
+    for(const w of W.walls){ w.id=pre+w.id; w.z0=L.z; w.lv=L.idx; if(up && w.kind==='outer'){ const hw=w.h>0 ? w.h : Hl; if(up.z-L.z>hw) w.h=+(up.z-L.z).toFixed(3); } out.walls.push(w); }
+    for(const q of W.opens){ q.wall=pre+q.wall; out.opens.push(q); }
+    if(lvs.some(M=>M.z<L.z-.01)) for(const pl of sub) out.slabs.push({lv:L.idx,z:L.z,t:slab.t,mat:slab.mat,poly:pl.names.map(n=>{ const p=R.pts.find(q=>q.name===n); return [p.x,p.y]; })});
+  }
+  for(const spec of R.roofSpecs||[]){
+    const L=spec.level!=null ? lvs.find(q=>q.name===spec.level) : lvs.slice().sort((a,b)=>b.z-a.z)[0];
+    if(!L){ (R.errors||[]).push({line:spec.li+1,text:'roof',msg:'roof: no level «'+spec.level+'»'}); continue; }
+    const ws=out.walls.filter(w=>w.lv===L.idx), first=R.polys.find(pl=>(pl.level??'1')===L.name); if(!ws.length || !first) continue;
+    let H=0; for(const w of ws) H=Math.max(H,w.h||0); for(const pl of R.polys) if((pl.level??'1')===L.name) H=Math.max(H,pl.h||0); if(!(H>0)) H=2.7;
+    const a=R.pts.find(q=>q.name===first.names[0]), b=R.pts.find(q=>q.name===first.names[1]);
+    out.roofs.push(spRoof(ws,spec,L.z+H,a,b,o.outerMat||R.mats?.outer||'brick'));
+  }
+  return out;
+}
+// крыша над стенами ws: оси — вдоль первой стороны первой комнаты (a→b), прямоугольник по наружным граням + свес; zE — верх стен.
+// gable — двускатная (фронтоны — стены), hip — вальмовая, shed — односкатная (высокая сторона — дальняя от a-b), flat — плоская.
+// → {type, faces:[{pts:[[x,y,z]…], kind:'roof'|'gable'}], area (м² скатов), ridge (z конька), eave (z свеса)}
+function spRoof(ws,spec,zE,a,b,wallMat){
+  const L=Math.hypot(b.x-a.x,b.y-a.y)||1, ux=(b.x-a.x)/L, uy=(b.y-a.y)/L, vx=-uy, vy=ux, ox=a.x, oy=a.y;
+  let u0=1e9,u1=-1e9,v0=1e9,v1=-1e9;
+  for(const w of ws){ const dx=w.x2-w.x1, dy=w.y2-w.y1, l=Math.hypot(dx,dy)||1, nx=-dy/l*w.t/2, ny=dx/l*w.t/2;
+    for(const [x,y] of [[w.x1+nx,w.y1+ny],[w.x1-nx,w.y1-ny],[w.x2+nx,w.y2+ny],[w.x2-nx,w.y2-ny]]){ const u=(x-ox)*ux+(y-oy)*uy, v=(x-ox)*vx+(y-oy)*vy; u0=Math.min(u0,u); u1=Math.max(u1,u); v0=Math.min(v0,v); v1=Math.max(v1,v); } }
+  // конёк вдоль длинной (или короткой) стороны: A — вдоль конька, B — поперёк
+  const alongU=(u1-u0>=v1-v0)===(spec.ridge!=='short');
+  const W=(A,B,z)=>alongU ? [ox+A*ux+B*vx,oy+A*uy+B*vy,z] : [ox+B*ux+A*vx,oy+B*uy+A*vy,z];
+  const [A0,A1,B0,B1]=alongU ? [u0,u1,v0,v1] : [v0,v1,u0,u1], o=spec.over||0, tg=Math.tan((spec.angle||0)*SP_D), Bm=(B0+B1)/2, span=B1-B0, len=A1-A0;
+  const faces=[], zo=zE-o*tg;
+  if(spec.type==='flat'){ faces.push({kind:'roof',pts:[W(A0-o,B0-o,zE),W(A1+o,B0-o,zE),W(A1+o,B1+o,zE),W(A0-o,B1+o,zE)]}); }
+  else if(spec.type==='shed'){ const zt=zE+span*tg, zto=zt+o*tg;
+    faces.push({kind:'roof',pts:[W(A0-o,B0-o,zo),W(A1+o,B0-o,zo),W(A1+o,B1+o,zto),W(A0-o,B1+o,zto)]});
+    faces.push({kind:'gable',pts:[W(A0,B0,zE),W(A0,B1,zE),W(A0,B1,zt)]},{kind:'gable',pts:[W(A1,B0,zE),W(A1,B1,zE),W(A1,B1,zt)]},{kind:'gable',pts:[W(A0,B1,zE),W(A1,B1,zE),W(A1,B1,zt),W(A0,B1,zt)]}); }
+  else if(spec.type==='gable'){ const zr=zE+span/2*tg;
+    faces.push({kind:'roof',pts:[W(A0-o,B0-o,zo),W(A1+o,B0-o,zo),W(A1+o,Bm,zr),W(A0-o,Bm,zr)]},{kind:'roof',pts:[W(A0-o,B1+o,zo),W(A1+o,B1+o,zo),W(A1+o,Bm,zr),W(A0-o,Bm,zr)]});
+    faces.push({kind:'gable',pts:[W(A0,B0,zE),W(A0,B1,zE),W(A0,Bm,zr)]},{kind:'gable',pts:[W(A1,B0,zE),W(A1,B1,zE),W(A1,Bm,zr)]}); }
+  else { const zr=zE+span/2*tg, h=Math.min(span/2,len/2), Ra=A0+h, Rb=A1-h;            // вальмовая: конёк короче на полпролёта с каждой стороны
+    faces.push({kind:'roof',pts:[W(A0-o,B0-o,zo),W(A1+o,B0-o,zo),W(Rb,Bm,zr),W(Ra,Bm,zr)]},{kind:'roof',pts:[W(A0-o,B1+o,zo),W(A1+o,B1+o,zo),W(Rb,Bm,zr),W(Ra,Bm,zr)]});
+    faces.push({kind:'roof',pts:[W(A0-o,B0-o,zo),W(A0-o,B1+o,zo),W(Ra,Bm,zr)]},{kind:'roof',pts:[W(A1+o,B0-o,zo),W(A1+o,B1+o,zo),W(Rb,Bm,zr)]}); }
+  const area3=P=>{ let nx=0,ny=0,nz=0; for(let i=0;i<P.length;i++){ const p=P[i], q=P[(i+1)%P.length]; nx+=p[1]*q[2]-p[2]*q[1]; ny+=p[2]*q[0]-p[0]*q[2]; nz+=p[0]*q[1]-p[1]*q[0]; } return Math.hypot(nx,ny,nz)/2; };
+  let area=0, ridge=-1e9; for(const f of faces){ if(f.kind==='roof') area+=area3(f.pts); for(const p of f.pts) ridge=Math.max(ridge,p[2]); }
+  return {type:spec.type,angle:spec.angle,faces,area,ridge,eave:zo,wallMat};
 }
 
 // ---------- экспорт ----------

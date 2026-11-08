@@ -387,6 +387,7 @@ const PRESET_CATS={
   'Plan Editor: Rooms in 3D with Cameras and Wi-Fi, Shared with Video Overlay':'Maps & Locating',
   'Plan Editor: Scan Underlay → Walls → Auto-placed Cameras and Wi-Fi → SVG / DXF':'Maps & Locating',
   'Site Plan: Room from a Tape Measure → Plan Editor Walls and Wi-Fi':'Maps & Locating',
+  'Site Plan: House with a Cellar, Two Floors and a Gable Roof → Wi-Fi Through the Slab':'Maps & Locating',
   'Clinometer: Tree Height from the Phone Tilt → Site Plan':'Maps & Locating',
   'Signal Paths: Direct and Reflected Between Two Points':'Maps & Locating',
   'Flight Sim: Fly over Terrain (Joystick)':'Aircraft, Satellites & Telemetry',
@@ -8834,6 +8835,20 @@ rw.size.w=420; rw.size.h=560; applySize(rw);
 const sp=addNode('siteplan',960,210,{view:'plan',plan:'# the corners come from Room Walk'});
 sp.size.w=500; sp.size.h=480; applySize(sp);
 addEdge(or.id,'az',rw.id,'az'); addEdge(er.id,'dist',rw.id,'d'); addEdge(er.id,'go',rw.id,'go'); addEdge(rw.id,'lines',sp.id,'lines');
+markWiresDirty();
+});
+preset('Site Plan: House with a Cellar, Two Floors and a Gable Roof → Wi-Fi Through the Slab', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A whole house from a tape measure. «level NAME [z height]» starts a floor: the rooms below it in the text are on it; without z it stands on the floor below + its room height + the slab, a cellar gets a negative z. Each floor is tied to the one below by «same A B» — corner B is exactly above / below corner A (two corners fix the floor, one leaves it free to turn: then it is amber). «slab 0.22 concrete» — the floors between levels. '+
+  '«roof gable 35 overhang 0.5» — a roof over the top floor: gable (two slopes and gable walls), hip, shed (one slope) or flat; «ridge short» turns the ridge across, «level 1» puts it over another floor; the readout gives the slope area, the ridge and the eaves heights. The outer walls under an upper floor rise through the slab, so the facade is one piece. '+
+  'Plan Editor «level»: all — the whole house with the roof in 3D (the ground floor in the plan); a number — that floor (in 3D — it and the ones below, a cut-away): 0 — ground, −1 — the cellar, 1 — upstairs. The signal now counts a wall only where the ray passes through it in height, a door / window only within its opening, and adds the slab loss when the ray goes from one floor to another: the access point downstairs, the receiver upstairs pays for 22 cm of concrete. The coverage is computed 1 m above the shown floor.'});
+nt.size.w=1180; nt.size.h=170; applySize(nt);
+const sp=addNode('siteplan',40,250,{view:'plan',plan:'# ground floor: tape along the inner faces, the hall and the kitchen behind a 0.12 m partition\nheight 2.70\nouter 0.40 brick\ninner block\nslab 0.22 concrete\nroom Hall 6.00 4.50 6.00 4.50\nroom Kit 3.50 4.50 3.50 4.50\nwall Hall2-Hall3 Kit1-Kit4 0.12\nHall1 at 0 0\nHall2 at 6 0\nwindow Hall4-Hall1 1.20 1.50 h 1.40 sill 0.85\ndoor Hall1-Hall2 0.50 0.90 h 2.05\ndoor Hall2-Hall3 1.50 0.80\n# cellar under the kitchen, its floor 2.3 m down; two corners right under the kitchen ones\nlevel cellar z -2.3\nroom Cel 3.50 4.50 3.50 4.50 h 2.00\nsame Cel1 Kit1\nsame Cel2 Kit2\n# upper floor over both rooms (no z: it stands on the ground floor + 2.70 + the slab)\nlevel 2\nroom Up 9.62 4.50 9.62 4.50 h 2.50\nsame Up1 Hall1\nsame Up2 Kit2\nwindow Up2-Up3 1.50 1.20\nroof gable 35 overhang 0.5'});
+sp.size.w=520; sp.size.h=560; applySize(sp);
+const sc=peNew(); peAddAnt(sc,3,-2.25,{z:2.2,bw:360,eirp:20,f:2437,name:'AP'}); peAddRx(sc,7.9,-2.2,{z:4.2,gain:2,sens:-75,f:2437,name:'upstairs'});
+const pe=addNode('planedit',600,250,{scene:JSON.stringify(sc),view:'3D',layer:'signal',lv:'all',snap:'0.1'});
+pe.size.w=640; pe.size.h=620; applySize(pe);
+addEdge(sp.id,'rec',pe.id,'rec');
 markWiresDirty();
 });
 preset('Site Plan: Room from a Tape Measure → Plan Editor Walls and Wi-Fi', function(){

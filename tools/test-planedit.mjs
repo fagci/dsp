@@ -3,7 +3,7 @@
 import vm from 'node:vm'; import fs from 'node:fs'; import path from 'node:path'; import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Array,String,Number,Object,JSON,Set,Map,Float32Array,Uint8Array,isFinite,Infinity});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peHistNew,peHistCommit,peHistUndo,peHistRedo,peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peOverlaps,peAddRx,peRxLevel,peMoveWall,peZRaster,peBoxCorners,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints,peSnapFace,peHiddenPts};`,ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peHistNew,peHistCommit,peHistUndo,peHistRedo,peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peOverlaps,peAddRx,peRxLevel,peMoveWall,peZRaster,peBoxCorners,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints,peSnapFace,peHiddenPts,peLvShow};`,ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -188,4 +188,16 @@ ok('an empty scene has no bounds and no grid',K.peGrid(K.peNew())===null);
   ok('snap: nothing far away',K.peSnapFace(q,2,-2,.1)===null);
   const h=K.peHiddenPts(q); ok('hidden: wall ends and the corners of a wall-less room',h.size===5,h.size);
   ok('room name from Site Plan',q.rooms[0].name==='zal'); }
+// этажи в расчёте сигнала: стена другого этажа не мешает, перекрытие добавляет потери, проём — только в его высоте
+{ const q=K.peNew(); const A=K.peAddPoint(q,5,-1), B=K.peAddPoint(q,5,11); const w=K.peAddWall(q,A.id,B.id,{t:.2,h:2.7,mat:'brick'}); w.z0=3; w.lv=1;
+  near('a wall of the upper floor is not crossed by a ray on the ground floor',K.peWallLoss(q,0,5,10,5,2400,1,1),0,1e-9);
+  near('…but it is for a ray up there',K.peWallLoss(q,0,5,10,5,2400,4,4),K.peMatLoss('brick',2400,.2),1e-9);
+  near('without heights the old 2D rule counts it',K.peWallLoss(q,0,5,10,5,2400),K.peMatLoss('brick',2400,.2),1e-9);
+  q.walls=[]; q.slabs=[{z:3,t:.25,mat:'concrete',lv:1,poly:[[0,0],[10,0],[10,10],[0,10]]}];
+  near('a slab between the floors adds its loss',K.peWallLoss(q,2,5,8,5,2400,1,4),K.peMatLoss('concrete',2400,.25),1e-9);
+  near('…not for a ray on one floor',K.peWallLoss(q,2,5,8,5,2400,1,1),0,1e-9);
+  q.slabs=[]; const w2=K.peAddWall(q,A.id,B.id,{t:.2,h:2.7,mat:'concrete'}); K.peAddObj(q,'window',{wall:w2.id,u:.5,w:2,h:1.2,sill:.9});
+  near('a window: through the glass at 1.5 m',K.peWallLoss(q,0,5,10,5,2400,1.5,1.5),K.peOpenLoss('window',2400),1e-9);
+  near('…through the wall under the sill at 0.5 m',K.peWallLoss(q,0,5,10,5,2400,.5,.5),K.peMatLoss('concrete',2400,.2),1e-9);
+  const f=K.peLvShow('1',true), g=K.peLvShow('all',false), a3=K.peLvShow('all',true); ok('level filter: 3D shows the floor and below, the plan «all» — the ground floor, 3D «all» — above the ground',f(1) && f(0) && f(-1) && !f(2) && g(0) && g(undefined) && !g(1) && a3(2) && a3(0) && !a3(-1)); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
