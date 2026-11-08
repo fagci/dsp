@@ -98,7 +98,8 @@ export function createPinBridge(opt = {}) {
     const bye = () => {
       if (!conns.delete(c)) return;
       c.dead = true; o.log((c.role === 'graph' ? 'graph' : 'client') + ' left');
-      if (c.role === 'graph') announce(); else wantAll();
+      if (c.role === 'graph') announce();
+      wantAll();                                          // подписки ушедшего (клиента или Pins In страницы) пропали
     };
     sock.on('close', bye); sock.on('error', bye);
     if (raw) wantAll(); else sendJson(c, { t: 'pins', ...pinList(c) });

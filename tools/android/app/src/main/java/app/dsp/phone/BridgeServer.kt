@@ -53,6 +53,8 @@ class BridgeServer(
         @Volatile var dead = false
         /** Кто подключён: адрес, страница (Origin) и подписки — для списка клиентов моста. */
         @Volatile var origin = ""
+        /** Участник ретрансляции пинов (PinRelay): появляется с первым сообщением {"t":…} или на /raw/ИМЯ. */
+        @Volatile var pin: PinRelay.Peer? = null
         val since = System.currentTimeMillis()
         val out = LinkedBlockingQueue<ByteArray>(4096)
         fun send(text: String) { out.offer(frame(text.toByteArray(Charsets.UTF_8))) }   // переполнена — медленный клиент теряет записи
@@ -77,6 +79,10 @@ class BridgeServer(
     @Volatile var usb: UsbBackend? = null
 
     private val clients = CopyOnWriteArraySet<Client>()
+
+    /** Пины наружу: страницы с узлами Pins ↔ внешние клиенты (то же, что tools/pin-bridge.mjs). */
+    private val pins = PinRelay()
+    private fun pinPeer(c: Client): PinRelay.Peer = c.pin ?: PinRelay.Peer({ c.send(it) }, { c.sendBytes(it) }).also { c.pin = it }
 
     /** Внутренний получатель записей (запись на диск, RecHub): подписки и частоты учитываются в wanted() как у клиента, а записи идут в on, не в сокет. */
     class Sink(val subs: Set<String>, val hz: Int = 0, val wifiEvery: Int = 0, val cellEvery: Int = 0, val on: (List<String>) -> Unit,
@@ -216,7 +222,7 @@ class BridgeServer(
         synchronized(pending) { pending.add(src to json); (pending as java.lang.Object).notify() }
     }
 
-    fun note(level: String, msg: String) { val j = Json.note(level, msg); for (c in clients) c.send(j) }
+    fun note(level: String, msg: String) { val j = Json.note(level, msg); for (c in clients) if (c.pin?.raw.isNullOrEmpty()) c.send(j) }   // /raw/ИМЯ получает только данные пина
 
     /** Есть клиент с микрофоном в режиме низкой задержки и запись mic уже ждёт отправки. */
     private fun urgentMic(): Boolean = clients.any { it.micLow && "mic" in it.subs } && synchronized(pending) { pending.any { it.first == "mic" } }
@@ -269,6 +275,7 @@ class BridgeServer(
         when {
             req.path == "/usb" -> serveUsb(sock, req, remote, origin)
             req.headers["upgrade"]?.equals("websocket", true) == true -> serveWs(sock, req)
+            req.path == "/pins" -> respond(sock, 200, "OK", "application/json", pins.list(null).toString(), origin)
             req.path == "/" || req.path == "/status" -> respond(sock, 200, "OK", "text/plain; charset=utf-8", status(), origin)
             else -> respond(sock, 404, "Not Found", "text/plain", "not found", origin)
         }
@@ -370,9 +377,13 @@ class BridgeServer(
         c.hz = req.query["hz"]?.toIntOrNull() ?: 0
         clients.add(c)
         pool.execute { writeLoop(c) }
-        c.send(hello())
+        val raw = if (req.path.startsWith("/raw/")) try { URLDecoder.decode(req.path.removePrefix("/raw/"), "UTF-8") } catch (e: IllegalArgumentException) { "" } else ""
+        if (raw.isNotEmpty()) {                               // /raw/ИМЯ: только данные пина, без приветствия и записей датчиков
+            val p = pinPeer(c); p.raw = raw; pins.add(p)
+        } else c.send(hello())
         onSubs()
         try { readLoop(c) } finally {
+            c.pin?.let { pins.remove(it) }
             c.dead = true; clients.remove(c)
             try { sock.close() } catch (e: IOException) {}
             onSubs()
@@ -420,7 +431,9 @@ class BridgeServer(
                     if (fin) {
                         val all = msg.toByteArray(); msg.reset()
                         // двоичный кадр с меткой 1 — поток байт; остальное (в т.ч. JSON, посланный двоичным кадром) — как раньше, текстом
-                        if (bin && all.size > 5 && all[0] == 1.toByte() && onBinary != null) onBinary?.invoke(c, all)
+                        val pp = c.pin
+                        if (bin && pp != null) pins.binary(pp, all)                  // соединение уже говорит про пины: кадр — пина, не поток байт
+                        else if (bin && all.size > 5 && all[0] == 1.toByte() && onBinary != null) onBinary?.invoke(c, all)
                         else onMessage(c, String(all, Charsets.UTF_8))
                     }
                 }
@@ -438,6 +451,10 @@ class BridgeServer(
     private fun onMessage(c: Client, text: String) {
         val j = try { JSONObject(text) } catch (e: Exception) { return }
         if (j.has("cmd")) { onCommand?.invoke(c, j); return }
+        if (j.has("t")) {                                    // пины (PinRelay): первое такое сообщение делает соединение участником
+            val p = c.pin ?: pinPeer(c).also { pins.add(it) }
+            pins.text(p, j); return
+        }
         val sub = j.optJSONArray("sub") ?: return
         c.subs = allowed(c, (0 until sub.length()).map { sub.optString(it) }.filter { it.isNotEmpty() }.toSet())
         c.hz = j.optInt("hz", 0)
