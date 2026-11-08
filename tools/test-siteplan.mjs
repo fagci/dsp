@@ -158,4 +158,11 @@ R=K.spSolve('room zal 4.48 3.74 4.46 3.74\nwindow zal1-zal2 1 1 x 2'); ok('openi
 for(const t of ['material Kit2-Kit3 concrete\nroom Hall 4.48 3.74 4.46 3.74\nroom Kit 3.10 3.74 3.10 3.74\nwall Hall2-Hall3 Kit1-Kit4 0.40','wall Hall2-Hall3 Kit1-Kit4 0.40\nroom Kit 3.10 3.74 3.10 3.74\nroom Hall 4.48 3.74 4.46 3.74']){
   R=K.spSolve(t); const W=K.spWalls(R,{});
   ok('order of lines: no overlap, one shared wall ('+t.split('\n')[0]+')',R.rms<.2 && W.walls.filter(w=>w.kind==='inner').length===1,R.rms+' '+W.walls.map(w=>w.kind).join()); }
+// ровный фасад: наружные грани соседних стен в одну линию, внутренние (замер) на месте; B сдвинута на 3 см к северу
+{ R=K.spSolve('A1 at 0 0\nA2 at 4 0\nA3 at 4 -3\nA4 at 0 -3\npoly A1 A2 A3 A4\nB1 at 4.3 0.03\nB2 at 7.3 0.03\nB3 at 7.3 -2.97\nB4 at 4.3 -2.97\npoly B1 B2 B3 B4'); const W=K.spWalls(R,{});
+  const top=W.walls.filter(w=>w.kind==='outer' && Math.abs(w.y1-w.y2)<.01 && w.y1>-.1).sort((a,b)=>a.x1+a.x2-b.x1-b.x2);
+  ok('facade: the north outer faces are on one line',top.length===2 && Math.abs((top[0].y1+top[0].t/2)-(top[1].y1+top[1].t/2))<1e-6,JSON.stringify(top.map(w=>[w.y1,w.t])));
+  near('facade: the inner face of A stays at 0',top[0].y1-top[0].t/2,0,1e-3); near('…and of B at 0.03',top[1].y1-top[1].t/2,.03,1e-3);
+  R=K.spSolve('A1 at 0 0\nA2 at 4 0\nA3 at 4 -3\nA4 at 0 -3\npoly A1 A2 A3 A4\nB1 at 4.3 0.3\nB2 at 7.3 0.3\nB3 at 7.3 -2.7\nB4 at 4.3 -2.7\npoly B1 B2 B3 B4');
+  ok('facade: a real step (30 cm) stays a step',new Set(K.spWalls(R,{}).walls.filter(w=>w.kind==='outer' && Math.abs(w.y1-w.y2)<.01 && w.y1>-.1).map(w=>(w.y1+w.t/2).toFixed(3))).size===2); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
