@@ -15,7 +15,7 @@ const IQN_TUNERS=['unknown','E4000','FC0012','FC0013','FC2580','R820T','R828D'];
 const IQN_SPY_VER=(2<<24)|1700;                                                           // версия протокола SpyServer 2.0.1700
 const IQN_SPY_DEV=['invalid','Airspy One','Airspy HF+','RTL-SDR'];
 const iqnRtl=n=>n.p.proto==='rtl_tcp' || n.p.proto==='rtl_tcp (WebRTC)' || n.p.proto==='rtl_tcp (DSP app)';   // все варианты говорят одним протоколом
-const iqnApp=n=>n.p.proto==='rtl_tcp (DSP app)';                                           // транспорт — tcp.connect моста приложения DSP / tools/net-bridge.mjs
+const iqnApp=n=>n.p.proto==='rtl_tcp (DSP app)';                                           // транспорт — tcp.connect моста приложения DSP / tools/node/bridge.mjs
 const iqnRtc=n=>n.p.proto==='rtl_tcp (WebRTC)';                                          // транспорт — канал rtl узла WebRTC Data
 const iqnSr=n=>(n.sp && n.sp.sr) || +n.p.sr || 1e6;                                     // у SpyServer частоту задаёт сервер
 const IQN_QMAX_S=2;                                                                      // сколько секунд держим в очереди, дальше выбрасываем старое
@@ -35,7 +35,7 @@ function iqnStart(n){
   n.warn=netInsecure(url) ? NET_INSECURE_MSG : '';
   n.want=true; n.bad=false; n.sp=null; (iqnApp(n) ? iqnAppOpen : iqnOpen)(n,url);
 }
-// ---- через мост приложения DSP (или tools/net-bridge.mjs): мост сам открывает TCP к rtl_tcp — драйверу RTL-SDR на этом же телефоне (127.0.0.1:1234),
+// ---- через мост приложения DSP (или tools/node/bridge.mjs): мост сам открывает TCP к rtl_tcp — драйверу RTL-SDR на этом же телефоне (127.0.0.1:1234),
 // Raspberry Pi, другому компьютеру. Байты потока — двоичными кадрами [2][conn u32 BE][данные] (binary:true), команды — [1][conn][5 байт];
 // мост без этого (старое приложение) — записями data с hex, медленнее, но работает. ----
 function iqnAppOpen(n,url){
@@ -275,7 +275,7 @@ def({ id:'iqnet', title:'IQ over Network', cat:'Sources', kw:'rtl_tcp rtl-tcp re
   ins:[{n:'rtc',t:'rtc'}],
   outs:[{n:'iq',t:'iq'},{n:'sr',t:'num'}], readout:true, tall:true,
   params:[{n:'url',t:'text',d:'ws://127.0.0.1:8766',dev:true,label:'WebSocket: ws:// wss:// (rtl_tcp: through a bridge, e.g. websockify 8766 host:1234) — or @name from Settings → Devices (the token stays there)'},
-          {n:'proto',t:'select',opts:['rtl_tcp','rtl_tcp (DSP app)','rtl_tcp (WebRTC)','raw stream','SpyServer'],d:'rtl_tcp',label:'protocol (rtl_tcp (DSP app): the app bridge or node tools/net-bridge.mjs opens the TCP connection to a standard rtl_tcp server, no websockify; rtl_tcp (WebRTC): through the WebRTC Data connection, the server is the rtl_tcp Server node on the other device; wire its link to rtc)'},
+          {n:'proto',t:'select',opts:['rtl_tcp','rtl_tcp (DSP app)','rtl_tcp (WebRTC)','raw stream','SpyServer'],d:'rtl_tcp',label:'protocol (rtl_tcp (DSP app): the app bridge or node tools/node/bridge.mjs opens the TCP connection to a standard rtl_tcp server, no websockify; rtl_tcp (WebRTC): through the WebRTC Data connection, the server is the rtl_tcp Server node on the other device; wire its link to rtc)'},
           {n:'fmt',t:'select',opts:Object.keys(IQN_FRAME),d:'uint8',label:'raw stream: sample format (interleaved I, Q)'},
           {n:'host',t:'text',d:'127.0.0.1',label:'rtl_tcp (DSP app): server host — 127.0.0.1 is the machine of the bridge itself (the RTL-SDR driver app on the phone), or a Raspberry Pi / another computer: rtl_tcp -a 0.0.0.0'},
           {n:'port',t:'num',d:1234,label:'rtl_tcp (DSP app): server port'},
