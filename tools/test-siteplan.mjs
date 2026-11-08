@@ -110,4 +110,10 @@ for(const [w,c4,c1] of [['wall Zal2-Zal3 kor4-kor1 0.37',[14.85,-0],[14.85,-5.9]
   ok('wall «'+w+'»: corridor outside the hall, fits',cx>14.85 && R.rms<.2 && R.pts.every(p=>!p.weak),cx+' '+R.rms);
 }
 R=K.spSolve('room Zal 4 3 4 3\nzal2-x 1'); ok('names differing only by case are reported',R.errors.some(e=>/case-sensitive/.test(e.msg)));
+// «mirror»: без компаса план отражается слева направо, размеры те же
+{ const t='room zal 4.48 3.74 4.46 3.74\nroom kor 1.36 5.9 1.33 5.9\nwall zal2-zal3 kor1-kor4 0.37\n';
+  const A=K.spSolve(t), B=K.spSolve(t+'mirror'), side=R=>Math.sign(R.polys[1].cx-R.polys[0].cx);
+  ok('mirror: the corridor moves to the other side of the hall',side(A)===-side(B) && B.mirror,side(A)+' '+side(B));
+  near('mirror: areas unchanged',B.polys[0].area+B.polys[1].area,A.polys[0].area+A.polys[1].area,1e-9);
+  R=K.spSolve(t+'mirror\nzal1-zal2 az 90'); ok('mirror with a compass is ignored and reported',!R.mirror && R.errors.some(e=>/mirror/.test(e.msg))); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);

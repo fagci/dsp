@@ -107,7 +107,7 @@ def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, lazy:true, kw:'pl
   ins:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'acc',t:'num'},{n:'alt',t:'num'},{n:'rec',t:'rec'},{n:'lines',t:'txt'}],
   outs:[{n:'area',t:'num'},{n:'perim',t:'num'},{n:'slope',t:'num'},{n:'rms',t:'num'},{n:'n',t:'num'},{n:'rec',t:'rec'},{n:'poly',t:'rec'}],
   w:460, view:{h:380}, resize:true, readout:true,
-  params:[{n:'plan',t:'code',plain:true,d:SP_DEF,label:'measurements, one per line: A-B 12.4 · A-B h 12.4 · A-B dz 1.2 · A-B az 45 · A-B-C 90 · A-B tilt 25 15 eye 1.6 · A z 120 · A gps lat lon ±3 · A at x y · poly A B C D · room Hall 4.48 3.74 4.46 3.74 (corners Hall1…, 90° unless «side/angle», «side/?» — not measured; d — diagonal 1-3) · wall Hall2-Hall3 Kit1-Kit4 0.4 [shift s] (rooms across a wall) (± — error, m or °)',fn:n=>{ n.key=''; }},
+  params:[{n:'plan',t:'code',plain:true,d:SP_DEF,label:'measurements, one per line: A-B 12.4 · A-B h 12.4 · A-B dz 1.2 · A-B az 45 · A-B-C 90 · A-B tilt 25 15 eye 1.6 · A z 120 · A gps lat lon ±3 · A at x y · poly A B C D · room Hall 4.48 3.74 4.46 3.74 (corners Hall1…, 90° unless «side/angle», «side/?» — not measured; d — diagonal 1-3) · wall Hall2-Hall3 Kit1-Kit4 0.4 [shift s] (rooms across a wall) · mirror (flip left ↔ right) (± — error, m or °)',fn:n=>{ n.key=''; }},
           {n:'table',t:'text',d:'',label:'Table lists with measurements, comma-separated. Columns: kind (d h dz az tilt ang poly) + a, b, c + value [+ sigma]; or name + lat, lon [+ acc, alt]; or name + x, y [+ z]; or a ready «line»',fn:n=>{ n.tblKey=''; }},
           {n:'view',t:'select',opts:['plan','3D'],d:'plan',label:'view'},
           {n:'grid',t:'select',opts:['north','structure','off'],d:'north',label:'grid: north (E / N axes of the plan) · structure (along the first side of the contour, from its first point) · off'},
@@ -216,6 +216,8 @@ def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, lazy:true, kw:'pl
       L.push(R.n+' point'+(R.n===1 ? '' : 's')+' · '+R.res.length+' measurement'+(R.res.length===1 ? '' : 's')+(R.dof>0 ? ' · redundancy '+R.dof+' · residuals '+R.rms.toFixed(2)+'σ'+(R.rms>2 ? ' — inconsistent' : R.rms<1.5 ? ' — consistent' : '') : ' · no redundancy: nothing to cross-check (add a diagonal or a second measurement)'));
       if(gridStep) L.push('grid '+gridStep+' m · '+(F.mode==='structure' ? 'axes along the first side of the contour, origin at its first point' : R.georef ? 'north-aligned (E, N from the local origin)' : 'plan axes x, y from the origin (no north: the plan is not georeferenced)'));
       for(const w of worst) L.push('⚠ line '+w.li+' '+w.a+(w.b ? '-'+w.b : '')+' '+w.k+': off by '+w.r.map(v=>v.toFixed(3)).join(', ')+' ('+w.nmax.toFixed(1)+'σ) — check it');
+      if(R.mirror) L.push('mirrored left ↔ right («mirror» line)');
+      else if(R.polys.length && !R.georef) L.push('kitchen on the wrong side? a tape and angles cannot tell a plan from its mirror image — add a line «mirror»');
       for(const pl of R.polys) L.push('contour '+pl.names.join('-')+': plan '+pl.area.toFixed(2)+' m² · surface '+pl.surf.toFixed(2)+' m² · perimeter '+pl.perimeter.toFixed(2)+' m'+(pl.slope>.05 ? ' · slope '+pl.slope.toFixed(1)+'° ('+pl.slopePct.toFixed(0)+'%)' : ''));
       const wk=pts.filter(q=>q.weak).map(q=>q.name);
       if(wk.length){ const hint=[], has=new Set(R.edges.map(([a,b])=>R.names[a]+'-'+R.names[b]).concat(R.edges.map(([a,b])=>R.names[b]+'-'+R.names[a])));
