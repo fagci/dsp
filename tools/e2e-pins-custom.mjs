@@ -1,13 +1,15 @@
 // Pins (custom) и WebRTC в браузере: пины создаёт другая сторона; две страницы через мост и через WebRTC.
-// Нужны Playwright и статика на :8123 (python3 -m http.server 8123): node tools/e2e-pins-custom.mjs
+// Нужны Playwright и статика на :8123 (python3 -m http.server 8123): node tools/e2e-pins-custom.mjs  (BRIDGE=node — через tools/node/bridge.mjs)
 import { createRequire } from 'node:module';
 import { loadKernels } from './netmock.mjs';
 import { createBridge } from './termux/bridge.mjs';
+import { createMsgrBridge } from './node/bridge.mjs';
 const { chromium } = createRequire(import.meta.url)('playwright');
 let bad = 0; const ok = (n, c, x = '') => { if (!c) { bad++; console.log('FAIL', n, x); } else console.log('ok  ', n); };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const K = loadKernels(['pins-kernels.js'], 'pinEncode,pinDecode,PIN_JSON,PIN_IQ');
-const bridge = createBridge({ port: 0, sources: [], log: () => {} }), port = (await bridge.listen()).port, url = 'ws://127.0.0.1:' + port;
+const bridge = process.env.BRIDGE === 'node' ? createMsgrBridge({ port: 0, log: () => {} }) : createBridge({ port: 0, sources: [], log: () => {} }),   // BRIDGE=node — tools/node/bridge.mjs
+  port = (await bridge.listen()).port, url = 'ws://127.0.0.1:' + port;
 const b = await chromium.launch(); const ctx = await b.newContext(); const errs = [];
 async function mk() {
   const pg = await ctx.newPage(); pg.on('pageerror', (e) => errs.push(e.message));
