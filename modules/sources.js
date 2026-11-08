@@ -321,7 +321,7 @@ function fileRedraw(n){
 // частоте движка. Дальше его можно проредить узлом FFT в режиме low frequency.
 function ssInit(n,K){
   n.sK=K; n.sq=[]; n.sP=new Float64Array(K+1); n.sClk=null; n.sLastT=0; n.sDt=0;
-  n.sGaps=0; n.sRate=0; n.sRT0=0; n.sRN=0;
+  n.sGaps=0; n.sRate=0; n.sRT0=0; n.sRN=0; n.sBoost=0; n.sDry=0;
   n.mW0=0; n.mLast=null; n.mEvRate=null; n.mDup=0; n.tsBad=false;
 }
 // Метки событий бывают грубыми: Firefox округляет timeStamp (защита от фингерпринтинга,
@@ -355,25 +355,31 @@ function ssPush(n,obs,vals){                        // obs — секунды, �
 function ssProcess(n,outs){
   const K=n.sK, S=K+1, q=n.sq, P=n.sP, sr=Eng.sr;
   if(!n.sLastT){ for(const o of outs) o.fill(0); return P; }
-  const lag=Math.max(n.sLag||.06,3*n.sDt);          // запас на неровный приход событий
+  // Запас на неровный приход событий. Если очередь опустела (главный поток занят — перетаскивание, отрисовка), поток
+  // «залипает» на последнем отсчёте, и БПФ рисует чёрную строку в водопаде. У потоков звуковой частоты запас сам
+  // растёт на 20 мс за каждый такой блок (до +300 мс) и медленно возвращается; нужное сглаживание подбирается само.
+  const aud=n.sDt>0 && n.sDt<.005;
+  if(n.sBoost>0) n.sBoost=Math.max(0,n.sBoost-BLOCK/sr*.002);
+  const lag=Math.max((n.sLag||.06)+(aud?n.sBoost:0),3*n.sDt);
   const err=n.sLastT-lag-n.sClk;
   if(n.sClk==null || Math.abs(err)>.5) n.sClk=n.sLastT-lag;
   else n.sClk+=err*.0005;                           // медленно: подстройка часов = частотная ошибка спектра
-  const c0=n.sClk; let j=0;
+  const c0=n.sClk; let j=0, dry=0;
   for(let i=0;i<BLOCK;i++){
     const ti=c0+i/sr;
     while(j<q.length && q[j]<=ti){ for(let k=0;k<S;k++) P[k]=q[j+k]; j+=S; }
     if(j<q.length && P[0]){ const a=(ti-P[0])/(q[j]-P[0]);
       for(let k=0;k<K;k++) outs[k][i]=P[k+1]+(q[j+1+k]-P[k+1])*a; }
-    else for(let k=0;k<K;k++) outs[k][i]=P[k+1];
+    else{ for(let k=0;k<K;k++) outs[k][i]=P[k+1]; dry++; }
   }
+  if(aud && dry>0){ n.sDry+=dry; n.sBoost=Math.min(.3,n.sBoost+.02); }
   if(j) q.splice(0,j);
   n.sClk+=BLOCK/sr;
   return P;
 }
 function ssStatus(n){
   if(!n.sLastT) return '';
-  return `${n.sRate.toFixed(1)} Hz`+(n.sGaps?` · gaps ${n.sGaps}`:'')+
+  return `${n.sRate.toFixed(1)} Hz`+(n.sGaps?` · gaps ${n.sGaps}`:'')+(n.sBoost>.001?` · reserve +${Math.round(n.sBoost*1000)} ms`:'')+
     (n.mEvRate!=null?` · events ${n.mEvRate.toFixed(0)}/s`:'')+(n.mDup?` · repeats ${n.mDup}`:'')+
     (n.tsBad?` · timeStamp ×${n.tsRatio.toFixed(2)}, using arrival time`:'');
 }
