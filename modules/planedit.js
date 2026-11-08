@@ -152,6 +152,20 @@ function peIcon(cx,id,x,y,r,col){
   cx.restore();
 }
 
+// ---------- вид из выбранной камеры: окно в углу (тап — во весь холст); картинка пересчитывается при правке сцены или камеры ----------
+function peDrawCamView(n,cx,W,H){
+  n.camBox=null; const c=n.sel && n.sel.k==='cam' ? n.sc.cams.find(q=>q.id===n.sel.id) : null; if(!c || n.p.camview===false) return;
+  const big=!!n.camBig, w=Math.round(big ? W-16 : Math.min(W*.46,380)), h=Math.round(Math.min(w*9/16,big ? H-PE_BAR-60 : H*.4)), x=W-w-8, y=PE_BAR+8;
+  const k=Math.min(1,560/w), rw=Math.max(32,Math.round(w*k)), rh=Math.max(18,Math.round(h*k)), key=[n.rev,c.x,c.y,c.z,c.az,c.tilt,c.fov,rw,rh].join('|');
+  if(!n.camImg || n.camImg.key!==key){ const R=peCamView(n.sc,c,rw,rh), cv=n.camImg?.cv || document.createElement('canvas'); cv.width=rw; cv.height=rh; cv.getContext('2d').putImageData(new ImageData(R.data,rw,rh),0,0); n.camImg={key,cv}; }
+  const gr=cx.createLinearGradient(0,y,0,y+h); gr.addColorStop(0,'#9cc7e8'); gr.addColorStop(1,'#dbe9f2');                    // небо за сценой
+  cx.save(); cx.fillStyle=gr; cx.fillRect(x,y,w,h); cx.imageSmoothingEnabled=true; cx.drawImage(n.camImg.cv,x,y,w,h);
+  cx.strokeStyle='#ffb74d'; cx.lineWidth=2; cx.strokeRect(x,y,w,h);
+  cx.fillStyle='rgba(0,0,0,.55)'; cx.fillRect(x,y,w,18); cx.fillStyle='#fff'; cx.font='11px sans-serif'; cx.textAlign='left'; cx.textBaseline='middle';
+  cx.fillText(c.name+' · '+c.fov+'° · '+c.z.toFixed(1)+' m · tilt '+c.tilt+'°'+(big ? '  (tap — small)' : '  (tap — large)'),x+6,y+9); cx.textBaseline='alphabetic'; cx.restore();
+  n.camBox={x,y,w,h};
+}
+
 // ---------- действия инструментов ----------
 function peUse(n,P,tool,x,y,hit){
   const s=n.sc, p=n.p;
@@ -195,6 +209,7 @@ function peGesture(n,cv){
   cv.addEventListener('pointerdown',ev=>{
     ev.stopPropagation(); cv.focus({preventScroll:true}); cv.setPointerCapture(ev.pointerId); const q=pos(ev); n.touch=ev.pointerType==='touch'; Ptr.set(ev.pointerId,{p:q,b:ev.button});
     if(Ptr.size>1){ g={mode:'pinch'}; n.vw.user=true; n.dragging=false; return; }
+    if(n.camBox && q[0]>=n.camBox.x && q[0]<=n.camBox.x+n.camBox.w && q[1]>=n.camBox.y && q[1]<=n.camBox.y+n.camBox.h){ n.camBig=!n.camBig; redraw(n); g={mode:'chip'}; return; }   // окно вида из камеры: тап — крупно / мелко
     if(n.chipBox && q[1]>=n.chipBox.y){ const r=n.chipRects.find(r=>q[0]>=r.x && q[0]<=r.x+r.w && q[1]>=r.y && q[1]<=r.y+r.h); if(r) peChipHit(n,r); g={mode:'chip'}; return; }
     if(q[1]<PE_BAR){ const i=barHit(q[0]); if(i<PE_TOOLS.length){ setMod(n,'tool',PE_TOOLS[i][0]); n.chain=null; n.chainPts=[]; } else if(i===PE_TOOLS.length){ setMod(n,'view',n.p.view==='3D' ? 'plan' : '3D'); peFit(n,cv.width,cv.height); } else if(i===PE_TOOLS.length+1){ peFit(n,cv.width,cv.height); } else peUndo(n,i>PE_TOOLS.length+2); redraw(n); g={mode:'bar'}; return; }
     const P=peProj(n,cv.width,cv.height), hit=pePick(n,P,q[0],q[1]), tool=n.p.tool, pan=ev.button===1||ev.button===2||ev.shiftKey;
@@ -265,7 +280,7 @@ function peOrigin(n){ return {lat:+n.p.olat||0,lon:+n.p.olon||0,north:+n.p.north
 function peRecalc(n){
   const reflWant=+n.p.refl||0, reflUse=n.dragging ? Math.min(1,reflWant) : reflWant; n.heatPartial=reflUse<reflWant;   // пока тянут — одно отражение, после — сколько задано
   const s=n.sc, g=peGrid(s,+n.p.cell||.25);
-  n.camCov=s.cams.length&&g ? peCamCoverage(s,g) : null;
+  n.camCov=s.cams.length&&g ? peCamCoverage(s,g,peLvZ(s,n.p.lv)+(+n.p.ztgt||1)) : null;              // цель — человек: ztgt над полом выбранного этажа
   n.antHeat=s.ants.some(a=>!peIsRx(a))&&g ? peAntHeat(s,g,{thr:+n.p.thr,f:+n.p.lfreq||0,zr:peLvZ(s,n.p.lv)+1,refl:reflUse}) : null;
   n.links={}; n.minMargin=null; const ro=+n.p.refl>0 ? {refl:+n.p.refl,faces:peFaces(s)} : {}; for(const a of s.ants) if(peIsRx(a)){ const r=peRxLevel(s,a,ro); n.links[a.id]=r; if(r.from && (n.minMargin===null || r.margin<n.minMargin)) n.minMargin=r.margin; }
   n.calcRev=n.rev; n.rasKey='';
@@ -412,6 +427,8 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
           {n:'snap',t:'select',opts:['0','0.05','0.1','0.25','0.5','1'],d:'0.1',label:'snap to the grid, m (0 — off)'},
           {n:'ortho',t:'check',d:true,label:'walls snap to 15° steps'},
           {n:'lv',t:'select',opts:['all','-2','-1','0','1','2','3'],d:'all',label:'level: all (3D — the house above the ground with the roof, plan — the ground floor) · a number — that floor (3D — it and the ones below; 0 — ground, −1 — cellar); the signal is computed 1 m above its floor',fn:n=>{ n.rev=(n.rev||0)+1; redraw(n); }},
+          {n:'camview',t:'check',d:true,label:'the view from the selected camera (3D, a window in the corner; tap it to enlarge)'},
+          {n:'ztgt',t:'range',min:.1,max:3,step:.1,d:1,label:'cameras: the target height above the floor, m (a person ≈ 1, a face ≈ 1.6, a car number plate ≈ 0.5) — a wall, a fence or a box hides it only where the line of sight passes within their height',fn:n=>{ n.rev=(n.rev||0)+1; redraw(n); }},
           {n:'refl',t:'select',opts:['0','1','2'],d:'1',label:'reflections: 0 — the direct ray only · 1 — plus one bounce off a wall · 2 — plus two (slower); the powers of the paths add up, each bounce costs by the material (metal 1, concrete 5, glass 6, brick 7, block 8, wood 9, drywall 11 dB); the rays to a receiver are drawn on the «signal» layer',fn:n=>{ n.rev=(n.rev||0)+1; redraw(n); }},
           {n:'layer',t:'select',opts:['none','cameras','signal'],d:'none',label:'layer: cameras (green — seen, red — blind) · signal (antennas, dBm)'},
           {n:'thr',t:'range',min:-100,max:-30,step:1,d:-70,label:'signal threshold, dBm (below — dim)'},
@@ -527,7 +544,8 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
       if(P.sc>10){ const cxm=poly.reduce((a,q)=>a+q[0],0)/poly.length, cym=poly.reduce((a,q)=>a+q[1],0)/poly.length, A=P.pt(cxm,cym,rz); cx.fillStyle='rgba(150,170,180,.7)'; cx.font='11px sans-serif'; cx.textAlign='center'; cx.fillText(p.layer==='signal' ? (r.name||'') : (r.name||'')+' '+peRoomArea(s,r).toFixed(1)+' m²',A[0],A[1]); } }
     // зоны видимости камер
     const occ=peOccluders(s);
-    for(const c of s.cams){ const poly=peVisPoly(c,occ,2); cx.beginPath(); poly.forEach((q,i)=>{ const A=P.pt(q[0],q[1],0); i ? cx.lineTo(A[0],A[1]) : cx.moveTo(A[0],A[1]); }); cx.closePath(); cx.fillStyle='rgba(125,255,154,.10)'; cx.fill(); cx.strokeStyle='rgba(125,255,154,.55)'; cx.lineWidth=1; cx.stroke(); }
+    const zT=peLvZ(s,p.lv)+(+p.ztgt||1);
+    for(const c of s.cams){ const poly=peVisPoly(c,occ,2,zT); cx.beginPath(); poly.forEach((q,i)=>{ const A=P.pt(q[0],q[1],P.d3 ? peLvZ(s,p.lv) : 0); i ? cx.lineTo(A[0],A[1]) : cx.moveTo(A[0],A[1]); }); cx.closePath(); cx.fillStyle='rgba(125,255,154,.10)'; cx.fill(); cx.strokeStyle='rgba(125,255,154,.55)'; cx.lineWidth=1; cx.stroke(); }
     // блоки: стены, ящики, колонны — по глубине издали к близким
     { const raw=peBoxes(s).filter(b=>b.kind!=='wall' || lvOk(b.lv)), cam=[P.sa,-P.ca], sel=n.sel;
       const roofPolys=P.d3 && (p.lv==='all' || p.lv==null) ? (s.roofs||[]).flatMap(r=>r.faces.map(f=>({pts:f.pts,rgb:f.kind==='roof' ? [150,78,64] : (PE_MATCOL[r.wallMat]||[200,208,214])}))) : [];
@@ -614,6 +632,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
         if(tw+2*r+10<bw){ const x0=i*bw+(bw-(2*r+4+tw))/2; peIcon(cx,it.ic,x0+r,PE_BAR/2,r,col); cx.textAlign='left'; cx.fillText(it.name,x0+2*r+4,PE_BAR/2+1); cx.textAlign='center'; }   // иконка и подпись, если влезает
         else peIcon(cx,it.ic,i*bw+bw/2,PE_BAR/2,r,col); });
       cx.textBaseline='alphabetic'; }
+    peDrawCamView(n,cx,W,H);
     peDrawChips(n,cx,W,H,fg);
     // сводка
     if(n.msg) L.push(n.msg);

@@ -390,6 +390,7 @@ const PRESET_CATS={
   'Site Plan: House with a Cellar, Two Floors and a Gable Roof → Wi-Fi Through the Slab':'Maps & Locating',
   'Plan Editor: Wi-Fi with Reflections — Rays to a Receiver':'Maps & Locating',
   'Site Plan: Plot with a Fence, Road, Bath House and a Cell Tower → Signal Indoors':'Maps & Locating',
+  'Plan Editor: Yard Cameras — Over the Fence by Height, the View from a Camera':'Maps & Locating',
   'Clinometer: Tree Height from the Phone Tilt → Site Plan':'Maps & Locating',
   'Signal Paths: Direct and Reflected Between Two Points':'Maps & Locating',
   'Flight Sim: Fly over Terrain (Joystick)':'Aircraft, Satellites & Telemetry',
@@ -8837,6 +8838,19 @@ rw.size.w=420; rw.size.h=560; applySize(rw);
 const sp=addNode('siteplan',960,210,{view:'plan',plan:'# the corners come from Room Walk'});
 sp.size.w=500; sp.size.h=480; applySize(sp);
 addEdge(or.id,'az',rw.id,'az'); addEdge(er.id,'dist',rw.id,'d'); addEdge(er.id,'go',rw.id,'go'); addEdge(rw.id,'lines',sp.id,'lines');
+markWiresDirty();
+});
+preset('Plan Editor: Yard Cameras — Over the Fence by Height, the View from a Camera', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Cameras outdoors and in 3D. What a camera sees is now worked out by height: the line of sight from the camera to a person (the «target height», 1 m above the floor; 1.6 — a face, 0.5 — a number plate) is blocked by a wall, a fence or a box only where it passes within their height. So the camera on a 4 m pole in the corner sees over the 1.5 m mesh-and-sheet fence and over the bath house, leaving a shadow strip right behind them that ends where the sight line clears the top; a camera at 1 m does not. Chain-link mesh and glass walls do not hide anything, a window only within its opening (under the sill it is a wall), a slab hides the floor above. '+
+  'Tap a camera (select tool): a window with the view from it appears in the corner — a 3D picture from its position, azimuth, tilt and field of view, with the walls in their materials, the roofs, the lawn and the road; tap the window to make it large. Move or turn the camera with the handles and the steppers below — the view follows.'});
+nt.size.w=1180; nt.size.h=150; applySize(nt);
+const sp=addNode('siteplan',40,230,{view:'plan',plan:'# the house: two rooms, brick outside, a drywall partition\nouter 0.40 brick\ninner drywall\nroom Liv 5.00 4.00 5.00 4.00\nroom Bed 3.50 4.00 3.50 4.00\nwall Liv2-Liv3 Bed1-Bed4 0.12\nLiv1 at 0 0\nLiv2 at 5 0\nwindow Liv1-Liv2 1.50 1.60 h 1.40 sill 0.85\nwindow Bed2-Bed3 1.20 1.20\ndoor Liv4-Liv1 1.00 0.90\ndoor Liv2-Liv3 2.80 0.80\n# a bath house in the corner of the plot: its corners by tape from the fence posts\nroom Bath 4.00 3.00 4.00 3.00 h 2.30\nBath1 at 12 -9\nBath2 at 16 -9\n# the plot: a corrugated sheet fence, a mesh gate side, the road outside, a lawn and a vegetable garden\nF1 at -6 5\nF2 at 18 5\nF3 at 18 -14\nF4 at -6 -14\nfence F2 F3 F4 F1 h 2.0 профлист\nfence F1 F2 h 1.5 рабица\nR1 at -10 8\nR2 at 24 8\nroad R1 R2 w 5 asphalt\nL1 at -5 -6\nL2 at 10 -6\nL3 at 10 -13\nL4 at -5 -13\narea L1 L2 L3 L4 газон\nG1 at 11 -1\nG2 at 17 -1\nG3 at 17 -7\nG4 at 11 -7\narea G1 G2 G3 G4 огород'});
+sp.size.w=500; sp.size.h=560; applySize(sp);
+const sc=peNew(); peAddCam(sc,17.5,-13.5,{z:4,az:315,tilt:15,fov:90,range:30,name:'pole'}); peAddCam(sc,-0.6,4.3,{z:2.8,az:135,tilt:25,fov:100,range:15,name:'porch'});
+const pe=addNode('planedit',580,230,{scene:JSON.stringify(sc),view:'plan',layer:'cameras',snap:'0.1'});
+pe.size.w=700; pe.size.h=700; applySize(pe);
+addEdge(sp.id,'rec',pe.id,'rec');
 markWiresDirty();
 });
 preset('Site Plan: Plot with a Fence, Road, Bath House and a Cell Tower → Signal Indoors', function(){

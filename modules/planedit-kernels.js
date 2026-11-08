@@ -119,10 +119,17 @@ function peNearestWall(s,x,y){
 
 // ---------- препятствия и пересечения ----------
 // отрезки-препятствия [x0,y0,x1,y1]: сплошные части стен и габариты ящиков / колонн выше minH
-function peOccluders(s,minH=1.2){
+// препятствия для взгляда: отрезки [x1,y1,x2,y2,id,z0,z1] — с высотой (взгляд проходит над / под ними); сетка-рабица и стекло прозрачны;
+// у проёма стена остаётся под подоконником и над проёмом; o.slabs — перекрытия (взгляд с этажа на этаж через них не проходит)
+const PE_SEE_THROUGH={mesh:1,glass:1};
+function peOccluders(s,minH=0){
   const o=[];
-  for(const w of s.walls){ const [a,b]=peWallEnds(s,w), P=peWallParts(s,w), ux=(b.x-a.x)/(P.L||1), uy=(b.y-a.y)/(P.L||1); for(const [s0,s1] of P.solid) o.push([a.x+ux*s0,a.y+uy*s0,a.x+ux*s1,a.y+uy*s1,w.id]); }
-  for(const b of peBoxes(s)){ if(b.kind==='wall' || b.z1<minH) continue; const nx=-b.uy, ny=b.ux, h=b.l/2, q=b.t/2, C=[[b.cx+b.ux*h+nx*q,b.cy+b.uy*h+ny*q],[b.cx+b.ux*h-nx*q,b.cy+b.uy*h-ny*q],[b.cx-b.ux*h-nx*q,b.cy-b.uy*h-ny*q],[b.cx-b.ux*h+nx*q,b.cy-b.uy*h+ny*q]]; for(let i=0;i<4;i++) o.push([C[i][0],C[i][1],C[(i+1)%4][0],C[(i+1)%4][1],b.ref]); }
+  for(const w of s.walls){ if(PE_SEE_THROUGH[w.mat]) continue; const [a,b]=peWallEnds(s,w), P=peWallParts(s,w), ux=(b.x-a.x)/(P.L||1), uy=(b.y-a.y)/(P.L||1), z0=w.z0||0, z1=z0+w.h;
+    const seg=(s0,s1,za,zb)=>{ if(s1-s0>1e-6 && zb-za>1e-6) o.push([a.x+ux*s0,a.y+uy*s0,a.x+ux*s1,a.y+uy*s1,w.id,za,zb]); };
+    for(const [s0,s1] of P.solid) seg(s0,s1,z0,z1);
+    for(const q of P.open){ seg(q.s0,q.s1,z0,z0+(q.sill||0)); seg(q.s0,q.s1,z0+(q.sill||0)+q.h,z1); } }
+  o.slabs=s.slabs||[];
+  for(const b of peBoxes(s)){ if(b.kind==='wall' || b.z1<minH) continue; const nx=-b.uy, ny=b.ux, h=b.l/2, q=b.t/2, C=[[b.cx+b.ux*h+nx*q,b.cy+b.uy*h+ny*q],[b.cx+b.ux*h-nx*q,b.cy+b.uy*h-ny*q],[b.cx-b.ux*h-nx*q,b.cy-b.uy*h-ny*q],[b.cx-b.ux*h+nx*q,b.cy-b.uy*h+ny*q]]; for(let i=0;i<4;i++) o.push([C[i][0],C[i][1],C[(i+1)%4][0],C[(i+1)%4][1],b.ref,b.z0,b.z1]); }
   return o;
 }
 // пересечение отрезка p→q с отрезком e; возвращает параметр t по p→q или -1
@@ -131,7 +138,11 @@ function peSegT(px,py,qx,qy,e){
   const t=((e[0]-px)*sy-(e[1]-py)*sx)/den, u=((e[0]-px)*ry-(e[1]-py)*rx)/den; return t>=0&&t<=1&&u>=0&&u<=1 ? t : -1;
 }
 // есть ли на пути p→q препятствие (пересечения ближе skip метров к p не считаются — камера на стене)
-function peBlocked(occ,px,py,qx,qy,skip=.15){ const L=Math.hypot(qx-px,qy-py)||1; for(const e of occ){ const t=peSegT(px,py,qx,qy,e); if(t>=0 && t*L>skip) return true; } return false; }
+// pz, qz — высоты концов взгляда: если заданы, препятствие с высотой [z0,z1] мешает, только когда линия проходит в его пределах; перекрытия — тоже
+function peBlocked(occ,px,py,qx,qy,skip=.15,pz,qz){ const L=Math.hypot(qx-px,qy-py)||1, h3=isFinite(pz) && isFinite(qz);
+  for(const e of occ){ const t=peSegT(px,py,qx,qy,e); if(t<0 || t*L<=skip) continue; if(h3 && e.length>6){ const z=pz+(qz-pz)*t; if(z<e[5] || z>e[6]) continue; } return true; }
+  if(h3 && occ.slabs) for(const sl of occ.slabs){ const zs=sl.z-(sl.t||0)/2; if((zs-pz)*(zs-qz)>=0) continue; const k=(zs-pz)/(qz-pz); if(peInPoly(sl.poly,px+(qx-px)*k,py+(qy-py)*k)) return true; }
+  return false; }
 
 // ---------- камеры ----------
 // видна ли точка (x, y) на высоте zt (по умолчанию 1 м — торс человека): угол по азимуту, дальность, вертикальный угол (наклон вниз tilt, поле fov·0,5625), линия видимости
@@ -140,13 +151,20 @@ function peSees(c,x,y,occ,zt=1){
   if(Math.abs(peWrap180(Math.atan2(dx,dy)/PE_D-c.az))>c.fov/2) return false;
   const dep=Math.atan2(c.z-zt,d)/PE_D, v=c.fov*.5625;                                        // угол вниз до цели; допустимо tilt ± v/2
   if(dep<c.tilt-v/2 || dep>c.tilt+v/2) return false;
-  return !peBlocked(occ,c.x,c.y,x,y);
+  return !peBlocked(occ,c.x,c.y,x,y,.15,c.z,zt);
 }
 // многоугольник видимости на уровне пола в секторе камеры (для рисования): веер лучей с тенями от стен; дальность ограничена range
-function peVisPoly(c,occ,stepDeg=1){
-  const P=[[c.x,c.y]]; for(let a=-c.fov/2;a<=c.fov/2+1e-9;a+=stepDeg){
+// zt — высота цели (человек ≈ 1 м над полом): препятствие на расстоянии d с высотой [z0,z1] закрывает цель на дальностях t, где линия
+// камера → цель проходит в его пределах: z(d) = c.z + (zt − c.z)·d/t; контур — до первой такой тени (за невысоким забором видно снова — это на растре)
+function peVisPoly(c,occ,stepDeg=1,zt){
+  const P=[[c.x,c.y]], h3=isFinite(zt) && isFinite(c.z);
+  for(let a=-c.fov/2;a<=c.fov/2+1e-9;a+=stepDeg){
     const ang=(c.az+a)*PE_D, dx=Math.sin(ang), dy=Math.cos(ang); let t=c.range;
-    for(const e of occ){ const h=peSegT(c.x,c.y,c.x+dx*c.range,c.y+dy*c.range,e); if(h>=0 && h*c.range>.15 && h*c.range<t) t=h*c.range; }
+    for(const e of occ){ const h=peSegT(c.x,c.y,c.x+dx*c.range,c.y+dy*c.range,e); if(h<0) continue; const d=h*c.range; if(d<=.15 || d>=t) continue;
+      if(h3 && e.length>6){ const k=zt-c.z; let ua=0, ub=1;                                   // u = d/t ∈ (0,1]: z = c.z + k·u в [z0,z1]
+        if(Math.abs(k)<1e-9){ if(c.z<e[5] || c.z>e[6]) continue; } else { let u0=(e[5]-c.z)/k, u1=(e[6]-c.z)/k; if(u0>u1) [u0,u1]=[u1,u0]; ua=Math.max(ua,u0); ub=Math.min(ub,u1); if(ub<=ua || ub<=0) continue; }
+        const t0=d/ub; if(t0<t) t=Math.max(d,t0); }
+      else t=d; }
     P.push([c.x+dx*t,c.y+dy*t]);
   }
   return P;
@@ -520,6 +538,37 @@ function peClearAuto(s){ const n=s.cams.filter(c=>c.auto).length+s.ants.filter(a
 // Сортировка по центру ломается, когда протяжённый блок (стена) по центру далеко, а краем стоит перед близким. Вместо этого каждая пара блоков сравнивается по
 // разделяющей оси (у выпуклых ориентированных прямоугольников она есть среди четырёх нормалей): какая сторона ближе к зрителю — тот и рисуется позже;
 // потом топологическая сортировка. На виде сверху (горизонтальной составляющей взгляда нет) порядок — по высоте: нижний раньше.
+// ---------- вид из камеры (3D) ----------
+// базис камеры: f — куда смотрит (азимут от севера по часовой, наклон вниз), r — вправо, u — вверх
+function peCamBasis(c){ const a=(c.az||0)*PE_D, t=(c.tilt||0)*PE_D, f=[Math.sin(a)*Math.cos(t),Math.cos(a)*Math.cos(t),-Math.sin(t)], r=[Math.cos(a),-Math.sin(a),0];
+  return {f,r,u:[r[1]*f[2]-r[2]*f[1],r[2]*f[0]-r[0]*f[2],r[0]*f[1]-r[1]*f[0]]}; }
+// сцена многоугольниками в мире: земля, покрытия участка, полы комнат, стены / ящики / колонны (все грани), перекрытия, крыша
+function peScenePolys(s){
+  const out=[], b=peBounds(s,30); if(!b) return out;
+  out.push({pts:[[b.x0,b.y0,-.002],[b.x1,b.y0,-.002],[b.x1,b.y1,-.002],[b.x0,b.y1,-.002]],rgb:[150,160,140]});
+  const GC={asphalt:[95,98,104],gravel:[170,165,150],tile:[196,170,146],grass:[120,175,90],garden:[150,115,70],water:[90,150,210]};
+  for(const g of s.grounds||[]) out.push({pts:g.poly.map(q=>[q[0],q[1],.004]),rgb:GC[g.cover]||GC.grass});
+  for(const r of s.rooms){ const z=(r.z0||0)+.006; out.push({pts:peRoomPoly(s,r).map(q=>[q[0],q[1],z]),rgb:[206,202,190]}); }
+  for(const bx of peBoxes(s)){ const C=peBoxCorners(bx), rgb=bx.kind==='wall' ? (PE_MATCOL[bx.mat]||[200,208,214]) : bx.kind==='box' ? [201,143,90] : [160,168,173];
+    out.push({pts:C.map(c=>[c[0],c[1],bx.z1]),rgb},{pts:C.map(c=>[c[0],c[1],bx.z0]).reverse(),rgb});
+    for(let i=0;i<4;i++){ const p=C[i], q=C[(i+1)%4]; out.push({pts:[[p[0],p[1],bx.z0],[q[0],q[1],bx.z0],[q[0],q[1],bx.z1],[p[0],p[1],bx.z1]],rgb}); } }
+  for(const sl of s.slabs||[]){ const rgb=PE_MATCOL[sl.mat]||[168,174,180]; out.push({pts:sl.poly.map(q=>[q[0],q[1],sl.z]),rgb},{pts:sl.poly.map(q=>[q[0],q[1],sl.z-(sl.t||.25)]),rgb}); }
+  for(const r of s.roofs||[]) for(const f of r.faces) out.push({pts:f.pts,rgb:f.kind==='roof' ? [150,78,64] : (PE_MATCOL[r.wallMat]||[200,208,214])});
+  return out;
+}
+// отрезать многоугольник по плоскости (n·p ≥ d) — Сазерленд — Ходжмен
+function peClipPlane(P,n,d){ const out=[], val=p=>p[0]*n[0]+p[1]*n[1]+p[2]*n[2]-d;
+  for(let i=0;i<P.length;i++){ const a=P[i], b=P[(i+1)%P.length], va=val(a), vb=val(b);
+    if(va>=0) out.push(a); if((va>=0)!==(vb>=0)){ const t=va/(va-vb); out.push([a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t]); } }
+  return out; }
+// картинка из камеры c (x, y, z, az, tilt, fov — по горизонтали, 16:9): RGBA W×H, глубина — 1/расстояние (линейна на экране для перспективы)
+function peCamView(s,c,W,H,opt={}){
+  const {f,r,u}=peCamBasis(c), fx=(W/2)/Math.tan(Math.max(5,Math.min(170,c.fov||90))*PE_D/2), near=.05, ox=c.x, oy=c.y, oz=c.z;
+  const proj=(x,y,z)=>{ const dx=x-ox, dy=y-oy, dz=z-oz, F=dx*f[0]+dy*f[1]+dz*f[2], X=dx*r[0]+dy*r[1]+dz*r[2], Y=dx*u[0]+dy*u[1]+dz*u[2]; return [W/2+X/F*fx,H/2-Y/F*fx,-1/F]; };
+  const dN=ox*f[0]+oy*f[1]+oz*f[2]+near, polys=[];
+  for(const q of opt.polys||peScenePolys(s)){ const P=peClipPlane(q.pts,f,dN); if(P.length>=3) polys.push({pts:P,rgb:q.rgb}); }
+  return peZRaster([],proj,W,H,{cam:[0,0],ce:1,color:()=>[0,0,0],polys,crease:.0015,seal:0});
+}
 function peBoxCorners(b){ const nx=-b.uy, ny=b.ux, h=b.l/2, q=b.t/2; return [[b.cx+b.ux*h+nx*q,b.cy+b.uy*h+ny*q],[b.cx+b.ux*h-nx*q,b.cy+b.uy*h-ny*q],[b.cx-b.ux*h-nx*q,b.cy-b.uy*h-ny*q],[b.cx-b.ux*h+nx*q,b.cy-b.uy*h+ny*q]]; }
 // 1 — a рисуется раньше b (b ближе к зрителю); -1 — наоборот; 0 — порядок не важен. view: {dx, dy — горизонтальное направление на зрителя (единичное), h — доля горизонтальной составляющей взгляда (cos угла места)}
 function peBefore(a,b,ca,cb,view){
