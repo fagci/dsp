@@ -7,7 +7,26 @@
 
 const pipToast=m=>{ try{ if(typeof showToast==='function') showToast(m); }catch(e){} };
 // что зеркалить: у узлов-картинок (камера, кадр) — сам кадр, а не холст узла со всеми полями и подписями вокруг него
-const PIP_SRC={ipcam:n=>n.img && n.capCv, camarch:n=>n.capCv, imgview:n=>n.tmp, vplayer:n=>typeof vpFrame==='function' && vpFrame(n)};
+// Спектр: водопад — отдельный WebGL-слой под канвой узла (saWfLayer), канва в его зоне прозрачна; для зеркала (PiP, плавающее окно, обои)
+// склеиваем слои в одну канву: слой перерисовываем и копируем в том же вызове (буфер WebGL после показа может быть пустым)
+function saFlat(n){
+  const cv=n.cv, g=n.wfGl, ov=n._ov; if(!cv) return null;
+  const gl=g && n.s && n.wfW && !g.gl.isContextLost();
+  if(!gl && !ov) return cv;                                   // водопад на самой канве, маркеров нет — отдаём её как есть
+  let m=n._flat; if(!m) m=n._flat=document.createElement('canvas');
+  const W=cv.pxW||cv.width, H=cv.pxH||cv.height, sy=H/cv.height, hs=Math.round((n._hs|0)*sy);
+  if(m.width!==W || m.height!==H){ m.width=W; m.height=H; }
+  const x=m.getContext('2d'); x.fillStyle='#000'; x.fillRect(0,0,W,H);
+  if(gl){
+    const [lo,hi]=saBounds(n);
+    const wf=saWfGlRender(g,n.wfW,n.wfH,lo,hi,!n.p.log); n._wfKey=null;     // _wfKey: следующий draw() сам перерисует слой
+    if(wf && H>hs) x.drawImage(wf,0,0,wf.width,wf.height,0,hs,W,H-hs);
+  }
+  x.drawImage(cv,0,0,W,H);
+  if(ov && ov.width && ov.height && ov.style.display!=='none') x.drawImage(ov,0,0,W,H);   // маркеры, шторки, подсказки — отдельная прозрачная канва поверх
+  return m;
+}
+const PIP_SRC={sa:saFlat, ipcam:n=>n.img && n.capCv, camarch:n=>n.capCv, imgview:n=>n.tmp, vplayer:n=>typeof vpFrame==='function' && vpFrame(n)};
 function pipSource(n){
   try{ const f=PIP_SRC[n.type], s=f && f(n); if(s && s.width && s.height) return s; }catch(e){}
   return n.cv;

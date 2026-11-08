@@ -10,6 +10,26 @@
 
 function floatSupported(){ try{ return !!(window.DspApp && typeof DspApp.floatShow==='function'); }catch(e){ return false; } }
 
+// Настройки окна (Settings → Overlay): прозрачность всего окна и подложка (цвет + прозрачность). Живут в LS, меняются на лету.
+const FL_DEF={op:92,bg:'#000000',ba:40};
+function floatCfg(){ let c={}; try{ c=JSON.parse(localStorage.getItem('dsp-float')||'{}')||{}; }catch(e){}
+  const k=(v,d,a,b)=>{ v=+v; return isFinite(v) ? Math.min(b,Math.max(a,v)) : d; };
+  return {op:k(c.op,FL_DEF.op,10,100), bg:/^#[0-9a-f]{6}$/i.test(c.bg)?c.bg:FL_DEF.bg, ba:k(c.ba,FL_DEF.ba,0,100)}; }
+function floatOpts(n){ const c=floatCfg();
+  const argb=(Math.round(c.ba*2.55)*0x1000000 + parseInt(c.bg.slice(1),16));      // 0xAARRGGBB как положительное число (JSON)
+  return {opacity:c.op/100, bg:argb, touch:floatWantsTouch(n)}; }
+function floatReapply(){ for(const [id,s] of flSt){ try{ DspApp.floatShow(id,JSON.stringify(floatOpts(s.n))); }catch(e){} } }
+function floatSettingsInit(){
+  if(!floatSupported()) return;
+  const $=i=>document.getElementById(i), tab=$('setFloatTab'), op=$('flOp'), bg=$('flBg'), ba=$('flBa'); if(!tab||!op||!bg||!ba) return;
+  tab.hidden=false;
+  const c=floatCfg(), paint=()=>{ $('flOpV').textContent=op.value+'%'; $('flBaV').textContent=ba.value+'%'; };
+  op.value=c.op; bg.value=c.bg; ba.value=c.ba; paint();
+  const save=()=>{ paint(); try{ localStorage.setItem('dsp-float',JSON.stringify({op:+op.value,bg:bg.value,ba:+ba.value})); }catch(e){} floatReapply(); };
+  for(const e of [op,bg,ba]) e.addEventListener('input',save);
+}
+if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',floatSettingsInit); else floatSettingsInit();
+
 const FL_MAXW=640, FL_MIN_MS=120;                      // ~8 кадров/с; нативный толкатель (FloatWin.pump) дёргает floatTick каждые ~150 мс, даже когда страница в фоне
 const flSt=new Map();                 // id узла → {n, scratch:{cv,cx,busy}, lastDraw}
 let flRaf=0;
@@ -62,7 +82,7 @@ function floatToggle(n){
   const id=String(n.id);
   if(flSt.has(id)){ floatOff(id); return; }
   let ok=false;
-  try{ ok=DspApp.floatCan() && DspApp.floatShow(id,JSON.stringify({opacity:.92,touch:floatWantsTouch(n)})); }catch(e){}
+  try{ ok=DspApp.floatCan() && DspApp.floatShow(id,JSON.stringify(floatOpts(n))); }catch(e){}
   if(!ok){ try{ DspApp.floatPerm(); }catch(e){} return; }                // разрешения нет — системный экран; после него нажать ещё раз
   const scratch={cv:document.createElement('canvas'),cx:null,busy:false}; scratch.cx=scratch.cv.getContext('2d');
   n._float=true; flSt.set(id,{n,scratch,lastDraw:0}); floatLoop();

@@ -381,7 +381,10 @@ body.noedit #bar .ed{display:none}
 
 /* ---- узел ---- */
 .node{position:absolute;left:0;top:0;width:212px;background:var(--panel);
-  border-radius:0;user-select:none;isolation:isolate;box-shadow:0 0 0 1px var(--line),0 2px 8px #0006}   /* углы не скруглены: пины стоят вплотную снаружи */
+  border-radius:0;user-select:none;isolation:isolate;box-shadow:0 2px 8px #0006}
+/* рамка — слоем внутри узла и выше пинов (z-index колонки 3): пин не перекрывает границу модуля, модуль «главнее» */
+.node:not(.lod-dot)::after{content:'';position:absolute;inset:0;z-index:4;pointer-events:none;box-shadow:inset 0 0 0 1px var(--line)}
+.dash-body .node::after{display:none}   /* углы не скруглены: пины стоят вплотную снаружи */
 /* ---- карточная вёрстка узлов ----
    Порты выведены из потока (position:absolute) и не отжимают контент —
    .mid занимает всю высоту от заголовка до низа, точки просто плавают поверх. */
@@ -438,7 +441,8 @@ body.noedit #bar .ed{display:none}
   /* В «Микрофоне» выбор устройства и соответствующая кнопка стоят парой. */
   #canvas #content .node[data-type="mic"] .io3>.mid>.prm.mic-button{
     grid-column:auto}
-.node.sel{box-shadow:0 0 0 1px var(--acc)}
+.node.sel{box-shadow:0 2px 8px #0006}
+.node.sel:not(.lod-dot)::after{box-shadow:inset 0 0 0 1px var(--acc)}
 .node.note{background:var(--note-bg)}
 .node.note .nhead{background:var(--note-bg)}
 #sel{position:absolute;border:1px solid var(--acc);background:#e0b23c18;pointer-events:none;display:none}
