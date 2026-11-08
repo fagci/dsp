@@ -94,8 +94,8 @@ fun main() {
     val pageB = Sock(port, "/")
     pageB.send("""{"t":"hello","role":"graph"}""")
     pageB.send("""{"t":"sub","names":["chan1"]}""")
-    page.sendBin(iq)
-    ok("page B takes page A's pin", until { pageB.bins.any { it.contentEquals(iq) } })
+    // подписка B обрабатывается в потоке сервера: шлём кадр, пока она не вступит в силу (на CI один кадр сразу после sub мог уйти раньше)
+    ok("page B takes page A's pin", until { page.sendBin(iq); pageB.bins.any { it.contentEquals(iq) } })
     ok("page A is not echoed its own frames", page.bins.none { it.contentEquals(iq) })
     ok("page B sees A's names in the list (not its own)", until { pageB.json("pins").any { it.getJSONArray("out").length() == 2 } })
 
