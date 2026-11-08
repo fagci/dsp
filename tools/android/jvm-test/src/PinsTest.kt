@@ -53,6 +53,7 @@ fun main() {
     val page = Sock(port, "/")
     page.send("""{"t":"hello","role":"graph"}""")
     page.send("""{"t":"pins","out":[{"name":"chan1","kind":"iq","fc":1e8,"sr":48000},{"name":"spec"}],"in":[{"name":"tune"}]}""")
+    ok("bridge reports its version to the page", until { page.json("bridge").any { it.getInt("ver") == 2 && it.getString("impl") == "android" } }, page.texts.toString())
     val cli = Sock(port, "/")
     cli.send("""{"t":"pins"}""")
     ok("client sees the pin list", until { cli.json("pins").any { it.getJSONArray("out").length() == 2 && it.getJSONArray("in").getJSONObject(0).getString("name") == "tune" } }, cli.texts.toString())

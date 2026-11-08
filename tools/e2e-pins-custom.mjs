@@ -25,6 +25,10 @@ await A.evaluate(async (url) => {
   window.__x = x; await Eng.start();
 }, url);
 await wait(1000);
+ok('page shows the bridge version', /node bridge v2/.test(await A.evaluate(() => __x.el.querySelector('.readout').textContent)), await A.evaluate(() => __x.el.querySelector('.readout').textContent));
+await A.evaluate(() => { __x.lk.bridge = null; __x.lk.openT -= 5000; });                    // как будто мост старый и версию не назвал
+await wait(1200);
+ok('an old bridge (no version) is called out on the node', /does not report its version/.test(await A.evaluate(() => __x.el.querySelector('.readout').textContent)));
 const cli = await new Promise((res) => { const w = new WebSocket(url + '/'); w.binaryType = 'arraybuffer'; w.msgs = []; w.onmessage = (e) => w.msgs.push(e.data); w.onopen = () => res(w); });
 cli.send(JSON.stringify({ t: 'sub', names: ['spec1'] }));                   // хочу получать «spec1» → у узла появится вход
 await wait(500);

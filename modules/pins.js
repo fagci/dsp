@@ -81,6 +81,7 @@ function pinsRecv(L,data){
   if(typeof data==='string'){
     let j; try{ j=JSON.parse(data); }catch(x){ return; }
     if(!j) return;
+    if(j.t==='bridge'){ L.bridge={ver:+j.ver||0,impl:String(j.impl||'')}; return; }
     if(j.t==='want' && Array.isArray(j.names)){
       L.all=j.names.includes('*'); L.want=new Set(j.names.map(String)); L.gen++;
       for(const nm of L.want) if(nm!=='*') pinsGrow(L,'send',nm);          // просят имя, которого у нас нет — вход для него
@@ -111,7 +112,7 @@ function pinsOpenWs(L){
   L.state='connecting…';
   let ws; try{ ws=new WebSocket(L.url); }catch(e){ L.state='error: '+e.message; return; }
   ws.binaryType='arraybuffer'; L.ws=ws;
-  ws.onopen=()=>{ L.state='connected'; ws.send(JSON.stringify({t:'hello',role:'graph'})); pinsAnnounce(L); };
+  ws.onopen=()=>{ L.state='connected'; L.openT=performance.now(); L.bridge=null; ws.send(JSON.stringify({t:'hello',role:'graph'})); pinsAnnounce(L); };
   ws.onerror=()=>{ if(L.ws===ws && L.state!=='connected') L.state='no connection — is node tools/pin-bridge.mjs running?'; };
   ws.onclose=()=>{
     if(L.ws!==ws) return;
@@ -135,7 +136,7 @@ function pinsAcquire(n,kind,key,src){
   let L=PINS_LINKS.get(key);
   if(!L){
     L={kind,key,url:kind==='ws' ? src : '',rn:kind==='rtc' ? src : null,ws:null,state:'',want:new Set(),all:false,gen:0,refs:new Set(),timer:null,
-       rx:0,tx:0,drops:0,annDirty:false,growQ:new Set(),ev:-1};
+       rx:0,tx:0,drops:0,annDirty:false,growQ:new Set(),ev:-1,bridge:null,openT:0};
     PINS_LINKS.set(key,L);
     if(kind==='rtc'){ L.state='waiting for the WebRTC link'; src.pnsH=d=>pinsRecv(L,d); }
   }
@@ -261,8 +262,10 @@ function pinsDraw(n){
     n.rateT=now;
   }
   const on=L && pinsReady(L);
-  const t=n.status+(on ? ' · '+(n.rate/1024).toFixed(0)+' KB/s'+(L.drops ? ' · dropped '+L.drops : '')+(n.dropped ? ' · lost '+n.dropped : '')+
-    (n.sNames.length ? ' · '+(L.all ? 'all' : L.want.size)+' subscribed' : '') : '')+(n.warn ? '\n⚠ '+n.warn : '');
+  const old=on && L.kind==='ws' && !L.bridge && now-L.openT>3000;      // мост не назвал версию: старый tools/pin-bridge.mjs или приложение без пинов
+  const t=n.status+(on && L.bridge ? ' · '+L.bridge.impl+' bridge v'+L.bridge.ver : '')+(on ? ' · '+(n.rate/1024).toFixed(0)+' KB/s'+(L.drops ? ' · dropped '+L.drops : '')+(n.dropped ? ' · lost '+n.dropped : '')+
+    (n.sNames.length ? ' · '+(L.all ? 'all' : L.want.size)+' subscribed' : '') : '')+(n.warn ? '\n⚠ '+n.warn : '')+
+    (old ? '\n⚠ the bridge does not report its version — it is old: update tools/pin-bridge.mjs (git pull) or the DSP app; pages cannot see each other through it' : '');
   if(r.textContent!==t) r.textContent=t;
 }
 function pinsInit(n){
