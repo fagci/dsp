@@ -388,6 +388,7 @@ const PRESET_CATS={
   'Plan Editor: Scan Underlay → Walls → Auto-placed Cameras and Wi-Fi → SVG / DXF':'Maps & Locating',
   'Site Plan: Room from a Tape Measure → Plan Editor Walls and Wi-Fi':'Maps & Locating',
   'Site Plan: House with a Cellar, Two Floors and a Gable Roof → Wi-Fi Through the Slab':'Maps & Locating',
+  'Plan Editor: Wi-Fi with Reflections — Rays to a Receiver':'Maps & Locating',
   'Clinometer: Tree Height from the Phone Tilt → Site Plan':'Maps & Locating',
   'Signal Paths: Direct and Reflected Between Two Points':'Maps & Locating',
   'Flight Sim: Fly over Terrain (Joystick)':'Aircraft, Satellites & Telemetry',
@@ -8835,6 +8836,19 @@ rw.size.w=420; rw.size.h=560; applySize(rw);
 const sp=addNode('siteplan',960,210,{view:'plan',plan:'# the corners come from Room Walk'});
 sp.size.w=500; sp.size.h=480; applySize(sp);
 addEdge(or.id,'az',rw.id,'az'); addEdge(er.id,'dist',rw.id,'d'); addEdge(er.id,'go',rw.id,'go'); addEdge(rw.id,'lines',sp.id,'lines');
+markWiresDirty();
+});
+preset('Plan Editor: Wi-Fi with Reflections — Rays to a Receiver', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Indoors the signal comes not only straight through the walls but also bounced off them. Plan Editor «reflections» (image method): 0 — the direct ray only, 1 — plus one bounce off a wall face, 2 — plus two. Each bounce point must lie on the solid part of the face (an open door or a window lets the ray through instead), each leg of the path loses through the walls it crosses, and the bounce costs by the material: metal 1, concrete 5, glass 6, brick 7, aerated block 8, wood 9, drywall 11 dB. The paths add as powers (the phases average out over a 25 cm cell). '+
+  'On the «signal» layer the rays to a receiver are drawn: the direct one solid yellow, single bounces dashed blue, double ones dashed violet, the stronger the thicker; the readout gives the direct level and what the reflections add. Here the office behind two partitions gains a few dB from the bounces off the concrete shell. Order 2 is slower: while you drag, the map uses one bounce and finishes with two when you let go.'});
+nt.size.w=1180; nt.size.h=140; applySize(nt);
+const sp=addNode('siteplan',40,220,{view:'plan',plan:'# three rooms in a row, concrete outside, drywall partitions\nouter 0.30 concrete\ninner drywall\nroom Hall 6.00 4.00 6.00 4.00\nroom Bed 4.00 4.00 4.00 4.00\nroom Ofc 3.00 4.00 3.00 4.00\nwall Hall2-Hall3 Bed1-Bed4 0.10\nwall Bed2-Bed3 Ofc1-Ofc4 0.10\nHall1 at 0 0\nHall2 at 6 0\ndoor Hall2-Hall3 2.80 0.80\ndoor Bed2-Bed3 0.30 0.80\nwindow Hall4-Hall1 1.20 1.60 h 1.40 sill 0.85\nwindow Ofc2-Ofc3 1.00 1.20'});
+sp.size.w=480; sp.size.h=520; applySize(sp);
+const sc=peNew(); peAddAnt(sc,1.5,-2,{z:2.2,bw:360,eirp:20,f:5200,name:'AP 5 GHz'}); peAddRx(sc,12.4,-1.2,{z:1,gain:2,sens:-75,f:5200,name:'office'});
+const pe=addNode('planedit',560,220,{scene:JSON.stringify(sc),view:'plan',layer:'signal',refl:'2',snap:'0.1'});
+pe.size.w=680; pe.size.h=640; applySize(pe);
+addEdge(sp.id,'rec',pe.id,'rec');
 markWiresDirty();
 });
 preset('Site Plan: House with a Cellar, Two Floors and a Gable Roof → Wi-Fi Through the Slab', function(){

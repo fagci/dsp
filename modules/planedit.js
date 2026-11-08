@@ -263,10 +263,11 @@ function peShift(n,P,dx,dy){ // сдвиг вида на экранный век
 // ---------- расчёты: охват камер, уровень антенн, выходы ----------
 function peOrigin(n){ return {lat:+n.p.olat||0,lon:+n.p.olon||0,north:+n.p.north||0,alt:+n.p.oalt||0}; }
 function peRecalc(n){
+  const reflWant=+n.p.refl||0, reflUse=n.dragging ? Math.min(1,reflWant) : reflWant; n.heatPartial=reflUse<reflWant;   // пока тянут — одно отражение, после — сколько задано
   const s=n.sc, g=peGrid(s,+n.p.cell||.25);
   n.camCov=s.cams.length&&g ? peCamCoverage(s,g) : null;
-  n.antHeat=s.ants.some(a=>!peIsRx(a))&&g ? peAntHeat(s,g,{thr:+n.p.thr,f:+n.p.lfreq||0,zr:peLvZ(s,n.p.lv)+1}) : null;
-  n.links={}; n.minMargin=null; for(const a of s.ants) if(peIsRx(a)){ const r=peRxLevel(s,a); n.links[a.id]=r; if(r.from && (n.minMargin===null || r.margin<n.minMargin)) n.minMargin=r.margin; }
+  n.antHeat=s.ants.some(a=>!peIsRx(a))&&g ? peAntHeat(s,g,{thr:+n.p.thr,f:+n.p.lfreq||0,zr:peLvZ(s,n.p.lv)+1,refl:reflUse}) : null;
+  n.links={}; n.minMargin=null; const ro=+n.p.refl>0 ? {refl:+n.p.refl,faces:peFaces(s)} : {}; for(const a of s.ants) if(peIsRx(a)){ const r=peRxLevel(s,a,ro); n.links[a.id]=r; if(r.from && (n.minMargin===null || r.margin<n.minMargin)) n.minMargin=r.margin; }
   n.calcRev=n.rev; n.rasKey='';
   n.area=s.rooms.reduce((a,r)=>a+peRoomArea(s,r),0);
   n.overlaps=peOverlaps(s);
@@ -411,6 +412,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
           {n:'snap',t:'select',opts:['0','0.05','0.1','0.25','0.5','1'],d:'0.1',label:'snap to the grid, m (0 — off)'},
           {n:'ortho',t:'check',d:true,label:'walls snap to 15° steps'},
           {n:'lv',t:'select',opts:['all','-2','-1','0','1','2','3'],d:'all',label:'level: all (3D — the house above the ground with the roof, plan — the ground floor) · a number — that floor (3D — it and the ones below; 0 — ground, −1 — cellar); the signal is computed 1 m above its floor',fn:n=>{ n.rev=(n.rev||0)+1; redraw(n); }},
+          {n:'refl',t:'select',opts:['0','1','2'],d:'1',label:'reflections: 0 — the direct ray only · 1 — plus one bounce off a wall · 2 — plus two (slower); the powers of the paths add up, each bounce costs by the material (metal 1, concrete 5, glass 6, brick 7, block 8, wood 9, drywall 11 dB); the rays to a receiver are drawn on the «signal» layer',fn:n=>{ n.rev=(n.rev||0)+1; redraw(n); }},
           {n:'layer',t:'select',opts:['none','cameras','signal'],d:'none',label:'layer: cameras (green — seen, red — blind) · signal (antennas, dBm)'},
           {n:'thr',t:'range',min:-100,max:-30,step:1,d:-70,label:'signal threshold, dBm (below — dim)'},
           {n:'cell',t:'range',min:.1,max:1,step:.05,d:.25,label:'coverage cell, m'},
@@ -488,6 +490,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     for(const r of recList(I.rec)){ if(r && r.kind==='underlay' && r.bm){ const sig=JSON.stringify([r.H,r.up,r.w,r.h]); if(!n.under || n.under.sig!==sig){ n.under={bm:r.bm,w:r.w,h:r.h,H:r.H,up:r.up||0,sig,cv:null,b:null,err:''}; peUnderBuild(n); n.vw.fit=false; redraw(n); } else n.under.bm=r.bm; } }
     if(n.p.imp){ const rows=recList(I.rec).filter(r=>r && ((r.x!=null && r.y!=null && (r.name!=null||r.label!=null)) || r.kind==='plan poly' || r.kind==='plan opening' || r.kind==='plan walls')); if(rows.length){ rows.forEach(r=>{ if(r.name==null && r.label!=null) r.name=r.label; }); if(peImportPoints(n.sc,rows)){ peTouch(n); n.vw.fit=false; } } }
     const now=performance.now();
+    if(n.heatPartial && !n.dragging){ n.heatPartial=false; n.rev=(n.rev||0)+1; }
     if(n.calcRev!==n.rev && now-n.lastEdit>(n.dragging ? 180 : 60)){ peRecalc(n); redraw(n); }
     let rec=null; const every=+n.p.emit*1000;
     if(n.emitDue || (every>0 && n.recs.length && now-n.lastEmit>every)){ rec=n.recs.length ? n.recs : null; n.emitDue=false; n.lastEmit=now; }
@@ -558,6 +561,11 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     const hidPts=p.pts==='all' ? null : peHiddenPts(s);
     for(const q of s.pts){ if(hidPts && hidPts.has(q.id) && !(n.sel && n.sel.k==='pt' && n.sel.id===q.id)) continue; const A=P.pt(q.x,q.y,0), isSel=n.sel && n.sel.k==='pt' && n.sel.id===q.id; cx.fillStyle=isSel ? '#ffb74d' : '#7dff9a'; cx.strokeStyle='#000'; cx.lineWidth=1.5; cx.beginPath(); cx.arc(A[0],A[1],isSel ? 5.5 : 4,0,7); cx.stroke(); cx.fill();
       if(q.name){ cx.fillStyle=fg; cx.font='10px monospace'; cx.textAlign='left'; cx.fillText(q.name,A[0]+7,A[1]-6); } }
+    // лучи к приёмникам (слой «signal», отражения): прямой — сплошной, отражённые — пунктир; толще и ярче — сильнее
+    if(p.layer==='signal' && n.links) for(const a of s.ants){ const L=n.links[a.id]; if(!peIsRx(a) || !L || !L.paths) continue; const top=Math.max(...L.paths.map(q=>q.level));
+      for(const q of L.paths.slice().sort((u,v)=>u.level-v.level)){ const rel=Math.max(0,1+(q.level-top)/30); if(rel<=0) continue;
+        cx.strokeStyle=q.order===0 ? 'rgba(255,213,79,'+(.35+.6*rel)+')' : q.order===1 ? 'rgba(129,212,250,'+(.25+.6*rel)+')' : 'rgba(206,147,216,'+(.2+.6*rel)+')'; cx.lineWidth=.8+2.2*rel; cx.setLineDash(q.order ? [5,3] : []);
+        cx.beginPath(); q.pts.forEach((c,k)=>{ const A=P.pt(c[0],c[1],P.d3 ? c[2] : 0); k ? cx.lineTo(A[0],A[1]) : cx.moveTo(A[0],A[1]); }); cx.stroke(); } cx.setLineDash([]); }
     // линейка
     if(n.ruler){ const a=P.pt(n.ruler.a[0],n.ruler.a[1],0); cx.fillStyle='#ffd54f'; cx.beginPath(); cx.arc(a[0],a[1],3.5,0,7); cx.fill();
       if(n.ruler.b){ const b=P.pt(n.ruler.b[0],n.ruler.b[1],0), d=Math.hypot(n.ruler.b[0]-n.ruler.a[0],n.ruler.b[1]-n.ruler.a[1]);
@@ -609,7 +617,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     L.push(s.pts.length+' points · '+s.walls.length+' walls · '+s.objs.length+' objects · '+s.cams.length+' camera'+(s.cams.length===1 ? '' : 's')+' · '+s.ants.length+' antenna'+(s.ants.length===1 ? '' : 's')+(s.rooms.length ? ' · rooms '+n.area.toFixed(1)+' m²' : ''));
     if(n.under && n.under.err) L.push('⚠ '+n.under.err);
     if(n.overlaps && n.overlaps.length) L.push('⚠ '+n.overlaps.length+' object'+(n.overlaps.length===1 ? '' : 's')+' go through a wall ('+n.overlaps.slice(0,3).map(o=>{ const ob=s.objs.find(q=>q.id===o.obj); return ob ? (ob.name||ob.type) : o.obj; }).join(', ')+'): move them or turn them — the 3D picture and the plan are wrong there (a box’s width runs along the north at rotation 0)');
-    for(const a of s.ants) if(peIsRx(a)){ const r=n.links && n.links[a.id]; L.push('receiver '+a.name+' ('+(a.f>=1000 ? a.f/1000+' GHz' : a.f+' MHz')+'): '+(r && r.from ? r.level.toFixed(1)+' dBm from '+r.name+', margin '+(r.margin>=0 ? '+' : '')+r.margin.toFixed(1)+' dB over '+a.sens+' dBm' : 'no transmitter on this frequency')); }
+    for(const a of s.ants) if(peIsRx(a)){ const r=n.links && n.links[a.id]; L.push('receiver '+a.name+' ('+(a.f>=1000 ? a.f/1000+' GHz' : a.f+' MHz')+'): '+(r && r.from ? r.level.toFixed(1)+' dBm from '+r.name+', margin '+(r.margin>=0 ? '+' : '')+r.margin.toFixed(1)+' dB over '+a.sens+' dBm'+(r.paths && r.paths.length>1 ? ' · direct '+r.paths[0].level.toFixed(1)+' dBm + '+(r.paths.length-1)+' reflected (+'+(r.level-r.paths[0].level).toFixed(1)+' dB)' : '') : 'no transmitter on this frequency')); }
     if(n.camCov) L.push('cameras see '+(100*n.camCov.cover).toFixed(0)+'% of '+(s.rooms.length ? 'the rooms' : 'the area')+' ('+n.camCov.seen.toFixed(1)+' of '+n.camCov.total.toFixed(1)+' m², blind '+(n.camCov.total-n.camCov.seen).toFixed(1)+' m², by two or more '+n.camCov.multi.toFixed(1)+' m²)');
     if(n.antHeat) L.push('signal above '+p.thr+' dBm in '+(100*n.antHeat.share).toFixed(0)+'% · mean '+n.antHeat.mean.toFixed(0)+' dBm, weakest '+n.antHeat.min.toFixed(0)+' dBm');
     if(!n.sel && p.tool==='select') L.push('tap an item to select it: a strip with its parameters (thickness, height, length lock, field of view, power, frequency…) appears at the bottom of the canvas; drag the arrows on it to move it (the body itself is never dragged by accident), ↶ ↷ in the toolbar undo');

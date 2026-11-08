@@ -3,7 +3,7 @@
 import vm from 'node:vm'; import fs from 'node:fs'; import path from 'node:path'; import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Array,String,Number,Object,JSON,Set,Map,Float32Array,Uint8Array,isFinite,Infinity});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peHistNew,peHistCommit,peHistUndo,peHistRedo,peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peOverlaps,peAddRx,peRxLevel,peMoveWall,peZRaster,peBoxCorners,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints,peSnapFace,peHiddenPts,peLvShow};`,ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peHistNew,peHistCommit,peHistUndo,peHistRedo,peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peOverlaps,peAddRx,peRxLevel,peMoveWall,peZRaster,peBoxCorners,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints,peSnapFace,peHiddenPts,peLvShow,pePaths,peFaces,peReflLoss};`,ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -200,4 +200,21 @@ ok('an empty scene has no bounds and no grid',K.peGrid(K.peNew())===null);
   near('a window: through the glass at 1.5 m',K.peWallLoss(q,0,5,10,5,2400,1.5,1.5),K.peOpenLoss('window',2400),1e-9);
   near('…through the wall under the sill at 0.5 m',K.peWallLoss(q,0,5,10,5,2400,.5,.5),K.peMatLoss('concrete',2400,.2),1e-9);
   const f=K.peLvShow('1',true), g=K.peLvShow('all',false), a3=K.peLvShow('all',true); ok('level filter: 3D shows the floor and below, the plan «all» — the ground floor, 3D «all» — above the ground',f(1) && f(0) && f(-1) && !f(2) && g(0) && g(undefined) && !g(1) && a3(2) && a3(0) && !a3(-1)); }
+// отражения: метод мнимых источников
+{ const q=K.peNew(); const c=[[0,0],[10,0],[10,8],[0,8]].map(([x,y])=>K.peAddPoint(q,x,y)); const W=[]; for(let i=0;i<4;i++) W.push(K.peAddWall(q,c[i].id,c[(i+1)%4].id,{t:.2,h:2.7,mat:'concrete'}));
+  const a=K.peAddAnt(q,3,4,{z:1.5,eirp:20,f:2400,bw:360});
+  near('refl 0 = the direct ray (the old level)',K.peAntLevel(q,a,7,4,1.5,{refl:0}),K.peAntLevel(q,a,7,4,1.5),1e-12);
+  const P1=K.pePaths(q,a,7,4,1.5,{refl:1});
+  ok('a closed room: 4 single bounces (one off every wall)',P1.filter(p=>p.order===1).length===4,P1.length);
+  const back=P1.find(p=>p.order===1 && Math.abs(p.pts[1][0]-9.9)<1e-9);
+  near('bounce off the far wall: unfolded length 6.9 + 2.9, minus the concrete reflection loss',back.level,20-K.peFspl(9.8,2400)-K.peReflLoss('concrete'),1e-9);
+  ok('the bounce point is on the inner face of the wall',back && Math.abs(back.pts[1][1]-4)<1e-9);
+  const sum=K.peAntLevel(q,a,7,4,1.5,{refl:1}), dir=P1[0].level; near('levels add as powers',sum,10*Math.log10(P1.reduce((t,p)=>t+Math.pow(10,p.level/10),0)),1e-9); ok('…so reflections only add',sum>dir);
+  ok('second order adds more paths',K.pePaths(q,a,7,4,1.5,{refl:2}).filter(p=>p.order===2).length>0);
+  K.peAddObj(q,'door',{wall:W[1].id,u:.5,w:2,h:2.1,sill:0});
+  ok('an open door does not reflect',!K.pePaths(q,a,7,4,1.5,{refl:1}).some(p=>p.order===1 && Math.abs(p.pts[1][0]-9.9)<1e-9));
+  ok('…but the wall above it does (the ray at 2.5 m)',K.pePaths(q,{...a,z:2.5},7,4,2.5,{refl:1}).some(p=>p.order===1 && Math.abs(p.pts[1][0]-9.9)<1e-9));
+  W[0].mat='metal'; const m=K.pePaths(q,a,7,4,1.5,{refl:1}).find(p=>p.order===1 && Math.abs(p.pts[1][1]-.1)<1e-9), cc=K.pePaths(q,a,7,4,1.5,{refl:1}).find(p=>p.order===1 && Math.abs(p.pts[1][1]-7.9)<1e-9);
+  near('metal reflects 4 dB better than concrete (same geometry)',m.level-cc.level,K.peReflLoss('concrete')-K.peReflLoss('metal'),1e-9);
+  const out=K.peAddAnt(q,-5,4,{z:1.5,eirp:20,f:2400,bw:360}); const po=K.pePaths(q,out,5,6.5,1.5,{refl:1}); ok('no bounce off a face the source is behind (the inner face of the west wall); through the wall and off the east one — yes',!po.some(p=>p.order===1 && Math.abs(p.pts[1][0]-.1)<1e-9) && po.some(p=>p.order===1 && Math.abs(p.pts[1][0]-9.9)<1e-9)); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
