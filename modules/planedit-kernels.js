@@ -158,9 +158,9 @@ function peAntGain(a,dx,dy){ if(!(a.bw<360)) return 0; const off=Math.abs(peWrap
 // потери на стенах по пути a→(x,y) на частоте f (МГц), дБ: пересечение оси стены = материал × толщина / 10 см × (f / 2,4 ГГц)^k; проём — потери проёма
 // az, z — высоты концов луча (если заданы): стена считается, только если луч проходит через неё по высоте (этажи, проём — только в его пределах);
 // перекрытия (s.slabs) между az и z добавляют свои потери там, где луч проходит сквозь их контур
-function peWallLoss(s,ax,ay,x,y,f=2400,az,z){
+function peWallLoss(s,ax,ay,x,y,f=2400,az,z,skip){
   let loss=0; const h3=isFinite(az) && isFinite(z);
-  for(const w of s.walls){
+  for(const w of s.walls){ if(skip && (w.id===skip || (skip.has && skip.has(w.id)))) continue;
     const [p,q]=peWallEnds(s,w), t=peSegT(ax,ay,x,y,[p.x,p.y,q.x,q.y]); if(t<0) continue;
     const hz=h3 ? az+(z-az)*t-(w.z0||0) : NaN; if(h3 && (hz<0 || hz>w.h)) continue;
     const hx=ax+(x-ax)*t, hy=ay+(y-ay)*t, L=Math.hypot(q.x-p.x,q.y-p.y)||1, u=Math.hypot(hx-p.x,hy-p.y)/L; let open=null;
@@ -171,8 +171,47 @@ function peWallLoss(s,ax,ay,x,y,f=2400,az,z){
     if(peInPoly(sl.poly,ax+(x-ax)*k,ay+(y-ay)*k)) loss+=peMatLoss(sl.mat||'concrete',f,sl.t||.25); }
   return loss;
 }
-// уровень сигнала антенны в точке, дБм (приёмник на высоте zr)
-function peAntLevel(s,a,x,y,zr=1){
+// ---------- отражения (метод мнимых источников) ----------
+// потери на отражение от грани, дБ (|Γ|² типичных стройматериалов на 1–6 ГГц): металл почти зеркало, гипсокартон — слабо
+const PE_REFL={brick:7,concrete:5,block:8,drywall:11,wood:9,glass:6,metal:1};
+const peReflLoss=mat=>PE_REFL[mat]??8;
+// отражающие грани: у каждой стены две — по обе стороны оси на t/2; n — наружу от стены на эту сторону
+function peFaces(s){ const F=[]; for(const w of s.walls){ const [a,b]=peWallEnds(s,w), L=Math.hypot(b.x-a.x,b.y-a.y); if(L<.05) continue; const ux=(b.x-a.x)/L, uy=(b.y-a.y)/L;
+  for(const sg of [1,-1]){ const nx=-uy*sg, ny=ux*sg, ox=a.x+nx*w.t/2, oy=a.y+ny*w.t/2; F.push({w,ax:ox,ay:oy,bx:ox+ux*L,by:oy+uy*L,ux,uy,nx,ny,L}); } } return F; }
+const peFaceD=(f,x,y)=>(x-f.ax)*f.nx+(y-f.ay)*f.ny;
+const peMirror=(f,x,y)=>{ const d=peFaceD(f,x,y); return [x-2*d*f.nx,y-2*d*f.ny]; };
+// точка P на грани f по лучу из мнимого источника (ix,iy) в (x,y): [px,py,u] или null
+function peFaceHit(f,ix,iy,x,y){ const t=peSegT(ix,iy,x,y,[f.ax,f.ay,f.bx,f.by]); if(t<0) return null; const px=ix+(x-ix)*t, py=iy+(y-iy)*t; return [px,py,((px-f.ax)*f.ux+(py-f.ay)*f.uy)/f.L]; }
+// отражает ли грань в этой точке по высоте: стена есть (не выше / не ниже её) и это не проём (дверь / окно пропускают)
+function peFaceSolid(s,f,u,z){ const w=f.w, zr=z-(w.z0||0); if(zr<0 || zr>w.h) return false;
+  for(const o of s.objs) if(o.wall===w.id && (o.type==='door'||o.type==='window') && Math.abs(u-o.u)*f.L<=o.w/2 && zr>=(o.sill||0) && zr<=(o.sill||0)+o.h) return false; return true; }
+// пути антенна → точка: прямой и отражения до opt.refl (0…2) порядка. → [{level, order, pts:[[x,y,z]…]}]; уровни — дБм каждого пути
+function pePaths(s,a,x,y,zr=1,opt={}){
+  const f0=a.f, dx=x-a.x, dy=y-a.y, out=[];
+  const direct=a.eirp+peAntGain(a,dx,dy)-peFspl(Math.hypot(dx,dy,a.z-zr),f0)-peWallLoss(s,a.x,a.y,x,y,f0,a.z,zr);
+  out.push({level:direct,order:0,pts:[[a.x,a.y,a.z],[x,y,zr]]});
+  const ord=opt.refl|0; if(ord<1) return out;
+  const F=opt.faces||peFaces(s), floor=Math.max(direct,-200)-(opt.cut??40);   // пути слабее прямого на cut дБ не считаем (их вклад < 0,01 %)
+  const legs=(P,skips)=>{ let L=0; for(let i=0;i+1<P.length;i++) L+=peWallLoss(s,P[i][0],P[i][1],P[i+1][0],P[i+1][1],f0,P[i][2],P[i+1][2],skips[i]); return L; };
+  for(const f of F){ if(peFaceD(f,a.x,a.y)<=0 || peFaceD(f,x,y)<=0) continue;
+    const [ix,iy]=peMirror(f,a.x,a.y), h=peFaceHit(f,ix,iy,x,y); if(!h) continue;
+    const d1=Math.hypot(h[0]-a.x,h[1]-a.y), d2=Math.hypot(x-h[0],y-h[1]), D=d1+d2, zP=a.z+(zr-a.z)*d1/(D||1); if(!peFaceSolid(s,f,h[2],zP)) continue;
+    let lv=a.eirp+peAntGain(a,h[0]-a.x,h[1]-a.y)-peFspl(Math.hypot(D,a.z-zr),f0)-peReflLoss(f.w.mat); if(lv<floor) continue;
+    const P=[[a.x,a.y,a.z],[h[0],h[1],zP],[x,y,zr]]; lv-=legs(P,[f.w.id,f.w.id]); if(lv>=floor) out.push({level:lv,order:1,pts:P}); }
+  if(ord>=2) for(const f1 of F){ if(peFaceD(f1,a.x,a.y)<=0) continue; const [i1x,i1y]=peMirror(f1,a.x,a.y);
+    for(const f2 of F){ if(f2.w===f1.w || peFaceD(f2,i1x,i1y)<=0 || peFaceD(f2,x,y)<=0) continue;
+      const [i2x,i2y]=peMirror(f2,i1x,i1y), h2=peFaceHit(f2,i2x,i2y,x,y); if(!h2) continue; const h1=peFaceHit(f1,i1x,i1y,h2[0],h2[1]); if(!h1) continue;
+      const d1=Math.hypot(h1[0]-a.x,h1[1]-a.y), d2=Math.hypot(h2[0]-h1[0],h2[1]-h1[1]), d3=Math.hypot(x-h2[0],y-h2[1]), D=d1+d2+d3;
+      let lv=a.eirp+peAntGain(a,h1[0]-a.x,h1[1]-a.y)-peFspl(Math.hypot(D,a.z-zr),f0)-peReflLoss(f1.w.mat)-peReflLoss(f2.w.mat); if(lv<floor) continue;
+      const z1=a.z+(zr-a.z)*d1/D, z2=a.z+(zr-a.z)*(d1+d2)/D; if(!peFaceSolid(s,f1,h1[2],z1) || !peFaceSolid(s,f2,h2[2],z2)) continue;
+      const P=[[a.x,a.y,a.z],[h1[0],h1[1],z1],[h2[0],h2[1],z2],[x,y,zr]]; lv-=legs(P,[f1.w.id,new Set([f1.w.id,f2.w.id]),f2.w.id]); if(lv>=floor) out.push({level:lv,order:2,pts:P}); } }
+  return out;
+}
+// сумма мощностей путей (некогерентно — фазы на сетке в 25 см усреднились бы в ноль), дБм
+const peSumDb=L=>{ let p=0; for(const v of L) p+=Math.pow(10,v/10); return p>0 ? 10*Math.log10(p) : -200; };
+// уровень сигнала антенны в точке, дБм (приёмник на высоте zr); opt.refl — порядок отражений (0 — только прямой путь)
+function peAntLevel(s,a,x,y,zr=1,opt){
+  if(opt && opt.refl>0) return peSumDb(pePaths(s,a,x,y,zr,opt).map(p=>p.level));
   const dx=x-a.x, dy=y-a.y, d3=Math.hypot(dx,dy,a.z-zr);
   return a.eirp+peAntGain(a,dx,dy)-peFspl(d3,a.f)-peWallLoss(s,a.x,a.y,x,y,a.f,a.z,zr);
 }
@@ -181,9 +220,10 @@ function peAntLevel(s,a,x,y,zr=1){
 function peRxLevel(s,rx,opt={}){
   const tol=opt.tol??Math.max(10,rx.f*.01), sens=rx.sens??-90; let best=null;
   for(const t of s.ants){ if(peIsRx(t) || Math.abs(t.f-rx.f)>tol) continue;
-    const dx=rx.x-t.x, dy=rx.y-t.y, d3=Math.hypot(dx,dy,t.z-rx.z);
-    const lv=t.eirp+peAntGain(t,dx,dy)-peFspl(d3,t.f)-peWallLoss(s,t.x,t.y,rx.x,rx.y,t.f,t.z,rx.z)+(rx.gain||0)+peAntGain(rx,-dx,-dy);
-    if(!best||lv>best.level) best={level:lv,from:t.id,name:t.name}; }
+    const dx=rx.x-t.x, dy=rx.y-t.y, d3=Math.hypot(dx,dy,t.z-rx.z); let lv, paths=null;
+    if(opt.refl>0){ paths=pePaths(s,t,rx.x,rx.y,rx.z,opt); for(const q of paths){ const pv=q.pts[q.pts.length-2]; q.level+=(rx.gain||0)+peAntGain(rx,pv[0]-rx.x,pv[1]-rx.y); } lv=peSumDb(paths.map(q=>q.level)); }   // диаграмма приёмника — по направлению прихода
+    else lv=t.eirp+peAntGain(t,dx,dy)-peFspl(d3,t.f)-peWallLoss(s,t.x,t.y,rx.x,rx.y,t.f,t.z,rx.z)+(rx.gain||0)+peAntGain(rx,-dx,-dy);
+    if(!best||lv>best.level) best={level:lv,from:t.id,name:t.name,paths}; }
   if(!best) return {level:-200,from:null,name:'',margin:-200-sens,ok:false};
   best.margin=best.level-sens; best.ok=best.margin>=0; return best;
 }
@@ -207,9 +247,9 @@ function peCamCoverage(s,g,zt=1){
 function peAntHeat(s,g,opt={}){
   g=g||peGrid(s); if(!g) return null;
   const tol=opt.f>0 ? Math.max(10,opt.f*.01) : 0, ants=(opt.id ? s.ants.filter(a=>a.id===opt.id) : s.ants).filter(a=>!peIsRx(a) && (!(opt.f>0) || Math.abs(a.f-opt.f)<=tol)), lvl=new Float32Array(g.nx*g.ny).fill(-200), polys=s.rooms.map(r=>peRoomPoly(s,r));
-  const thr=opt.thr??-70; let tot=0, ok=0, sum=0, mn=1e9;
+  const thr=opt.thr??-70, ro=opt.refl>0 ? {refl:opt.refl,faces:peFaces(s)} : null; let tot=0, ok=0, sum=0, mn=1e9;
   for(let j=0;j<g.ny;j++) for(let i=0;i<g.nx;i++){
-    const x=g.x0+(i+.5)*g.cell, y=g.y0+(j+.5)*g.cell; let best=-200; for(const a of ants){ const v=peAntLevel(s,a,x,y,opt.zr??1); if(v>best) best=v; } lvl[j*g.nx+i]=best;
+    const x=g.x0+(i+.5)*g.cell, y=g.y0+(j+.5)*g.cell; let best=-200; for(const a of ants){ const v=peAntLevel(s,a,x,y,opt.zr??1,ro); if(v>best) best=v; } lvl[j*g.nx+i]=best;
     if(!polys.length || polys.some(P=>peInPoly(P,x,y))){ tot++; sum+=best; if(best>=thr) ok++; if(best<mn) mn=best; }
   }
   const a=g.cell*g.cell; return {g,lvl,thr,total:tot*a,good:ok*a,share:tot ? ok/tot : 0,mean:tot ? sum/tot : -200,min:tot ? mn : -200};
