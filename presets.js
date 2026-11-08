@@ -545,6 +545,7 @@ const PRESET_CATS={
   'Call: voice, video, chat and files over WebRTC':'Network & IoT',
   'WebRTC: audio and video of the graph over a connection':'Network & IoT',
   'WebRTC Tunnel: Any Protocol Between Two Phones':'Network & IoT',
+  'Pins (custom): pins made by the other side (WebRTC or bridge)':'Network & IoT',
   'Game: Tic-Tac-Toe over WebRTC':'Games',
   'Game: Connect Four over WebRTC':'Games',
   'Game: Battleship over WebRTC':'Games',
@@ -9677,6 +9678,24 @@ addEdge(osc.id,'out',ao.id,'in'); addEdge(r.id,'link',ao.id,'rtc');
 addEdge(vs.id,'vid',vo.id,'vid'); addEdge(r.id,'link',vo.id,'rtc');
 addEdge(r.id,'link',ai.id,'rtc'); addEdge(ai.id,'out',dac.id,'L');
 addEdge(r.id,'link',vi.id,'rtc'); addEdge(vi.id,'img',fr.id,'img');
+markWiresDirty();
+});
+preset('Pins (custom): pins made by the other side (WebRTC or bridge)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The node «Pins (custom)» has no fixed pin list: the other side creates the pins. Its list is the parameter «pins» (">name" — input, graph → out; "<name" — output, in → graph), so it is saved with the patch and the wires stay.\n'+
+  'WebRTC (no bridge): do the same on the other device with the same preset. Wire WebRTC Data → rtc on both, make the offer / answer in WebRTC Data (or use its auto-connect room). The nodes announce their names to each other: wire something into the new input here and the other side gets an output of the same name, and the other way round. Only the wires are yours.\n'+
+  'Bridge: `node tools/pin-bridge.mjs`, transport «WebSocket», tick «connect». A client creates pins by subscribing to a new name ({"t":"sub","names":["spec1"]}), by sending a frame with a new name or by {"t":"make","name":"tune","dir":"pub"} (pub — the client provides it, sub — it wants to receive it). «let the other side create pins» off — fixed list only (at most 64 pins).\n'+
+  'Below: a test signal goes out as «chan» (IQ) and «spectrum»; whatever the other side sends as «tune» comes out of the output «tune» and is shown by the lamp.'});
+nt.size.w=840; nt.size.h=240; applySize(nt);
+const gen=addNode('iqGen',40,320,{sr:'256000',fc:100000000,mode:'carrier'});
+const sp=addNode('iqSpec',320,320,{size:'2048'});
+const rt=addNode('rtcdata',40,520,{});
+rt.size.w=300; rt.size.h=360; applySize(rt);
+const px=addNode('pinsx',420,520,{on:false,transport:'WebRTC',pins:'>chan, >spectrum, <tune',grow:true});
+px.size.w=320; px.size.h=240; applySize(px);
+const lp=addNode('lamps',800,520,{count:'1',thr:100000000,mode:'threshold',labels:'tune > 100 MHz'});
+addEdge(gen.id,'iq',sp.id,'in'); addEdge(gen.id,'iq',px.id,'chan'); addEdge(sp.id,'spec',px.id,'spectrum');
+addEdge(rt.id,'link',px.id,'rtc'); addEdge(px.id,'tune',lp.id,'in1');
 markWiresDirty();
 });
 preset('WebRTC Tunnel: Any Protocol Between Two Phones', function(){
