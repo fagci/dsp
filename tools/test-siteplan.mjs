@@ -80,4 +80,26 @@ R=K.spSolve('A at 10 5\nB at 10 15\nC at 0 15\nD at 0 5\npoly A B C D');
   const w=K.spFromFrame(f,3,2); near('round trip x',K.spToFrame(f,...w)[0],3,1e-12); near('round trip y',K.spToFrame(f,...w)[1],2,1e-12);
   const n=K.spGridFrame(R,'north'); ok('north frame is the plan frame',n.ux===1 && n.uy===0 && n.vy===1 && n.ox===0);
   const g=K.spGridLines(R,n,5,0); ok('grid lines cover the points at a nice step',g.step===5 && g.u[0]<=0 && g.u[g.u.length-1]>=10 && g.v[0]<=5 && g.v[g.v.length-1]>=15,JSON.stringify(g.u)+JSON.stringify(g.v)); }
+// зеркало без азимута: 4 стороны + угол — D по двум расстояниям встаёт по обе стороны диагонали AC; контур poly выбирает неперекрученный вариант
+for(const extra of ['D-A 3.74','D-A 3.74\nC-D-A 90','C-D-A 90']){
+  R=K.spSolve('A-B 4.48\nB-C 3.74\nC-D 4.46\nA-B-C 90\n'+extra+'\npoly A B C D');
+  near('room ('+extra.replace('\n',' + ')+'): area ≈ 4.47 × 3.74, not a folded quad',R.polys[0].area,16.72,.1);
+  ok('room ('+extra.replace('\n',' + ')+'): all measurements fit',R.rms<.1,R.rms);
+}
+// недоопределённо (3 стороны + угол): замеры всё равно выполнены, D помечена слабой
+R=K.spSolve('A-B 4.48\nB-C 3.74\nC-D 4.46\nA-B-C 90\npoly A B C D');
+ok('room, D free: measurements fit exactly',R.rms<.01,R.rms);
+ok('room, D free: D is flagged weak, a contour is drawn',P(R,'D').weak && R.polys[0].area>10,JSON.stringify(P(R,'D')));
+// «room»: обход по периметру без имён точек
+R=K.spSolve('room Zal 4.48 3.74 4.46 3.74');
+ok('room: no errors, 4 corners named Zal1…Zal4',R.errors.length===0 && R.names.join()==='Zal1,Zal2,Zal3,Zal4',JSON.stringify(R.errors)+R.names);
+near('room: area ≈ 16.7 m²',R.polys[0].area,16.72,.1);
+ok('room: no weak corners (right angles fix the shape)',R.pts.every(p=>!p.weak));
+R=K.spSolve('room K 5 4/? 5/? 4/? d 6.4031');
+near('room with only a diagonal (corners «/?»): 5×4 rectangle',R.polys[0].area,20,.05);
+R=K.spSolve('room T 3 4/? 5/?');
+near('room: a triangle 3-4-5 from the sides alone',R.polys[0].area,6,.01);
+R=K.spSolve('room 4 4 4'); ok('room without a name is an error',R.errors.length===1);
+R=K.spSolve('room Z 4 x 4'); ok('room with a bad side is an error',R.errors.length===1);
+R=K.spSolve('room A 4 3 4 3\nroom B 2 3 2 3\nA2-B1 0.4\nA2-A3-B1 180\nA2-B4 0.4'); ok('two rooms linked by a wall line',R.errors.length===0 && R.polys.length===2,JSON.stringify(R.errors));
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);

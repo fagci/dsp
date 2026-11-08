@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', HKEY='dsp-presets-hash', PRESET_VER=156;   // PRESET_VER — полная пересборка всех пресетов (дефолты модулей, формат патча); правки самих пресетов подхватываются по хэшу
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', HKEY='dsp-presets-hash', PRESET_VER=157;   // PRESET_VER — полная пересборка всех пресетов (дефолты модулей, формат патча); правки самих пресетов подхватываются по хэшу
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -386,6 +386,7 @@ const PRESET_CATS={
   'Room Walk: a Room from Wall Distances and Compass Azimuths → Site Plan':'Maps & Locating',
   'Plan Editor: Rooms in 3D with Cameras and Wi-Fi, Shared with Video Overlay':'Maps & Locating',
   'Plan Editor: Scan Underlay → Walls → Auto-placed Cameras and Wi-Fi → SVG / DXF':'Maps & Locating',
+  'Site Plan: Room from a Tape Measure → Plan Editor Walls and Wi-Fi':'Maps & Locating',
   'Clinometer: Tree Height from the Phone Tilt → Site Plan':'Maps & Locating',
   'Signal Paths: Direct and Reflected Between Two Points':'Maps & Locating',
   'Flight Sim: Fly over Terrain (Joystick)':'Aircraft, Satellites & Telemetry',
@@ -8833,6 +8834,19 @@ rw.size.w=420; rw.size.h=560; applySize(rw);
 const sp=addNode('siteplan',960,210,{view:'plan',plan:'# the corners come from Room Walk'});
 sp.size.w=500; sp.size.h=480; applySize(sp);
 addEdge(or.id,'az',rw.id,'az'); addEdge(er.id,'dist',rw.id,'d'); addEdge(er.id,'go',rw.id,'go'); addEdge(rw.id,'lines',sp.id,'lines');
+markWiresDirty();
+});
+preset('Site Plan: Room from a Tape Measure → Plan Editor Walls and Wi-Fi', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A room from a tape measure, then walls with thickness and the Wi-Fi through them. In Site Plan one line is a room: «room Hall 4.48 3.74 4.46 3.74» — the sides in walking order; the corners are named Hall1…Hall4 by themselves (the first wall is Hall1-Hall2) and are 90° unless written: «3.74/92» — a 92° corner at the end of that side, «3.74/?» — not measured (then add a diagonal «d 5.8» = Hall1-Hall3). The long form works too and mixes with it: «A-B 4.48», «A-B-C 90», «poly A B C D»; four sides alone do not fix a room (it leans like a parallelogram), the free corner turns amber and the summary says what to add. '+
+  'The kitchen is tied to the hall across the 0.4 m wall by two thickness lines «Hall2-Kit1 0.40», «Hall3-Kit4 0.40» and one angle «Hall1-Hall2-Kit1 180» (its wall runs on in line with the hall’s). '+
+  'The points and the contour go to Plan Editor (rec): it builds a wall on every side and the room. Tap a wall to set its real thickness and material (new walls are 0.2 m brick); put an antenna from the canvas strip — its signal loses dB on every wall it crosses (layer «signal»). The tape measures the inner faces, while a wall in the editor is drawn on its centre line: for the next room share the corner names, for the outer size add the wall thickness.'});
+nt.size.w=1180; nt.size.h=150; applySize(nt);
+const sp=addNode('siteplan',40,230,{view:'plan',plan:'# tape along the inner faces (m); corners Hall1…Hall4, right angles unless «side/angle»\nroom Hall 4.48 3.74 4.46 3.74\nroom Kit 3.10 3.74 3.10 3.74\n# the kitchen behind the 0.4 m wall at Hall2, in line with the Hall1-Hall2 wall\nHall2-Kit1 0.40\nHall3-Kit4 0.40\nHall1-Hall2-Kit1 180'});
+sp.size.w=500; sp.size.h=480; applySize(sp);
+const pe=addNode('planedit',580,230,{view:'plan',layer:'signal',snap:'0.1'});
+pe.size.w=640; pe.size.h=560; applySize(pe);
+addEdge(sp.id,'rec',pe.id,'rec');
 markWiresDirty();
 });
 preset('Plan Editor: Rooms in 3D with Cameras and Wi-Fi, Shared with Video Overlay', function(){
