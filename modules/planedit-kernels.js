@@ -278,7 +278,8 @@ function peSnapFace(s,x,y,tol){
   return best;
 }
 // какой этаж показывать: sel — 'all' или номер; в плане 'all' — первый этаж (0), в 3D — все и крыша; номер в 3D — он и всё ниже (разрез)
-function peLvShow(sel,d3){ if(sel==='all' || sel==null) return d3 ? lv=>(lv||0)>=0 : lv=>(lv||0)===0;      // «all» в 3D — дом над землёй (подвал — при выборе −1 / 0: земля не непрозрачная) const k=+sel; return d3 ? lv=>(lv||0)<=k : lv=>(lv||0)===k; }
+// «all» в 3D — дом над землёй (подвал — при выборе −1 / 0: земля не непрозрачная)
+function peLvShow(sel,d3){ if(sel==='all' || sel==null) return d3 ? lv=>(lv||0)>=0 : lv=>(lv||0)===0; const k=+sel; return d3 ? lv=>(lv||0)<=k : lv=>(lv||0)===k; }
 const peLvZ=(s,sel)=>{ const L=(s.levels||[]).find(q=>q.idx===(sel==='all' ? 0 : +sel)); return L ? L.z : 0; };
 // служебные точки, которые не рисуются (при «points: auto»): концы стен из Site Plan и углы комнат, у которых нет своих стен
 function peHiddenPts(s){
