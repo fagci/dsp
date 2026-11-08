@@ -407,7 +407,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
           {n:'pname',t:'text',d:'',label:'point name',if:peOn('pt'),fn:n=>peApply(n,'pname')},
           {n:'wt',t:'range',min:.02,max:.8,step:.01,d:.2,label:'wall thickness, m (new walls take it too)',if:n=>n.selKind==='wall'||n.p.tool==='wall',fn:n=>peApply(n,'wt')},
           {n:'wh',t:'range',min:.5,max:6,step:.05,d:2.7,label:'wall height, m',if:n=>n.selKind==='wall'||n.p.tool==='wall',fn:n=>peApply(n,'wh')},
-          {n:'mat',t:'select',opts:PE_MATS,d:'brick',label:'wall material: signal loss per 10 cm at 2.4 GHz — brick 4, concrete 6, drywall 1.5, wood 2, glass 1, metal 20 dB; it grows with the frequency as f^k (brick 0.8, concrete 0.9, drywall 0.5, wood 0.6, glass 0.6, metal 0.1)',if:n=>n.selKind==='wall'||n.p.tool==='wall',fn:n=>peApply(n,'mat')},
+          {n:'mat',t:'select',opts:PE_MATS,d:'brick',label:'wall material: signal loss per 10 cm at 2.4 GHz — brick 4, concrete 6, aerated block 3, drywall 1.5, wood 2, glass 1, metal 20 dB; it grows with the frequency as f^k (brick 0.8, concrete 0.9, drywall 0.5, wood 0.6, glass 0.6, metal 0.1)',if:n=>n.selKind==='wall'||n.p.tool==='wall',fn:n=>peApply(n,'mat')},
           {n:'wlen',t:'num',d:0,label:'locked length, m (0 — free): the side keeps it while you drag the points',if:peOn('wall'),fn:n=>peApply(n,'wlen')},
           {n:'lockw',t:'button',label:'🔒 lock / unlock this side at its length',if:peOn('wall'),fn:n=>{ const w=peItem(n); if(w){ peLock(n.sc,w.id); setMod(n,'wlen',w.len||0); peTouch(n); } }},
           {n:'ow',t:'range',min:.1,max:6,step:.05,d:1,label:'width, m',if:peOn('obj'),fn:n=>peApply(n,'ow')},

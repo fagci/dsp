@@ -7,9 +7,9 @@
 
 const PE_D=Math.PI/180;
 // затухание стены, дБ на 10 см толщины: уровень сигнала на пути через стену = мат × толщина / 0,1 м
-const PE_MAT={brick:4,concrete:6,drywall:1.5,wood:2,glass:1,metal:20};
+const PE_MAT={brick:4,concrete:6,block:3,drywall:1.5,wood:2,glass:1,metal:20};          // block — газо- / пеноблок (ячеистый бетон)
 // частотная зависимость: потери = таблица (на 2,4 ГГц) × (f / 2,4 ГГц)^k; k — по материалу (эмпирика типа ITU-R P.2040: плотные материалы растут быстрее, металл почти не зависит)
-const PE_MATK={brick:.8,concrete:.9,drywall:.5,wood:.6,glass:.6,metal:.1};
+const PE_MATK={brick:.8,concrete:.9,block:.8,drywall:.5,wood:.6,glass:.6,metal:.1};
 const PE_OPEN_LOSS={door:3,window:2};                          // проём: тонкая дверь / стекло, дБ на 2,4 ГГц
 const PE_OPEN_K={door:.4,window:.6};
 const peFk=(f,k)=>Math.pow(Math.max(30,Math.min(100000,f||2400))/2400,k);
@@ -239,7 +239,7 @@ function peImportPoints(s,recs){
     const pre=String(r.id||'plan')+'|', keep=new Set();
     for(const q of r.walls){ const src=pre+q.id; keep.add(src); let w=s.walls.find(w=>w.src===src);
       if(!w){ const a=peAddPoint(s,+q.x1,+q.y1), b=peAddPoint(s,+q.x2,+q.y2); a.src=b.src=src; w=peAddWall(s,a.id,b.id,{t:+q.t,h:+q.h>0 ? +q.h : 2.7}); w.src=src; }
-      const [a,b]=peWallEnds(s,w); a.x=+q.x1; a.y=+q.y1; b.x=+q.x2; b.y=+q.y2; w.t=+q.t>0 ? +q.t : w.t; if(+q.h>0) w.h=+q.h; }
+      const [a,b]=peWallEnds(s,w); a.x=+q.x1; a.y=+q.y1; b.x=+q.x2; b.y=+q.y2; w.t=+q.t>0 ? +q.t : w.t; if(+q.h>0) w.h=+q.h; if(q.mat && PE_MAT[q.mat]!=null) w.mat=q.mat; }
     for(const w of s.walls.filter(w=>w.src && w.src.startsWith(pre) && !keep.has(w.src))){ s.walls=s.walls.filter(q=>q!==w); s.objs=s.objs.filter(o=>o.wall!==w.id); s.pts=s.pts.filter(p=>p.src!==w.src); }
     const okeep=new Set();
     (r.opens||[]).forEach((o,i)=>{ const w=s.walls.find(w=>w.src===pre+o.wall); if(!w) return; const src=pre+'o'+i+':'+o.wall, type=o.type==='door' ? 'door' : 'window'; okeep.add(src);

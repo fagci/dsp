@@ -15,6 +15,8 @@
      poly A B C D             контур — площадь и периметр
      room Hall … h 2.65 · poly … h 2.65 · height 2.7   высота потолка комнаты / по умолчанию для всех (уходит в высоту стен Plan Editor, объём)
      window A-B 1.20 1.40 [h 1.45] [sill 0.85]   окно в стене A-B: от угла A до ближнего края 1.20, ширина 1.40, высота, подоконник от пола (door — дверь, h 2.05, sill 0)
+     outer 0.45 [concrete] · inner drywall · material A-B glass   материалы: наружных стен, стен между комнатами, стены на стороне A-B (и «wall … 0.37 brick»);
+                              brick concrete block drywall wood glass metal (или кирпич бетон газоблок гипсокартон дерево стекло металл)
      outer 0.45               толщина наружных стен (0.4 по умолчанию); внутренние — по щели между комнатами (стены строятся снаружи от замера, spWalls)
      mirror                   отразить план слева направо (по рулетке и углам план не отличить от зеркального; с компасом / GPS не нужно)
      wall Hall2-Hall3 Kor4-Kor1 0.37 [shift 0]   стык через стену: Kor4-Kor1 параллельно Hall2-Hall3 по ту сторону стены 0.37, Kor4 напротив Hall2 (shift — сдвиг вдоль), Kor1 — в сторону Hall3
@@ -22,6 +24,10 @@
    Ядро чистое, без DOM: node tools/test-siteplan.mjs */
 
 const SP_D=Math.PI/180, SP_R=6371008.8;
+// материалы стен (как в Plan Editor) и русские названия
+const SP_MAT={brick:'brick',concrete:'concrete',block:'block',drywall:'drywall',wood:'wood',glass:'glass',metal:'metal',
+  'кирпич':'brick','бетон':'concrete','газоблок':'block','пеноблок':'block','блок':'block','гипсокартон':'drywall','гкл':'drywall','дерево':'wood','брус':'wood','стекло':'glass','металл':'metal'};
+const spMat=t=>SP_MAT[String(t||'').toLowerCase()]||null;
 
 function spFrame(lat0,lon0){
   const ky=SP_R*SP_D, kx=ky*Math.cos(lat0*SP_D);
@@ -39,7 +45,7 @@ function spTilt(d,alphaDeg,eye=0,sd=0.03,sa=1){
 function spNum(t){ if(t==null) return NaN; const s=String(t).replace(/^[±~]|^\+-/,'').replace(/(\d),(\d)/,'$1.$2'); return /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(s) ? +s : NaN; }
 function spParse(text,o={}){
   const sd=o.sd>0 ? o.sd : 0.03, sa=o.sa>0 ? o.sa : 2, sg=o.sg>0 ? o.sg : 5, eye0=o.eye||0;
-  const names=[], idx=new Map(), obs=[], polys=[], errors=[], opens=[]; let mirror=false, height=NaN, outer=NaN;
+  const names=[], idx=new Map(), obs=[], polys=[], errors=[], opens=[]; let mirror=false, height=NaN, outer=NaN, outerMat=null, innerMat=null; const edgeMat=[];
   const pt=n=>{ if(!idx.has(n)){ idx.set(n,names.length); names.push(n); } return idx.get(n); };
   const one=(raw,li,depth=0)=>{
     const line=raw.trim(); if(!line) return;
@@ -54,7 +60,9 @@ function spParse(text,o={}){
     if(/^mirror$/i.test(T[0])){ mirror=!mirror; return; }                                   // зеркало: длины и углы его не различают
     if(/^wall$/i.test(T[0])){                                                                // стык комнат через стену: «wall A-B C-D 0.37 [shift s]»
       const h1=(T[1]||'').split('-'), h2=(T[2]||'').split('-'), t=spNum(T[3]); let sh=0;
-      { const i=T.indexOf('shift'); if(i>=0){ sh=spNum(T[i+1]); if(!isFinite(sh)) return bad('bad shift'); } }
+      { const i=T.indexOf('shift'); if(i>=0){ sh=spNum(T[i+1]); if(!isFinite(sh)) return bad('bad shift'); T.splice(i,2); } }
+      { const i=T.findIndex((t,k)=>k>3 && spMat(t)); if(i>0){ const m=spMat(T[i]); T.splice(i,1); edgeMat.push({a:pt(h1[0]),b:pt(h1[1]),mat:m,li},{a:pt(h2[0]),b:pt(h2[1]),mat:m,li}); } }
+      if(T.length>4) return bad('wall: unknown «'+T[4]+'» (shift s, a material)');
       if(h1.length!==2 || h2.length!==2 || !(t>=0)) return bad('wall A-B C-D thickness [shift s] — C-D faces A-B across the wall, C opposite A');
       const a=pt(h1[0]), b=pt(h1[1]), c=pt(h2[0]), e=pt(h2[1]); if(a===b || c===e) return bad('same point');
       const s=sig??sd; obs.push({k:'wd',a,b,c,v:t,s,li},{k:'wd',a,b,c:e,v:t,s,li},{k:'wsh',a,b,c,v:sh,s,li,wall:{e}}); return; }
@@ -63,7 +71,9 @@ function spParse(text,o={}){
       if(hd.length!==2 || !(from>=0) || !(w>0)) return bad(kind+' A-B from width [h height] [sill height] — from: corner A to the near edge, m');
       for(let i=4;i<T.length;i+=2){ const k=T[i].toLowerCase(), v=spNum(T[i+1]); if((k!=='h' && k!=='sill') || !(v>=0) || (k==='h' && !(v>0))) return bad(kind+': unknown «'+T[i]+'» (h height, sill height)'); o[k]=v; }
       o.a=pt(hd[0]); o.b=pt(hd[1]); if(o.a===o.b) return bad('same point'); opens.push(o); return; }
-    if(/^outer$/i.test(T[0])){ const v=spNum(T[1]); if(!(v>0 && v<3)) return bad('outer needs the outer wall thickness, m'); outer=v; return; }
+    if(/^outer$/i.test(T[0])){ for(const t of T.slice(1)){ const v=spNum(t), m=spMat(t); if(v>0 && v<3) outer=v; else if(m) outerMat=m; else return bad('outer [thickness m] [material: '+Object.keys(SP_MAT).slice(0,7).join(' ')+']'); } return; }
+    if(/^inner$/i.test(T[0])){ const m=spMat(T[1]); if(!m || T.length>2) return bad('inner material — for the walls between rooms: '+Object.keys(SP_MAT).slice(0,7).join(' ')); innerMat=m; return; }
+    if(/^material$/i.test(T[0])){ const hd=(T[1]||'').split('-'), m=spMat(T[2]); if(hd.length!==2 || !m) return bad('material A-B '+Object.keys(SP_MAT).slice(0,7).join('|')+' — the wall on the side A-B of a room'); edgeMat.push({a:pt(hd[0]),b:pt(hd[1]),mat:m,li}); return; }
     if(/^height$/i.test(T[0])){ const v=spNum(T[1]); if(!(v>0)) return bad('height needs a number, m'); height=v; return; }     // высота потолка по умолчанию для всех комнат
     if(/^poly$/i.test(T[0])){ let h=NaN; { const i=T.findIndex((t,k)=>k>0 && /^h$/i.test(t)); if(i>0){ h=spNum(T[i+1]); if(!(h>0)) return bad('poly … h needs a height, m'); T.splice(i,2); } }
       const ids=T.slice(1).map(pt); if(ids.length<3){ bad('poly needs 3+ points'); return; } polys.push({ids,h}); return; }
@@ -94,7 +104,7 @@ function spParse(text,o={}){
   String(text||'').split('\n').forEach((raw0,li)=>raw0.replace(/#.*/,'').split(';').forEach(raw=>one(raw,li)));   // # — комментарий до конца строки; «;» — несколько замеров в строке
   { const seen=new Map(); for(const n of names){ const k=n.toLowerCase(); if(seen.has(k) && seen.get(k)!==n) errors.push({line:0,text:n,msg:'«'+seen.get(k)+'» and «'+n+'» are different points — names are case-sensitive'}); else seen.set(k,n); } }
   for(const pl of polys) if(!(pl.h>0) && height>0) pl.h=height;
-  return {names,obs,polys,errors,mirror,opens,outer};
+  return {names,obs,polys,errors,mirror,opens,outer,outerMat,innerMat,edgeMat};
 }
 
 // «room ИМЯ 4.48 3.74 4.46 3.74 [d 5.8] [d2 5.9]» — комната обходом по периметру: стороны по порядку, углы ИМЯ1, ИМЯ2… расставляются сами.
@@ -180,6 +190,18 @@ function spInit(P){
       if(!isFinite(r)) r=L;
       if(!placed[o.c]){ X[3*o.c]=cX; X[3*o.c+1]=cY; X[3*o.c+2]=X[3*o.a+2]; placed[o.c]=true; moved=true; }
       if(!placed[e]){ X[3*e]=X[3*o.c]+ux*r; X[3*e+1]=X[3*o.c+1]+uy*r; X[3*e+2]=X[3*o.c+2]; placed[e]=true; moved=true; }
+    }
+    for(const o of obs){                                         // то же в обратную сторону: стоит C-D, ставим A-B (A напротив C со сдвигом назад)
+      if(o.k!=='wsh' || !placed[o.c] || !placed[o.wall.e] || (placed[o.a] && placed[o.b])) continue;
+      const e=o.wall.e, cx0=X[3*o.c], cy0=X[3*o.c+1], L=Math.hypot(X[3*e]-cx0,X[3*e+1]-cy0)||1, ux=(X[3*e]-cx0)/L, uy=(X[3*e+1]-cy0)/L;
+      const t=(obs.find(q=>q.k==='wd' && q.a===o.a && q.c===o.c)||{v:0}).v;
+      let nx=-uy, ny=ux;
+      const room=P.polys.find(pl=>pl.ids.includes(o.c) && pl.ids.includes(e));
+      if(room){ let cx=0, cy=0, k=0; for(const i of room.ids) if(placed[i]){ cx+=X[3*i]; cy+=X[3*i+1]; k++; } if(k>=3 && (cx/k-cx0)*nx+(cy/k-cy0)*ny>0){ nx=-nx; ny=-ny; } }
+      let r=NaN; for(const q of obs) if((q.k==='d'||q.k==='h') && ((q.a===o.a&&q.b===o.b)||(q.a===o.b&&q.b===o.a))){ r=q.v; break; }
+      if(!isFinite(r)) r=L;
+      if(!placed[o.a]){ X[3*o.a]=cx0-ux*o.v+nx*t; X[3*o.a+1]=cy0-uy*o.v+ny*t; X[3*o.a+2]=X[3*o.c+2]; placed[o.a]=true; moved=true; }
+      if(!placed[o.b]){ X[3*o.b]=X[3*o.a]+ux*r; X[3*o.b+1]=X[3*o.a+1]+uy*r; X[3*o.b+2]=X[3*o.a+2]; placed[o.b]=true; moved=true; }
     }
     for(let p=0;p<N;p++){
       if(placed[p]) continue;
@@ -385,6 +407,10 @@ function spSolve(text,opt={}){
     out.opens.push({kind:o.kind,a:A.name,b:B.name,from:o.from,w:o.w,h:o.h,sill:o.sill,L});
   }
   out.outer=P.outer>0 ? P.outer : .4;
+  out.mats={outer:P.outerMat||'brick',inner:P.innerMat||P.outerMat||'brick',edge:{}};
+  for(const m of P.edgeMat||[]){ const side=P.polys.some(pl=>{ const k=pl.ids.length; return pl.ids.some((id,i)=>(id===m.a && pl.ids[(i+1)%k]===m.b) || (id===m.b && pl.ids[(i+1)%k]===m.a)); });
+    if(!side){ out.errors.push({line:m.li+1,text:P.names[m.a]+'-'+P.names[m.b],msg:'material: '+P.names[m.a]+'-'+P.names[m.b]+' is not a side of a room'}); continue; }
+    out.mats.edge[[P.names[m.a],P.names[m.b]].sort().join('|')]=m.mat; }
   out.ground=out.pts.length ? out.pts.map(p=>p.z) : [];
   out.edges=[]; { const seen=new Set(); for(const o of obs) if((o.k==='d'||o.k==='h'||o.k==='dz'||o.k==='az') && o.b!==undefined){ const key=Math.min(o.a,o.b)+'-'+Math.max(o.a,o.b); if(!seen.has(key)){ seen.add(key); out.edges.push([o.a,o.b]); } } }
   return out;
@@ -411,6 +437,7 @@ function spPoly(pts){
 // поэтому дверь между комнатами пробивает общую стену насквозь, как ни записана — со стороны любой комнаты.
 // → {walls:[{id,x1,y1,x2,y2,t,h,kind:'outer'|'inner'}], opens:[{wall,u (0…1 от x1,y1),w,h,sill,type}]}
 function spWalls(R,o={}){
+  const M=o.mats||R.mats||{}, mOut=M.outer||'brick', mIn=M.inner||mOut, eMat=e=>(M.edge||{})[[e.a,e.b].sort().join('|')];
   const outer=o.outer>0 ? o.outer : .4, maxGap=o.maxGap>0 ? o.maxGap : .8, P=n=>R.pts.find(p=>p.name===n), E=[], rooms=[];
   R.polys.forEach((pl,ri)=>{
     const V=pl.names.map(P), m=V.length; let a2=0; for(let i=0;i<m;i++){ const p=V[i], q=V[(i+1)%m]; a2+=p.x*q.y-q.x*p.y; }
@@ -444,7 +471,7 @@ function spWalls(R,o={}){
     if(lo<.01 && e.prev.convexEnd){ const t=e.prev.pieces[e.prev.pieces.length-1]?.t||0; lo-=t/Math.max(.3,e.prev.sinEnd); }
     if(hi>e.L-.01 && e.convexEnd){ const t=e.next.pieces[0]?.t||0; hi+=t/Math.max(.3,e.sinEnd); }
     const ox=e.nx*pc.t/2, oy=e.ny*pc.t/2, h=Math.max(e.h,pc.inner ? pc.f.h : 0);
-    const w={id:'spw:'+e.a+'-'+e.b+':'+k,x1:e.px+e.ux*lo+ox,y1:e.py+e.uy*lo+oy,x2:e.px+e.ux*hi+ox,y2:e.py+e.uy*hi+oy,t:+pc.t.toFixed(3),h:h>0 ? h : 0,kind:pc.inner ? 'inner' : 'outer',e,lo,hi};
+    const w={id:'spw:'+e.a+'-'+e.b+':'+k,x1:e.px+e.ux*lo+ox,y1:e.py+e.uy*lo+oy,x2:e.px+e.ux*hi+ox,y2:e.py+e.uy*hi+oy,t:+pc.t.toFixed(3),h:h>0 ? h : 0,kind:pc.inner ? 'inner' : 'outer',mat:eMat(e)||(pc.inner ? eMat(pc.f)||mIn : mOut),e,lo,hi};
     walls.push(w); key.set(pc,w);
   });
   // проём → стена в этом месте (своя или общая, построенная от соседа)

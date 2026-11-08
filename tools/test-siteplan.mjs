@@ -144,4 +144,18 @@ R=K.spSolve('room zal 4.48 3.74 4.46 3.74\nwindow zal1-zal2 1 1 x 2'); ok('openi
   ok('walls: the window goes into the outer wall',W.opens.some(o=>o.type==='window' && W.walls.find(w=>w.id===o.wall).kind==='outer'));
   const w0=W.walls.find(w=>w.id===doors[0].wall), Lw=Math.hypot(w0.x2-w0.x1,w0.y2-w0.y1), cy=w0.y1+(w0.y2-w0.y1)*doors[0].u;
   near('walls: the door centre is 1.4 m from Zal2',cy,-1.4,.02); }
+// материалы стен
+{ const t='Zal1 at 0 0\nZal1-Zal2 az 90\nroom Zal 4 3 4 3\nroom Kor 1.5 3 1.5 3\nroom Kit 2 3 2 3\nwall Zal2-Zal3 Kor1-Kor4 0.37\nwall Kor2-Kor3 Kit1-Kit4 0.12 гкл\nouter 0.5 бетон\ninner block\nmaterial Zal4-Zal1 glass';
+  R=K.spSolve(t); const W=K.spWalls(R,{outer:R.outer}), at=(x,y)=>W.walls.find(w=>{ const dx=w.x2-w.x1, dy=w.y2-w.y1, L=Math.hypot(dx,dy), u=((x-w.x1)*dx+(y-w.y1)*dy)/L, v=Math.abs((x-w.x1)*dy-(y-w.y1)*dx)/L; return u>=0 && u<=L && v<=w.t/2+1e-6; });
+  ok('materials: no errors',R.errors.length===0,JSON.stringify(R.errors));
+  ok('materials: outer walls are concrete (Russian name)',at(2,.25)?.mat==='concrete');
+  ok('materials: shared walls take «inner»',at(4.18,-1.5)?.mat==='block');
+  ok('materials: a «wall» line sets its wall',at(4+.37+1.5+.06,-1.5)?.mat==='drywall');
+  ok('materials: «material A-B» sets the wall of that side',at(-.25,-1.5)?.mat==='glass');
+  R=K.spSolve('room A 4 3 4 3\nmaterial A1-A3 glass'); ok('materials: a diagonal is not a side',R.errors.length===1);
+  R=K.spSolve('room A 4 3 4 3\nouter 0.4 cheese'); ok('materials: unknown material is an error',R.errors.length===1); }
+// порядок строк не важен: комната за стеной, упомянутая раньше, всё равно встаёт по свою сторону
+for(const t of ['material Kit2-Kit3 concrete\nroom Hall 4.48 3.74 4.46 3.74\nroom Kit 3.10 3.74 3.10 3.74\nwall Hall2-Hall3 Kit1-Kit4 0.40','wall Hall2-Hall3 Kit1-Kit4 0.40\nroom Kit 3.10 3.74 3.10 3.74\nroom Hall 4.48 3.74 4.46 3.74']){
+  R=K.spSolve(t); const W=K.spWalls(R,{});
+  ok('order of lines: no overlap, one shared wall ('+t.split('\n')[0]+')',R.rms<.2 && W.walls.filter(w=>w.kind==='inner').length===1,R.rms+' '+W.walls.map(w=>w.kind).join()); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
