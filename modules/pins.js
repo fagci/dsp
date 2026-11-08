@@ -6,12 +6,12 @@
    Pins (custom): оба направления в одном узле, а пины создаёт другая сторона — клиент моста ({t:'make'}, подписка на новое имя,
    первый кадр с новым именем) или узел Pins на другом устройстве по WebRTC (он объявляет свои имена). Список лежит в параметре pins
    («>имя» — вход узла, «<имя» — выход), поэтому сохраняется вместе с патчем; пин с готовыми проводами не пропадает.
-   Транспорт: WebSocket к мосту — tools/termux/bridge.mjs или приложению Android (ws://127.0.0.1:8765) или WebRTC (канал pins узла WebRTC Data, вход rtc): тогда на
+   Транспорт: WebSocket к мосту — tools/node/bridge.mjs (ws://127.0.0.1:8777), приложению Android или tools/termux/bridge.mjs (порт 8765) или WebRTC (канал pins узла WebRTC Data, вход rtc): тогда на
    другом конце такой же узел Pins, и мост не нужен. Кадры и сообщения управления одни и те же в обоих случаях.
    Одна связь на адрес / соединение; данные уходят, только когда на имя кто-то подписан (иначе нагрузка нулевая). Очереди
    ограничены: медленному клиенту выбрасывается старое, а не копится. Формат кадров и тест — pins-kernels.js, tools/test-pins.mjs. */
 
-const PINS_URL='ws://127.0.0.1:8765';              // порт по умолчанию у tools/termux/bridge.mjs и приложения Android
+const PINS_URL='ws://127.0.0.1:8777';              // мост на компьютере (tools/node/bridge.mjs); у приложения Android и termux-моста порт 8765
 const PINS_RETRY_MS=3000, PINS_BACKLOG=4<<20, PINS_QMAX=64;
 const PINS_COUNTS=['1','2','3','4','6','8','12','16'];
 const PINS_TRANSPORTS=['WebSocket (bridge)','WebRTC'];
@@ -118,7 +118,7 @@ function pinsOpenWs(L){
   let ws; try{ ws=new WebSocket(L.url); }catch(e){ L.state='error: '+e.message; return; }
   ws.binaryType='arraybuffer'; L.ws=ws;
   ws.onopen=()=>{ L.state='connected'; L.openT=performance.now(); L.bridge=null; ws.send(JSON.stringify({t:'hello',role:'graph'})); pinsAnnounce(L); };
-  ws.onerror=()=>{ if(L.ws===ws && L.state!=='connected') L.state='no connection — is the bridge running (node tools/termux/bridge.mjs --sources "" or the DSP app)?'; };
+  ws.onerror=()=>{ if(L.ws===ws && L.state!=='connected') L.state='no connection — is the bridge running (node tools/node/bridge.mjs, the DSP app or termux bridge.mjs) and is the port right?'; };
   ws.onclose=()=>{
     if(L.ws!==ws) return;
     L.ws=null; L.want=new Set(); L.all=false; L.gen++;
@@ -252,7 +252,7 @@ const RTC_PIN={n:'rtc',t:'rtc'};
 const pinsParams=(kind)=>[
   {n:'on',t:'check',d:false,label:{pinsout:'send: connect and publish the pins',pinsin:'receive: connect and take the pins',pinsx:'connect (the other side creates the pins)'}[kind]},
   {n:'transport',t:'select',opts:PINS_TRANSPORTS,d:PINS_TRANSPORTS[0],label:'transport: bridge (tools/termux/bridge.mjs or the DSP app: scripts, GNU Radio, other tabs) or WebRTC (wire WebRTC Data → rtc: the other end is a Pins node, no bridge)'},
-  {n:'url',t:'text',d:PINS_URL,dev:true,label:'bridge: ws://127.0.0.1:8765 (other device: ws://IP:8765/?token=…) — or @name from Settings → Devices'},
+  {n:'url',t:'text',d:PINS_URL,dev:true,label:'bridge: ws://127.0.0.1:8777 on a computer (tools/node/bridge.mjs), ws://phone:8765 on a phone (DSP app) (other device: ws://IP:PORT/?token=…) — or @name from Settings → Devices'},
   ...(kind==='pinsx'
     ? [{n:'pins',t:'text',d:'',fn:pinsResize,label:'pins: ">name" — input (graph → out), "<name" — output (in → graph), comma separated. The other side adds its own'},
        {n:'grow',t:'check',d:true,label:'let the other side create pins (subscribe to a new name, send a new name, {"t":"make"}, a Pins node over WebRTC)'}]
@@ -270,7 +270,7 @@ function pinsDraw(n){
   const old=on && L.kind==='ws' && !L.bridge && now-L.openT>3000;      // мост не назвал версию: старый tools/termux/bridge.mjs или приложение без пинов
   const t=n.status+(on && L.bridge ? ' · '+L.bridge.impl+' bridge v'+L.bridge.ver : '')+(on ? ' · '+(n.rate/1024).toFixed(0)+' KB/s'+(L.drops ? ' · dropped '+L.drops : '')+(n.dropped ? ' · lost '+n.dropped : '')+
     (n.sNames.length ? ' · '+(L.all ? 'all' : L.want.size)+' subscribed' : '') : '')+(n.warn ? '\n⚠ '+n.warn : '')+
-    (old ? '\n⚠ the bridge does not report its version — it is old: update tools/termux/bridge.mjs (git pull, restart it) or the DSP app; pages cannot see each other through it' : '');
+    (old ? '\n⚠ the bridge does not report its version — it is old: update the bridge (git pull and restart tools/node/bridge.mjs / tools/termux/bridge.mjs) or the DSP app; pages cannot see each other through it' : '');
   if(r.textContent!==t) r.textContent=t;
 }
 function pinsInit(n){

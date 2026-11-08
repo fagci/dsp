@@ -7,6 +7,9 @@
 //   node tools/node/bridge.mjs --host 0.0.0.0 --token секрет      для других устройств: ws://IP:8777/?token=секрет
 //   --hosts irc.libera.chat,*.example.org               ограничить, к каким серверам мост вообще ходит
 //
+// Он же — мост пинов (узлы Pins Out / Pins In / Pins (custom)): страницы получают пины друг друга, внешние клиенты читают и пишут —
+// ws://host:8777/raw/ИМЯ (только данные пина), GET /pins; подробности и протокол — в шапке tools/termux/bridge.mjs. Адрес в узле Pins — этот же.
+//
 // Он же — CORS-прокси для всех модулей страницы: в Settings → CORS proxy впиши
 //   http://127.0.0.1:8777/proxy?token=ТОКЕН&url={url}
 // GET / HEAD (с Range) на любой http(s)-адрес, потоком — годятся MJPEG, HLS, радио. Защита: Origin и токен, --hosts, а мост не ходит на
@@ -26,7 +29,7 @@ import os from 'node:os';
 import fs from 'node:fs';
 import {fileURLToPath} from 'node:url';
 import {parseArgs} from 'node:util';
-import {wsAccept, wsFrame, wsParser, originOk, DEFAULT_ORIGINS} from '../termux/bridge.mjs';
+import {wsAccept, wsFrame, wsParser, originOk, DEFAULT_ORIGINS, createPinRelay, makePinPeer} from '../termux/bridge.mjs';
 import {loadMsgr} from './load.mjs';
 import {prepareTls} from './tlsdir.mjs';
 import {createSerialHub, parseSerialSpec} from './serial.mjs';
@@ -173,6 +176,7 @@ export function createMsgrBridge(opt) {
   const M = loadMsgr();
   const io = o.io || nodeIo(o.hosts, o.outProxy);                 // o.outProxy — прокси по умолчанию (--proxy); сессия может прислать свой
   const clients = new Set();
+  const pins = createPinRelay(m => o.log(m));
   const serial = createSerialHub((o.serial || []).map(x => typeof x === 'string' ? parseSerialSpec(x) : x), o.log);
 
   let tlsInfo = null, tlsSrv = null;
@@ -182,6 +186,12 @@ export function createMsgrBridge(opt) {
     if (tlsInfo && tlsInfo.caPem && (u.pathname === '/ca.crt' || u.pathname === '/ca.pem')) {      // сертификат центра — публичный, его и ставят на устройство
       res.writeHead(200, {'content-type': 'application/x-x509-ca-cert', 'content-disposition': 'attachment; filename="dsp-bridge-ca.crt"', 'access-control-allow-origin': '*'});
       return res.end(tlsInfo.caPem);
+    }
+    if (u.pathname === '/pins') {                         // список пинов страниц: {out:[…], in:[…]}
+      if (!originOk(req.headers.origin, o.origins)) { res.writeHead(403); return res.end('origin not allowed (--origin)\n'); }
+      if (o.token && !sameToken(u.searchParams.get('token') || '', o.token)) { res.writeHead(401); return res.end('token\n'); }
+      res.writeHead(200, {'content-type': 'application/json', 'access-control-allow-origin': req.headers.origin || '*'});
+      return res.end(JSON.stringify(pins.list(null)));
     }
     if (u.pathname === '/serial') {                       // список портов для страницы и для глаз
       if (!originOk(req.headers.origin, o.origins)) { res.writeHead(403); return res.end('origin not allowed (--origin)\n'); }
@@ -226,16 +236,23 @@ export function createMsgrBridge(opt) {
     const sm = /^\/serial\/([^/]+)$/.exec(u.pathname);
     if (sm) return serialUpgrade(sock, sm[1], key, deny);
     sock.write('HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-accept: ' + wsAccept(key) + '\r\n\r\n');
-    const c = {sock, ses: null, dead: false};
+    const c = {sock, ses: null, dead: false, pin: null};
     clients.add(c);
+    const rawPin = /^\/raw\/(.+)$/.exec(u.pathname);          // /raw/ИМЯ: только данные пина, без приветствия
+    if (rawPin) { const p = c.pin = makePinPeer(c, req.headers.origin || ''); try { p.raw = decodeURIComponent(rawPin[1]); } catch (e) { p.raw = rawPin[1]; } pins.add(p); }
     const send = rec => { if (!c.dead) try { sock.write(wsFrame(JSON.stringify(rec))); } catch (e) { c.dead = true; } };
     c.net = createNetCmds({policy: netpol, send, log: o.log, enabled: o.net !== false});
     const stop = () => { if (c.ses) { try { c.ses.close(); } catch (e) { /* закрыт */ } c.ses = null; } };
-    const bye = () => { if (clients.delete(c)) { c.dead = true; stop(); c.net.closeAll(); } };
+    const bye = () => { if (clients.delete(c)) { c.dead = true; stop(); c.net.closeAll(); if (c.pin) pins.remove(c.pin); } };
     const par = wsParser({
+      onBin: b => { if (c.pin) pins.binary(c.pin, b); },
       onMsg: t => {
         let m; try { m = JSON.parse(t); } catch (e) { return; }
         if (m && typeof m.cmd === 'string') return void c.net.handle(m);       // команды приложения: ping, tcp.* (netcmd.mjs)
+        if (m && typeof m.t === 'string') {                                    // пины: первое такое сообщение делает соединение участником (tools/termux/bridge.mjs)
+          const fresh = !c.pin, p = c.pin || (c.pin = makePinPeer(c, req.headers.origin || '')); if (fresh) pins.add(p);
+          return void pins.text(p, m);
+        }
         if (m.op === 'open' && typeof m.proto === 'string' && m.cfg && typeof m.cfg === 'object') {
           stop();
           // мост сам переподключается; io и via задаём сами — страница не может подсунуть чужой транспорт
@@ -261,7 +278,7 @@ export function createMsgrBridge(opt) {
       onPing: p => { try { sock.write(wsFrame(p.toString(), 10)); } catch (e) { /* закрыт */ } },
     });
     sock.on('data', par); sock.on('close', bye); sock.on('error', bye);
-    send({ev: 'hello', ver: 1, host: os.hostname(), protos: ['nostr', 'ntfy', 'matrix', 'telegram', 'irc', 'xmpp', 'aprs', 'email'], cmds: o.net === false ? [] : ['ping', 'tcp.connect', 'tcp.send', 'tcp.close']});
+    if (!rawPin) send({ev: 'hello', ver: 1, host: os.hostname(), protos: ['nostr', 'ntfy', 'matrix', 'telegram', 'irc', 'xmpp', 'aprs', 'email'], cmds: o.net === false ? [] : ['ping', 'tcp.connect', 'tcp.send', 'tcp.close']});
   };
   const httpSrv = http.createServer(onRequest); httpSrv.on('upgrade', onUpgrade);
   // один порт — и ws:// / http://, и wss:// / https://: по первому байту (0x16 — TLS ClientHello) соединение отдаётся нужному серверу

@@ -3976,10 +3976,10 @@ markWiresDirty();
 });
 preset('USB SDR: Pins Out / In (channel IQ + spectrum to outside, OpenWebRX-style)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'Any pin of the graph to the outside, and from the outside in. Run `node tools/termux/bridge.mjs --sources ""` on the computer (port 8765; on a phone with the DSP app this bridge is already there), tick «send» / «receive» on both Pins nodes.\n'+
+const nt=addNode('note',40,40,{text:'Any pin of the graph to the outside, and from the outside in. Run `node tools/node/bridge.mjs` on the computer (port 8777; on a phone the DSP app is already such a bridge, port 8765), tick «send» / «receive» on both Pins nodes.\n'+
   'Pins Out publishes the names «chan» (IQ of the picked channel: shift + decimation, 64 kS/s) and «spectrum» (the wide spectrum of the SDR). Nothing is sent until a client subscribes, so the idle cost is zero.\n'+
   'Pins In takes «tune» (centre frequency, Hz → the SDR) and «offset» (channel offset, Hz → IQ Frequency Shift): the receiver is re-tuned by a wire, any numeric control of any node can be driven the same way.\n'+
-  'Clients: `websocat -b ws://127.0.0.1:8765/raw/chan | …` (float32 I,Q,I,Q…, no header); ws://127.0.0.1:8765/ with {"t":"sub","names":["chan","spectrum"]} (frames with a header: modules/pins-kernels.js); {"t":"set","name":"tune","v":100500000} re-tunes; GET http://127.0.0.1:8765/pins lists the names. Another DSP tab can take the same pins with Pins In.'});
+  'Clients: `websocat -b ws://127.0.0.1:8777/raw/chan | …` (float32 I,Q,I,Q…, no header); ws://127.0.0.1:8777/ with {"t":"sub","names":["chan","spectrum"]} (frames with a header: modules/pins-kernels.js); {"t":"set","name":"tune","v":100500000} re-tunes; GET http://127.0.0.1:8777/pins lists the names. Another DSP tab can take the same pins with Pins In.'});
 nt.size.w=820; nt.size.h=240; applySize(nt);
 const rx=addNode('rtlsdr',40,320,{sr:'1024000',auto:false,gainDb:30,demod:'WFM',freq:100000000});
 rx.size.w=320; rx.size.h=260; applySize(rx);
@@ -3988,9 +3988,9 @@ const sa=addNode('sa',720,320,{auto:true,floor:-90,top:-20,split:.4});
 sa.size.w=640; sa.size.h=300; applySize(sa);
 const sh=addNode('iqShift',420,520,{});
 const d1=addNode('iqDecim',420,660,{M:'16',cut:.4});
-const po=addNode('pinsout',720,660,{on:false,url:'ws://127.0.0.1:8765',count:'2',names:'chan, spectrum'});
+const po=addNode('pinsout',720,660,{on:false,url:'ws://127.0.0.1:8777',count:'2',names:'chan, spectrum'});
 po.size.w=300; po.size.h=200; applySize(po);
-const pi=addNode('pinsin',40,660,{on:false,url:'ws://127.0.0.1:8765',count:'2',names:'tune, offset'});
+const pi=addNode('pinsin',40,660,{on:false,url:'ws://127.0.0.1:8777',count:'2',names:'tune, offset'});
 pi.size.w=300; pi.size.h=200; applySize(pi);
 addEdge(rx.id,'iq',w0.id,'in'); addEdge(w0.id,'spec',sa.id,'spec'); addEdge(w0.id,'spec',po.id,'in2');
 addEdge(rx.id,'iq',sh.id,'in'); addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',po.id,'in1');
@@ -9684,7 +9684,7 @@ preset('Pins (custom): pins made by the other side (WebRTC or bridge)', function
 clearAll();
 const nt=addNode('note',40,40,{text:'The node «Pins (custom)» has no fixed pin list: the other side creates the pins. Its list is the parameter «pins» (">name" — input, graph → out; "<name" — output, in → graph), so it is saved with the patch and the wires stay.\n'+
   'WebRTC (no bridge): do the same on the other device with the same preset. Wire WebRTC Data → rtc on both, make the offer / answer in WebRTC Data (or use its auto-connect room). The nodes announce their names to each other: wire something into the new input here and the other side gets an output of the same name, and the other way round. Only the wires are yours.\n'+
-  'Bridge: `node tools/termux/bridge.mjs --sources ""` (or the DSP app on a phone), transport «WebSocket», tick «connect». A client creates pins by subscribing to a new name ({"t":"sub","names":["spec1"]}), by sending a frame with a new name or by {"t":"make","name":"tune","dir":"pub"} (pub — the client provides it, sub — it wants to receive it). «let the other side create pins» off — fixed list only (at most 64 pins).\n'+
+  'Bridge: `node tools/node/bridge.mjs` (or the DSP app on a phone), transport «WebSocket», tick «connect». A client creates pins by subscribing to a new name ({"t":"sub","names":["spec1"]}), by sending a frame with a new name or by {"t":"make","name":"tune","dir":"pub"} (pub — the client provides it, sub — it wants to receive it). «let the other side create pins» off — fixed list only (at most 64 pins).\n'+
   'Below: a test signal goes out as «chan» (IQ) and «spectrum»; whatever the other side sends as «tune» comes out of the output «tune» and is shown by the lamp.'});
 nt.size.w=840; nt.size.h=240; applySize(nt);
 const gen=addNode('iqGen',40,320,{sr:'256000',fc:100000000,mode:'carrier'});

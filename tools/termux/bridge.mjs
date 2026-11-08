@@ -237,6 +237,15 @@ export function createPinRelay(log = () => {}) {
   };
 }
 const PIN_MAX_BACKLOG = 4 << 20;                        // сколько байт может висеть в сокете медленного клиента, дальше кадры выбрасываем
+// участник ретрансляции для соединения c = {sock, dead}: общий для этого моста и tools/node/bridge.mjs
+export function makePinPeer(c, origin = '') {
+  const {sock} = c;
+  return {
+    graph: false, subs: new Set(), pins: {out: [], in: []}, raw: '', greeted: false, origin,
+    text: t => { if (!c.dead) try { sock.write(wsFrame(t)); } catch (e) { c.dead = true; } },
+    bin: b => { if (!c.dead && sock.writableLength < PIN_MAX_BACKLOG) try { sock.write(wsFrame(b, 2)); } catch (e) { c.dead = true; } },   // клиент не успевает — старое не копим
+  };
+}
 
 // ---------- мост ----------
 
@@ -329,11 +338,7 @@ export function createBridge(opt) {
     // источники: ?sources=a,b (пустой — никаких, так подключаются узлы Pins), /raw/ИМЯ — никаких; иначе --sources
     const raw = /^\/raw\/(.+)$/.exec(u.pathname);
     const c = {sock, subs: new Set(raw ? [] : u.searchParams.has('sources') ? u.searchParams.get('sources').split(',').map(x => x.trim()).filter(Boolean) : o.sources), dead: false, pin: null};
-    const peer = () => c.pin || (c.pin = {
-      graph: false, subs: new Set(), pins: {out: [], in: []}, raw: '', greeted: false, origin: req.headers.origin || '',
-      text: t => { if (!c.dead) try { sock.write(wsFrame(t)); } catch (e) { c.dead = true; } },
-      bin: b => { if (!c.dead && sock.writableLength < PIN_MAX_BACKLOG) try { sock.write(wsFrame(b, 2)); } catch (e) { c.dead = true; } },   // клиент не успевает — старое не копим
-    });
+    const peer = () => c.pin || (c.pin = makePinPeer(c, req.headers.origin || ''));
     clients.add(c);
     if (raw) { const p = peer(); try { p.raw = decodeURIComponent(raw[1]); } catch (e) { p.raw = raw[1]; } pins.add(p); }
     const bye = () => { if (clients.delete(c)) { c.dead = true; if (c.pin) pins.remove(c.pin); sync(); } };

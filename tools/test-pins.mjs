@@ -1,6 +1,7 @@
 // Пины наружу: кадры (modules/pins-kernels.js) и ретрансляция в tools/termux/bridge.mjs: node tools/test-pins.mjs
 import { loadKernels } from './netmock.mjs';
 import { createBridge } from './termux/bridge.mjs';
+import { createMsgrBridge } from './node/bridge.mjs';
 let bad = 0; const ok = (n, c, x = '') => { if (!c) { bad++; console.log('FAIL', n, x); } else console.log('ok  ', n); };
 const K = loadKernels(['pins-kernels.js'], 'pinEncode,pinDecode,pinClassify,pinFrames,pinSpecOf,pinName,pinNames,PinRing,PIN_SIG,PIN_IQ,PIN_SPEC,PIN_SPECR,PIN_JSON,PIN_KIND_NAME,pinxParse,pinxWith,pinxName');
 
@@ -87,50 +88,60 @@ ok('reject short / unknown kind / bad length', K.pinDecode(new Uint8Array(10)) =
   ok('Android app: ws:// to another host is allowed', run(true, 'https:')('ws://192.168.1.5:8765') === '');
 }
 
-// ---------- мост ----------
-const bridge = createBridge({ port: 0, sources: [], log: () => {} });
-const port = (await bridge.listen()).port;
-const open = (path) => new Promise((res, rej) => { const ws = new WebSocket('ws://127.0.0.1:' + port + path); ws.binaryType = 'arraybuffer'; ws.msgs = []; ws.onmessage = (e) => ws.msgs.push(e.data); ws.onopen = () => res(ws); ws.onerror = () => rej(new Error('ws error')); });
-const wait = async (f, ms = 1500) => { const t = Date.now(); while (!f() && Date.now() - t < ms) await new Promise((r) => setTimeout(r, 10)); return f(); };
-const txt = (ws) => ws.msgs.filter((m) => typeof m === 'string').map((m) => JSON.parse(m));
-const bin = (ws) => ws.msgs.filter((m) => typeof m !== 'string').map((m) => K.pinDecode(new Uint8Array(m)));
+// ---------- мост: один сценарий на оба моста (tools/termux/bridge.mjs и tools/node/bridge.mjs) ----------
+async function scenario(label, port) {
+  const open = (path) => new Promise((res, rej) => { const ws = new WebSocket('ws://127.0.0.1:' + port + path); ws.binaryType = 'arraybuffer'; ws.msgs = []; ws.onmessage = (e) => ws.msgs.push(e.data); ws.onopen = () => res(ws); ws.onerror = () => rej(new Error('ws error')); });
+  const wait = async (f, ms = 1500) => { const t = Date.now(); while (!f() && Date.now() - t < ms) await new Promise((r) => setTimeout(r, 10)); return f(); };
+  const txt = (ws) => ws.msgs.filter((m) => typeof m === 'string').map((m) => JSON.parse(m));
+  const bin = (ws) => ws.msgs.filter((m) => typeof m !== 'string').map((m) => K.pinDecode(new Uint8Array(m)));
 
-const page = await open('/');
-page.send(JSON.stringify({ t: 'hello', role: 'graph' }));
-page.send(JSON.stringify({ t: 'pins', out: [{ name: 'chan1', kind: 'iq', fc: 1e8, sr: 48000 }, { name: 'spec', kind: 'spec' }], in: [{ name: 'tune' }] }));
-const cli = await open('/');
-cli.send(JSON.stringify({ t: 'pins' }));
-ok('bridge reports its version to the page', await wait(() => txt(page).some((m) => m.t === 'bridge' && m.ver === 2 && m.impl === 'node')), JSON.stringify(txt(page)));
-ok('client sees the pin list', await wait(() => txt(cli).some((m) => m.t === 'pins' && m.out.length === 2 && m.in[0].name === 'tune')), JSON.stringify(txt(cli)));
-ok('page was told nothing wanted yet', await wait(() => txt(page).some((m) => m.t === 'want' && m.names.length === 0)));
+  const page = await open('/');
+  page.send(JSON.stringify({ t: 'hello', role: 'graph' }));
+  page.send(JSON.stringify({ t: 'pins', out: [{ name: 'chan1', kind: 'iq', fc: 1e8, sr: 48000 }, { name: 'spec', kind: 'spec' }], in: [{ name: 'tune' }] }));
+  const cli = await open('/');
+  cli.send(JSON.stringify({ t: 'pins' }));
+  ok(label + ': bridge reports its version to the page', await wait(() => txt(page).some((m) => m.t === 'bridge' && m.ver === 2 && m.impl === 'node')), JSON.stringify(txt(page)));
+  ok(label + ': client sees the pin list', await wait(() => txt(cli).some((m) => m.t === 'pins' && m.out.length === 2 && m.in[0].name === 'tune')), JSON.stringify(txt(cli)));
+  ok(label + ': page was told nothing wanted yet', await wait(() => txt(page).some((m) => m.t === 'want' && m.names.length === 0)));
 
-cli.send(JSON.stringify({ t: 'sub', names: ['chan1'] }));
-ok('page is told what is wanted', await wait(() => txt(page).some((m) => m.t === 'want' && m.names.join() === 'chan1')), JSON.stringify(txt(page)));
+  cli.send(JSON.stringify({ t: 'sub', names: ['chan1'] }));
+  ok(label + ': page is told what is wanted', await wait(() => txt(page).some((m) => m.t === 'want' && m.names.join() === 'chan1')), JSON.stringify(txt(page)));
 
-const iqFrame = K.pinFrames('chan1', K.pinClassify({ sr: 48000, fc: 1e8, chunks: [{ re: new Float32Array([1, 2]), im: new Float32Array([3, 4]) }] }, 0), 0)[0];
-page.send(iqFrame);
-page.send(K.pinEncode({ kind: K.PIN_JSON, name: 'other', seq: 0, data: 1 }));       // не подписаны — не придёт
-ok('subscribed pin arrives with header', await wait(() => bin(cli).length >= 1) && bin(cli)[0].name === 'chan1' && Array.from(bin(cli)[0].data).join() === '1,3,2,4');
-await new Promise((r) => setTimeout(r, 100));
-ok('unsubscribed pin does not', bin(cli).length === 1, String(bin(cli).length));
+  const iqFrame = K.pinFrames('chan1', K.pinClassify({ sr: 48000, fc: 1e8, chunks: [{ re: new Float32Array([1, 2]), im: new Float32Array([3, 4]) }] }, 0), 0)[0];
+  page.send(iqFrame);
+  page.send(K.pinEncode({ kind: K.PIN_JSON, name: 'other', seq: 0, data: 1 }));       // не подписаны — не придёт
+  ok(label + ': subscribed pin arrives with header', await wait(() => bin(cli).length >= 1) && bin(cli)[0].name === 'chan1' && Array.from(bin(cli)[0].data).join() === '1,3,2,4');
+  await new Promise((r) => setTimeout(r, 100));
+  ok(label + ': unsubscribed pin does not', bin(cli).length === 1, String(bin(cli).length));
 
-// raw: только данные
-const raw = await open('/raw/chan1');
-ok('raw join widens wanted', await wait(() => txt(page).some((m) => m.t === 'want' && m.names.join() === 'chan1')));
-page.send(iqFrame);
-ok('raw gets payload only', await wait(() => raw.msgs.length >= 1) && new Float32Array(raw.msgs[0]).join() === '1,3,2,4', String(raw.msgs[0] && raw.msgs[0].byteLength));
+  // raw: только данные
+  const raw = await open('/raw/chan1');
+  ok(label + ': raw join widens wanted', await wait(() => txt(page).some((m) => m.t === 'want' && m.names.join() === 'chan1')));
+  page.send(iqFrame);
+  ok(label + ': raw gets payload only', await wait(() => raw.msgs.length >= 1) && new Float32Array(raw.msgs[0]).join() === '1,3,2,4', String(raw.msgs[0] && raw.msgs[0].byteLength));
 
-// вход: set (текстом) и бинарный кадр доходят до графа
-cli.send(JSON.stringify({ t: 'set', name: 'tune', v: 100500000 }));
-ok('set → graph', await wait(() => bin(page).some((f) => f.name === 'tune' && f.data === 100500000)), JSON.stringify(bin(page)));
-cli.send(K.pinEncode({ kind: K.PIN_SIG, name: 'mic', seq: 0, sr: 48000, data: new Float32Array([0.25]) }));
-ok('binary → graph', await wait(() => bin(page).some((f) => f.name === 'mic' && f.data[0] === 0.25)));
+  // вход: set (текстом) и бинарный кадр доходят до графа
+  cli.send(JSON.stringify({ t: 'set', name: 'tune', v: 100500000 }));
+  ok(label + ': set → graph', await wait(() => bin(page).some((f) => f.name === 'tune' && f.data === 100500000)), JSON.stringify(bin(page)));
+  cli.send(K.pinEncode({ kind: K.PIN_SIG, name: 'mic', seq: 0, sr: 48000, data: new Float32Array([0.25]) }));
+  ok(label + ': binary → graph', await wait(() => bin(page).some((f) => f.name === 'mic' && f.data[0] === 0.25)));
 
-// '*' и уход клиента
-cli.send(JSON.stringify({ t: 'sub', names: ['*'] }));
-ok('* means everything', await wait(() => txt(page).some((m) => m.t === 'want' && m.names.join() === '*')));
-raw.close(); cli.close();
-ok('wanted shrinks when clients leave', await wait(() => txt(page).filter((m) => m.t === 'want').pop().names.length === 0));
+  // '*' и уход клиента
+  cli.send(JSON.stringify({ t: 'sub', names: ['*'] }));
+  ok(label + ': * means everything', await wait(() => txt(page).some((m) => m.t === 'want' && m.names.join() === '*')));
+  raw.close(); cli.close();
+  ok(label + ': wanted shrinks when clients leave', await wait(() => txt(page).filter((m) => m.t === 'want').pop().names.length === 0));
+
+
+  page.close();
+}
+
+const termux = createBridge({ port: 0, sources: [], log: () => {} });
+await scenario('bridge.mjs (termux)', (await termux.listen()).port);
+termux.close();
+const desk = createMsgrBridge({ port: 0, log: () => {} });
+await scenario('node/bridge.mjs', (await desk.listen()).port);
+desk.close();
 
 // токен и Origin
 {
@@ -139,6 +150,5 @@ ok('wanted shrinks when clients leave', await wait(() => txt(page).filter((m) =>
   ok('token required', !(await t('')) && await t('?token=x'));
   b2.close();
 }
-page.close(); bridge.close();
 console.log(bad ? bad + ' FAILED' : 'all ok');
 process.exit(bad ? 1 : 0);
