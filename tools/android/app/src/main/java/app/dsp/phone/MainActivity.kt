@@ -67,6 +67,7 @@ open class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= 33 && !granted(Manifest.permission.POST_NOTIFICATIONS)) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_MAIN)
 
         web = WebView(this)
+        web.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS   // системное автозаполнение (имя, контакты) не лезет в поля графа
         // процесс страницы остаётся «важным», даже когда окно приложения не на экране: иначе Android в фоне замораживает её, и всё, что она рисует в окна поверх приложений / обои, замирает
         web.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
         setContentView(web)
