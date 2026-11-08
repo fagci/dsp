@@ -42,18 +42,26 @@ function floatOff(id){
 // окно закрыли крестиком на самом телефоне
 function floatClosed(id){ id=String(id); const s=flSt.get(id); if(s){ s.n._float=false; flSt.delete(id); } }
 
-// webp сохраняет прозрачность и в несколько раз легче png; если WebView его не умеет, toDataURL отдаёт png
+// webp сохраняет прозрачность и в несколько раз легче png; если WebView его не умеет, кодировщик отдаёт png.
+// Кодирование — асинхронное (toBlob): синхронный toDataURL('image/webp') держал главный поток ~20 мс на кадр (замер при замедлении CPU в 4 раза,
+// холст 184×176; копирование на промежуточный холст — 0.2 мс, toBlob — 1 мс на главном потоке), 8 раз в секунду — такты движка опаздывали,
+// интернет-радио и другие источники звука затыкались сразу после создания окна. Кадры не накладываются: s.scratch.busy снимается, когда кадр ушёл.
 function floatSend(s){
+  const n=s.n, id=String(n.id), done=()=>{ s.scratch.busy=false; };
   try{
-    const n=s.n, c=pipSource(n); if(!c) return;
-    const w=c.width, h=c.height; if(!w || !h) return;
+    const c=pipSource(n); if(!c){ done(); return; }
+    const w=c.width, h=c.height; if(!w || !h){ done(); return; }
     const k=Math.min(1,FL_MAXW/Math.max(w,h)), cv=s.scratch.cv;
     cv.width=Math.max(1,Math.round(w*k)); cv.height=Math.max(1,Math.round(h*k));
     s.scratch.cx.clearRect(0,0,cv.width,cv.height);
     s.scratch.cx.drawImage(c,0,0,cv.width,cv.height);
-    const url=cv.toDataURL('image/webp',.85);
-    if(flSt.get(String(n.id))===s) DspApp.floatFrame(String(n.id),url.split(',')[1]||'');
-  }catch(e){} finally{ s.scratch.busy=false; }
+    cv.toBlob(blob=>{
+      if(!blob || flSt.get(id)!==s){ done(); return; }
+      const fr=new FileReader();
+      fr.onload=()=>{ try{ const url=String(fr.result); if(flSt.get(id)===s) DspApp.floatFrame(id,url.slice(url.indexOf(',')+1)); }catch(e){} done(); };
+      fr.onerror=done; fr.readAsDataURL(blob);
+    },'image/webp',.85);
+  }catch(e){ done(); }
 }
 
 // дёргается из Eng.tick (core-engine.js) на каждый аудио-такт и из собственного rAF, пока страница видна
@@ -62,6 +70,7 @@ function floatTick(){
   const now=performance.now();
   for(const [id,s] of flSt){
     if(Graph.map[s.n.id]!==s.n){ floatOff(id); continue; }               // узел удалили
+    if(s.scratch.busy && now-s.lastDraw>3000) s.scratch.busy=false;       // кодировщик не ответил (холст потерян) — не замираем навсегда
     if(s.scratch.busy || now-s.lastDraw<FL_MIN_MS) continue;
     s.lastDraw=now;
     if(document.visibilityState!=='visible'){
