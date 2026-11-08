@@ -53,9 +53,10 @@ await pg.evaluate(() => { const o = floatSend; window.__fsOrig = o; floatSend = 
 await wait(4000);
 const slow = await pg.evaluate(() => window.__frames);
 ok('a 30 ms frame slows the window down (≤ 8 per second) instead of eating the engine', slow <= 36, String(slow));
-await pg.evaluate(() => { floatSend = window.__fsOrig; window.__frames = 0; }); await wait(5000);
+await pg.evaluate(() => { floatSend = window.__fsOrig; }); await wait(3000);             // интервал сжимается за ~1.5 с (скользящее среднее стоимости кадра)
+await pg.evaluate(() => { window.__frames = 0; }); await wait(2000);
 const again = await pg.evaluate(() => window.__frames);
-ok('and it speeds up again when frames are cheap (rate at least 1.5× the slowed one)', again / 5 >= 1.5 * slow / 4, 'slowed ' + slow + ' in 4 s, recovered ' + again + ' in 5 s');
+ok('and it speeds up again when frames are cheap (rate at least 1.5× the slowed one)', again / 2 >= 1.5 * slow / 4, 'slowed ' + slow + ' in 4 s, recovered ' + again + ' in 2 s');
 // узел удалили — кадры прекращаются
 await pg.evaluate(() => { floatToggle(__sa); window.__frames = 0; }); await wait(1200);
 ok('closing the window stops the frames', await pg.evaluate(() => window.__frames) === 0);
