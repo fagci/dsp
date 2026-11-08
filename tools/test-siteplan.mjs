@@ -121,4 +121,11 @@ R=K.spSolve('height 2.7\nroom A 4 3 4 3 h 2.5\nroom B 2 3 2 3\nwall A2-A3 B1-B4 
 ok('ceiling: room h overrides the default height',R.polys[0].h===2.5 && R.polys[1].h===2.7,JSON.stringify(R.polys.map(p=>p.h)));
 near('ceiling: volume = area × h',R.polys[0].volume,30,.01);
 R=K.spSolve('A-B 3\nB-C 3\nC-A 3\npoly A B C h x'); ok('poly with a bad h is an error',R.errors.length===1);
+// окна и двери
+R=K.spSolve('room zal 4.48 3.74 4.46 3.74\nwindow zal1-zal2 1.20 1.40 h 1.45 sill 0.85\ndoor zal3-zal4 0.10 0.80');
+ok('openings: a window and a door, no errors',R.errors.length===0 && R.opens.length===2,JSON.stringify(R.errors));
+ok('openings: window values and defaults of the door',R.opens[0].kind==='window' && R.opens[0].h===1.45 && R.opens[0].sill===.85 && Math.abs(R.opens[0].L-4.48)<.01 && R.opens[1].h===2.05 && R.opens[1].sill===0,JSON.stringify(R.opens));
+R=K.spSolve('room zal 4.48 3.74 4.46 3.74\nwindow zal1-zal2 4.0 1.0'); ok('openings: longer than the wall is an error',R.errors.length===1 && !R.opens.length);
+R=K.spSolve('room zal 4.48 3.74 4.46 3.74\nwindow zal1-zal3 1 1'); ok('openings: a diagonal is not a wall',R.errors.length===1);
+R=K.spSolve('room zal 4.48 3.74 4.46 3.74\nwindow zal1-zal2 1 1 x 2'); ok('openings: an unknown key is an error',R.errors.length===1);
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);

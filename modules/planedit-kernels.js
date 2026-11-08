@@ -222,12 +222,20 @@ function peLines(s){
 function peImportPoints(s,recs){
   let n=0;
   for(const r of recs||[]){ if(r && r.kind==='plan poly' && Array.isArray(r.names)){ r._poly=true; } }
-  for(const r of recs||[]){ if(r && r._poly) continue; const x=+r.x, y=+r.y, name=String(r.name??r.label??''); if(!name||!isFinite(x)||!isFinite(y)) continue;
+  for(const r of recs||[]){ if(r && r.kind==='plan opening') r._op=true; }
+  for(const r of recs||[]){ if(r && (r._poly || r._op)) continue; const x=+r.x, y=+r.y, name=String(r.name??r.label??''); if(!name||!isFinite(x)||!isFinite(y)) continue;
     let p=s.pts.find(p=>p.name===name); if(p){ p.x=x; p.y=y; } else { p=peAddPoint(s,x,y); p.name=name; } n++; }
   // контуры (kind 'plan poly', names): стены между соседними точками и комната, если их ещё нет
   for(const r of recs||[]){ if(!r || !r._poly) continue; const ids=r.names.map(nm=>s.pts.find(p=>p.name===nm)).filter(Boolean).map(p=>p.id); if(ids.length<3) continue;
     for(let i=0;i<ids.length;i++){ const w=peAddWall(s,ids[i],ids[(i+1)%ids.length]); if(w && +r.h>0) w.h=+r.h; }      // h — высота потолка комнаты (Site Plan)
     const key=ids.slice().sort().join(); if(!s.rooms.some(q=>q.pts.slice().sort().join()===key)) peAddRoom(s,ids); n++; delete r._poly; }
+  // проёмы (kind 'plan opening': type, a, b — имена углов, from — от a до ближнего края, w, h, sill): на стену a-b, повторный импорт обновляет тот же
+  for(const r of recs||[]){ if(!r || !r._op) continue; delete r._op;
+    const A=s.pts.find(p=>p.name===r.a), B=s.pts.find(p=>p.name===r.b), type=r.type==='door' ? 'door' : 'window'; if(!A||!B) continue;
+    const w=s.walls.find(w=>(w.a===A.id&&w.b===B.id)||(w.a===B.id&&w.b===A.id)); if(!w) continue;
+    const L=peWallLen(s,w)||1, wd=+r.w>0 ? +r.w : 1; let u=Math.max(0,Math.min(1,((+r.from||0)+wd/2)/L)); if(w.a!==A.id) u=1-u;
+    const src=String(r.id||type+':'+r.a+'-'+r.b+':'+r.from), p={type,wall:w.id,u,w:wd,...(+r.h>0 ? {h:+r.h} : {}),...(isFinite(+r.sill) && r.sill!=='' && r.sill!=null ? {sill:+r.sill} : {})};
+    const ob=s.objs.find(o=>o.src===src); if(ob) Object.assign(ob,p); else peAddObj(s,type,{...p,src}); n++; }
   return n;
 }
 // история правок: base — последнее закреплённое состояние (JSON), u / r — стеки отмены и повтора
