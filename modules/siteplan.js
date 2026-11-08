@@ -24,9 +24,12 @@ function spRecords(R){
   const rec=[], poly=[], t=new Date().toISOString();
   for(const p of R.pts) rec.push({id:'sp:'+p.name,t,kind:'plan point',label:p.name,x:+p.x.toFixed(3),y:+p.y.toFixed(3),z:+p.z.toFixed(2),
     sigma_m:isFinite(p.sx) ? +Math.hypot(p.sx,p.sy).toFixed(3) : '',...(R.georef ? {lat:+p.lat.toFixed(8),lon:+p.lon.toFixed(8),icon:'dot'} : {})});
-  (R.opens||[]).forEach((o,i)=>rec.push({id:'sp:'+o.kind+':'+o.a+'-'+o.b+':'+o.from,t,kind:'plan opening',type:o.kind,a:o.a,b:o.b,from:o.from,w:o.w,h:o.h,sill:o.sill}));   // для Plan Editor
+  // для Plan Editor: стены снаружи замера (наружные + общие между комнатами), проёмы на них, комнаты — по замеру, без своих стен
+  const W=R.walls||{walls:[],opens:[]};
+  rec.push({id:'sp:walls',t,kind:'plan walls',walls:W.walls.map(w=>({id:w.id,x1:+w.x1.toFixed(3),y1:+w.y1.toFixed(3),x2:+w.x2.toFixed(3),y2:+w.y2.toFixed(3),t:w.t,h:w.h,kind:w.kind})),
+    opens:W.opens.map(o=>({...o,u:+o.u.toFixed(4)}))});
   R.polys.forEach((pl,i)=>{
-    rec.push({id:'sp:room:'+i,t,kind:'plan poly',names:pl.names.slice(),area_m2:+pl.area.toFixed(2),...(pl.h>0 ? {h:pl.h,volume_m3:+pl.volume.toFixed(2)} : {})});     // для Plan Editor: стены по сторонам контура и комната
+    rec.push({id:'sp:room:'+i,t,kind:'plan poly',nowalls:true,names:pl.names.slice(),area_m2:+pl.area.toFixed(2),...(pl.h>0 ? {h:pl.h,volume_m3:+pl.volume.toFixed(2)} : {})});
     if(!R.georef) return;
     const q=pl.names.map(nm=>R.pts.find(p=>p.name===nm)), path=q.map(p=>[+p.lat.toFixed(8),+p.lon.toFixed(8)]); path.push(path[0]);
     poly.push({id:'sp:poly:'+i,label:pl.area.toFixed(1)+' m²',lat:path[0][0],lon:path[0][1],icon:'dot',color:'#4fc3f7',path,area_m2:+pl.area.toFixed(2),perimeter_m:+pl.perimeter.toFixed(2),slope_deg:+pl.slope.toFixed(1)});
@@ -35,6 +38,7 @@ function spRecords(R){
 }
 function spRun(n,I){
   const R=spSolve(spText(n),spOpts(n));
+  R.walls=R.polys.length ? spWalls(R,{outer:R.outer}) : null;
   n.res=R; n.emit=spRecords(R); n.err=R.errors; redraw(n);
 }
 
@@ -188,6 +192,11 @@ def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, lazy:true, kw:'pl
         const o=gp(0,0), au=gp(G.step*2,0), av=gp(0,G.step*2);
         cx.strokeStyle='rgba(255,183,77,.8)'; cx.fillStyle='rgba(255,183,77,.95)'; cx.lineWidth=1.5; cx.beginPath(); cx.moveTo(o[0],o[1]); cx.lineTo(au[0],au[1]); cx.moveTo(o[0],o[1]); cx.lineTo(av[0],av[1]); cx.stroke();
         cx.textAlign='left'; cx.fillText(unit[0],au[0]+3,au[1]+3); cx.fillText(unit[1],av[0]+3,av[1]-3);
+      }
+      if(R.walls) for(const w of R.walls.walls){                       // стены: толщина снаружи замера, общие — во всю щель
+        const dx=w.x2-w.x1, dy=w.y2-w.y1, L=Math.hypot(dx,dy)||1, nx=-dy/L*w.t/2, ny=dx/L*w.t/2;
+        cx.beginPath(); [[w.x1+nx,w.y1+ny],[w.x2+nx,w.y2+ny],[w.x2-nx,w.y2-ny],[w.x1-nx,w.y1-ny]].forEach((c,k)=>{ const q=pr({x:c[0],y:c[1],z:zmin}), s=T(q[0],q[1]); if(k) cx.lineTo(s[0],s[1]); else cx.moveTo(s[0],s[1]); });
+        cx.closePath(); cx.fillStyle=w.kind==='inner' ? 'rgba(150,160,170,.55)' : 'rgba(120,130,140,.75)'; cx.fill();
       }
       for(const pl of R.polys){
         cx.beginPath(); pl.names.forEach((nm,k)=>{ const s=S(idx(nm)); if(k) cx.lineTo(s[0],s[1]); else cx.moveTo(s[0],s[1]); }); cx.closePath();

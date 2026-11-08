@@ -6,7 +6,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float64Array,Float32Array,Set,Map,Number,String,JSON,isFinite,Infinity,Array,Object});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/siteplan-kernels.js'),'utf8')+';this.K={spSolve,spParse,spTilt,spPoly,spDXF,spGeoJSON,spSVG,spCSV,spFrame,spNice,spGridFrame,spToFrame,spFromFrame,spGridLines};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/siteplan-kernels.js'),'utf8')+';this.K={spSolve,spParse,spTilt,spPoly,spDXF,spGeoJSON,spSVG,spCSV,spFrame,spNice,spGridFrame,spToFrame,spFromFrame,spGridLines,spWalls};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -128,4 +128,20 @@ ok('openings: window values and defaults of the door',R.opens[0].kind==='window'
 R=K.spSolve('room zal 4.48 3.74 4.46 3.74\nwindow zal1-zal2 4.0 1.0'); ok('openings: longer than the wall is an error',R.errors.length===1 && !R.opens.length);
 R=K.spSolve('room zal 4.48 3.74 4.46 3.74\nwindow zal1-zal3 1 1'); ok('openings: a diagonal is not a wall',R.errors.length===1);
 R=K.spSolve('room zal 4.48 3.74 4.46 3.74\nwindow zal1-zal2 1 1 x 2'); ok('openings: an unknown key is an error',R.errors.length===1);
+// стены снаружи замера: наружные outer, общая — во всю щель, углы закрыты, дверь пробивает общую стену
+{ const t='Zal1 at 0 0\nZal1-Zal2 az 90\nroom Zal 4 3 4 3\nroom Kor 1.5 3 1.5 3\nwall Zal2-Zal3 Kor1-Kor4 0.37\nouter 0.5\ndoor Zal2-Zal3 1 0.8\ndoor Kor4-Kor1 1.2 0.8\nwindow Zal4-Zal1 1 1';
+  R=K.spSolve(t); const W=K.spWalls(R,{outer:R.outer}), inn=W.walls.filter(w=>w.kind==='inner');
+  ok('walls: one shared wall 0.37 thick between the rooms',inn.length===1 && Math.abs(inn[0].t-.37)<.01,JSON.stringify(inn));
+  ok('walls: outer ones are 0.5',W.walls.filter(w=>w.kind==='outer').every(w=>w.t===.5));
+  const inside=(x,y)=>W.walls.some(w=>{ const dx=w.x2-w.x1, dy=w.y2-w.y1, L=Math.hypot(dx,dy), u=((x-w.x1)*dx+(y-w.y1)*dy)/L, v=Math.abs((x-w.x1)*dy-(y-w.y1)*dx)/L; return u>=-1e-6 && u<=L+1e-6 && v<=w.t/2+1e-6; });
+  ok('walls: the inner face is the measurement (no wall inside the room)',!inside(.02,-.02) && !inside(3.98,-2.98) && inside(-.02,.02));
+  const X0=-.5, X1=4+.37+1.5+.5, Y0=-3.5, Y1=.5; let holes=0;
+  for(let k=0;k<=200;k++){ const f=k/200; for(const [x,y] of [[X0+.01+(X1-X0-.02)*f,Y1-.01],[X0+.01+(X1-X0-.02)*f,Y0+.01],[X0+.01,Y0+.01+(Y1-Y0-.02)*f],[X1-.01,Y0+.01+(Y1-Y0-.02)*f]]) if(!inside(x,y)) holes++; }
+  ok('walls: the outer shell is closed (corners filled, the shared wall meets the shell)',holes===0,holes+' holes');
+  ok('walls: the shared wall is solid between the faces',inside(4.185,-1.5) && inside(4.185,.25));
+  const doors=W.opens.filter(o=>o.type==='door');
+  ok('walls: the door written from both rooms is one opening in the shared wall',doors.length===1 && doors[0].wall===inn[0].id,JSON.stringify(W.opens));
+  ok('walls: the window goes into the outer wall',W.opens.some(o=>o.type==='window' && W.walls.find(w=>w.id===o.wall).kind==='outer'));
+  const w0=W.walls.find(w=>w.id===doors[0].wall), Lw=Math.hypot(w0.x2-w0.x1,w0.y2-w0.y1), cy=w0.y1+(w0.y2-w0.y1)*doors[0].u;
+  near('walls: the door centre is 1.4 m from Zal2',cy,-1.4,.02); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);

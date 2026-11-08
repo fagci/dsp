@@ -33,7 +33,7 @@ function peWallEnds(s,w){ const a=pePt(s,w.a), b=pePt(s,w.b); return [a,b]; }
 function peWallLen(s,w){ const [a,b]=peWallEnds(s,w); return Math.hypot(b.x-a.x,b.y-a.y); }
 function peDelWall(s,id){
   s.walls=s.walls.filter(w=>w.id!==id); s.objs=s.objs.filter(o=>o.wall!==id);
-  s.rooms=s.rooms.filter(r=>r.pts.every((p,i)=>s.walls.some(w=>(w.a===p&&w.b===r.pts[(i+1)%r.pts.length])||(w.b===p&&w.a===r.pts[(i+1)%r.pts.length]))));
+  s.rooms=s.rooms.filter(r=>r.free || r.pts.every((p,i)=>s.walls.some(w=>(w.a===p&&w.b===r.pts[(i+1)%r.pts.length])||(w.b===p&&w.a===r.pts[(i+1)%r.pts.length]))));
 }
 function peDelPoint(s,id){ for(const w of s.walls.filter(w=>w.a===id||w.b===id)) peDelWall(s,w.id); s.pts=s.pts.filter(p=>p.id!==id); }
 function peDel(s,kind,id){
@@ -223,12 +223,31 @@ function peImportPoints(s,recs){
   let n=0;
   for(const r of recs||[]){ if(r && r.kind==='plan poly' && Array.isArray(r.names)){ r._poly=true; } }
   for(const r of recs||[]){ if(r && r.kind==='plan opening') r._op=true; }
-  for(const r of recs||[]){ if(r && (r._poly || r._op)) continue; const x=+r.x, y=+r.y, name=String(r.name??r.label??''); if(!name||!isFinite(x)||!isFinite(y)) continue;
+  for(const r of recs||[]){ if(r && (r._poly || r._op || r.kind==='plan walls')) continue; const x=+r.x, y=+r.y, name=String(r.name??r.label??''); if(!name||!isFinite(x)||!isFinite(y)) continue;
     let p=s.pts.find(p=>p.name===name); if(p){ p.x=x; p.y=y; } else { p=peAddPoint(s,x,y); p.name=name; } n++; }
   // контуры (kind 'plan poly', names): стены между соседними точками и комната, если их ещё нет
   for(const r of recs||[]){ if(!r || !r._poly) continue; const ids=r.names.map(nm=>s.pts.find(p=>p.name===nm)).filter(Boolean).map(p=>p.id); if(ids.length<3) continue;
-    for(let i=0;i<ids.length;i++){ const w=peAddWall(s,ids[i],ids[(i+1)%ids.length]); if(w && +r.h>0) w.h=+r.h; }      // h — высота потолка комнаты (Site Plan)
-    const key=ids.slice().sort().join(); if(!s.rooms.some(q=>q.pts.slice().sort().join()===key)) peAddRoom(s,ids); n++; delete r._poly; }
+    const key=ids.slice().sort().join(); let room=s.rooms.find(q=>q.pts.slice().sort().join()===key);
+    if(r.nowalls){                                                // стены придут отдельно (plan walls): комната — только контур по замеру; старые стены по контуру убираем
+      for(let i=0;i<ids.length;i++){ const a=ids[i], b=ids[(i+1)%ids.length], w=s.walls.find(w=>!w.src && ((w.a===a&&w.b===b)||(w.a===b&&w.b===a))); if(w){ s.walls=s.walls.filter(q=>q!==w); s.objs=s.objs.filter(o=>o.wall!==w.id); } }
+      if(!room) room=peAddRoom(s,ids); room.free=true; }
+    else { for(let i=0;i<ids.length;i++){ const w=peAddWall(s,ids[i],ids[(i+1)%ids.length]); if(w && +r.h>0) w.h=+r.h; }      // h — высота потолка комнаты (Site Plan)
+      if(!room) peAddRoom(s,ids); }
+    n++; delete r._poly; }
+  // стены целиком (kind 'plan walls': walls [{id,x1,y1,x2,y2,t,h}], opens [{wall,u,w,h,sill,type}]): набор от источника заменяет прежний — лишние уходят, свои двигаются
+  for(const r of recs||[]){ if(!r || r.kind!=='plan walls' || !Array.isArray(r.walls)) continue;
+    const pre=String(r.id||'plan')+'|', keep=new Set();
+    for(const q of r.walls){ const src=pre+q.id; keep.add(src); let w=s.walls.find(w=>w.src===src);
+      if(!w){ const a=peAddPoint(s,+q.x1,+q.y1), b=peAddPoint(s,+q.x2,+q.y2); a.src=b.src=src; w=peAddWall(s,a.id,b.id,{t:+q.t,h:+q.h>0 ? +q.h : 2.7}); w.src=src; }
+      const [a,b]=peWallEnds(s,w); a.x=+q.x1; a.y=+q.y1; b.x=+q.x2; b.y=+q.y2; w.t=+q.t>0 ? +q.t : w.t; if(+q.h>0) w.h=+q.h; }
+    for(const w of s.walls.filter(w=>w.src && w.src.startsWith(pre) && !keep.has(w.src))){ s.walls=s.walls.filter(q=>q!==w); s.objs=s.objs.filter(o=>o.wall!==w.id); s.pts=s.pts.filter(p=>p.src!==w.src); }
+    const okeep=new Set();
+    (r.opens||[]).forEach((o,i)=>{ const w=s.walls.find(w=>w.src===pre+o.wall); if(!w) return; const src=pre+'o'+i+':'+o.wall, type=o.type==='door' ? 'door' : 'window'; okeep.add(src);
+      const v={type,wall:w.id,u:Math.max(0,Math.min(1,+o.u||0)),w:+o.w>0 ? +o.w : 1,...(+o.h>0 ? {h:+o.h} : {}),...(isFinite(+o.sill) && o.sill!=null ? {sill:+o.sill} : {})};
+      const ob=s.objs.find(q=>q.src===src); if(ob) Object.assign(ob,v); else peAddObj(s,type,{...v,src}); });
+    s.objs=s.objs.filter(o=>!o.src || !o.src.startsWith(pre) || okeep.has(o.src));
+    s.objs=s.objs.filter(o=>!(o.src && String(o.src).startsWith('sp:') && !String(o.src).startsWith(pre) && (o.type==='door'||o.type==='window')));   // проёмы старого вида (по углам) — заменены
+    n++; }
   // проёмы (kind 'plan opening': type, a, b — имена углов, from — от a до ближнего края, w, h, sill): на стену a-b, повторный импорт обновляет тот же
   for(const r of recs||[]){ if(!r || !r._op) continue; delete r._op;
     const A=s.pts.find(p=>p.name===r.a), B=s.pts.find(p=>p.name===r.b), type=r.type==='door' ? 'door' : 'window'; if(!A||!B) continue;

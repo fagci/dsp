@@ -451,7 +451,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     const pose={lat:num(I.lat),lon:num(I.lon),alt:num(I.alt),az:num(I.az),el:num(I.el),fov:num(I.fov)};
     if(JSON.stringify(pose)!==JSON.stringify(n.inPose)){ n.inPose=pose; redraw(n); }
     for(const r of recList(I.rec)){ if(r && r.kind==='underlay' && r.bm){ const sig=JSON.stringify([r.H,r.up,r.w,r.h]); if(!n.under || n.under.sig!==sig){ n.under={bm:r.bm,w:r.w,h:r.h,H:r.H,up:r.up||0,sig,cv:null,b:null,err:''}; peUnderBuild(n); n.vw.fit=false; redraw(n); } else n.under.bm=r.bm; } }
-    if(n.p.imp){ const rows=recList(I.rec).filter(r=>r && ((r.x!=null && r.y!=null && (r.name!=null||r.label!=null)) || r.kind==='plan poly' || r.kind==='plan opening')); if(rows.length){ rows.forEach(r=>{ if(r.name==null && r.label!=null) r.name=r.label; }); if(peImportPoints(n.sc,rows)){ peTouch(n); n.vw.fit=false; } } }
+    if(n.p.imp){ const rows=recList(I.rec).filter(r=>r && ((r.x!=null && r.y!=null && (r.name!=null||r.label!=null)) || r.kind==='plan poly' || r.kind==='plan opening' || r.kind==='plan walls')); if(rows.length){ rows.forEach(r=>{ if(r.name==null && r.label!=null) r.name=r.label; }); if(peImportPoints(n.sc,rows)){ peTouch(n); n.vw.fit=false; } } }
     const now=performance.now();
     if(n.calcRev!==n.rev && now-n.lastEdit>(n.dragging ? 180 : 60)){ peRecalc(n); redraw(n); }
     let rec=null; const every=+n.p.emit*1000;
@@ -513,7 +513,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     // замки длин и размеры
     if(P.sc>14) for(const w of s.walls){ const [a,b]=peWallEnds(s,w), A=P.pt(a.x,a.y,P.d3 ? w.h : 0), B=P.pt(b.x,b.y,P.d3 ? w.h : 0), len=peWallLen(s,w); cx.font='10px monospace'; cx.textAlign='center'; cx.fillStyle=w.len>0 ? '#ffb74d' : 'rgba(180,195,200,.8)'; cx.fillText((w.len>0 ? '🔒' : '')+len.toFixed(2),(A[0]+B[0])/2,(A[1]+B[1])/2-5); }
     // точки
-    for(const q of s.pts){ const A=P.pt(q.x,q.y,0), isSel=n.sel && n.sel.k==='pt' && n.sel.id===q.id; cx.fillStyle=isSel ? '#ffb74d' : '#7dff9a'; cx.strokeStyle='#000'; cx.lineWidth=1.5; cx.beginPath(); cx.arc(A[0],A[1],isSel ? 5.5 : 4,0,7); cx.stroke(); cx.fill();
+    for(const q of s.pts){ if(q.src && !(n.sel && n.sel.k==='pt' && n.sel.id===q.id)) continue; const A=P.pt(q.x,q.y,0), isSel=n.sel && n.sel.k==='pt' && n.sel.id===q.id; cx.fillStyle=isSel ? '#ffb74d' : '#7dff9a'; cx.strokeStyle='#000'; cx.lineWidth=1.5; cx.beginPath(); cx.arc(A[0],A[1],isSel ? 5.5 : 4,0,7); cx.stroke(); cx.fill();
       if(q.name){ cx.fillStyle=fg; cx.font='10px monospace'; cx.textAlign='left'; cx.fillText(q.name,A[0]+7,A[1]-6); } }
     // камеры
     for(const c of s.cams){ const A=P.pt(c.x,c.y,c.z), F=P.pt(c.x,c.y,0), isSel=n.sel&&n.sel.id===c.id; if(P.d3){ cx.strokeStyle='rgba(125,255,154,.45)'; cx.beginPath(); cx.moveTo(A[0],A[1]); cx.lineTo(F[0],F[1]); cx.stroke(); }
