@@ -3,7 +3,7 @@
 import vm from 'node:vm'; import fs from 'node:fs'; import path from 'node:path'; import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Array,String,Number,Object,JSON,Set,Map,Float32Array,Uint8Array,isFinite,Infinity});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peHistNew,peHistCommit,peHistUndo,peHistRedo,peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peOverlaps,peAddRx,peRxLevel,peMoveWall,peZRaster,peBoxCorners,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints,peSnapFace,peHiddenPts,peLvShow,pePaths,peFaces,peReflLoss};`,ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peHistNew,peHistCommit,peHistUndo,peHistRedo,peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peOverlaps,peAddRx,peRxLevel,peMoveWall,peZRaster,peBoxCorners,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints,peSnapFace,peHiddenPts,peLvShow,pePaths,peFaces,peReflLoss,peCamView};`,ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -229,4 +229,23 @@ ok('an empty scene has no bounds and no grid',K.peGrid(K.peNew())===null);
   K.peImportPoints(q,[{name:'L1',x:1,y:1}]); ok('an imported point that is not a wall end is hidden («points: auto»)',K.peHiddenPts(q).has(q.pts.find(p=>p.name==='L1').id) && !K.peHiddenPts(q).has(K.peAddPoint(q,2,2).id));
   K.peImportPoints(q,[{name:'T',x:300,y:400,ext:true}]); ok('the point under a far source is not a plan point',!q.pts.some(p=>p.name==='T'));
   R[0].sources=[]; K.peImportPoints(q,R); ok('a source removed in Site Plan goes away',!q.ants.some(a=>a.name==='BS')); }
+// камеры с высотой: забор 1,5 м — камера на столбе 4 м видит через него (кроме полосы тени за ним), камера на 1 м — нет; рабица прозрачна
+{ const q=K.peNew(); const a=K.peAddPoint(q,10,-5), b=K.peAddPoint(q,10,5); const f=K.peAddWall(q,a.id,b.id,{t:.1,h:1.5,mat:'metal'}); const occ=K.peOccluders(q);
+  const pole={x:0,y:0,z:4,az:90,tilt:15,fov:90,range:40}, low={...pole,z:1,tilt:0};
+  ok('a pole camera sees a person 10 m behind a 1.5 m fence',K.peSees(pole,20,0,occ,1));
+  ok('…but not right behind it (the fence shadow)',!K.peSees(pole,10.5,0,occ,1));
+  ok('a camera at 1 m does not see over it',!K.peSees(low,20,0,occ,1));
+  const shadowEnd=10*(4-1)/(4-1.5); ok('the shadow ends where the line of sight clears the top: 10·(4−1)/(4−1.5) = 12 m',!K.peSees(pole,shadowEnd-.1,0,occ,1) && K.peSees(pole,shadowEnd+.1,0,occ,1));
+  const V=K.peVisPoly(pole,occ,45,1); near('the outline stops at the fence (straight ahead)',Math.hypot(V[2][0],V[2][1]),10,1e-6);
+  f.mat='mesh'; ok('a chain-link fence does not hide anything',K.peSees(low,20,0,K.peOccluders(q),1));
+  f.mat='metal'; K.peAddObj(q,'window',{wall:f.id,u:.5,w:2,h:.5,sill:.8}); const o2=K.peOccluders(q);
+  ok('through a window at its height — yes; under the sill — no',K.peSees(low,20,0,o2,1) && !K.peSees({...low,z:.5},20,0,o2,.5));
+  q.slabs=[{z:3,t:.2,mat:'concrete',lv:1,poly:[[-5,-5],[30,-5],[30,5],[-5,5]]}]; ok('a slab hides the floor above',!K.peSees({...low,tilt:-20},5,0,K.peOccluders(q),4.5)); }
+// вид из камеры: стена прямо перед камерой заполняет центр кадра своим цветом, небо (нет граней) прозрачно
+{ const q=K.peNew(); const a=K.peAddPoint(q,-10,5), b=K.peAddPoint(q,10,5); K.peAddWall(q,a.id,b.id,{t:.2,h:3,mat:'brick'});
+  const R=K.peCamView(q,{x:0,y:0,z:1.5,az:0,tilt:0,fov:90},160,90), px=(x,y)=>{ const i=(y*160+x)*4; return [R.data[i],R.data[i+1],R.data[i+2],R.data[i+3]]; };
+  const c=px(80,45); ok('the wall ahead fills the centre of the view (brick tint)',c[3]===255 && c[0]>c[2],JSON.stringify(c));
+  ok('above the wall there is sky (transparent)',px(80,2)[3]===0,JSON.stringify(px(80,2)));
+  ok('below — the ground',px(80,88)[3]===255);
+  const back=K.peCamView(q,{x:0,y:0,z:1.5,az:180,tilt:0,fov:90},160,90); ok('looking away — no wall in the centre (behind the camera is clipped)',(()=>{ const i=(45*160+80)*4; return back.data[i+3]===0 || back.data[i]<back.data[i+1]; })()); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
