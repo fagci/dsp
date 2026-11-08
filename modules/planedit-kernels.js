@@ -226,7 +226,7 @@ function peImportPoints(s,recs){
     let p=s.pts.find(p=>p.name===name); if(p){ p.x=x; p.y=y; } else { p=peAddPoint(s,x,y); p.name=name; } n++; }
   // контуры (kind 'plan poly', names): стены между соседними точками и комната, если их ещё нет
   for(const r of recs||[]){ if(!r || !r._poly) continue; const ids=r.names.map(nm=>s.pts.find(p=>p.name===nm)).filter(Boolean).map(p=>p.id); if(ids.length<3) continue;
-    for(let i=0;i<ids.length;i++) peAddWall(s,ids[i],ids[(i+1)%ids.length]);
+    for(let i=0;i<ids.length;i++){ const w=peAddWall(s,ids[i],ids[(i+1)%ids.length]); if(w && +r.h>0) w.h=+r.h; }      // h — высота потолка комнаты (Site Plan)
     const key=ids.slice().sort().join(); if(!s.rooms.some(q=>q.pts.slice().sort().join()===key)) peAddRoom(s,ids); n++; delete r._poly; }
   return n;
 }

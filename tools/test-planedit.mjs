@@ -62,6 +62,7 @@ near('antenna level at 5 m in the open ≈ eirp − FSPL',K.peAntLevel(s,ap,6,5,
 // экспорт и импорт
 ({s,P,Wl}=room()); K.peLock(s,Wl[0].id); { const t=K.peLines(s).split('\n'); ok('lines: 4 points, 1 locked length, 1 contour',t.length===6 && /^p1 at 0 0 ± 0.01$/.test(t[0]) && t.some(l=>/^p1-p2 6 ± 0.002$/.test(l)) && /^poly p1 p2 p3 p4$/.test(t[5]),t.join('|')); }
 { const q=K.peNew(); const n=K.peImportPoints(q,[{name:'A',x:1,y:2},{name:'B',x:3,y:4},{name:'A',x:5,y:6},{name:'',x:1,y:1}]); ok('import: 3 rows used, 2 points, A moved',n===3 && q.pts.length===2 && q.pts[0].x===5); }
+{ const q=K.peNew(), R=[{name:'C1',x:0,y:0},{name:'C2',x:5,y:0},{name:'C3',x:5,y:4},{kind:'plan poly',names:['C1','C2','C3'],h:2.55}]; K.peImportPoints(q,R); ok('import: a contour with h sets the wall height',q.walls.length===3 && q.walls.every(w=>w.h===2.55)); R[3].h=3; K.peImportPoints(q,R); ok('import: a new h updates the walls',q.walls.every(w=>w.h===3)); }
 { const q=K.peNew(); const n=K.peImportPoints(q,[{name:'C1',x:0,y:0},{name:'C2',x:5,y:0},{name:'C3',x:5,y:4},{name:'C4',x:0,y:4},{kind:'plan poly',names:['C1','C2','C3','C4']}]);
   ok('import a traced contour: 4 points, 4 walls and a room, once (a second import adds nothing)',q.pts.length===4 && q.walls.length===4 && q.rooms.length===1 && (K.peImportPoints(q,[{kind:'plan poly',names:['C1','C2','C3','C4']}]),q.walls.length===4 && q.rooms.length===1)); }
 ok('parse: round trip, junk → a new scene',JSON.stringify(K.peParse(JSON.stringify(s)).pts.length)==='4' && K.peParse('x').pts.length===0);
