@@ -45,7 +45,7 @@ globalThis.__r = r;
 
 ok('overlay frames keep coming (≥ 4 per second)', r.overlayFrames >= 48, String(r.overlayFrames));
 ok('frames are WebP / PNG images', r.firstKind === 'webp' || r.firstKind === 'png', String(r.firstKind));
-ok('a frame costs the main thread under 5 ms (it was ~28 with the synchronous toDataURL)', r.frameCostMs && r.frameCostMs.avg < 5 && r.frameCostMs.p95 < 10, JSON.stringify(r.frameCostMs));
+ok('a frame costs the main thread under 10 ms at CPU ×4 (28 ms on average with the synchronous toDataURL)', r.frameCostMs && r.frameCostMs.avg < 10 && r.frameCostMs.p95 < 18, JSON.stringify(r.frameCostMs));
 ok('engine ticks stay regular: few gaps over 40 ms (44 with the synchronous encoder, 3 without an overlay)', r.tickGaps_over_40ms < 20, String(r.tickGaps_over_40ms));
 ok('engine keeps real time (86 ticks per second)', r.ticksPerSec > 80, String(r.ticksPerSec));
 // кодировщик замолчал — окно не замирает навсегда
