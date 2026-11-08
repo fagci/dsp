@@ -18,6 +18,7 @@ import { wsAccept, wsFrame, wsParser, originOk, DEFAULT_ORIGINS } from './termux
 import { loadKernels } from './netmock.mjs';
 
 const K = loadKernels(['pins-kernels.js'], 'pinEncode,pinHdrLen,PIN_JSON');
+export const BRIDGE_VER = 2;                            // 2: страницы получают пины друг друга (graph ↔ graph), {t:'make'}, версия в ответе
 const MAX_BACKLOG = 4 << 20;                           // сколько байт может висеть в сокете медленного клиента, дальше кадры выбрасываем
 
 export function createPinBridge(opt = {}) {
@@ -60,12 +61,14 @@ export function createPinBridge(opt = {}) {
   const onText = (c) => (t) => {
     let m; try { m = JSON.parse(t); } catch (e) { return; }
     if (!m || typeof m.t !== 'string') return;
+    if (!c.greeted) { c.greeted = true; sendJson(c, { t: 'bridge', ver: BRIDGE_VER, impl: 'node' }); }   // страница по этому видит, что мост не старый
     if (m.t === 'hello' && m.role === 'graph') {
-      c.role = 'graph'; c.pins = { out: [], in: [] }; c.subs.clear(); o.log('page joined as graph'); sendWant(c); announce();
+      c.role = 'graph'; c.pins = { out: [], in: [] }; c.subs.clear(); o.log('page joined as graph (' + (c.origin || 'no Origin') + ')'); sendWant(c); announce();
     } else if (m.t === 'sub' && Array.isArray(m.names)) {        // подписка: и клиента, и другой страницы (её Pins In)
-      c.subs = new Set(m.names.map(String).slice(0, 256)); wantAll();
+      c.subs = new Set(m.names.map(String).slice(0, 256)); o.log((c.role === 'graph' ? 'page' : 'client') + ' subscribes: ' + ([...c.subs].join(', ') || '—')); wantAll();
     } else if (c.role === 'graph' && m.t === 'pins') {
-      c.pins = { out: Array.isArray(m.out) ? m.out.slice(0, 256) : [], in: Array.isArray(m.in) ? m.in.slice(0, 256) : [] }; announce();
+      c.pins = { out: Array.isArray(m.out) ? m.out.slice(0, 256) : [], in: Array.isArray(m.in) ? m.in.slice(0, 256) : [] };
+      o.log('page offers: ' + (c.pins.out.map((p) => p.name).join(', ') || '—') + ' · takes: ' + (c.pins.in.map((p) => p.name).join(', ') || '—')); announce();
     } else if (c.role === 'client') {
       if (m.t === 'pins') sendJson(c, { t: 'pins', ...pinList(c) });
       else if (m.t === 'make' && typeof m.name === 'string' && (m.dir === 'pub' || m.dir === 'sub'))   // «создай пин в узле Pins»: pub — клиент отдаёт, sub — хочет получать
@@ -79,14 +82,14 @@ export function createPinBridge(opt = {}) {
 
   const server = http.createServer((q, s) => {
     if (q.url.split('?')[0] === '/pins') { s.setHeader('content-type', 'application/json'); s.setHeader('access-control-allow-origin', '*'); s.end(JSON.stringify(pinList(null))); return; }
-    s.end('DSP pin bridge: ' + graphs().length + ' graph(s), ' + clients().length + ' client(s)\n');
+    s.end('DSP pin bridge v' + BRIDGE_VER + ' (node): ' + graphs().length + ' page(s), ' + clients().length + ' client(s)\n');
   });
   server.on('upgrade', (req, sock) => {
     const key = req.headers['sec-websocket-key'], u = new URL(req.url, 'http://x');
     if (!key || !originOk(req.headers.origin, o.origins)) { o.log('refused origin ' + req.headers.origin); sock.end('HTTP/1.1 403 Forbidden\r\n\r\n'); return; }
     if (o.token && u.searchParams.get('token') !== o.token) { o.log('refused: wrong token'); sock.end('HTTP/1.1 401 Unauthorized\r\n\r\n'); return; }
     sock.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ' + wsAccept(key) + '\r\n\r\n');
-    const c = { sock, role: 'client', subs: new Set(), pins: null, drops: 0, dead: false, rawName: '' };
+    const c = { sock, role: 'client', subs: new Set(), pins: null, drops: 0, dead: false, rawName: '', greeted: false, origin: req.headers.origin || '' };
     const raw = /^\/raw\/(.+)$/.exec(u.pathname);
     if (raw) { c.rawName = decodeURIComponent(raw[1]); c.subs.add(c.rawName); }
     conns.add(c);
@@ -115,5 +118,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === fs.realpathSync(proces
   const host = g('host', '127.0.0.1');
   const b = createPinBridge({ host, port: +g('port', 8766), token: g('token', ''), origins: [...DEFAULT_ORIGINS, ...a.flatMap((x, i) => x === '--origin' ? [a[i + 1]] : [])], log: (m) => console.log(new Date().toISOString().slice(11, 19), m) });
   if (host !== '127.0.0.1' && !g('token', '')) console.error('warning: open to the network without --token — anyone on it can read the exposed pins and write the inputs');
-  console.log('pin bridge: ws://' + host + ':' + await b.start() + '  (nodes «Pins Out» / «Pins In» → url)');
+  const port = await b.start();
+  console.log('pin bridge v' + BRIDGE_VER + ': ws://' + host + ':' + port + '  (nodes «Pins Out» / «Pins In» / «Pins (custom)» → url)');
+  if (host === '0.0.0.0') for (const l of Object.values((await import('node:os')).networkInterfaces()).flat()) if (l && l.family === 'IPv4' && !l.internal) console.log('  from other devices: ws://' + l.address + ':' + port + (g('token', '') ? '/?token=…' : ''));
 }

@@ -100,6 +100,7 @@ page.send(JSON.stringify({ t: 'hello', role: 'graph' }));
 page.send(JSON.stringify({ t: 'pins', out: [{ name: 'chan1', kind: 'iq', fc: 1e8, sr: 48000 }, { name: 'spec', kind: 'spec' }], in: [{ name: 'tune' }] }));
 const cli = await open('/');
 cli.send(JSON.stringify({ t: 'pins' }));
+ok('bridge reports its version to the page', await wait(() => txt(page).some((m) => m.t === 'bridge' && m.ver === 2 && m.impl === 'node')), JSON.stringify(txt(page)));
 ok('client sees the pin list', await wait(() => txt(cli).some((m) => m.t === 'pins' && m.out.length === 2 && m.in[0].name === 'tune')), JSON.stringify(txt(cli)));
 ok('page was told nothing wanted yet', await wait(() => txt(page).some((m) => m.t === 'want' && m.names.length === 0)));
 

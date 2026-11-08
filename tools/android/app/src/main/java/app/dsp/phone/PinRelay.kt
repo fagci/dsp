@@ -26,6 +26,7 @@ class PinRelay {
         @Volatile var inn: JSONArray = JSONArray()
         /** Имя пина для /raw/ИМЯ; пусто — обычный клиент. */
         @Volatile var raw = ""
+        @Volatile var greeted = false
     }
 
     private val peers = CopyOnWriteArraySet<Peer>()
@@ -70,6 +71,7 @@ class PinRelay {
     }
 
     fun text(p: Peer, j: JSONObject) {
+        if (!p.greeted) { p.greeted = true; p.text(JSONObject().put("t", "bridge").put("ver", VER).put("impl", "android").toString()) }   // страница видит, что мост не старый
         when (j.optString("t")) {
             "hello" -> if (j.optString("role") == "graph" && p.raw.isEmpty()) {
                 p.graph = true; p.out = JSONArray(); p.inn = JSONArray(); p.subs = emptySet()
@@ -111,6 +113,8 @@ class PinRelay {
 
     companion object {
         const val MAX_NAME = 64
+        /** 2: страницы получают пины друг друга (graph ↔ graph), {t:"make"}, версия в ответе (то же число у tools/pin-bridge.mjs). */
+        const val VER = 2
 
         /** Кадр json (kind 5) с именем и значением — так {"t":"set"} доходит до Pins In страницы. */
         fun jsonFrame(name: String, v: Any?): ByteArray {
