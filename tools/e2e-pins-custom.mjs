@@ -43,6 +43,7 @@ ok('values reach the new outputs', await A.evaluate(() => __x.out.speed === 7 &&
 await A.evaluate(() => { __x.p.grow = false; }); cli.send(JSON.stringify({ t: 'make', name: 'nope', dir: 'pub' })); await wait(300);
 ok('grow off → no new pins', await A.evaluate(() => __x.p.pins) === pins);
 await A.evaluate(() => { __x.p.grow = true; });
+cli.close(); await wait(300);                                                // клиент со старой подпиской не нужен дальше
 
 // ---------- 2. Две страницы через мост: граф → граф ----------
 await A.evaluate(async (url) => {
@@ -61,6 +62,33 @@ await wait(2500);
 const g2g = await B.evaluate(() => ({ spec: !!(__sp.out.spec && __sp.out.spec.mag), fc: __sp.out.spec && __sp.out.spec.freqs && __sp.out.spec.freqs[512], st: __i.status }));
 ok('page B takes page A\'s IQ through the bridge', g2g.spec && Math.abs(g2g.fc - 50e6) < 1, JSON.stringify(g2g));
 await A.evaluate(() => { __o.p.on = false; }); await B.evaluate(() => { __i.p.on = false; }); await wait(300);
+
+// ---------- 2b. ввод в поле pins: порты обновляются без движка, фокус не теряется, чужая сторона не плодит промежуточные пины ----------
+await A.evaluate(async (url) => {
+  Eng.stop && Eng.stop();
+  clearAll();
+  window.__t = addNode('pinsx', 40, 40, { on: false, pins: '' });
+}, url);
+await wait(300);
+await A.locator('.prm[data-param="pins"] input').first().click();
+await A.keyboard.type('>aa, <bb');
+const typed = await A.evaluate(() => ({ f: document.activeElement.closest('.prm')?.dataset.param, ins: portsOf(__t, 'ins').map((p) => p.n).filter((n) => !['on', 'grow'].includes(n)).join() }));
+ok('focus stays in the pins field while typing', typed.f === 'pins', JSON.stringify(typed));
+await A.keyboard.press('Enter'); await A.locator('.prm[data-param="pins"] input').first().blur();
+await wait(300);
+const upd = await A.evaluate(() => ({ ins: [...__t.el.querySelectorAll('.port[data-dir="i"] .pin')].map((e) => e.textContent).join(), outs: [...__t.el.querySelectorAll('.port[data-dir="o"] .pin')].map((e) => e.textContent).join() }));
+ok('pins appear on the node right after the edit (engine stopped)', /aa/.test(upd.ins) && /bb/.test(upd.outs), JSON.stringify(upd));
+ok('no text field has autofill on', await A.evaluate(() => [...document.querySelectorAll('input,textarea')].filter((i) => !['checkbox', 'radio', 'file', 'password', 'button', 'range', 'color', 'hidden', 'submit'].includes(i.type) && i.getAttribute('autocomplete') !== 'off').map((i) => i.id || i.className || i.type).join() === ''), await A.evaluate(() => [...document.querySelectorAll('input,textarea')].filter((i) => !['checkbox', 'radio', 'file', 'password', 'button', 'range', 'color', 'hidden', 'submit'].includes(i.type) && i.getAttribute('autocomplete') !== 'off').map((i) => i.id || i.className || i.type).join()));
+// страница A правит список под мостом, страница B (тоже Pins custom) не должна получить пин на каждую букву
+await B.evaluate(async (url) => { clearAll(); window.__bx = addNode('pinsx', 40, 40, { on: true, url, pins: '', grow: true }); await Eng.start(); }, url);
+await A.evaluate(async (url) => { clearAll(); window.__t = addNode('pinsx', 40, 40, { on: true, url, pins: '', grow: true }); await Eng.start(); }, url);
+await wait(800);
+await A.locator('.prm[data-param="pins"] input').first().click();
+await A.keyboard.type('>channel', { delay: 120 });
+await wait(2200);
+const bPins = await B.evaluate(() => __bx.p.pins), aPins = await A.evaluate(() => __t.p.pins);
+ok('typing a name does not leave a trail of prefixes on the other side', bPins === '<channel' && aPins === '>channel', aPins + ' | ' + bPins);
+await A.evaluate(() => { __t.p.on = false; }); await B.evaluate(() => { __bx.p.on = false; }); await wait(300);
 
 // ---------- 3. WebRTC: тот же узел на обоих концах, мост не нужен ----------
 await A.evaluate(async () => {

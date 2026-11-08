@@ -298,12 +298,15 @@ for(const e of [n.el,n.ghost]) if(e){ e.dataset.title=t;
 const ttl=e.querySelector('.ttl'); if(ttl){ ttl.textContent=t; ttl.dataset.ini=nodeInitials(t); } }
 if(dashMode) dashRenderRoot();
 }
-/* Поля «name» (параметры узлов, строки Table, подписи «name» в формах): без подсказок и автозаполнения браузера, клавиатуры и менеджеров
-   паролей — автозаполнение предлагает чужие имена и портит значения. Проставляется сразу при появлении поля в DOM (до фокуса). */
+/* Все текстовые поля: без автозаполнения и подсказок браузера и менеджеров паролей (autocomplete=off, data-lpignore, data-1p-ignore) —
+   оно предлагает чужие значения и портит свои. Поля «name» (параметры узлов, строки Table, подписи «name» в формах) сверх того — без
+   автокоррекции клавиатуры, заглавных и проверки орфографии. Проставляется сразу при появлении поля в DOM (до фокуса). */
 const NAF_LABEL=/^\s*(name|имя|название)\s*:?\s*$/i, NAF_WORD=/(^|[^a-z0-9])(name|имя|название)([^a-z0-9]|$)/i;
 function nafIs(i){
   if(i._naf) return false;
-  if(i.tagName==='INPUT' && i.type && !['text','search','url',''].includes(i.type)) return false;
+  return !(i.tagName==='INPUT' && i.type && !['text','search','url','email','tel','number',''].includes(i.type));   // пароли, чекбоксы, файлы — как есть
+}
+function nafName(i){
   if(i.closest('[data-param="name"]')) return true;
   const own=[i.name,i.id,i.placeholder,i.getAttribute('aria-label'),i.title,i.dataset&&i.dataset.col,i.dataset&&i.dataset.param].filter(Boolean).join(' ');
   if(NAF_WORD.test(own)) return true;
@@ -314,9 +317,12 @@ function nafIs(i){
 }
 function nafApply(i){
   i._naf=1;
-  i.setAttribute('autocomplete','off'); i.setAttribute('autocorrect','off'); i.setAttribute('autocapitalize','off'); i.spellcheck=false;
+  i.setAttribute('autocomplete','off');
   i.setAttribute('data-lpignore','true'); i.setAttribute('data-1p-ignore','true');
-  if(/^name$/i.test(i.name||'')) i.name='dsp-field-name';           // имя «name» — первая подсказка эвристики автозаполнения
+  if(nafName(i)){
+    i.setAttribute('autocorrect','off'); i.setAttribute('autocapitalize','off'); i.spellcheck=false;
+    if(/^name$/i.test(i.name||'')) i.name='dsp-field-name';         // имя «name» — первая подсказка эвристики автозаполнения
+  }
 }
 function nafScan(root){
   if(!root || root.nodeType!==1) return;
@@ -1070,6 +1076,7 @@ row.classList.add('pr-dev','pr-cred');
 } else {
 const i=document.createElement('input'); i.type='text'; i.value=n.p[s.n];
 i.addEventListener('input',()=>n.p[s.n]=i.value);
+i.addEventListener('change',()=>{ s.fn &&s.fn(n); });               // по Enter / уходу из поля, не на каждую букву (fn может перестраивать узел)
 (n.set||(n.set={}))[s.n]=v=>{ n.p[s.n]=v; i.value=v; };
 row.append(i); }
 n.pel=n.pel||{}; n.pel[s.n]=row;

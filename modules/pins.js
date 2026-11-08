@@ -63,16 +63,20 @@ function pinsGrow(L,dir,name){
   const key=dir+'|'+name;
   if(L.growQ.has(key)) return;
   L.growQ.add(key);
-  setTimeout(()=>{
-    L.growQ.delete(key);
+  const flush=()=>{
     for(const n of L.refs){
       if(n.type!=='pinsx' || !n.p.grow) continue;
+      if(pinsTyping(n)){ setTimeout(flush,500); return; }                  // человек правит список — не перебиваем и не перестраиваем узел под руками
+      L.growQ.delete(key);
       const t=pinxWith(n.p.pins,dir,name);
-      if(t!==null){ n.p.pins=t; pinsResize(n); }
+      if(t!==null){ if(n.set && n.set.pins) n.set.pins(t); else n.p.pins=t; pinsResize(n); }
       return;
     }
-  },0);
+    L.growQ.delete(key);
+  };
+  setTimeout(flush,0);
 }
+const pinsTyping=n=>{ const a=document.activeElement; return !!(a && n.el && n.el.contains(a) && a.closest('.prm[data-param="pins"]')); };
 
 function pinsRecv(L,data){
   if(typeof data==='string'){
@@ -165,6 +169,7 @@ function pinsNames(n){
   const so=new Map(n.sNames.map((nm,k)=>[nm,n.sSt[k]])), ro=new Map(n.rNames.map((nm,k)=>[nm,n.rSt[k]]));
   n.sNames=s; n.sIds=sid; n.sSt=s.map(nm=>so.get(nm)||{seq:0});
   n.rNames=r; n.rIds=rid; n.rSt=r.map(nm=>ro.get(nm)||{q:[]});
+  n.nkeyT=performance.now();
   if(n.lk) n.lk.annDirty=true;
 }
 function pinsSync(n,I){
@@ -182,7 +187,8 @@ function pinsSync(n,I){
   else if(pinsRtc(n) && !L) n.status='wire WebRTC Data → rtc';
   else if(!L) n.status=(typeof gwErr==='function' && gwErr(n.p.url)) || 'URL must start with ws:// or wss://';
   else n.status=L.state;
-  if(L && L.annDirty) pinsAnnounce(L);
+  // имена объявляем, когда набор закончен: иначе другая сторона создаст пин на каждый промежуточный префикс («c», «ch», «cha»…)
+  if(L && L.annDirty){ const now=performance.now(); if(![...L.refs].some(r=>now-r.nkeyT<800)) pinsAnnounce(L); }
   return L && pinsReady(L) ? L : null;
 }
 
@@ -261,7 +267,7 @@ function pinsDraw(n){
   if(r.textContent!==t) r.textContent=t;
 }
 function pinsInit(n){
-  n.lk=null; n.nkey=null; n.sNames=[]; n.sIds=[]; n.sSt=[]; n.rNames=[]; n.rIds=[]; n.rSt=[];
+  n.lk=null; n.nkey=null; n.nkeyT=0; n.sNames=[]; n.sIds=[]; n.sSt=[]; n.rNames=[]; n.rIds=[]; n.rSt=[];
   n.status='off'; n.warn=''; n.dropped=0; n.rate=0; n.rateT=performance.now(); n.rateB=0;
 }
 
