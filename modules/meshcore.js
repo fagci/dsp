@@ -6,17 +6,19 @@
    ADVERT — целиком открытый текст (имя узла, тип, координаты); GRP_TXT/GRP_DATA — AES-ECB по PSK канала
    (по умолчанию izOH6cXN6mrJ5e26oRXNcg== — предустановленный канал «Public», этим ключом идёт открытый чат по
    умолчанию во многих клиентах; свои каналы — свой PSK). Личные сообщения (TXT_MSG) и прочее, что шифруется
-   приватным ключом получателя (ECDH), пассивно не читаются — это не ограничение декодера, а свойство протокола. */
+   приватным ключом получателя (ECDH), пассивно не читаются — это не ограничение декодера, а свойство протокола.
+   Подпись Ed25519 у ADVERT проверяется (sig valid/invalid); кадры с версией ≠ 0 и зарезервированным типом — ложные срабатывания CRC, отбрасываются. */
 
 function mcHex(n,bytes,pskCsv,now){
-  let r; try{ r=mcDecode(bytes,String(pskCsv||MC_PUBLIC_PSK).split(',').map(s=>s.trim()).filter(Boolean)); }catch(e){ return null; }
-  if(!r) return null;
-  const rec={t:now, src:'MeshCore', kind:r.typeName, route:r.route, hop:r.hopCount};
+  let r; try{ r=mcDecode(bytes,String(pskCsv||MC_PUBLIC_PSK).split(',').map(s=>s.trim()).filter(Boolean),{verify:n.p.verify!==false}); }catch(e){ return null; }
+  if(!r){ n.bogus++; return null; }
+  const rec={t:now, src:'MeshCore', kind:r.typeName, route:r.route, hop:r.hopCount, direct:r.direct};
   if(r.advert){
-    n.ok++;
-    const node=n.nodes.get(r.pubKey)||{pubKey:r.pubKey}; if(r.name) node.name=r.name; node.type=r.advTypeName;
+    const sig=r.sigOk==null ? undefined : r.sigOk ? 'valid' : 'invalid';
+    if(sig==='invalid'){ n.badsig++; if(n.p.dropBadSig) return null; } else n.ok++;
+    const node=n.nodes.get(r.pubKey)||{pubKey:r.pubKey}; if(r.name) node.name=r.name; node.type=r.advTypeName; if(sig) node.sig=sig;
     if(r.lat!=null){ node.lat=r.lat; node.lon=r.lon; } n.nodes.set(r.pubKey,node);
-    Object.assign(rec,{from:'!'+r.id, pubKey:r.pubKey, name:r.name, advType:r.advTypeName, lat:r.lat, lon:r.lon, text:(r.name||'node')+' ('+r.advTypeName+')'+(r.lat!=null ? ' @ '+r.lat.toFixed(5)+','+r.lon.toFixed(5) : '')});
+    Object.assign(rec,{from:'!'+r.id, pubKey:r.pubKey, name:r.name, advType:r.advTypeName, sig, lat:r.lat, lon:r.lon, text:(r.name||'node')+' ('+r.advTypeName+')'+(sig==='invalid' ? ' [BAD SIGNATURE]' : '')+(r.lat!=null ? ' @ '+r.lat.toFixed(5)+','+r.lon.toFixed(5) : '')});
   } else if(r.text!==undefined || r.dataType!==undefined || r.encrypted){
     if(r.encrypted){ n.undec++; rec.encrypted=true; rec.channelHash=r.channelHash; }
     else{
@@ -35,9 +37,11 @@ def({ id:'meshcore', title:'MeshCore Sniffer (LoRa)', cat:'Decoders', kw:'meshco
   readout:true, tall:true, resize:true, w:480,
   params:[{n:'psk',t:'text',d:MC_PUBLIC_PSK,label:'channel PSK, base64 (through comma — try several; default — the pre-set "Public" channel)'},
           {n:'onlyKnown',t:'check',d:true,label:'hide group frames that none of the PSKs could decrypt'},
+          {n:'verify',t:'check',d:true,label:'verify the Ed25519 signature of adverts (sig = valid / invalid in the record)'},
+          {n:'dropBadSig',t:'check',d:false,label:'drop adverts whose signature does not verify (forged or damaged)'},
           {n:'hexcol',adv:true,t:'text',d:'hex',label:'hex field in the input record'},
-          {n:'clr',t:'button',label:'Clear',fn:n=>{ n.nodes.clear(); n.ok=n.undec=n.skip=0; n.recent=[]; }}],
-  init:n=>{ n.nodes=new Map(); n.ok=0; n.undec=0; n.skip=0; n.recent=[]; n.lastHex=undefined; n.lastText=null; n.lastLat=null; n.lastLon=null; },
+          {n:'clr',t:'button',label:'Clear',fn:n=>{ n.nodes.clear(); n.ok=n.undec=n.skip=n.bogus=n.badsig=0; n.recent=[]; }}],
+  init:n=>{ n.nodes=new Map(); n.ok=0; n.undec=0; n.skip=0; n.bogus=0; n.badsig=0; n.recent=[]; n.lastHex=undefined; n.lastText=null; n.lastLat=null; n.lastLon=null; },
   process(n,I){
     const now=Date.now(), out=[], psk=n.p.psk, hc=n.p.hexcol||'hex';
     for(const r of recList(I.rec)){
@@ -51,7 +55,7 @@ def({ id:'meshcore', title:'MeshCore Sniffer (LoRa)', cat:'Decoders', kw:'meshco
       if(rec && (!rec.encrypted || !n.p.onlyKnown)) out.push(rec);
     }
     for(const rec of out){
-      n.recent.push((rec.encrypted ? '[locked] ' : '')+rec.kind+(rec.from ? ' '+rec.from : '')+(rec.text ? ' "'+String(rec.text).slice(0,80)+'"' : rec.channelHash!=null ? ' channel 0x'+rec.channelHash.toString(16) : ''));
+      n.recent.push((rec.encrypted ? '[locked] ' : '')+rec.kind+(rec.hop ? ' hops='+rec.hop : rec.direct ? ' direct' : '')+(rec.from ? ' '+rec.from : '')+(rec.text ? ' "'+String(rec.text).slice(0,80)+'"' : rec.channelHash!=null ? ' channel 0x'+rec.channelHash.toString(16) : ''));
       if(rec.text!=null) n.lastText=rec.text;
       if(rec.lat!=null){ n.lastLat=rec.lat; n.lastLon=rec.lon; }
     }
@@ -59,7 +63,7 @@ def({ id:'meshcore', title:'MeshCore Sniffer (LoRa)', cat:'Decoders', kw:'meshco
     return {rec:out.length ? out : null, text:n.lastText, from:out.length ? (out[out.length-1].from||out[out.length-1].pubKey) : null, lat:n.lastLat, lon:n.lastLon, new:out.length ? 1 : 0};
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
-    const t='decoded '+n.ok+(n.undec ? ' · locked '+n.undec : '')+(n.skip ? ' · needs peer key '+n.skip : '')+' · '+n.nodes.size+' nodes'+
+    const t='decoded '+n.ok+(n.undec ? ' · locked '+n.undec : '')+(n.skip ? ' · needs peer key '+n.skip : '')+(n.badsig ? ' · bad signature '+n.badsig : '')+(n.bogus ? ' · not MeshCore '+n.bogus : '')+' · '+n.nodes.size+' nodes'+
       (n.recent.length ? '\n'+n.recent.slice(-12).join('\n') : '\nno frames yet (feed LoRa Decoder rec, sync 12 for MeshCore)');
     if(r.textContent!==t) r.textContent=t; }
 });
