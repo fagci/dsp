@@ -21,9 +21,8 @@ function pinsUrlOf(n){
   const raw=typeof gwUrl==='function' ? gwUrl(n.p.url) : String(n.p.url||'').trim();
   try{ const u=new URL(String(raw).trim()); return u.protocol==='ws:' || u.protocol==='wss:' ? u.toString() : ''; }catch(e){ return ''; }
 }
-function pinsBlocked(url){
-  return location.protocol==='https:' && /^ws:\/\//i.test(url) && !/^ws:\/\/(localhost|127\.|\[::1\])/i.test(url)
-    ? 'blocked: an https page can only open wss:// (or ws://localhost)' : '';
+function pinsBlocked(url){          // https-страница не откроет ws:// на чужой хост; в приложении Android (DspApp) можно — см. netInsecure
+  return netInsecure(url) ? 'blocked: an https page can only open wss:// (or ws://localhost); the Android app allows ws:// and http://' : '';
 }
 const pinsRtc=n=>n.p.transport==='WebRTC';
 

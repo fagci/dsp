@@ -11,7 +11,7 @@ function cpClose(n){
 }
 // https-страница не откроет ws:// на другой машине — скажем прямо
 function cpUrlBlock(url){
-  return location.protocol==='https:' && /^ws:\/\//i.test(url) && !/^ws:\/\/(localhost|127\.|\[::1\])/i.test(url)
+  return netInsecure(url)       // в приложении Android (DspApp) ws:// на другие хосты разрешён, в браузере по https — нет
     ? 'blocked: an https page can only open wss:// (or ws://localhost) — run the bridge on this machine or use a wss:// proxy' : '';
 }
 async function cpOpen(n,o){
