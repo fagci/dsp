@@ -8,7 +8,7 @@ let bad = 0; const ok = (n, c, x = '') => { if (!c) { bad++; console.log('FAIL',
 const { chromium } = createRequire(import.meta.url)('playwright');
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const bridge = createMsgrBridge({ port: 0, log: () => {} }), port = (await bridge.listen()).port, url = 'ws://127.0.0.1:' + port;
-const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] }); const ctx = await b.newContext(); const errs = [];
+const b = await chromium.launch({ args: ['--autoplay-policy=no-user-gesture-required'] }); let ctx = null; const errs = [];
 async function mk() { const pg = await ctx.newPage(); pg.on('pageerror', e => errs.push(e.message)); await pg.goto('http://localhost:8123/index.html');
   await pg.waitForFunction(() => window.crossOriginIsolated === true, null, { timeout: 90000 }).catch(() => {}); await pg.waitForTimeout(1500);
   await pg.waitForFunction(() => typeof addNode === 'function'); return pg; }
@@ -21,6 +21,8 @@ const analyse = (pg) => pg.evaluate(() => {
   return { fs, samples: n, seconds: +(n / fs).toFixed(1), amp: +amp.toFixed(3), discontinuous: bad, events: runs, zeroRun: zero, blocks: window.__blocks };
 });
 async function scenario(name, withPins, fmt) {
+  if (ctx) await ctx.close();
+  ctx = await b.newContext();                         // свежее хранилище: автосохранение прошлого сценария не должно восстановиться в эти страницы
   const A = await mk(); let B = A;
   if (withPins) B = await mk();
   await A.evaluate(async ({ url, withPins, fmt }) => {
@@ -40,6 +42,8 @@ async function scenario(name, withPins, fmt) {
     addEdge(pi.id, 'out1', de.id, 'in'); addEdge(de.id, 'stereo', au.id, 'in'); addEdge(au.id, 'out', dc.id, 'L'); addEdge(au.id, 'q', dc.id, 'R'); markWiresDirty(); window.__pi = pi;
   }, { url });
   await B.evaluate(hook);
+  const nodes = await Promise.all([A, B].map((p) => p.evaluate(() => ({ out: Graph.nodes.filter((n) => n.type === 'pinsout').length, in: Graph.nodes.filter((n) => n.type === 'pinsin').length, gen: Graph.nodes.filter((n) => n.type === 'iqGen').length }))));
+  if (withPins && (nodes[0].out !== 1 || nodes[0].gen !== 1 || nodes[1].in !== 1)) console.log('WARNING: unexpected nodes', JSON.stringify(nodes));
   await A.evaluate(() => Eng.start()); if (B !== A) await B.evaluate(() => Eng.start());
   await wait(4000);
   await B.evaluate(() => { window.__cap = []; window.__blocks = 0; });
