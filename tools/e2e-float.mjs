@@ -23,7 +23,7 @@ await wait(3000);
 await pg.evaluate((mode) => {
   window.__frames = 0; window.__bytes = 0; window.__cost = [];
   if (mode === 'overlay') {
-    window.DspApp = { floatCan: () => true, floatShow: () => true, floatClose() {}, floatPerm() {}, floatFrame: (id, b64) => { if (!window.__first) window.__first = b64.startsWith('UklGR') ? 'webp' : b64.startsWith('iVBOR') ? 'png' : 'other:' + b64.slice(0, 8); window.__frames++; window.__bytes += b64.length; }, appKey: () => '' };
+    window.DspApp = { floatCan: () => true, floatShow: () => true, floatClose() {}, floatPerm() {}, floatFrame: (id, b64) => { if (!window.__first) window.__first = b64.startsWith('/9j/') ? 'jpeg' : b64.startsWith('iVBOR') ? 'png' : b64.startsWith('UklGR') ? 'webp' : 'other:' + b64.slice(0, 8); window.__frames++; window.__bytes += b64.length; }, appKey: () => '' };
     const orig = floatSend; floatSend = function (s) { const t = performance.now(); try { return orig(s); } finally { window.__cost.push(performance.now() - t); } };
     floatToggle(__sa);
   }
@@ -43,15 +43,20 @@ const r = await pg.evaluate(() => {
 console.log(mode.padEnd(8), 'cpu×' + rate, JSON.stringify(r));
 globalThis.__r = r;
 
-ok('overlay frames keep coming (≥ 4 per second)', r.overlayFrames >= 48, String(r.overlayFrames));
-ok('frames are WebP / PNG images', r.firstKind === 'webp' || r.firstKind === 'png', String(r.firstKind));
-ok('a frame costs the main thread under 10 ms at CPU ×4 (28 ms on average with the synchronous toDataURL)', r.frameCostMs && r.frameCostMs.avg < 10 && r.frameCostMs.p95 < 18, JSON.stringify(r.frameCostMs));
+ok('a cheap frame lets the window run faster than the old 8 per second cap (≥ 15 per second)', r.overlayFrames >= 180, String(r.overlayFrames));
+ok('the spectrum goes as JPEG (opaque canvas, 3 ms encoder)', r.firstKind === 'jpeg', String(r.firstKind));
+ok('a frame costs the main thread under 10 ms at CPU ×4 (28 ms on average with synchronous webp)', r.frameCostMs && r.frameCostMs.avg < 10 && r.frameCostMs.p95 < 18, JSON.stringify(r.frameCostMs));
 ok('engine ticks stay regular: few gaps over 40 ms (44 with the synchronous encoder, 3 without an overlay)', r.tickGaps_over_40ms < 20, String(r.tickGaps_over_40ms));
 ok('engine keeps real time (86 ticks per second)', r.ticksPerSec > 80, String(r.ticksPerSec));
-// кодировщик замолчал — окно не замирает навсегда
-await pg.evaluate(() => { const o = HTMLCanvasElement.prototype.toBlob; let first = true; HTMLCanvasElement.prototype.toBlob = function (cb, t, q) { if (first) { first = false; return; } return o.call(this, cb, t, q); }; window.__frames = 0; });
-await wait(5000);
-ok('a lost encoder callback does not freeze the window', await pg.evaluate(() => window.__frames) > 5);
+// дорогой кадр (слабый телефон) — окно само замедляется, а не отнимает такты у звука
+await pg.evaluate(() => { const o = floatSend; window.__fsOrig = o; floatSend = function (s) { const t = performance.now(); while (performance.now() - t < 30) {} return o(s); }; window.__frames = 0; });
+await wait(4000);
+const slow = await pg.evaluate(() => window.__frames);
+ok('a 30 ms frame slows the window down (≤ 8 per second) instead of eating the engine', slow <= 36, String(slow));
+await pg.evaluate(() => { floatSend = window.__fsOrig; }); await wait(3000);             // интервал сжимается за ~1.5 с (скользящее среднее стоимости кадра)
+await pg.evaluate(() => { window.__frames = 0; }); await wait(2000);
+const again = await pg.evaluate(() => window.__frames);
+ok('and it speeds up again when frames are cheap (rate clearly above the slowed one)', again / 2 >= 1.2 * slow / 4, 'slowed ' + slow + ' in 4 s, recovered ' + again + ' in 2 s');
 // узел удалили — кадры прекращаются
 await pg.evaluate(() => { floatToggle(__sa); window.__frames = 0; }); await wait(1200);
 ok('closing the window stops the frames', await pg.evaluate(() => window.__frames) === 0);
