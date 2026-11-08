@@ -116,4 +116,9 @@ R=K.spSolve('room Zal 4 3 4 3\nzal2-x 1'); ok('names differing only by case are 
   ok('mirror: the corridor moves to the other side of the hall',side(A)===-side(B) && B.mirror,side(A)+' '+side(B));
   near('mirror: areas unchanged',B.polys[0].area+B.polys[1].area,A.polys[0].area+A.polys[1].area,1e-9);
   R=K.spSolve(t+'mirror\nzal1-zal2 az 90'); ok('mirror with a compass is ignored and reported',!R.mirror && R.errors.some(e=>/mirror/.test(e.msg))); }
+// высота потолка
+R=K.spSolve('height 2.7\nroom A 4 3 4 3 h 2.5\nroom B 2 3 2 3\nwall A2-A3 B1-B4 0.3');
+ok('ceiling: room h overrides the default height',R.polys[0].h===2.5 && R.polys[1].h===2.7,JSON.stringify(R.polys.map(p=>p.h)));
+near('ceiling: volume = area × h',R.polys[0].volume,30,.01);
+R=K.spSolve('A-B 3\nB-C 3\nC-A 3\npoly A B C h x'); ok('poly with a bad h is an error',R.errors.length===1);
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
