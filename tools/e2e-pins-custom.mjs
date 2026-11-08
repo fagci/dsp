@@ -40,7 +40,7 @@ cli.send(K.pinEncode({ kind: K.PIN_JSON, name: 'speed', seq: 0, data: 5 }));  //
 await wait(500);
 let pins = await A.evaluate(() => __x.p.pins);
 ok('client created the pins', pins === '>spec1, <tune, <speed', pins);
-const pp = await A.evaluate(() => portsOf(__x, 'ins').map((p) => p.n).filter((n) => !['on', 'grow'].includes(n)).join() + '|' + portsOf(__x, 'outs').map((p) => p.n).filter((n) => !['on', 'grow'].includes(n)).join());
+const pp = await A.evaluate(() => portsOf(__x, 'ins').map((p) => p.n).filter((n) => !['on', 'grow', 'buf'].includes(n)).join() + '|' + portsOf(__x, 'outs').map((p) => p.n).filter((n) => !['on', 'grow', 'buf'].includes(n)).join());
 ok('ports follow', pp === 'rtc,spec1|tune,speed', pp);
 cli.send(K.pinEncode({ kind: K.PIN_JSON, name: 'speed', seq: 1, data: 7 }));
 cli.send(JSON.stringify({ t: 'set', name: 'tune', v: 100.5e6 }));
@@ -78,7 +78,7 @@ await A.evaluate(async (url) => {
 await wait(300);
 await A.locator('.prm[data-param="pins"] input').first().click();
 await A.keyboard.type('>aa, <bb');
-const typed = await A.evaluate(() => ({ f: document.activeElement.closest('.prm')?.dataset.param, ins: portsOf(__t, 'ins').map((p) => p.n).filter((n) => !['on', 'grow'].includes(n)).join() }));
+const typed = await A.evaluate(() => ({ f: document.activeElement.closest('.prm')?.dataset.param, ins: portsOf(__t, 'ins').map((p) => p.n).filter((n) => !['on', 'grow', 'buf'].includes(n)).join() }));
 ok('focus stays in the pins field while typing', typed.f === 'pins', JSON.stringify(typed));
 await A.keyboard.press('Enter'); await A.locator('.prm[data-param="pins"] input').first().blur();
 await wait(300);

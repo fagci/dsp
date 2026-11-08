@@ -3,7 +3,7 @@ import { loadKernels } from './netmock.mjs';
 import { createBridge } from './termux/bridge.mjs';
 import { createMsgrBridge } from './node/bridge.mjs';
 let bad = 0; const ok = (n, c, x = '') => { if (!c) { bad++; console.log('FAIL', n, x); } else console.log('ok  ', n); };
-const K = loadKernels(['pins-kernels.js'], 'pinEncode,pinDecode,pinClassify,pinFrames,pinSpecOf,pinName,pinNames,PinRing,PIN_SIG,PIN_IQ,PIN_SPEC,PIN_SPECR,PIN_JSON,PIN_KIND_NAME,pinxParse,pinxWith,pinxName,pinIqSplit,pinSigOf,PIN_IQ16,PIN_IQ8,PIN_SIG16,PIN_FMT_NAME,PIN_FORMATS');
+const K = loadKernels(['pins-kernels.js'], 'pinEncode,pinDecode,pinClassify,pinFrames,pinSpecOf,pinName,pinNames,PinRing,PIN_SIG,PIN_IQ,PIN_SPEC,PIN_SPECR,PIN_JSON,PIN_KIND_NAME,pinxParse,pinxWith,pinxName,pinIqSplit,pinSigOf,PIN_IQ16,PIN_IQ8,PIN_SIG16,PIN_FMT_NAME,PIN_FORMATS,PinIqFifo');
 
 // имена
 ok('names', K.pinNames('a, b ,,x y', 5, 'out').join('|') === 'a|b|out3|x_y|out5', K.pinNames('a, b ,,x y', 5, 'out').join('|'));
@@ -93,12 +93,44 @@ ok('reject short / unknown kind / bad length', K.pinDecode(new Uint8Array(10)) =
   ok('odd-sized int payload is rejected', K.pinDecode(new Uint8Array([K.PIN_IQ16, 1, 0, 0, ...new Array(20).fill(0), 120, 0, 0, 0, 1, 2, 3])) === null);
 }
 
+// буфер IQ на приёме: неровный приход кадров → ровная выдача на каждый такт (иначе такты без IQ = тишина в звуке)
+{
+  const sr = 204800, dt = 512 / 44100, per = sr * dt;                          // WFM после децимации на 5: 2378.3 отсчёта на такт
+  const run = (target, arrive, ticks) => {                                      // arrive(tick) → сколько отсчётов пришло к этому такту
+    const ff = new K.PinIqFifo(); ff.sr = sr; const out = []; let sum = 0;
+    for (let t = 0; t < ticks; t++) { const a = arrive(t); if (a > 0) ff.push(new Float32Array(a).fill(1), new Float32Array(a)); const c = ff.pull(dt, target); out.push(c ? c.re.length : 0); sum += c ? c.re.length : 0; }
+    return { ff, out, sum };
+  };
+  // как в браузере: кадры ≈ каждые 10.7 мс, но по сети то два подряд, то ни одного
+  let seed = 7; const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+  const jitter = (t) => (rnd() < 0.3 ? 0 : Math.round(per * (rnd() < 0.5 ? 1.4 : 2.6)));      // в среднем ≈ per
+  let carry = 0; const bursty = (t) => { carry += per; if (rnd() < 0.35) return 0; const a = Math.round(carry); carry -= a; return a; };
+  const raw = run(0, bursty, 600);
+  ok('without a buffer ticks are uneven (the reason of dropouts)', raw.out.filter((x) => x === 0).length > 50, String(raw.out.filter((x) => x === 0).length));
+  const r1 = run(Math.round(sr * 0.1), (() => { let c = 0, held = 0; return (t) => { c += per; held += per; if (rnd() < 0.35) return 0; const a = Math.round(held); held -= a; return a; }; })(), 800);
+  const steady = r1.out.slice(60);                                              // после набора буфера
+  ok('with a buffer every tick gets the same amount (±1 %)', steady.every((x) => Math.abs(x - per) <= per * 0.012 + 1), steady.filter((x) => Math.abs(x - per) > per * 0.012 + 1).length + ' bad of ' + steady.length);
+  ok('with a buffer: no underruns, no overruns', r1.ff.under === 0 && r1.ff.over === 0, r1.ff.under + '/' + r1.ff.over);
+  ok('with a buffer: nothing is lost on average', Math.abs(r1.sum + r1.ff.n - 800 * per) < per * 2, r1.sum + r1.ff.n + ' vs ' + 800 * per);
+  // пропавший поток: один underrun, потом пауза до набора буфера (не дробление на каждом такте)
+  const r2 = run(Math.round(sr * 0.1), (t) => (t >= 100 && t < 160 ? 0 : Math.round(per)), 400);
+  ok('a stalled link gives one underrun, not a stutter', r2.ff.under === 1 && r2.out.slice(300).every((x) => x > 0), r2.ff.under + ' ' + r2.out.slice(300).filter((x) => x === 0).length);
+  // уход часов: отправитель на 0.3 % быстрее — буфер подстраивается, не копится и не пустеет
+  let h = 0; const r3 = run(Math.round(sr * 0.1), () => { h += per * 1.003; const a = Math.floor(h); h -= a; return a; }, 6000);
+  ok('0.3 % clock drift is absorbed without under / overruns', r3.ff.under === 0 && r3.ff.over === 0 && r3.ff.n < sr * 0.35, JSON.stringify({ u: r3.ff.under, o: r3.ff.over, ms: Math.round(r3.ff.n / sr * 1000) }));
+  // очередь ушла далеко вперёд (вкладка стояла): выбрасываем старое, не отдаём лавиной
+  const r4 = run(Math.round(sr * 0.1), (t) => (t === 5 ? Math.round(sr * 3) : 0), 8);
+  ok('a pile-up is cut to a bounded delay', r4.ff.over >= 1 && r4.ff.n <= sr * 0.4, r4.ff.over + ' ' + r4.ff.n);
+  const r5 = run(0, (t) => (t === 2 ? 5000 : 0), 6);
+  ok('buffer 0 hands everything over at once', r5.out[2] === 5000);
+}
+
 // узел Pins (custom): список пинов строкой
 {
   const x = K.pinxParse('>chan, <tune, >chan, <on, <, junk, >a b');
   ok('pinx parse', x.send.join() === 'chan,a_b' && x.recv.join() === 'tune', JSON.stringify(x));
   ok('pinx add send', K.pinxWith('', 'send', 'x') === '>x' && K.pinxWith('>x, <y', 'recv', 'z') === '>x, <y, <z');
-  ok('pinx add refuses duplicate / reserved / empty', K.pinxWith('>x', 'send', 'x') === null && K.pinxWith('', 'recv', 'rtc') === null && K.pinxWith('', 'recv', '  ') === null);
+  ok('pinx add refuses duplicate / reserved / empty', K.pinxWith('>x', 'send', 'x') === null && K.pinxWith('', 'recv', 'rtc') === null && K.pinxWith('', 'recv', 'buf') === null && K.pinxWith('', 'send', 'fmt') === null && K.pinxWith('', 'recv', '  ') === null);
   ok('pinx same name in both directions is fine', K.pinxWith('>x', 'recv', 'x') === '>x, <x');
   let t = ''; for (let i = 0; i < 70; i++) t = K.pinxWith(t, 'send', 'p' + i) ?? t;
   ok('pinx capped at 64', K.pinxParse(t).send.length === 64);

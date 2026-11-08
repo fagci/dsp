@@ -141,6 +141,41 @@ function pinSigOf(f){                                    // kind 1 / 8 → Float
   return o;
 }
 
+// Буфер IQ на приёме. Кадры приходят по сети неровно (≈ столько же в секунду, сколько тактов движка, но не по одному на такт), а граф берёт
+// IQ синхронно с тактом: такт без кадра — пустота на входе демодулятора, то есть тишина (потери в звуке при нулевых счётчиках потерь).
+// pull() отдаёт на каждый такт ровно sr·dt отсчётов из очереди, как это делает источник в самом графе; начинает после набора target
+// отсчётов, при нехватке ждёт, пока очередь снова наберётся (одна пауза вместо дробления), небольшим подстроением ±0.5 % поглощает
+// уход частоты между часами отправителя и приёмника. target 0 — без буфера: отдаёт всё, что есть.
+class PinIqFifo{
+  constructor(){ this.q=[]; this.n=0; this.acc=0; this.run=false; this.under=0; this.over=0; this.gaps=0; this.sr=0; this.fc=0; this.tag=null; this.seq=undefined; }
+  push(re,im){ this.q.push({re,im,o:0}); this.n+=re.length; }
+  _take(m,keep){
+    m=Math.min(m,this.n);
+    if(m<=0) return null;
+    const re=keep ? new Float32Array(m) : null, im=keep ? new Float32Array(m) : null;
+    let o=0;
+    while(o<m){
+      const c=this.q[0], k=Math.min(m-o,c.re.length-c.o);
+      if(keep){ re.set(c.re.subarray(c.o,c.o+k),o); im.set(c.im.subarray(c.o,c.o+k),o); }
+      c.o+=k; o+=k;
+      if(c.o>=c.re.length) this.q.shift();
+    }
+    this.n-=m;
+    return keep ? {re,im} : null;
+  }
+  // dt — длительность такта, с; target — сколько отсчётов держим; → {re,im} | null
+  pull(dt,target){
+    if(!(this.sr>0)) return null;
+    if(!(target>0)) return this._take(this.n,true);
+    this.acc+=this.sr*dt; let want=Math.floor(this.acc); this.acc-=want;
+    if(this.n>target*4){ this._take(this.n-target*2,false); this.over++; }       // очередь ушла далеко вперёд (вкладка стояла): старое выбрасываем
+    if(!this.run){ if(this.n<target) return null; this.run=true; }
+    if(this.n>target*1.5) want=Math.round(want*1.005); else if(this.n<target*0.5) want=Math.round(want*0.995);
+    if(this.n<want){ this.under++; this.run=false; return null; }
+    return this._take(want,true);
+  }
+}
+
 // Очередь звука: кадры sig приходят не в такт блокам движка. pull(n) отдаёт ровно n отсчётов (нехватку добивает нулями)
 class PinRing{
   constructor(cap){ this.buf=new Float32Array(cap||48000); this.r=0; this.w=0; this.n=0; this.over=0; this.under=0; }
@@ -164,7 +199,7 @@ class PinRing{
    «>имя» — вход узла (данные из графа уходят наружу), «<имя» — выход узла (данные приходят снаружи); через запятую.
    Имя пина = id пина, поэтому провода переживают добавление и перестановку. */
 const PINX_MAX=64;
-const PINX_RESERVED=new Set(['rtc','on','grow','url','transport','pins','count','names']);   // это id служебных пинов и контролов узла
+const PINX_RESERVED=new Set(['rtc','on','grow','url','transport','pins','count','names','fmt','buf']);   // это id служебных пинов и контролов узла
 function pinxName(s){ return String(s==null ? '' : s).trim().replace(/[^\w.\-\/@]+/g,'_').slice(0,48); }
 function pinxParse(text){
   const send=[], recv=[];

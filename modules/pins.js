@@ -217,7 +217,6 @@ function pinsTx(n,L,I){
 function pinsRx(n,res){
   for(let k=0;k<n.rNames.length;k++){
     const st=n.rSt[k], fr=st.q.splice(0), key=n.rIds[k];
-    let iq=null;
     for(const f of fr){
       st.kind=PIN_KIND_NAME[f.kind];
       if(f.kind===PIN_JSON){ st.val=f.data; st.once=typeof f.data==='object' && f.data!==null; }
@@ -226,16 +225,21 @@ function pinsRx(n,res){
         if(f.sr && Math.abs(f.sr-Eng.sr)>1) n.warn='"'+f.name+'": sample rate '+f.sr+' ≠ engine '+Eng.sr;
         st.ring.push(pinSigOf(f));
       }else if(f.kind===PIN_IQ || f.kind===PIN_IQ16 || f.kind===PIN_IQ8){
-        const {re,im}=pinIqSplit(f);
-        const s=iqStream(n,key,f.sr,f.fc);
-        let tag=null;
-        if(st.seq!==undefined && f.seq!==((st.seq+1)>>>0)) tag='gap';
-        if(st.fc!==undefined && f.fc!==st.fc) tag='retune';
-        st.seq=f.seq; st.fc=f.fc; iqPush(s,re,im,tag); iq=s; st.iqs=s;
+        const {re,im}=pinIqSplit(f), ff=st.fifo || (st.fifo=new PinIqFifo());
+        if(ff.seq!==undefined){
+          const miss=(f.seq-ff.seq-1)>>>0;                                      // пропущенные кадры (потеряны в пути: мост, обрыв); огромное число — отправитель перезапустился
+          if(miss){ if(miss<1e5) ff.gaps+=miss; ff.tag='gap'; }
+        }
+        if(ff.fc!==f.fc && ff.sr) ff.tag='retune';
+        ff.seq=f.seq; ff.fc=f.fc; ff.sr=f.sr; ff.push(re,im);
       }else{ const sp=pinSpecOf(f); sp.rev=(st.rev=(st.rev|0)+1); st.spec=sp; }
     }
     if(st.kind==='sig' && st.ring) res[key]=st.ring.pull(buf(n,key));
-    else if(st.kind==='iq' && st.iqs){ if(!iq) iq=iqStream(n,key,st.iqs.sr,st.iqs.fc); res[key]=iq; }
+    else if(st.kind==='iq' && st.fifo){
+      const ff=st.fifo, s=iqStream(n,key,ff.sr,ff.fc), c=ff.pull(BLOCK/Eng.sr,Math.round(ff.sr*(+n.p.buf||0)/1000));   // ровно столько, сколько дал бы такт источника в графе
+      if(c){ iqPush(s,c.re,c.im,ff.tag); ff.tag=null; }
+      res[key]=s;
+    }
     else if(st.kind==='spec') res[key]=st.spec;
     else if(st.kind==='json'){ res[key]=st.val; if(st.once) st.val=undefined; }
   }
@@ -248,6 +252,7 @@ function pinsResize(n){
 }
 const pinsPorts=(n,pre,dflt)=>pinNames(n.p.names,+n.p.count||2,dflt).map((name,k)=>({n:pre+(k+1),t:'val',tip:name}));
 const RTC_PIN={n:'rtc',t:'rtc'};
+const PINS_BUF_PARAM={n:'buf',t:'range',min:0,max:1000,step:10,d:100,label:'IQ buffer, ms: evens out the network (frames come unevenly, the graph takes IQ every engine tick — without a buffer gaps in the sound). Bigger — more delay, fewer dropouts; 0 — hand over as it comes'};
 const PINS_FMT_PARAM={n:'fmt',t:'select',opts:PIN_FORMATS,d:'float32',label:'IQ and audio on the wire: float32 (exact), int16 (half the bytes, ~−96 dB steps), int8 (a quarter, ~−42 dB: raw 8-bit SDR samples lose nothing). The receiving side detects it'};
 const pinsParams=(kind)=>[
   {n:'on',t:'check',d:false,label:{pinsout:'send: connect and publish the pins',pinsin:'receive: connect and take the pins',pinsx:'connect (the other side creates the pins)'}[kind]},
@@ -256,10 +261,10 @@ const pinsParams=(kind)=>[
   ...(kind==='pinsx'
     ? [{n:'pins',t:'text',d:'',fn:pinsResize,label:'pins: ">name" — input (graph → out), "<name" — output (in → graph), comma separated. The other side adds its own'},
        {n:'grow',t:'check',d:true,label:'let the other side create pins (subscribe to a new name, send a new name, {"t":"make"}, a Pins node over WebRTC)'},
-       PINS_FMT_PARAM]
+       PINS_FMT_PARAM, PINS_BUF_PARAM]
     : [{n:'count',t:'select',opts:PINS_COUNTS,d:'2',label:'pins',fn:pinsResize},
        {n:'names',t:'text',d:'',label:'names, comma separated ('+(kind==='pinsin' ? 'in1, in2…' : 'out1, out2…')+' by default) — what clients subscribe to'},
-       ...(kind==='pinsout' ? [PINS_FMT_PARAM] : [])])];
+       ...(kind==='pinsout' ? [PINS_FMT_PARAM] : [PINS_BUF_PARAM])])];
 
 function pinsDraw(n){
   const r=n.el.querySelector('.readout'); if(!r) return;
@@ -273,7 +278,9 @@ function pinsDraw(n){
   const t=n.status+(on && L.bridge ? ' · '+L.bridge.impl+' bridge v'+L.bridge.ver : '')+(on ? ' · '+(n.rate/1024).toFixed(0)+' KB/s'+(L.drops ? ' · dropped '+L.drops : '')+(n.dropped ? ' · lost '+n.dropped : '')+
     (n.sNames.length ? ' · '+(L.all ? 'all' : L.want.size)+' subscribed' : '') : '')+(n.warn ? '\n⚠ '+n.warn : '')+
     (old ? '\n⚠ the bridge does not report its version — it is old: update the bridge (git pull and restart tools/node/bridge.mjs / tools/termux/bridge.mjs) or the DSP app; pages cannot see each other through it' : '');
-  if(r.textContent!==t) r.textContent=t;
+  const iqs=n.rNames.map((nm,k)=>{ const ff=n.rSt[k].fifo; return ff && ff.sr ? nm+': IQ '+(ff.sr/1000).toFixed(1)+' kS/s · buffer '+Math.round(ff.n/ff.sr*1000)+' ms'+(ff.under ? ' · underruns '+ff.under : '')+(ff.over ? ' · overruns '+ff.over : '')+(ff.gaps ? ' · frames lost on the way '+ff.gaps : '') : ''; }).filter(Boolean);
+  const tt=iqs.length ? t+'\n'+iqs.join('\n') : t;
+  if(r.textContent!==tt) r.textContent=tt;
 }
 function pinsInit(n){
   n.lk=null; n.nkey=null; n.nkeyT=0; n.sNames=[]; n.sIds=[]; n.sSt=[]; n.rNames=[]; n.rIds=[]; n.rSt=[];
