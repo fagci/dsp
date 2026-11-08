@@ -322,6 +322,7 @@ const PRESET_CATS={
   'Remote SDR: FM Receiver (rtl_tcp via DSP app — phone driver, Raspberry Pi)':'SDR Receivers',
   'Remote SDR: FM Receiver (rtl_tcp over WebRTC)':'SDR Receivers',
   'USB SDR: rtl_tcp Server (WebRTC / SDR++)':'SDR Receivers',
+  'USB SDR: Pins Out / In (channel IQ + spectrum to outside, OpenWebRX-style)':'SDR Receivers',
   'Remote SDR: FM Receiver (SpyServer over WebSocket)':'SDR Receivers',
   'USB SDR: HF AM / SSB from Blocks':'SDR Receivers',
   'Sound Card IQ: HF Receiver (SoftRock-style)':'SDR Receivers',
@@ -3970,6 +3971,29 @@ sa.size.w=640; sa.size.h=300; applySize(sa);
 addEdge(rx.id,'iq',sv.id,'iq'); addEdge(rt.id,'link',sv.id,'rtc');
 addEdge(sv.id,'freq',rx.id,'freq'); addEdge(sv.id,'sr',rx.id,'sr'); addEdge(sv.id,'gain',rx.id,'gainDb');
 addEdge(rx.id,'iq',sp.id,'in'); addEdge(sp.id,'spec',sa.id,'spec');
+markWiresDirty();
+});
+preset('USB SDR: Pins Out / In (channel IQ + spectrum to outside, OpenWebRX-style)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Any pin of the graph to the outside, and from the outside in. Run `node tools/pin-bridge.mjs` on the computer (port 8766), tick «send» / «receive» on both Pins nodes.\n'+
+  'Pins Out publishes the names «chan» (IQ of the picked channel: shift + decimation, 64 kS/s) and «spectrum» (the wide spectrum of the SDR). Nothing is sent until a client subscribes, so the idle cost is zero.\n'+
+  'Pins In takes «tune» (centre frequency, Hz → the SDR) and «offset» (channel offset, Hz → IQ Frequency Shift): the receiver is re-tuned by a wire, any numeric control of any node can be driven the same way.\n'+
+  'Clients: `websocat -b ws://127.0.0.1:8766/raw/chan | …` (float32 I,Q,I,Q…, no header); ws://127.0.0.1:8766/ with {"t":"sub","names":["chan","spectrum"]} (frames with a header: modules/pins-kernels.js); {"t":"set","name":"tune","v":100500000} re-tunes; GET http://127.0.0.1:8766/pins lists the names. Another DSP tab can take the same pins with Pins In.'});
+nt.size.w=820; nt.size.h=240; applySize(nt);
+const rx=addNode('rtlsdr',40,320,{sr:'1024000',auto:false,gainDb:30,demod:'WFM',freq:100000000});
+rx.size.w=320; rx.size.h=260; applySize(rx);
+const w0=addNode('iqSpec',420,320,{size:'4096'});
+const sa=addNode('sa',720,320,{auto:true,floor:-90,top:-20,split:.4});
+sa.size.w=640; sa.size.h=300; applySize(sa);
+const sh=addNode('iqShift',420,520,{});
+const d1=addNode('iqDecim',420,660,{M:'16',cut:.4});
+const po=addNode('pinsout',720,660,{on:false,url:'ws://127.0.0.1:8766',count:'2',names:'chan, spectrum'});
+po.size.w=300; po.size.h=200; applySize(po);
+const pi=addNode('pinsin',40,660,{on:false,url:'ws://127.0.0.1:8766',count:'2',names:'tune, offset'});
+pi.size.w=300; pi.size.h=200; applySize(pi);
+addEdge(rx.id,'iq',w0.id,'in'); addEdge(w0.id,'spec',sa.id,'spec'); addEdge(w0.id,'spec',po.id,'in2');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(sh.id,'out',d1.id,'in'); addEdge(d1.id,'out',po.id,'in1');
+addEdge(pi.id,'out1',rx.id,'freq'); addEdge(pi.id,'out2',sh.id,'freq');
 markWiresDirty();
 });
 preset('Remote SDR: FM Receiver (SpyServer over WebSocket)', function(){
