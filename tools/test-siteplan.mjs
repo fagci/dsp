@@ -102,4 +102,12 @@ near('room: a triangle 3-4-5 from the sides alone',R.polys[0].area,6,.01);
 R=K.spSolve('room 4 4 4'); ok('room without a name is an error',R.errors.length===1);
 R=K.spSolve('room Z 4 x 4'); ok('room with a bad side is an error',R.errors.length===1);
 R=K.spSolve('room A 4 3 4 3\nroom B 2 3 2 3\nA2-B1 0.4\nA2-A3-B1 180\nA2-B4 0.4'); ok('two rooms linked by a wall line',R.errors.length===0 && R.polys.length===2,JSON.stringify(R.errors));
+// «wall»: комнаты через стену, без наложения
+for(const [w,c4,c1] of [['wall Zal2-Zal3 kor4-kor1 0.37',[14.85,-0],[14.85,-5.9]],['wall Zal2-Zal3 kor1-kor4 0.37 shift -1',[14.85,-4.9],[14.85,1]],['wall Zal3-Zal2 kor4-kor1 0.37',[14.85,-3.74],[14.85,2.16]]]){
+  R=K.spSolve('Zal1 at 10 0\nZal1-Zal2 az 90\nroom Zal 4.48 3.74 4.46 3.74\nroom kor 1.36 5.9 1.33 5.9\n'+w);
+  const a=P(R,'kor4'), b=P(R,'kor1'), cx=R.polys[1].cx;
+  ok('wall «'+w+'»: corners across the wall',Math.hypot(a.x-c4[0],a.y-c4[1])<.05 && Math.hypot(b.x-c1[0],b.y-c1[1])<.05,JSON.stringify([a,b]));
+  ok('wall «'+w+'»: corridor outside the hall, fits',cx>14.85 && R.rms<.2 && R.pts.every(p=>!p.weak),cx+' '+R.rms);
+}
+R=K.spSolve('room Zal 4 3 4 3\nzal2-x 1'); ok('names differing only by case are reported',R.errors.some(e=>/case-sensitive/.test(e.msg)));
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
