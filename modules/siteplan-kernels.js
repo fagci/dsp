@@ -24,7 +24,7 @@
      fence A B C … [h 1.8] [sheet|mesh|wood|brick|concrete|block] [closed]   забор по точкам (профлист, рабица, штакетник…; можно по-русски), для сигнала — стена
      road A B … [w 3.5] [asphalt|gravel|tile] · area A B C … [grass|asphalt|gravel|tile|garden|water]   дорога (полоса) и площадка — покрытие земли
      light|socket|switch|panel|inlet|junction NAME POINT [dx м] [dy м] [h м] [w Вт]   электрика: светильник, розетка, выключатель, щиток, ввод, распредкоробка у точки (смещение на восток / север, высота над точкой)
-     wire A B C [cable 3x1.5|3x2.5|5x2.5|2x0.75] [z 2.5]   провод по цепочке устройств (z — высота трассы); ввод — 5x2.5, розетка — 3x2.5, иначе 3x1.5
+     wire A B C [cable 3x1.5 · 2x1.5 · 5x2.5 … — любое «жилыxсечение»] [z 2.5]   провод по цепочке устройств (z — высота трассы); ввод — 5x2.5, розетка — 3x2.5, иначе 3x1.5
      source NAME POINT [h 25] [eirp 43] [f 1800] [az 120] [bw 65]   внешний источник сигнала над точкой (вышка, соседский роутер; точка — по GPS, at или замерам)
      mirror                   отразить план слева направо (по рулетке и углам план не отличить от зеркального; с компасом / GPS не нужно)
      wall Hall2-Hall3 Kor4-Kor1 0.37 [shift 0]   стык через стену: Kor4-Kor1 параллельно Hall2-Hall3 по ту сторону стены 0.37, Kor4 напротив Hall2 (shift — сдвиг вдоль), Kor1 — в сторону Hall3
@@ -125,7 +125,7 @@ function spParse(text,o={}){
     if(/^wire$/i.test(T[0])){                                                                 // «wire L1 SW1 S1 [cable 3x1.5] [z 2.5]» — провод по цепочке устройств
       const w={names:[],cable:null,z:null,li};
       for(let i=1;i<T.length;i++){ const t=T[i].toLowerCase();
-        if(t==='cable'){ w.cable=T[++i]; if(!['3x1.5','3x2.5','5x2.5','2x0.75'].includes(w.cable)) return bad('wire: cable 3x1.5 | 3x2.5 | 5x2.5 | 2x0.75'); }
+        if(t==='cable'){ w.cable=T[++i]; if(!/^\d{1,2}x\d{1,3}(\.\d{1,2})?$/.test(w.cable||'') || !(+w.cable.split('x')[1]>0)) return bad('wire: cable — cores × cross-section, mm², e.g. 2x1.5 · 3x1.5 · 3x2.5 · 5x2.5 · 3x4'); }
         else if(t==='z'){ w.z=spNum(T[++i]); if(!(w.z>0 && w.z<10)) return bad('wire: z — run height, m'); }
         else w.names.push(T[i]); }
       if(w.names.length<2) return bad('wire A B [C …] [cable 3x1.5] [z 2.5] — A, B… are names of lights, sockets and switches'); wires.push(w); return; }

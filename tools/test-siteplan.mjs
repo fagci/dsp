@@ -219,5 +219,7 @@ for(const t of ['material Kit2-Kit3 concrete\nroom Hall 4.48 3.74 4.46 3.74\nroo
   { const Q=K.spSolve('room A 5 4 5 4\ninlet IN1 A1 dx 0.1 h 3\npanel P1 A1 dx 0.3 dy -0.4\njunction J1 A2 dx -1 dy -0.5\nlight L1 A1 dx 2 dy -2\nwire IN1 P1 J1 L1'), e=Object.fromEntries(Q.elec.map(x=>[x.name,x]));
     ok('inlet, panel, junction box: heights 3 / 1.6 / 2.4, no power',Q.errors.length===0 && e.IN1.z===3 && e.P1.z===1.6 && Math.abs(e.J1.z-2.4)<1e-9 && e.P1.watt===0,JSON.stringify(Q.errors));
     ok('cable: inlet 5x2.5, then 3x1.5',Q.wires.length===3 && Q.wires[0].cable==='5x2.5' && Q.wires[1].cable==='3x1.5' && Q.wires[2].cable==='3x1.5',JSON.stringify(Q.wires)); }
+  { const Q=K.spSolve('room A 5 4 5 4\nlight L1 A1\nlight L2 A2\nwire L1 L2 cable 2x1.5'), W=K.spSolve('room A 5 4 5 4\nlight L1 A1\nlight L2 A2\nwire L1 L2 cable abc');
+    ok('any «NxS» cable is accepted: 2x1.5',Q.errors.length===0 && Q.wires[0].cable==='2x1.5',JSON.stringify(Q.errors)); ok('a nonsense cable is an error',W.errors.length===1 && /cross-section/.test(W.errors[0].msg)); }
   const B=K.spSolve('room A 4 3 4 3\nwire L1 L2'); ok('wire to an undeclared device is an error',B.errors.length>0 && /unknown device/.test(B.errors[0].msg)); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);

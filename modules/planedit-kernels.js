@@ -66,7 +66,9 @@ function peInRooms(s,x,y){ for(const r of s.rooms) if(peInPoly(peRoomPoly(s,r),x
 const PE_EL={socket:{z:.3,watt:200,pre:'S'},switch:{z:1.1,watt:0,pre:'SW'},light:{z:2.6,watt:60,pre:'L'},panel:{z:1.6,watt:0,pre:'P'},inlet:{z:3,watt:0,pre:'IN'},junction:{z:2.4,watt:0,pre:'J'}};   // щиток, ввод в здание, распредкоробка
 // сечение по умолчанию: ввод — 5x2.5, розетка — 3x2.5, остальное — 3x1.5
 const peDefCable=(a,b)=>a==='inlet'||b==='inlet' ? '5x2.5' : a==='socket'||b==='socket' ? '3x2.5' : '3x1.5';
-const PE_CABLES=['3x1.5','3x2.5','5x2.5','2x0.75'];            // сечение жил, мм² (число жил × сечение)
+const PE_CABLES=['2x0.75','2x1.5','2x2.5','3x1.5','3x2.5','3x4','3x6','4x2.5','5x1.5','5x2.5','5x4','5x6'];            // ходовые: число жил × сечение, мм²; в тексте Site Plan годится любое «NxS»
+const peCableOk=c=>/^\d{1,2}x\d{1,3}(\.\d{1,2})?$/.test(String(c)) && +String(c).split('x')[1]>0;
+const peCableCol=c=>{ const s=+String(c).split('x')[1]; return s<=.75 ? '#90caf9' : s<=1.5 ? '#ffd54f' : s<=2.5 ? '#ff8a65' : s<=4 ? '#f48fb1' : s<=6 ? '#ba68c8' : '#b0bec5'; };   // цвет по сечению
 const PE_RESERVE=1.1;
 const peElOf=(s,id)=>(s.elec||[]).find(e=>e.id===id);
 function peAddEl(s,type,x,y,o={}){ const b=PE_EL[type]; if(!b) return null; (s.elec??=[]);
@@ -361,7 +363,7 @@ function peImportPoints(s,recs){
       const wkeep=new Set(); for(const q of r.wires||[]){ const A=s.elec.find(e=>e.src===pre+'el:'+q.a), B=s.elec.find(e=>e.src===pre+'el:'+q.b); if(!A||!B||A===B) continue;
         const src=pre+'wire:'+q.a+'-'+q.b; wkeep.add(src); let w=s.wires.find(x=>x.src===src);
         if(!w){ w=peAddWire(s,A.id,B.id,{}); if(!w) continue; w.src=src; }
-        w.cable=PE_CABLES.includes(q.cable) ? q.cable : w.cable; if(+q.z>0) w.zr=+q.z; }
+        w.cable=peCableOk(q.cable) ? q.cable : w.cable; if(+q.z>0) w.zr=+q.z; }
       s.wires=s.wires.filter(w=>(!w.src || !w.src.startsWith(pre) || wkeep.has(w.src)) && peElOf(s,w.a) && peElOf(s,w.b)); }
     s.objs=s.objs.filter(o=>!(o.src && String(o.src).startsWith('sp:') && !String(o.src).startsWith(pre) && (o.type==='door'||o.type==='window')));   // проёмы старого вида (по углам) — заменены
     n++; }
