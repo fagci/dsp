@@ -251,6 +251,10 @@ ok('an empty scene has no bounds and no grid',K.peGrid(K.peNew())===null);
 // электрика: устройства, провода, длины, сводка, каскадное удаление, импорт из Site Plan
 { const q=K.peNew(); const l=K.peAddEl(q,'light',1,1), sw=K.peAddEl(q,'switch',4,1), so=K.peAddEl(q,'socket',4,3);
   ok('electrics: default heights and names',l.z===2.6 && sw.z===1.1 && so.z===.3 && l.name==='L1' && so.name==='S1');
+  { const pn=K.peAddEl(q,'panel',0,0), inl=K.peAddEl(q,'inlet',0,1), jb=K.peAddEl(q,'junction',2,1);
+    ok('panel, inlet and junction box: heights 1.6 / 3 / 2.4, names P1 IN1 J1, no power',pn.z===1.6 && inl.z===3 && jb.z===2.4 && pn.name==='P1' && inl.name==='IN1' && jb.name==='J1' && pn.watt===0);
+    ok('cable by endpoints: inlet 5x2.5, panel → light 3x1.5, panel → socket 3x2.5',K.peAddWire(q,inl.id,pn.id).cable==='5x2.5' && K.peAddWire(q,pn.id,l.id).cable==='3x1.5' && K.peAddWire(q,pn.id,so.id).cable==='3x2.5');
+    K.peDel(q,'el',pn.id); K.peDel(q,'el',inl.id); K.peDel(q,'el',jb.id); ok('their wires go with them',q.wires.length===0 && q.elec.length===3); }
   const w=K.peAddWire(q,l.id,sw.id); ok('wire between a light and a switch: 1.5 mm² cable, no duplicates',w.cable==='3x1.5' && K.peAddWire(q,sw.id,l.id)===w && q.wires.length===1 && K.peAddWire(q,l.id,l.id)===null);
   const L=K.peWireLen(q,w); near('wire length = 3 m in plan + drops to 2.5 m (0.1 + 1.4)',L.len,4.5,1e-9); near('with the 10 % reserve',L.total,4.95,1e-9);
   const w2=K.peAddWire(q,sw.id,so.id,{via:[[4,2]]}); ok('wire to a socket: 2.5 mm² cable',w2.cable==='3x2.5'); near('wire with a bend: 2 m in plan + 1.4 + 2.2 drops',K.peWireLen(q,w2).len,5.6,1e-9);
