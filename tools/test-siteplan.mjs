@@ -6,7 +6,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float64Array,Float32Array,Set,Map,Number,String,JSON,isFinite,Infinity,Array,Object});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/siteplan-kernels.js'),'utf8')+';this.K={spSolve,spParse,spTilt,spPoly,spDXF,spGeoJSON,spSVG,spCSV,spFrame,spNice,spGridFrame,spToFrame,spFromFrame,spGridLines,spWalls,spHouse,spRoof};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/siteplan-kernels.js'),'utf8')+';this.K={spSolve,spParse,spTilt,spPoly,spDXF,spGeoJSON,spSVG,spCSV,spFrame,spNice,spGridFrame,spToFrame,spFilePath,spFromFrame,spGridLines,spWalls,spHouse,spRoof};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -206,4 +206,8 @@ for(const t of ['material Kit2-Kit3 concrete\nroom Hall 4.48 3.74 4.46 3.74\nroo
   const q=H.sources[0]; ok('source: above its point, with its EIRP, frequency and beam',q.name==='BS' && q.x===300 && q.y===400 && q.z===30 && q.eirp===46 && q.f===1800 && q.bw===65 && q.az===200,JSON.stringify(q));
   R=K.spSolve('fence A'); ok('fence needs two points',R.errors.length===1);
   R=K.spSolve('A at 0 0\nsource X A power 5'); ok('source: unknown key is an error',R.errors.length===1); }
+{ const a=K.spFilePath('Plans/dacha'), b=K.spFilePath(' a\\b/../c.plan '), c=K.spFilePath('  ');
+  ok('file path: folders and .txt',a.dirs.join('/')==='Plans' && a.name==='dacha.txt');
+  ok('file path: backslash, «..» dropped, extension kept',b.dirs.join('/')==='a/b' && b.name==='c.plan');
+  ok('file path: empty is null',c===null); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);

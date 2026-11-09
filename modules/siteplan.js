@@ -112,13 +112,57 @@ async function spSaveTable(n){
   const list=n.p.save||'analysis/siteplan'; await tblPut(list,Object.keys(rows[0]),rows); n.msg='saved '+rows.length+' points to «'+list+'» (name, x, y, z, sx, sy, sz'+(R.georef ? ', lat, lon' : '')+')'; redraw(n);
 }
 
+/* ---- план в файле из Files: имя — параметр «file» или пин file; правки текста пишутся в этот файл, внешние правки файла подтягиваются ---- */
+async function spFileFind(path,create){
+  const P=spFilePath(path); if(!P) return null;
+  let id=FS_ROOT;
+  for(const nm of P.dirs){
+    const f=(await FileStore.listFolders('files',id)).find(x=>x.name===nm);
+    if(f) id=f.id; else if(create) id=await FileStore.addFolder('files',nm,id); else return null;
+  }
+  return {dir:id,name:P.name,rec:(await FileStore.list('files',id)).find(x=>x.name===P.name)||null};
+}
+function spSetPlan(n,v){ if(n.set?.plan) n.set.plan(v); else n.p.plan=v; n.key=''; }
+async function spFileLoad(n,soft){                                         // soft: из onChange — только если локальных правок нет
+  const nm=n.fileName, tok=n.fileTok=(n.fileTok||0)+1;
+  if(!nm){ n.fileText=null; return; }
+  try{
+    const f=await spFileFind(nm,false); if(tok!==n.fileTok) return;
+    if(!f || !f.rec){ if(!soft){ n.fileText=null; n.msg='file «'+nm+'» is new — the plan will be saved there'; redraw(n); } return; }
+    const text=await (await FileStore.get(f.rec.id)).blob.text(); if(tok!==n.fileTok) return;
+    if(soft && String(n.p.plan||'')!==n.fileText) return;                  // в плане есть несохранённые правки — не затираем
+    n.fileText=text;
+    if(text!==String(n.p.plan||'')){ spSetPlan(n,text); n.msg='loaded «'+nm+'»'; }
+    redraw(n);
+  }catch(e){ n.msg='file: '+e.message; redraw(n); }
+}
+async function spFileSave(n){
+  const nm=n.fileName, text=String(n.p.plan||''); if(!nm) return;
+  try{
+    const f=await spFileFind(nm,true), blob=new Blob([text],{type:'text/plain'});
+    if(f.rec) await FileStore.update(f.rec.id,{blob,mime:'text/plain'}); else await FileStore.put({space:'files',folderId:f.dir,name:f.name,mime:'text/plain',blob});
+    n.fileText=text; n.msg='saved «'+nm+'»';
+  }catch(e){ n.msg='file: '+e.message; }
+  redraw(n);
+}
+function spFileTick(n,want){                                               // вызывается из process: имя сменилось — загрузить; текст правили — сохранить с задержкой
+  if(want!==n.fileName){ n.fileName=want; n.fileText=undefined; clearTimeout(n.fileT); spFileLoad(n); return; }
+  if(!want || n.fileText===undefined || !n.p.fsave) return;
+  if(String(n.p.plan||'')!==n.fileText){ clearTimeout(n.fileT); n.fileT=setTimeout(()=>spFileSave(n),800); }
+}
+
 def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, lazy:true, kw:'plan site survey land plot measure tape gps clinometer height building outdoor indoor area perimeter slope dxf 3d construction fence foundation',
   // rec — записи: строки замеров (kind, a, b, value, sigma — от Measure Entry или Table), GPS-замеры (name, lat, lon, acc, alt), точки (name, x, y, z); lines — замеры текстом с других модулей (Photo Measure, Clinometer), дописываются к списку; lat / lon / acc / alt — позиция (My Position) для кнопки «＋ GPS fix»; rec — GPS-замеры записями (name, lat, lon, acc, alt): складываются в план как «name gps …»;
+  // file — путь к файлу плана в Files («Plans/дача.txt»): замеры берутся из него, правки пишутся обратно; без пина — параметр «file»;
   // area — площадь первого контура, м²; perim — его периметр, м; slope — уклон, °; rms — невязки в σ (≈1 — замеры согласованы); n — точек; rec — точки, poly — контуры для карты
-  ins:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'acc',t:'num'},{n:'alt',t:'num'},{n:'rec',t:'rec'},{n:'lines',t:'txt'}],
+  ins:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'acc',t:'num'},{n:'alt',t:'num'},{n:'rec',t:'rec'},{n:'lines',t:'txt'},{n:'file',t:'txt'}],
   outs:[{n:'area',t:'num'},{n:'perim',t:'num'},{n:'slope',t:'num'},{n:'rms',t:'num'},{n:'n',t:'num'},{n:'rec',t:'rec'},{n:'poly',t:'rec'}],
   w:460, view:{h:380}, resize:true, readout:true,
   params:[{n:'plan',t:'code',plain:true,d:SP_DEF,label:'measurements, one per line: A-B 12.4 · A-B h 12.4 · A-B dz 1.2 · A-B az 45 · A-B-C 90 · A-B tilt 25 15 eye 1.6 · A z 120 · A gps lat lon ±3 · A at x y · poly A B C D · room Hall 4.48 3.74 4.46 3.74 (corners Hall1…, 90° unless «side/angle», «side/?» — not measured; d — diagonal 1-3) · wall Hall2-Hall3 Kit1-Kit4 0.4 [shift s] (rooms across a wall) · room … h 2.65 / height 2.7 (ceiling) · window zal1-zal2 1.20 1.40 h 1.45 sill 0.85 / door … (from corner, width) · outer 0.45 concrete / inner drywall / material A-B glass (walls) · mirror (flip left ↔ right) (± — error, m or °)',fn:n=>{ n.key=''; }},
+          {n:'file',t:'text',d:'',label:'plan file in Files (e.g. Plans/dacha.txt; the pin «file» overrides). The measurements are read from it and your edits are written back; a new name creates the file from the current text'},
+          {n:'fsave',t:'check',d:true,label:'save edits of the measurements to the file automatically'},
+          {n:'fload',t:'button',label:'↻ Reload the plan from the file',fn:n=>{ n.fileText=undefined; spFileLoad(n); }},
+          {n:'fwrite',t:'button',label:'⬇ Save the plan to the file now',fn:n=>spFileSave(n)},
           {n:'table',t:'text',d:'',label:'Table lists with measurements, comma-separated. Columns: kind (d h dz az tilt ang poly) + a, b, c + value [+ sigma]; or name + lat, lon [+ acc, alt]; or name + x, y [+ z]; or a ready «line»',fn:n=>{ n.tblKey=''; }},
           {n:'view',t:'select',opts:['plan','3D'],d:'plan',label:'view'},
           {n:'lvl',t:'select',opts:['-2','-1','0','1','2','3'],d:'0',label:'level on the plan: 0 — the ground floor, −1 — the cellar, 1 — the first upper floor (the others are dashed)'},
@@ -142,10 +186,12 @@ def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, lazy:true, kw:'pl
           {n:'gj',t:'button',label:'⬇ GeoJSON (georeferenced plans)',fn:n=>spExport(n,'gj')},
           {n:'csv',t:'button',label:'⬇ CSV (points ± error)',fn:n=>spExport(n,'csv')},
           {n:'clr',t:'button',label:'Forget GPS fixes from rec',fn:n=>{ n.fixLines.clear(); n.key=''; }}],
-  init:n=>{ n.res=null; n.emit=null; n.key=''; n.err=[]; n.msg=''; n.fixLines=new Map(); n.extLines=''; n.tblText=''; n.tblKey=''; n.inLat=null; n.inLon=null; n.inAcc=null; n.inAlt=null; n.zoom=1; n.panX=0; n.panY=0; },
+  init:n=>{ n.res=null; n.emit=null; n.key=''; n.err=[]; n.msg=''; n.fixLines=new Map(); n.extLines=''; n.tblText=''; n.tblKey=''; n.inLat=null; n.inLon=null; n.inAcc=null; n.inAlt=null; n.zoom=1; n.panX=0; n.panY=0; n.fileName=''; n.fileText=undefined; n.fileT=0; n.fileTok=0; n.off=FileStore.onChange(sp=>{ if((!sp || sp==='files') && n.fileName) spFileLoad(n,true); }); },
+  dispose:n=>{ if(n.off) n.off(); clearTimeout(n.fileT); },
   process(n,I){
     const p=n.p;
     const ext=typeof I.lines==='string' ? I.lines : ''; if(ext!==n.extLines){ n.extLines=ext; n.key=''; }
+    spFileTick(n,String(typeof I.file==='string' && I.file.trim() ? I.file : p.file||'').trim());
     n.inLat=recNum(I.lat); n.inLon=recNum(I.lon); n.inAcc=recNum(I.acc); n.inAlt=recNum(I.alt);
     for(const r of recList(I.rec)){                                         // записи: строки замеров (kind a b value…), GPS (name lat lon acc alt), точки (name x y z)
       const line=spRowToLine(r); if(!line || n.fixLines.has(line)) continue;
