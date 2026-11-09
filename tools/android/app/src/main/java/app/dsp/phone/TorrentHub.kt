@@ -251,6 +251,9 @@ class TorrentCore(private val sm: SessionManager, val root: File) {
         val w = maxOf(8, (windowBytes / pl).toInt())
         if (it.winStart >= 0 && firstPiece >= it.winStart && firstPiece - it.winStart < maxOf(4, w / 8)) return     // окно почти там же
         val fileFirst = (fs.fileOffset(idx) / pl).toInt(); val fileLast = ((fs.fileOffset(idx) + fs.fileSize(idx) - 1) / pl).toInt()
+        // приоритет файла (select) libtorrent применяет асинхронно — после ответа дискового потока, и тогда же пересчитывает приоритеты всех его кусков;
+        // если окно поставить раньше, этот пересчёт его затрёт и файл скачается целиком (так иногда и было). Ждём, пока приоритет файла применится.
+        if (!it.active) { val until = System.currentTimeMillis() + 2000; while (h.filePriority(idx) != Priority.DEFAULT && System.currentTimeMillis() < until) Thread.sleep(20) }
         val pr = Array(np) { Priority.IGNORE }
         for (p in fileFirst..minOf(fileLast, np - 1)) {
             pr[p] = when {
