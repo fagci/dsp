@@ -377,6 +377,7 @@ const PRESET_CATS={
   'Signal Paths: Links in 3D (Free Fly)':'Maps & Locating',
   'Coverage: Transmitters from Table → Dead Zones':'Maps & Locating',
   'Site Plan: Plot and House from Tape, GPS and Clinometer (3D)':'Maps & Locating',
+  'Site Plan: Plan Kept in a File (name from a pin, edits saved to Files)':'Maps & Locating',
   'Photo Measure: a Bed from an A4 Sheet in the Photo → Site Plan':'Maps & Locating',
   'Plan Scan: Trace a Plot from an Image with a Scale → Site Plan':'Maps & Locating',
   'Measure Entry: Walk a Plot with a Tape, Numbers from a Keypad → Site Plan':'Maps & Locating',
@@ -8735,6 +8736,16 @@ const mp=addNode('geoMap',860,230,{mz:19,mlat:55.0302,mlon:82.9206});
 mp.size.w=480; mp.size.h=420; applySize(mp);
 addEdge(me.id,'lat',sp.id,'lat'); addEdge(me.id,'lon',sp.id,'lon');
 addEdge(sp.id,'rec',mp.id,'rec'); addEdge(sp.id,'poly',mp.id,'rec');
+markWiresDirty();
+});
+preset('Site Plan: Plan Kept in a File (name from a pin, edits saved to Files)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The measurements live in a file in Files, not in the patch: type a path in the Text Source node (Plans/dacha.txt) and it goes to the «file» pin of Site Plan. The plan is read from that file; whatever you edit in «measurements» is written back after a second. A new name creates the file from the current text, so one patch can open any number of plans — change the name and the other plan appears. Edit the file in Files and the plan follows (unless you have unsaved edits). Buttons «↻ Reload» and «⬇ Save now» are in the node settings.'});
+nt.size.w=980; nt.size.h=110; applySize(nt);
+const tx=addNode('textsrc',40,190,{text:'Plans/dacha.txt'});
+const sp=addNode('siteplan',300,190,{view:'plan',plan:'A-B 20.00\nB-C 12.00\nC-D 20.00\nD-A 12.00\nA-C 23.32\npoly A B C D'});
+sp.size.w=520; sp.size.h=470; applySize(sp);
+addEdge(tx.id,'text',sp.id,'file');
 markWiresDirty();
 });
 preset('Photo Measure: a Bed from an A4 Sheet in the Photo → Site Plan', function(){

@@ -765,3 +765,11 @@ function spRowToLine(r){
   return '';
 }
 const spRowsToText=rows=>(rows||[]).map(spRowToLine).filter(Boolean).join('\n');
+
+// путь к файлу плана в Files: «Plans/дача.txt» → {dirs:['Plans'], name:'дача.txt'}; без расширения добавляется .txt; пусто — null
+function spFilePath(s){
+  const a=String(s??'').replace(/\\/g,'/').split('/').map(x=>x.trim()).filter(x=>x && x!=='.' && x!=='..');
+  if(!a.length) return null;
+  let name=a.pop(); if(!/\.[A-Za-z0-9]{1,5}$/.test(name)) name+='.txt';
+  return {dirs:a,name};
+}
