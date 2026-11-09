@@ -15,8 +15,8 @@
      poly A B C D             контур — площадь и периметр
      room Hall … h 2.65 · poly … h 2.65 · height 2.7   высота потолка комнаты / по умолчанию для всех (уходит в высоту стен Plan Editor, объём)
      window A-B 1.20 1.40 [h 1.45] [sill 0.85]   окно в стене A-B: от угла A до ближнего края 1.20, ширина 1.40, высота, подоконник от пола (door — дверь, h 2.05, sill 0)
-     outer 0.45 [concrete] · inner drywall · material A-B glass   материалы: наружных стен, стен между комнатами, стены на стороне A-B (и «wall … 0.37 brick»);
-                              brick concrete block drywall wood glass metal (или кирпич бетон газоблок гипсокартон дерево стекло металл)
+     outer 0.45 [concrete] · inner drywall · material block (все стены) · material A-B glass   материалы: наружных стен, стен между комнатами, стены на стороне A-B (и «wall … 0.37 brick»);
+                              brick concrete block drywall wood glass metal (или кирпич бетон газоблок шлакоблок гипсокартон дерево стекло металл)
      outer 0.45               толщина наружных стен (0.4 по умолчанию); внутренние — по щели между комнатами (стены строятся снаружи от замера, spWalls)
      level 2 [z 2.95] · level cellar z -2.2   этаж: комнаты ниже по тексту — на нём (без z — над самым верхним из уже объявленных: его пол + высота комнат + перекрытие); подвал — с минусом
      slab 0.25 concrete       перекрытия между этажами (толщина, материал) · same A B — B ровно над / под A (угол этажа над углом нижнего)
@@ -32,7 +32,7 @@
 const SP_D=Math.PI/180, SP_R=6371008.8;
 // материалы стен (как в Plan Editor) и русские названия
 const SP_MAT={brick:'brick',concrete:'concrete',block:'block',drywall:'drywall',wood:'wood',glass:'glass',metal:'metal',
-  'кирпич':'brick','бетон':'concrete','газоблок':'block','пеноблок':'block','блок':'block','гипсокартон':'drywall','гкл':'drywall','дерево':'wood','брус':'wood','стекло':'glass','металл':'metal'};
+  'кирпич':'brick','бетон':'concrete','газоблок':'block','пеноблок':'block','шлакоблок':'block','шлакобетон':'block','керамзитоблок':'block','керамзитобетон':'block','блок':'block','гипсокартон':'drywall','гкл':'drywall','дерево':'wood','брус':'wood','стекло':'glass','металл':'metal'};
 const spMat=t=>SP_MAT[String(t||'').toLowerCase()]||null;
 // заборы: материал → {mat (Plan Editor), t (толщина, м)}; профлист — металл (сплошной лист экранирует), рабица — сетка (теряет немного, ячейка меньше волны не на всех частотах)
 const SP_FENCE_SPEC={sheet:{mat:'metal',t:.1},mesh:{mat:'mesh',t:.05},wood:{mat:'wood',t:.03},brick:{mat:'brick',t:.25},concrete:{mat:'concrete',t:.15},block:{mat:'block',t:.2}};
@@ -84,6 +84,7 @@ function spParse(text,o={}){
       o.a=pt(hd[0]); o.b=pt(hd[1]); if(o.a===o.b) return bad('same point'); opens.push(o); return; }
     if(/^outer$/i.test(T[0])){ for(const t of T.slice(1)){ const v=spNum(t), m=spMat(t); if(v>0 && v<3) outer=v; else if(m) outerMat=m; else return bad('outer [thickness m] [material: '+Object.keys(SP_MAT).slice(0,7).join(' ')+']'); } return; }
     if(/^inner$/i.test(T[0])){ const m=spMat(T[1]); if(!m || T.length>2) return bad('inner material — for the walls between rooms: '+Object.keys(SP_MAT).slice(0,7).join(' ')); innerMat=m; return; }
+    if(/^material$/i.test(T[0]) && T.length===2 && spMat(T[1])){ outerMat=spMat(T[1]); return; }                  // «material шлакоблок» — все стены, если внутренние не заданы отдельно (inner)
     if(/^material$/i.test(T[0])){ const hd=(T[1]||'').split('-'), m=spMat(T[2]); if(hd.length!==2 || !m) return bad('material A-B '+Object.keys(SP_MAT).slice(0,7).join('|')+' — the wall on the side A-B of a room'); edgeMat.push({a:pt(hd[0]),b:pt(hd[1]),mat:m,li}); return; }
     if(/^level$/i.test(T[0])){                                                               // этаж / подвал: «level 2 [z 2.95]» — комнаты ниже по тексту на нём
       const nm=T[1]; if(!nm) return bad('level NAME [z height of its floor, m] — e.g. level 2, level cellar z -2.2');
