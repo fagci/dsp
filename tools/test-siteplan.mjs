@@ -210,4 +210,6 @@ for(const t of ['material Kit2-Kit3 concrete\nroom Hall 4.48 3.74 4.46 3.74\nroo
   ok('file path: folders and .txt',a.dirs.join('/')==='Plans' && a.name==='dacha.txt');
   ok('file path: backslash, «..» dropped, extension kept',b.dirs.join('/')==='a/b' && b.name==='c.plan');
   ok('file path: empty is null',c===null); }
+{ const R=K.spSolve('room A 4 3 4 3\nmaterial шлакоблок'), H=K.spHouse(R,{outer:R.outer});
+  ok('material шлакоблок: no errors, all walls block',R.errors.length===0 && H.walls.length>0 && H.walls.every(w=>w.mat==='block'),JSON.stringify(R.errors)); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
