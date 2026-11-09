@@ -123,7 +123,7 @@ function spParse(text,o={}){
       for(let i=3;i<T.length;i+=2){ const k=T[i].toLowerCase(), v=spNum(T[i+1]); if(!['dx','dy','h','w'].includes(k) || !isFinite(v)) return bad(type+': unknown «'+T[i]+'» (dx dy h w)'); q[k]=v; }
       if(q.h<0 || q.w<0) return bad(type+': h, w ≥ 0'); elec.push(q); return; }
     if(/^wire$/i.test(T[0])){                                                                 // «wire L1 SW1 S1 [cable 3x1.5] [z 2.5]» — провод по цепочке устройств
-      const w={names:[],cable:null,z:2.5,li};
+      const w={names:[],cable:null,z:null,li};
       for(let i=1;i<T.length;i++){ const t=T[i].toLowerCase();
         if(t==='cable'){ w.cable=T[++i]; if(!['3x1.5','3x2.5','5x2.5','2x0.75'].includes(w.cable)) return bad('wire: cable 3x1.5 | 3x2.5 | 5x2.5 | 2x0.75'); }
         else if(t==='z'){ w.z=spNum(T[++i]); if(!(w.z>0 && w.z<10)) return bad('wire: z — run height, m'); }

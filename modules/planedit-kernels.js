@@ -61,7 +61,7 @@ function peInPoly(P,x,y){ let c=false; for(let i=0,j=P.length-1;i<P.length;j=i++
 function peInRooms(s,x,y){ for(const r of s.rooms) if(peInPoly(peRoomPoly(s,r),x,y)) return true; return false; }
 
 // ---------- электрика: розетки, выключатели, светильники и провода между ними ----------
-// Устройство: {id,type,name,x,y,z,watt}; провод: {id,a,b (id устройств),cable,via:[[x,y]…],zr} — идёт от a к b через точки via на высоте трассы zr (под потолком),
+// Устройство: {id,type,name,x,y,z,watt}; провод: {id,a,b (id устройств),cable,via:[[x,y]…],zr} — идёт от a к b через точки via на высоте трассы zr (не задана — выше из двух устройств),
 // к каждому устройству спускается / поднимается по вертикали. Длина = путь в плане + спуски; запас на подрезку и разделку — PE_RESERVE.
 const PE_EL={socket:{z:.3,watt:200,pre:'S'},switch:{z:1.1,watt:0,pre:'SW'},light:{z:2.6,watt:60,pre:'L'},panel:{z:1.6,watt:0,pre:'P'},inlet:{z:3,watt:0,pre:'IN'},junction:{z:2.4,watt:0,pre:'J'}};   // щиток, ввод в здание, распредкоробка
 // сечение по умолчанию: ввод — 5x2.5, розетка — 3x2.5, остальное — 3x1.5
@@ -74,13 +74,15 @@ function peAddEl(s,type,x,y,o={}){ const b=PE_EL[type]; if(!b) return null; (s.e
 function peDelEl(s,id){ s.elec=(s.elec||[]).filter(e=>e.id!==id); s.wires=(s.wires||[]).filter(w=>w.a!==id&&w.b!==id); }
 function peAddWire(s,a,b,o={}){ if(a===b||!peElOf(s,a)||!peElOf(s,b)) return null; (s.wires??=[]);
   let w=s.wires.find(w=>(w.a===a&&w.b===b)||(w.a===b&&w.b===a)); if(w) return w;
-  w={id:peId(s,'k'),a,b,cable:peDefCable(peElOf(s,a).type,peElOf(s,b).type),via:[],zr:2.5,...o}; s.wires.push(w); return w; }
+  w={id:peId(s,'k'),a,b,cable:peDefCable(peElOf(s,a).type,peElOf(s,b).type),via:[],...o}; s.wires.push(w); return w; }
+// высота трассы: заданная (w.zr) или по умолчанию — выше из двух устройств (без лишнего подъёма к потолку)
+const peRunZ=(A,B,w)=>w.zr>0 ? w.zr : Math.max(A.z||0,B.z||0);
 // длина провода: путь в плане, вертикальные спуски до высоты трассы, всего с запасом
 function peWireLen(s,w){ const A=peElOf(s,w.a), B=peElOf(s,w.b); if(!A||!B) return {plan:0,drop:0,total:0,len:0};
   const P=[[A.x,A.y],...(w.via||[]),[B.x,B.y]]; let plan=0; for(let i=1;i<P.length;i++) plan+=Math.hypot(P[i][0]-P[i-1][0],P[i][1]-P[i-1][1]);
-  const zr=w.zr??2.5, drop=Math.abs(zr-(A.z||0))+Math.abs(zr-(B.z||0)); return {plan,drop,len:plan+drop,total:(plan+drop)*PE_RESERVE}; }
+  const zr=peRunZ(A,B,w), drop=Math.abs(zr-(A.z||0))+Math.abs(zr-(B.z||0)); return {plan,drop,len:plan+drop,total:(plan+drop)*PE_RESERVE}; }
 // трасса провода как ломаная [x,y,z]: от устройства вверх до высоты трассы, по via, вниз ко второму
-function peWirePath(s,w){ const A=peElOf(s,w.a), B=peElOf(s,w.b); if(!A||!B) return null; const zr=w.zr??2.5;
+function peWirePath(s,w){ const A=peElOf(s,w.a), B=peElOf(s,w.b); if(!A||!B) return null; const zr=peRunZ(A,B,w);
   return [[A.x,A.y,A.z||0],[A.x,A.y,zr],...(w.via||[]).map(q=>[q[0],q[1],zr]),[B.x,B.y,zr],[B.x,B.y,B.z||0]]; }
 // сводка: числа устройств, мощность, длины кабеля по сечениям
 function peElecStats(s){

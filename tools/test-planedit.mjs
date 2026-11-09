@@ -255,10 +255,15 @@ ok('an empty scene has no bounds and no grid',K.peGrid(K.peNew())===null);
     ok('panel, inlet and junction box: heights 1.6 / 3 / 2.4, names P1 IN1 J1, no power',pn.z===1.6 && inl.z===3 && jb.z===2.4 && pn.name==='P1' && inl.name==='IN1' && jb.name==='J1' && pn.watt===0);
     ok('cable by endpoints: inlet 5x2.5, panel → light 3x1.5, panel → socket 3x2.5',K.peAddWire(q,inl.id,pn.id).cable==='5x2.5' && K.peAddWire(q,pn.id,l.id).cable==='3x1.5' && K.peAddWire(q,pn.id,so.id).cable==='3x2.5');
     K.peDel(q,'el',pn.id); K.peDel(q,'el',inl.id); K.peDel(q,'el',jb.id); ok('their wires go with them',q.wires.length===0 && q.elec.length===3); }
+  { const r=K.peNew(), inl=K.peAddEl(r,'inlet',0,0,{z:2.7}), pn=K.peAddEl(r,'panel',0,0,{z:2.1}), jb=K.peAddEl(r,'junction',0,-.4,{z:2.1});
+    const w1=K.peAddWire(r,inl.id,pn.id), w2=K.peAddWire(r,pn.id,jb.id);
+    near('inlet above the panel: the wire is a straight 0.6 m drop (no rise to the ceiling)',K.peWireLen(r,w1).len,.6,1e-9);
+    near('panel → box at one height: a straight 0.4 m run, nothing up or down',K.peWireLen(r,w2).len,.4,1e-9);
+    w2.zr=2.5; near('an explicit run height still works: 0.4 + 0.4 + 0.4',K.peWireLen(r,w2).len,1.2,1e-9); }
   const w=K.peAddWire(q,l.id,sw.id); ok('wire between a light and a switch: 1.5 mm² cable, no duplicates',w.cable==='3x1.5' && K.peAddWire(q,sw.id,l.id)===w && q.wires.length===1 && K.peAddWire(q,l.id,l.id)===null);
-  const L=K.peWireLen(q,w); near('wire length = 3 m in plan + drops to 2.5 m (0.1 + 1.4)',L.len,4.5,1e-9); near('with the 10 % reserve',L.total,4.95,1e-9);
-  const w2=K.peAddWire(q,sw.id,so.id,{via:[[4,2]]}); ok('wire to a socket: 2.5 mm² cable',w2.cable==='3x2.5'); near('wire with a bend: 2 m in plan + 1.4 + 2.2 drops',K.peWireLen(q,w2).len,5.6,1e-9);
-  const E=K.peElecStats(q); ok('stats: counts, watts, cable by type',E.n.light===1 && E.n.switch===1 && E.n.socket===1 && E.watt===260 && Math.abs(E.cables['3x1.5']-4.95)<1e-9 && Math.abs(E.total-(4.95+6.16))<1e-9,JSON.stringify(E));
+  const L=K.peWireLen(q,w); near('wire length = 3 m in plan + a 1.5 m drop (runs at the light, 2.6 m)',L.len,4.5,1e-9); near('with the 10 % reserve',L.total,4.95,1e-9);
+  const w2=K.peAddWire(q,sw.id,so.id,{via:[[4,2]]}); ok('wire to a socket: 2.5 mm² cable',w2.cable==='3x2.5'); near('wire with a bend: runs at the higher device (1.1 m): 2 m in plan + 0.8 drop',K.peWireLen(q,w2).len,2.8,1e-9);
+  const E=K.peElecStats(q); ok('stats: counts, watts, cable by type',E.n.light===1 && E.n.switch===1 && E.n.socket===1 && E.watt===260 && Math.abs(E.cables['3x1.5']-4.95)<1e-9 && Math.abs(E.total-(4.95+3.08))<1e-9,JSON.stringify(E));
   ok('wire path starts and ends at the devices',(()=>{ const P=K.peWirePath(q,w); return P[0][2]===2.6 && P[P.length-1][2]===1.1 && P.length===4; })());
   K.peDel(q,'el',sw.id); ok('delete a device: its wires go',q.wires.length===0 && q.elec.length===2);
   ok('old scene without electrics parses',K.peParse(JSON.stringify({pts:[],walls:[]})).elec.length===0);
