@@ -3,7 +3,7 @@
 import vm from 'node:vm'; import fs from 'node:fs'; import path from 'node:path'; import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Array,String,Number,Object,JSON,Set,Map,Float32Array,Uint8Array,isFinite,Infinity});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peHistNew,peHistCommit,peHistUndo,peHistRedo,peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peOverlaps,peAddRx,peRxLevel,peMoveWall,peZRaster,peBoxCorners,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints,peSnapFace,peHiddenPts,peLvShow,pePaths,peFaces,peReflLoss,peCamView};`,ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peAddEl,peAddWire,peWireLen,peWirePath,peElecStats,peImportPoints,peParse,peHistNew,peHistCommit,peHistUndo,peHistRedo,peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peOverlaps,peAddRx,peRxLevel,peMoveWall,peZRaster,peBoxCorners,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints,peSnapFace,peHiddenPts,peLvShow,pePaths,peFaces,peReflLoss,peCamView};`,ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -248,4 +248,18 @@ ok('an empty scene has no bounds and no grid',K.peGrid(K.peNew())===null);
   ok('above the wall there is sky (transparent)',px(80,2)[3]===0,JSON.stringify(px(80,2)));
   ok('below — the ground',px(80,88)[3]===255);
   const back=K.peCamView(q,{x:0,y:0,z:1.5,az:180,tilt:0,fov:90},160,90); ok('looking away — no wall in the centre (behind the camera is clipped)',(()=>{ const i=(45*160+80)*4; return back.data[i+3]===0 || back.data[i]<back.data[i+1]; })()); }
+// электрика: устройства, провода, длины, сводка, каскадное удаление, импорт из Site Plan
+{ const q=K.peNew(); const l=K.peAddEl(q,'light',1,1), sw=K.peAddEl(q,'switch',4,1), so=K.peAddEl(q,'socket',4,3);
+  ok('electrics: default heights and names',l.z===2.6 && sw.z===1.1 && so.z===.3 && l.name==='L1' && so.name==='S1');
+  const w=K.peAddWire(q,l.id,sw.id); ok('wire between a light and a switch: 1.5 mm² cable, no duplicates',w.cable==='3x1.5' && K.peAddWire(q,sw.id,l.id)===w && q.wires.length===1 && K.peAddWire(q,l.id,l.id)===null);
+  const L=K.peWireLen(q,w); near('wire length = 3 m in plan + drops to 2.5 m (0.1 + 1.4)',L.len,4.5,1e-9); near('with the 10 % reserve',L.total,4.95,1e-9);
+  const w2=K.peAddWire(q,sw.id,so.id,{via:[[4,2]]}); ok('wire to a socket: 2.5 mm² cable',w2.cable==='3x2.5'); near('wire with a bend: 2 m in plan + 1.4 + 2.2 drops',K.peWireLen(q,w2).len,5.6,1e-9);
+  const E=K.peElecStats(q); ok('stats: counts, watts, cable by type',E.n.light===1 && E.n.switch===1 && E.n.socket===1 && E.watt===260 && Math.abs(E.cables['3x1.5']-4.95)<1e-9 && Math.abs(E.total-(4.95+6.16))<1e-9,JSON.stringify(E));
+  ok('wire path starts and ends at the devices',(()=>{ const P=K.peWirePath(q,w); return P[0][2]===2.6 && P[P.length-1][2]===1.1 && P.length===4; })());
+  K.peDel(q,'el',sw.id); ok('delete a device: its wires go',q.wires.length===0 && q.elec.length===2);
+  ok('old scene without electrics parses',K.peParse(JSON.stringify({pts:[],walls:[]})).elec.length===0);
+  const t=K.peNew(); const rec={id:'sp:walls',kind:'plan walls',walls:[],opens:[],elec:[{type:'light',name:'L1',x:1,y:1,z:2.6,watt:60},{type:'switch',name:'SW1',x:2,y:0,z:1.1,watt:0}],wires:[{a:'L1',b:'SW1',cable:'3x1.5',z:2.4}]};
+  K.peImportPoints(t,[rec]); ok('import from Site Plan: devices and a wire',t.elec.length===2 && t.wires.length===1 && t.wires[0].zr===2.4);
+  rec.elec=[rec.elec[0]]; rec.wires=[]; K.peImportPoints(t,[rec]); ok('re-import replaces the set: the removed device and its wire go',t.elec.length===1 && t.wires.length===0);
+  const own=K.peAddEl(t,'socket',9,9); K.peImportPoints(t,[rec]); ok('a hand-drawn device survives a re-import',t.elec.includes(own)); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);

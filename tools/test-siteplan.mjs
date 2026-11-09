@@ -212,4 +212,9 @@ for(const t of ['material Kit2-Kit3 concrete\nroom Hall 4.48 3.74 4.46 3.74\nroo
   ok('file path: empty is null',c===null); }
 { const R=K.spSolve('room A 4 3 4 3\nmaterial шлакоблок'), H=K.spHouse(R,{outer:R.outer});
   ok('material шлакоблок: no errors, all walls block',R.errors.length===0 && H.walls.length>0 && H.walls.every(w=>w.mat==='block'),JSON.stringify(R.errors)); }
+{ const R=K.spSolve('room A 5 4 5 4\nlight L1 A1 dx 2 dy 2 h 2.6\nswitch SW1 A1 dx 0.2 dy 0.1 h 1.1\nsocket S1 A3 dx -0.3 dy -0.3\nwire L1 SW1 S1 z 2.4'), e=Object.fromEntries(R.elec.map(x=>[x.name,x]));
+  ok('electrics: no errors',R.errors.length===0,JSON.stringify(R.errors));
+  near('light: A1 + (2, 2) east / north',Math.hypot(e.L1.x-P(R,'A1').x,e.L1.y-P(R,'A1').y),Math.SQRT2*2,1e-6); near('light height 2.6',e.L1.z,2.6,1e-6); ok('defaults: light 60 W, socket 200 W',e.L1.watt===60 && e.S1.watt===200);
+  ok('wire chain L1 SW1 S1 → 2 wires, cable by endpoint',R.wires.length===2 && R.wires[0].cable==='3x1.5' && R.wires[1].cable==='3x2.5' && R.wires[0].z===2.4,JSON.stringify(R.wires));
+  const B=K.spSolve('room A 4 3 4 3\nwire L1 L2'); ok('wire to an undeclared device is an error',B.errors.length>0 && /unknown device/.test(B.errors[0].msg)); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);

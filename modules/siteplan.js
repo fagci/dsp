@@ -31,7 +31,7 @@ function spRecords(R){
   rec.push({id:'sp:walls',t,kind:'plan walls',walls:W.walls.map(w=>({id:w.id,x1:+w.x1.toFixed(3),y1:+w.y1.toFixed(3),x2:+w.x2.toFixed(3),y2:+w.y2.toFixed(3),t:w.t,h:w.h,kind:w.kind,mat:w.mat,z0:w.z0||0,lv:w.lv||0})),
     opens:W.opens.map(o=>({...o,u:+o.u.toFixed(4)})),slabs:(W.slabs||[]).map(q=>({...q,poly:q.poly.map(r3)})),
     roofs:(W.roofs||[]).map(r=>({type:r.type,area:+r.area.toFixed(2),ridge:+r.ridge.toFixed(3),eave:+r.eave.toFixed(3),wallMat:r.wallMat,faces:r.faces.map(f=>({kind:f.kind,pts:f.pts.map(r3)}))})),
-    levels:W.levels||[],grounds:(W.grounds||[]).map(g=>({cover:g.cover,poly:g.poly.map(r3)})),sources:(W.sources||[]).map(q=>({name:q.name,x:+q.x.toFixed(3),y:+q.y.toFixed(3),z:+q.z.toFixed(2),eirp:q.eirp,f:q.f,az:q.az,bw:q.bw}))});
+    levels:W.levels||[],grounds:(W.grounds||[]).map(g=>({cover:g.cover,poly:g.poly.map(r3)})),elec:(R.elec||[]).map(e=>({type:e.type,name:e.name,x:+e.x.toFixed(3),y:+e.y.toFixed(3),z:+e.z.toFixed(2),watt:e.watt})),wires:(R.wires||[]).map(w=>({a:w.a,b:w.b,cable:w.cable,z:w.z})),sources:(W.sources||[]).map(q=>({name:q.name,x:+q.x.toFixed(3),y:+q.y.toFixed(3),z:+q.z.toFixed(2),eirp:q.eirp,f:q.f,az:q.az,bw:q.bw}))});
   R.polys.forEach((pl,i)=>{
     const nm0=pl.names.map(x=>x.replace(/\d+$/,'')), rname=nm0.every(x=>x && x===nm0[0]) ? nm0[0] : '';
     const lv=(R.levels||[]).find(q=>q.name===(pl.level??'1'));

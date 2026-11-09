@@ -20,7 +20,7 @@ const PE_TYPES=['box','column','door','window'];               // примити
 const peWrap180=a=>((a+180)%360+360)%360-180;
 const peWrap360=a=>((a%360)+360)%360;
 
-function peNew(){ return {pts:[],walls:[],objs:[],cams:[],ants:[],rooms:[],slabs:[],roofs:[],levels:[],grounds:[],seq:1}; }
+function peNew(){ return {pts:[],walls:[],objs:[],cams:[],ants:[],rooms:[],slabs:[],roofs:[],levels:[],grounds:[],elec:[],wires:[],seq:1}; }
 function peId(s,p){ return p+(s.seq++); }
 const pePt=(s,id)=>s.pts.find(p=>p.id===id);
 function peAddPoint(s,x,y){ const p={id:peId(s,'p'),x,y}; s.pts.push(p); return p; }
@@ -41,6 +41,7 @@ function peDel(s,kind,id){
   if(kind==='pt') peDelPoint(s,id); else if(kind==='wall') peDelWall(s,id);
   else if(kind==='obj') s.objs=s.objs.filter(o=>o.id!==id); else if(kind==='cam') s.cams=s.cams.filter(o=>o.id!==id); else if(kind==='ant') s.ants=s.ants.filter(o=>o.id!==id);
   else if(kind==='room') s.rooms=s.rooms.filter(o=>o.id!==id);
+  else if(kind==='el') peDelEl(s,id); else if(kind==='wire') s.wires=s.wires.filter(o=>o.id!==id);
 }
 // проём / примитив
 function peAddObj(s,type,o){
@@ -58,6 +59,35 @@ function peRoomArea(s,r){ let a=0; for(let i=0;i<r.pts.length;i++){ const p=pePt
 function peRoomPoly(s,r){ return r.pts.map(id=>{ const p=pePt(s,id); return [p.x,p.y]; }); }
 function peInPoly(P,x,y){ let c=false; for(let i=0,j=P.length-1;i<P.length;j=i++) if((P[i][1]>y)!==(P[j][1]>y) && x<(P[j][0]-P[i][0])*(y-P[i][1])/(P[j][1]-P[i][1])+P[i][0]) c=!c; return c; }
 function peInRooms(s,x,y){ for(const r of s.rooms) if(peInPoly(peRoomPoly(s,r),x,y)) return true; return false; }
+
+// ---------- электрика: розетки, выключатели, светильники и провода между ними ----------
+// Устройство: {id,type,name,x,y,z,watt}; провод: {id,a,b (id устройств),cable,via:[[x,y]…],zr} — идёт от a к b через точки via на высоте трассы zr (под потолком),
+// к каждому устройству спускается / поднимается по вертикали. Длина = путь в плане + спуски; запас на подрезку и разделку — PE_RESERVE.
+const PE_EL={socket:{z:.3,watt:200,pre:'S'},switch:{z:1.1,watt:0,pre:'SW'},light:{z:2.6,watt:60,pre:'L'}};
+const PE_CABLES=['3x1.5','3x2.5','5x2.5','2x0.75'];            // сечение жил, мм² (число жил × сечение)
+const PE_RESERVE=1.1;
+const peElOf=(s,id)=>(s.elec||[]).find(e=>e.id===id);
+function peAddEl(s,type,x,y,o={}){ const b=PE_EL[type]; if(!b) return null; (s.elec??=[]);
+  const e={id:peId(s,'e'),type,name:b.pre+(s.elec.filter(q=>q.type===type).length+1),x,y,z:b.z,watt:b.watt,...o}; s.elec.push(e); return e; }
+function peDelEl(s,id){ s.elec=(s.elec||[]).filter(e=>e.id!==id); s.wires=(s.wires||[]).filter(w=>w.a!==id&&w.b!==id); }
+function peAddWire(s,a,b,o={}){ if(a===b||!peElOf(s,a)||!peElOf(s,b)) return null; (s.wires??=[]);
+  let w=s.wires.find(w=>(w.a===a&&w.b===b)||(w.a===b&&w.b===a)); if(w) return w;
+  const sock=peElOf(s,a).type==='socket'||peElOf(s,b).type==='socket';
+  w={id:peId(s,'k'),a,b,cable:sock ? '3x2.5' : '3x1.5',via:[],zr:2.5,...o}; s.wires.push(w); return w; }
+// длина провода: путь в плане, вертикальные спуски до высоты трассы, всего с запасом
+function peWireLen(s,w){ const A=peElOf(s,w.a), B=peElOf(s,w.b); if(!A||!B) return {plan:0,drop:0,total:0,len:0};
+  const P=[[A.x,A.y],...(w.via||[]),[B.x,B.y]]; let plan=0; for(let i=1;i<P.length;i++) plan+=Math.hypot(P[i][0]-P[i-1][0],P[i][1]-P[i-1][1]);
+  const zr=w.zr??2.5, drop=Math.abs(zr-(A.z||0))+Math.abs(zr-(B.z||0)); return {plan,drop,len:plan+drop,total:(plan+drop)*PE_RESERVE}; }
+// трасса провода как ломаная [x,y,z]: от устройства вверх до высоты трассы, по via, вниз ко второму
+function peWirePath(s,w){ const A=peElOf(s,w.a), B=peElOf(s,w.b); if(!A||!B) return null; const zr=w.zr??2.5;
+  return [[A.x,A.y,A.z||0],[A.x,A.y,zr],...(w.via||[]).map(q=>[q[0],q[1],zr]),[B.x,B.y,zr],[B.x,B.y,B.z||0]]; }
+// сводка: числа устройств, мощность, длины кабеля по сечениям
+function peElecStats(s){
+  const n={socket:0,switch:0,light:0}, cab={}; let watt=0, len=0, tot=0;
+  for(const e of s.elec||[]){ n[e.type]=(n[e.type]||0)+1; watt+=+e.watt||0; }
+  for(const w of s.wires||[]){ const L=peWireLen(s,w); cab[w.cable]=(cab[w.cable]||0)+L.total; len+=L.len; tot+=L.total; }
+  return {n,watt,len,total:tot,cables:cab};
+}
 
 // ---------- перетаскивание точки с сохранением длин ----------
 // Итерации по ограничениям (position-based): точка id идёт за курсором, остальные подтягиваются так, чтобы зафиксированные стены (w.len > 0) сохранили длину.
@@ -284,7 +314,7 @@ function peLines(s){
 }
 // точки из записей Site Plan (kind 'plan point': name, x, y, z) или любых (name, x, y): добавляет отсутствующие, существующие по имени двигает
 function peImportPoints(s,recs){
-  let n=0;
+  let n=0; s.elec??=[]; s.wires??=[];
   for(const r of recs||[]){ if(r && r.kind==='plan poly' && Array.isArray(r.names)){ r._poly=true; } }
   for(const r of recs||[]){ if(r && r.kind==='plan opening') r._op=true; }
   for(const r of recs||[]){ if(r && r.ext){ const nm=String(r.name??r.label??''), q=s.pts.find(p=>p.name===nm); if(q && !s.walls.some(w=>w.a===q.id||w.b===q.id)) s.pts=s.pts.filter(p=>p!==q); } }   // точка внешнего источника — не точка плана
@@ -320,6 +350,16 @@ function peImportPoints(s,recs){
       const v={type,wall:w.id,u:Math.max(0,Math.min(1,+o.u||0)),w:+o.w>0 ? +o.w : 1,...(+o.h>0 ? {h:+o.h} : {}),...(isFinite(+o.sill) && o.sill!=null ? {sill:+o.sill} : {})};
       const ob=s.objs.find(q=>q.src===src); if(ob) Object.assign(ob,v); else peAddObj(s,type,{...v,src}); });
     s.objs=s.objs.filter(o=>!o.src || !o.src.startsWith(pre) || okeep.has(o.src));
+    // электрика: устройства и провода от источника заменяют прежние с тем же префиксом (свои, нарисованные руками, остаются)
+    { const ekeep=new Set(); for(const q of r.elec||[]){ const src=pre+'el:'+q.name; ekeep.add(src); let e=s.elec.find(x=>x.src===src);
+        if(!e){ e=peAddEl(s,PE_EL[q.type] ? q.type : 'socket',+q.x,+q.y,{}); e.src=src; }
+        Object.assign(e,{name:String(q.name),x:+q.x,y:+q.y,z:+q.z,watt:+q.watt||0}); }
+      s.elec=s.elec.filter(e=>!e.src || !e.src.startsWith(pre) || ekeep.has(e.src));
+      const wkeep=new Set(); for(const q of r.wires||[]){ const A=s.elec.find(e=>e.src===pre+'el:'+q.a), B=s.elec.find(e=>e.src===pre+'el:'+q.b); if(!A||!B||A===B) continue;
+        const src=pre+'wire:'+q.a+'-'+q.b; wkeep.add(src); let w=s.wires.find(x=>x.src===src);
+        if(!w){ w=peAddWire(s,A.id,B.id,{}); if(!w) continue; w.src=src; }
+        w.cable=PE_CABLES.includes(q.cable) ? q.cable : w.cable; if(+q.z>0) w.zr=+q.z; }
+      s.wires=s.wires.filter(w=>(!w.src || !w.src.startsWith(pre) || wkeep.has(w.src)) && peElOf(s,w.a) && peElOf(s,w.b)); }
     s.objs=s.objs.filter(o=>!(o.src && String(o.src).startsWith('sp:') && !String(o.src).startsWith(pre) && (o.type==='door'||o.type==='window')));   // проёмы старого вида (по углам) — заменены
     n++; }
   // проёмы (kind 'plan opening': type, a, b — имена углов, from — от a до ближнего края, w, h, sill): на стену a-b, повторный импорт обновляет тот же
@@ -358,7 +398,7 @@ function peHistNew(base){ return {base:String(base),u:[],r:[]}; }
 function peHistCommit(h,cur){ if(cur===h.base) return false; h.u.push(h.base); if(h.u.length>100) h.u.shift(); h.r.length=0; h.base=cur; return true; }
 function peHistUndo(h,cur){ peHistCommit(h,cur); if(!h.u.length) return null; h.r.push(h.base); h.base=h.u.pop(); return h.base; }
 function peHistRedo(h,cur){ peHistCommit(h,cur); if(!h.r.length) return null; h.u.push(h.base); h.base=h.r.pop(); return h.base; }
-function peParse(text){ try{ const o=JSON.parse(text); if(o && Array.isArray(o.pts)){ for(const k of ['walls','objs','cams','ants','rooms','slabs','roofs','levels','grounds']) if(!Array.isArray(o[k])) o[k]=[]; if(!(o.seq>0)) o.seq=1000; return o; } }catch(e){} return peNew(); }
+function peParse(text){ try{ const o=JSON.parse(text); if(o && Array.isArray(o.pts)){ for(const k of ['walls','objs','cams','ants','rooms','slabs','roofs','levels','grounds','elec','wires']) if(!Array.isArray(o[k])) o[k]=[]; if(!(o.seq>0)) o.seq=1000; return o; } }catch(e){} return peNew(); }
 
 // ---------- привязка к земле (общее пространство с Video Overlay и Map) ----------
 // o: {lat, lon, north, alt} — где точка (0, 0) плана, азимут оси +y плана от севера (по часовой, °) и высота пола над уровнем моря, м

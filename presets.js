@@ -390,6 +390,7 @@ const PRESET_CATS={
   'Site Plan: Room from a Tape Measure → Plan Editor Walls and Wi-Fi':'Maps & Locating',
   'Site Plan: House with a Cellar, Two Floors and a Gable Roof → Wi-Fi Through the Slab':'Maps & Locating',
   'Plan Editor: Wi-Fi with Reflections — Rays to a Receiver':'Maps & Locating',
+  'Plan Editor: Wiring and Lighting — Lights, Switches, Sockets and Cable Length':'Maps & Locating',
   'Site Plan: Plot with a Fence, Road, Bath House and a Cell Tower → Signal Indoors':'Maps & Locating',
   'Plan Editor: Yard Cameras — Over the Fence by Height, the View from a Camera':'Maps & Locating',
   'Clinometer: Tree Height from the Phone Tilt → Site Plan':'Maps & Locating',
@@ -8861,6 +8862,18 @@ sp.size.w=500; sp.size.h=560; applySize(sp);
 const sc=peNew(); peAddCam(sc,17.5,-13.5,{z:4,az:315,tilt:15,fov:90,range:30,name:'pole'}); peAddCam(sc,-0.6,4.3,{z:2.8,az:135,tilt:25,fov:100,range:15,name:'porch'});
 const pe=addNode('planedit',580,230,{scene:JSON.stringify(sc),view:'plan',layer:'cameras',snap:'0.1'});
 pe.size.w=700; pe.size.h=700; applySize(pe);
+addEdge(sp.id,'rec',pe.id,'rec');
+markWiresDirty();
+});
+preset('Plan Editor: Wiring and Lighting — Lights, Switches, Sockets and Cable Length', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Wiring and lighting on the plan. Site Plan lines: «light L1 POINT [dx 2] [dy -2] [h 2.6] [w 60]», «switch SW1 POINT …», «socket S1 POINT … [w 300]» — a device near a corner point (dx east, dy north, h above the point, w watts); «wire A B C … [cable 3x1.5|3x2.5|5x2.5|2x0.75] [z 2.5]» — a cable through the devices in a chain (z — the run height). '+
+  'In Plan Editor the tools socket, switch, light and wire do the same by hand: tap a device, then the next one, a tap on the empty floor between bends the route. Dashed lines are the cable runs (colour — the cross-section), the number is the length; select a cable to change the cross-section and the run height. The readout sums devices, power and cable per cross-section, with a 10 % reserve for trimming. Hand-drawn items stay when Site Plan is edited.'});
+nt.size.w=1180; nt.size.h=130; applySize(nt);
+const sp=addNode('siteplan',40,200,{view:'plan',plan:'outer 0.40 brick\ninner drywall\nroom Liv 5.00 4.00 5.00 4.00\nroom Bed 3.50 4.00 3.50 4.00\nwall Liv2-Liv3 Bed1-Bed4 0.12\nLiv1 at 0 0\nLiv2 at 5 0\ndoor Liv4-Liv1 1.00 0.90\ndoor Liv2-Liv3 2.80 0.80\n# lights on the ceiling, switches by the doors, sockets at the skirting\nlight L1 Liv1 dx 2.5 dy -2 h 2.6 w 60\nlight L2 Bed1 dx 1.75 dy -2 h 2.6 w 40\nswitch SW1 Liv1 dx 0.3 dy -1.7 h 1.1\nswitch SW2 Bed1 dx 0.3 dy -2.4 h 1.1\nsocket S1 Liv1 dx 0.3 dy -0.4 w 300\nsocket S2 Liv3 dx -0.3 dy 0.4 w 1500\nsocket S3 Bed3 dx -0.3 dy 0.4 w 200\n# a cable: SW1 → L1 along the ceiling (z — the run height, m); sockets on 2.5 mm² at the floor\nwire SW1 L1 cable 3x1.5\nwire SW2 L2 cable 3x1.5\nwire S1 S2 S3 cable 3x2.5 z 0.3'});
+sp.size.w=520; sp.size.h=560; applySize(sp);
+const pe=addNode('planedit',600,200,{view:'plan',layer:'none',snap:'0.1'});
+pe.size.w=700; pe.size.h=620; applySize(pe);
 addEdge(sp.id,'rec',pe.id,'rec');
 markWiresDirty();
 });
