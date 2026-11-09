@@ -409,7 +409,7 @@ function peChips(n){
   } else if(k==='wire'){
     const L=()=>peWireLen(s,it);
     cyc('cable',()=>it.cable,d=>{ const i=PE_CABLES.indexOf(it.cable); it.cable=PE_CABLES[(i+d+PE_CABLES.length)%PE_CABLES.length]; });
-    num('run height',()=>it.zr??2.5,v=>{ it.zr=v; },.1,.3,6,' m');
+    { const A=peElOf(s,it.a), B=peElOf(s,it.b); if(A&&B){ num('run height',()=>peRunZ(A,B,it),v=>{ it.zr=v; },.1,.3,6,it.zr>0 ? ' m' : ' m (auto)'); if(it.zr>0) btn('run height',()=>'fixed → auto',()=>{ delete it.zr; }); } }
     btn('length',()=>L().len.toFixed(2)+' m (+10%: '+L().total.toFixed(1)+')',()=>{});
   }
   btn('delete',()=>'🗑',()=>{ peDeleteSel(n); });
@@ -639,7 +639,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
       for(const w of s.wires||[]){ const pa=peWirePath(s,w); if(!pa) continue; const on=sel && sel.k==='wire' && sel.id===w.id; cx.strokeStyle=on ? '#fff' : CC[w.cable]||'#ffd54f'; cx.lineWidth=on ? 3 : 1.8; cx.setLineDash(P.d3 ? [] : [7,3]);
         cx.beginPath(); pa.forEach((q,k)=>{ const A=P.pt(q[0],q[1],P.d3 ? q[2] : 0); k ? cx.lineTo(A[0],A[1]) : cx.moveTo(A[0],A[1]); }); cx.stroke(); cx.setLineDash([]);
         if(P.sc>14){ const m=P.pt((pa[1][0]+pa[pa.length-2][0])/2,(pa[1][1]+pa[pa.length-2][1])/2,P.d3 ? pa[1][2] : 0), L=peWireLen(s,w); cx.fillStyle=CC[w.cable]||'#ffd54f'; cx.font='10px monospace'; cx.textAlign='center'; cx.fillText(L.len.toFixed(1)+' m',m[0],m[1]-5); } }
-      if(n.wfrom && p.tool==='wire'){ const A=peElOf(s,n.wfrom); if(A){ cx.strokeStyle='#fff'; cx.lineWidth=1.5; cx.setLineDash([3,3]); cx.beginPath(); const zr=2.5, pts=[[A.x,A.y,A.z],[A.x,A.y,zr],...(n.wvia||[]).map(q=>[q[0],q[1],zr])]; pts.forEach((q,k)=>{ const B=P.pt(q[0],q[1],P.d3 ? q[2] : 0); k ? cx.lineTo(B[0],B[1]) : cx.moveTo(B[0],B[1]); }); cx.stroke(); cx.setLineDash([]); } }
+      if(n.wfrom && p.tool==='wire'){ const A=peElOf(s,n.wfrom); if(A){ cx.strokeStyle='#fff'; cx.lineWidth=1.5; cx.setLineDash([3,3]); cx.beginPath(); const zr=A.z, pts=[[A.x,A.y,A.z],[A.x,A.y,zr],...(n.wvia||[]).map(q=>[q[0],q[1],zr])]; pts.forEach((q,k)=>{ const B=P.pt(q[0],q[1],P.d3 ? q[2] : 0); k ? cx.lineTo(B[0],B[1]) : cx.moveTo(B[0],B[1]); }); cx.stroke(); cx.setLineDash([]); } }
       for(const e of s.elec||[]){ const A=P.pt(e.x,e.y,e.z), isSel=sel && sel.k==='el' && sel.id===e.id, from=n.wfrom===e.id, col=isSel||from ? '#fff' : e.type==='light' ? '#ffe082' : e.type==='socket' ? '#ff8a65' : e.type==='panel' ? '#a5d6a7' : e.type==='inlet' ? '#ef9a9a' : e.type==='junction' ? '#b0bec5' : '#80deea';
         if(P.d3){ const F=P.pt(e.x,e.y,0); cx.strokeStyle='rgba(255,255,255,.2)'; cx.beginPath(); cx.moveTo(A[0],A[1]); cx.lineTo(F[0],F[1]); cx.stroke(); }
         cx.fillStyle='#10161a'; cx.strokeStyle=col; cx.lineWidth=1.8; cx.beginPath();
