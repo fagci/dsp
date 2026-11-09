@@ -145,10 +145,20 @@ async function spFileSave(n){
   }catch(e){ n.msg='file: '+e.message; }
   redraw(n);
 }
+// файла нет, а текст правили — сразу заводим файл «Plans/siteplan-ДАТА-ВРЕМЯ.txt» и пишем в него (дальше — как с обычным файлом, 0,8 с после правки);
+// имя кладётся в параметр «file»; пресеты и загруженные патчи не трогаем, пока текст не изменили руками
+function spAutoName(n){
+  const t=String(n.p.plan||''); if(n.planInit===undefined){ n.planInit=t; return; }
+  if(!n.p.fsave || !t.trim() || t===n.planInit) return;
+  const d=new Date(), z=v=>String(v).padStart(2,'0'), nm='Plans/siteplan-'+d.getFullYear()+z(d.getMonth()+1)+z(d.getDate())+'-'+z(d.getHours())+z(d.getMinutes())+z(d.getSeconds())+'.txt';
+  n.p.file=nm; if(typeof setMod==='function') setMod(n,'file',nm); n.fileName=nm; n.fileText=null; spFileSave(n);                  // файл новый (имя по секундам): пишем сразу, не дожидаясь такта движка
+}
 function spFileTick(n,want){                                               // вызывается из process: имя сменилось — загрузить; текст правили — сохранить с задержкой
   if(want!==n.fileName){ n.fileName=want; n.fileText=undefined; clearTimeout(n.fileT); spFileLoad(n); return; }
-  if(!want || n.fileText===undefined || !n.p.fsave) return;
-  if(String(n.p.plan||'')!==n.fileText){ clearTimeout(n.fileT); n.fileT=setTimeout(()=>spFileSave(n),800); }
+  if(!want){ spAutoName(n); return; }
+  if(n.fileText===undefined || !n.p.fsave) return;
+  const t=String(n.p.plan||'');                                              // таймер не сбрасываем на каждом такте движка (иначе он не срабатывал бы никогда): только если текст другой
+  if(t!==n.fileText && n.fileSched!==t){ clearTimeout(n.fileT); n.fileSched=t; n.fileT=setTimeout(()=>{ n.fileSched=null; spFileSave(n); },800); }
 }
 
 def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, lazy:true, kw:'plan site survey land plot measure tape gps clinometer height building outdoor indoor area perimeter slope dxf 3d construction fence foundation',
@@ -158,8 +168,8 @@ def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, lazy:true, kw:'pl
   ins:[{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'acc',t:'num'},{n:'alt',t:'num'},{n:'rec',t:'rec'},{n:'lines',t:'txt'},{n:'file',t:'txt'}],
   outs:[{n:'area',t:'num'},{n:'perim',t:'num'},{n:'slope',t:'num'},{n:'rms',t:'num'},{n:'n',t:'num'},{n:'rec',t:'rec'},{n:'poly',t:'rec'}],
   w:460, view:{h:380}, resize:true, readout:true,
-  params:[{n:'plan',t:'code',plain:true,d:SP_DEF,label:'measurements, one per line: A-B 12.4 · A-B h 12.4 · A-B dz 1.2 · A-B az 45 · A-B-C 90 · A-B tilt 25 15 eye 1.6 · A z 120 · A gps lat lon ±3 · A at x y · poly A B C D · room Hall 4.48 3.74 4.46 3.74 (corners Hall1…, 90° unless «side/angle», «side/?» — not measured; d — diagonal 1-3) · wall Hall2-Hall3 Kit1-Kit4 0.4 [shift s] (rooms across a wall) · room … h 2.65 / height 2.7 (ceiling) · window zal1-zal2 1.20 1.40 h 1.45 sill 0.85 / door … (from corner, width) · outer 0.45 concrete / inner drywall / material A-B glass (walls) · mirror (flip left ↔ right) (± — error, m or °)',fn:n=>{ n.key=''; }},
-          {n:'file',t:'text',d:'',label:'plan file in Files (e.g. Plans/dacha.txt; the pin «file» overrides). The measurements are read from it and your edits are written back; a new name creates the file from the current text'},
+  params:[{n:'plan',t:'code',plain:true,d:SP_DEF,fn:n=>spFileTick(n,n.fileName||String(n.p.file||'').trim()),label:'measurements, one per line: A-B 12.4 · A-B h 12.4 · A-B dz 1.2 · A-B az 45 · A-B-C 90 · A-B tilt 25 15 eye 1.6 · A z 120 · A gps lat lon ±3 · A at x y · poly A B C D · room Hall 4.48 3.74 4.46 3.74 (corners Hall1…, 90° unless «side/angle», «side/?» — not measured; d — diagonal 1-3) · wall Hall2-Hall3 Kit1-Kit4 0.4 [shift s] (rooms across a wall) · room … h 2.65 / height 2.7 (ceiling) · window zal1-zal2 1.20 1.40 h 1.45 sill 0.85 / door … (from corner, width) · outer 0.45 concrete / inner drywall / material A-B glass (walls) · mirror (flip left ↔ right) (± — error, m or °)',fn:n=>{ n.key=''; }},
+          {n:'file',t:'text',d:'',label:'plan file in Files (e.g. Plans/dacha.txt; the pin «file» overrides). The measurements are read from it and your edits are written back; a new name creates the file from the current text. Empty — the first edit of the text creates Plans/siteplan-DATE-TIME.txt by itself'},
           {n:'fsave',t:'check',d:true,label:'save edits of the measurements to the file automatically'},
           {n:'fload',t:'button',label:'↻ Reload the plan from the file',fn:n=>{ n.fileText=undefined; spFileLoad(n); }},
           {n:'fwrite',t:'button',label:'⬇ Save the plan to the file now',fn:n=>spFileSave(n)},
