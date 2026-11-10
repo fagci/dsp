@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float64Array,Float32Array,Set,Map,Number,String,JSON,isFinite,Infinity,Array,Object,RegExp});
 const src=['modules/planedit-kernels.js','modules/hvac-kernels.js','modules/plancheck-kernels.js'].map(f=>fs.readFileSync(path.join(root,f),'utf8')).join('\n');
-vm.runInContext(src+';this.K={peNew,peAddPoint,peAddWall,peAddRoom,peAddObj,peAddEl,peAddWire,hvAdd,hvLink,pcCheck,pcShow,pcHvSys,PC_SHOW,peAddPolyRoom,peAddRectRoom,peSplitWall,peAddObj,peEnsureLevel,peCopyLevel,peOnLevel,peLevelRange,peAddWall,hvRoomZ,peRoomRect,peRoomResize,peNextRoomPos,peRoomArea,peWallLen,peSetLen,peLock};',ctx);
+vm.runInContext(src+';this.K={peNew,peAddPoint,peAddWall,peAddRoom,peAddObj,peAddEl,peAddWire,hvAdd,hvLink,pcCheck,pcShow,pcHvSys,PC_SHOW,peAddPolyRoom,peAddRectRoom,peSplitWall,peAddObj,peImportPoints,peDetach,pePt,peEnsureLevel,peCopyLevel,peOnLevel,peLevelRange,peAddWall,hvRoomZ,peRoomRect,peRoomResize,peNextRoomPos,peRoomArea,peWallLen,peSetLen,peLock};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 function box(s,x0,y0,w,h,name,o={}){ const P=[[x0,y0],[x0+w,y0],[x0+w,y0+h],[x0,y0+h]].map(q=>K.peAddPoint(s,q[0],q[1])); const ids=P.map(p=>p.id);
@@ -71,6 +71,16 @@ ok('no rooms at all: devices are not checked',K.pcCheck((()=>{ const q=K.peNew()
   ok('floor 1 in the plan: ground items hidden, its own shown; in 3D the floors below stay',!K.peOnLevel(q,'1',.3,false) && K.peOnLevel(q,'1',3.4,false) && K.peOnLevel(q,'1',.3,true) && !K.peOnLevel(q,'0',3.4,true));
   ok('cellar devices belong to the lowest level range',K.peOnLevel(q,'-1',-2.5,false) && !K.peOnLevel(q,'0',-2.5,false)); }
 { const q=K.peNew(); ok('no floors defined: everything is visible',K.peOnLevel(q,'1',5,false)); }
+// отвязка от Site Plan
+{ const q=K.peNew(); const rec=()=>({id:'sp:walls',kind:'plan walls',walls:[{id:'w1',x1:0,y1:0,x2:5,y2:0,t:.3,h:2.7,mat:'brick'},{id:'w2',x1:5,y1:0,x2:5,y2:4,t:.3,h:2.7,mat:'brick'}],opens:[{wall:'w1',u:.5,w:1,h:1.2,sill:.9,type:'window'}],elec:[{type:'socket',name:'S1',x:1,y:1,z:.3,watt:200}],hv:[{type:'radiator',name:'R1',x:2,y:1,z:.5,watt:1000}],pp:[],uses:[]});
+  K.peImportPoints(q,[rec()]); const w1=q.walls.find(w=>w.src==='sp:walls|w1'), n0=q.walls.length;
+  ok('detach a wall: it loses src, keeps det, its openings and end points go with it',K.peDetach(q,'wall',w1.id) && !w1.src && w1.det==='sp:walls|w1' && q.objs.every(o=>!o.src && o.det) && q.pts.filter(p=>p.src==='sp:walls|w1').length===0);
+  const r2=rec(); r2.walls[0].x2=6; r2.opens[0].w=2; K.peImportPoints(q,[r2]);
+  ok('a re-import does not touch the detached wall, make a copy of it, nor change its window',q.walls.length===n0 && q.pts.find(p=>p.id===w1.a).x===0 && q.objs.length===1 && q.objs[0].w===1,q.walls.length+' vs '+n0+' '+q.objs.length);
+  ok('the other wall still follows the text',(()=>{ const r3=rec(); r3.walls[1].y2=7; K.peImportPoints(q,[r3]); const w=q.walls.find(w=>w.src==='sp:walls|w2'); return K.pePt(q,w.b).y===7; })());
+  const s1=q.elec.find(e=>e.name==='S1'); ok('detach a device; a re-import with a moved device leaves it alone, no duplicate',K.peDetach(q,'el',s1.id) && (()=>{ const r3=rec(); r3.elec[0].x=9; K.peImportPoints(q,[r3]); return q.elec.length===1 && q.elec[0].x===1; })());
+  const h1=q.hv.find(d=>d.name==='R1'); ok('the same for a heating device',K.peDetach(q,'hv',h1.id) && (()=>{ const r3=rec(); r3.hv[0].x=9; K.peImportPoints(q,[r3]); return q.hv.length===1 && q.hv[0].x===2; })());
+  ok('a hand-drawn item cannot be detached',K.peDetach(q,'el',s1.id)===false); }
 // слои
 ok('layers: all shows everything, one shows only itself',K.pcShow('all','electrics') && K.pcShow('electrics','electrics') && !K.pcShow('heating','electrics') && K.pcShow(undefined,'radio'));
 ok('heat devices vs air devices',K.pcHvSys('radiator')==='heating' && K.pcHvSys('heater')==='heating' && K.pcHvSys('ahu')==='ventilation' && K.pcHvSys('extract')==='ventilation');

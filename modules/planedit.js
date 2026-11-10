@@ -32,6 +32,11 @@ function peTouch(n){ n.rev++; n.lastEdit=performance.now(); redraw(n);
   clearTimeout(n.histT); n.histT=setTimeout(()=>peCommit(n),450);
   if(!n.saveT) n.saveT=setTimeout(()=>{ n.saveT=0; n.p.scene=JSON.stringify(n.sc); },400); }
 // отмена / повтор: правки склеиваются в шаг, пока пауза между ними короче 450 мс; перетаскивание — один шаг
+// импорт из Site Plan — не правка пользователя: история берёт новое состояние как базовое, и «отменить» не откатывает пересчёт плана
+function peImported(n){ n.rev++; n.lastEdit=performance.now(); n.hist.base=JSON.stringify(n.sc); redraw(n); }
+// «пришло из Site Plan»: такой объект пересчитывается из текста; отвязанный остаётся как нарисованный руками и из текста больше не меняется
+function peFromSp(n){ const it=n.sel && peItem(n); return it && it.src ? it : null; }
+function peDetachSel(n){ const it=peFromSp(n); if(!it) return; if(peDetach(n.sc,n.sel.k,it.id)){ n.msg='detached from Site Plan: it is yours now and the text no longer changes it'; peTouch(n); } }
 function peCommit(n){ n.histT=0; if(n.dragging){ n.histT=setTimeout(()=>peCommit(n),200); return; } peHistCommit(n.hist,JSON.stringify(n.sc)); }
 function peUndo(n,redo){
   clearTimeout(n.histT); n.histT=0; n.dragging=false; const r=(redo ? peHistRedo : peHistUndo)(n.hist,JSON.stringify(n.sc));
@@ -39,7 +44,7 @@ function peUndo(n,redo){
   n.sc=peParse(r); n.p.scene=r; if(n.sel){ if(peItem(n)) peLoad(n); else peSelect(n,null); }
   n.rev++; n.lastEdit=performance.now(); n.chain=null; n.chainPts=[]; redraw(n);
 }
-function peSelect(n,kind,id){ n.sel=kind ? {k:kind,id} : null; n.selKind=kind||''; peLoad(n); redraw(n); }
+function peSelect(n,kind,id){ n.sel=kind ? {k:kind,id} : null; n.selKind=kind||''; peLoad(n); if(kind){ const it=peItem(n); if(it && it.src) n.msg='from Site Plan: its next change overwrites hand edits — the «detach» button on the strip keeps this item'; } redraw(n); }
 function peItem(n,sel=n.sel){ if(!sel) return null; const s=n.sc; return sel.k==='pt' ? pePt(s,sel.id) : sel.k==='wall' ? peWall(s,sel.id) : sel.k==='obj' ? s.objs.find(o=>o.id===sel.id) : sel.k==='cam' ? s.cams.find(o=>o.id===sel.id) : sel.k==='ant' ? s.ants.find(o=>o.id===sel.id) : sel.k==='el' ? (s.elec||[]).find(o=>o.id===sel.id) : sel.k==='wire' ? (s.wires||[]).find(o=>o.id===sel.id) : sel.k==='room' ? s.rooms.find(o=>o.id===sel.id) : sel.k==='hv' ? (s.hv||[]).find(o=>o.id===sel.id) : sel.k==='pp' ? (s.pp||[]).find(o=>o.id===sel.id) : null; }
 // выбранное → параметры панели
 function peLoad(n){
@@ -511,6 +516,7 @@ function peChips(n){
     if(kind==='pipe') btn('insulation',()=>it.ins ? 'insulated' : 'bare',()=>{ if(it.ins) delete it.ins; else it.ins=true; });
     btn('length',()=>L().len.toFixed(2)+' m'+(kind==='pipe' ? ' (×2 with the return)' : ''),()=>{});
   }
+  if(['wall','obj','el','hv'].includes(k)){ if(it.src) btn('Site Plan',()=>'detach',()=>peDetachSel(n)); else if(it.det) btn('Site Plan',()=>'detached',()=>{}); }
   btn('delete',()=>'🗑',()=>{ peDeleteSel(n); });
   return C;
 }
@@ -648,7 +654,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     const pose={lat:num(I.lat),lon:num(I.lon),alt:num(I.alt),az:num(I.az),el:num(I.el),fov:num(I.fov)};
     if(JSON.stringify(pose)!==JSON.stringify(n.inPose)){ n.inPose=pose; redraw(n); }
     for(const r of recList(I.rec)){ if(r && r.kind==='underlay' && r.bm){ const sig=JSON.stringify([r.H,r.up,r.w,r.h,r.span]); if(!n.under || n.under.sig!==sig){ n.under={bm:r.bm,w:r.w,h:r.h,H:r.H,up:r.up||0,span:+r.span>0 ? +r.span : 80,sig,cv:null,b:null,err:''}; peUnderBuild(n); n.vw.fit=false; redraw(n); } else n.under.bm=r.bm; } }
-    if(n.p.imp){ const rows=recList(I.rec).filter(r=>r && ((r.x!=null && r.y!=null && (r.name!=null||r.label!=null)) || r.kind==='plan poly' || r.kind==='plan opening' || r.kind==='plan walls')); if(rows.length){ rows.forEach(r=>{ if(r.name==null && r.label!=null) r.name=r.label; }); if(peImportPoints(n.sc,rows)){ peTouch(n); n.vw.fit=false; } } }
+    if(n.p.imp){ const rows=recList(I.rec).filter(r=>r && ((r.x!=null && r.y!=null && (r.name!=null||r.label!=null)) || r.kind==='plan poly' || r.kind==='plan opening' || r.kind==='plan walls')); if(rows.length){ rows.forEach(r=>{ if(r.name==null && r.label!=null) r.name=r.label; }); if(peImportPoints(n.sc,rows)){ peImported(n); n.vw.fit=false; } } }
     const now=performance.now();
     if(n.heatPartial && !n.dragging){ n.heatPartial=false; n.rev=(n.rev||0)+1; }
     if(n.calcRev!==n.rev && now-n.lastEdit>(n.dragging ? 180 : 60)){ peRecalc(n); redraw(n); }

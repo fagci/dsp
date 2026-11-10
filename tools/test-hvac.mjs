@@ -7,7 +7,7 @@ const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float64Array,Float32Array,Set,Map,Number,String,JSON,isFinite,Infinity,Array,Object,RegExp});
 const src=['modules/planedit-kernels.js','modules/hvac-kernels.js'].map(f=>fs.readFileSync(path.join(root,f),'utf8')).join('\n');
 vm.runInContext(src+';this.K={peNew,peAddPoint,peAddWall,peAddRoom,peAddObj,peParse,peImportPoints,peDel,hvAdd,hvLink,hvLinkLen,hvLinkPath,hvCalc,hvStats,hvGuessUse,peAddRectRoom,peCopyLevel,hvWallU,hvPickPipe,hvPickDuct,hvPipeDrop,hvDuctDrop,HV_DUCTS,HV_PIPES};',ctx);
-vm.runInContext(fs.readFileSync(path.join(root,'modules/siteplan-kernels.js'),'utf8')+';this.S={spSolve};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/siteplan-kernels.js'),'utf8')+';this.S={spSolve,spTemplate,SP_TPL};',ctx);
 const K=ctx.K, S=ctx.S;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -121,4 +121,11 @@ ok('the same name twice is refused',S.spSolve(T+'\nradiator B1 A').errors.some(q
   const H=K.hvCalc(q,{tout:-25}), lo=H.rooms.find(r=>r.name==='Low'), up=H.rooms.find(r=>r.name==='Up');
   ok('the ground room has a floor and no roof, the upper one — a roof and no floor',lo.trans.floor>0 && lo.trans.roof===0 && up.trans.floor===0 && up.trans.roof>0,JSON.stringify([lo.trans,up.trans]));
   const d=K.hvAdd(q,'radiator',2.5,.3,{watt:1000}); d.z+=q.levels.find(l=>l.idx===1).z; ok('a radiator drawn on the upper floor belongs to the upper room',K.hvCalc(q,{tout:-25}).rooms.find(r=>r.name==='Up').dev.includes('R1')); }
+// заготовки строк Site Plan: каждая разбирается без ошибок, имена устройств свободные
+{ const base=['A at 0 0','B at 5 0','C at 5 4','D at 0 4','A-B 5','B-C 4','C-D 5','D-A 4','A-C 6.4031','poly A B C D','room Liv 5 4 5 4','boiler B1 A dx 0.5 dy -0.5 kw 24','radiator R1 B dx -0.5 dy -1 w 1500','ahu U1 C dx -1 dy -1 m3 250','supply SA1 D dx 1 dy 1'].join('\n');
+  let text=base; const R0=S.spSolve(base); ok('the base text parses',R0.errors.length===0,JSON.stringify(R0.errors));
+  for(const k of S.SP_TPL){ if(k==='measurement') continue; const line=S.spTemplate(k,S.spSolve(text)); text+='\n'+line; const R=S.spSolve(text); ok('template «'+k+'»: «'+line+'» parses',R.errors.length===0,JSON.stringify(R.errors)); }
+  const a=S.spTemplate('socket',S.spSolve(text)), b=S.spTemplate('radiator',S.spSolve(text)); ok('names are free: the second socket is S2, the next radiator R3',/socket S2 /.test(a) && /radiator R3 /.test(b),a+' | '+b);
+  ok('pipe and duct take the last two devices of their system',S.spTemplate('pipe',S.spSolve(text)).startsWith('pipe ') && S.spTemplate('duct',S.spSolve(base))==='duct U1 SA1');
+  ok('an empty text still gives lines',S.spTemplate('room',S.spSolve(''))==='room Room 4.00 3.00 4.00 3.00' && S.spTemplate('window',S.spSolve('')).startsWith('window A-B')); }
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad ? 1 : 0);

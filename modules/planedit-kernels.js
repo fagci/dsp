@@ -423,6 +423,7 @@ function peImportPoints(s,recs){
   for(const r of recs||[]){ if(!r || r.kind!=='plan walls' || !Array.isArray(r.walls)) continue;
     const pre=String(r.id||'plan')+'|', keep=new Set();
     for(const q of r.walls){ const src=pre+q.id; keep.add(src); let w=s.walls.find(w=>w.src===src);
+      if(!w && s.walls.some(x=>x.det===src)) continue;                                                       // отвязанная стена — своя
       if(!w){ const a=peAddPoint(s,+q.x1,+q.y1), b=peAddPoint(s,+q.x2,+q.y2); a.src=b.src=src; w=peAddWall(s,a.id,b.id,{t:+q.t,h:+q.h>0 ? +q.h : 2.7}); w.src=src; }
       const [a,b]=peWallEnds(s,w); a.x=+q.x1; a.y=+q.y1; b.x=+q.x2; b.y=+q.y2; w.t=+q.t>0 ? +q.t : w.t; if(+q.h>0) w.h=+q.h; if(q.mat && PE_MAT[q.mat]!=null) w.mat=q.mat;
       if(+q.z0) w.z0=+q.z0; else delete w.z0; if(+q.lv) w.lv=+q.lv; else delete w.lv; }
@@ -438,15 +439,16 @@ function peImportPoints(s,recs){
     const okeep=new Set();
     for(const q of r.stakes||[]){ const src=pre+'stake:'+q.id; okeep.add(src); const h=+q.h>0 ? +q.h : .5, v={x:+q.x,y:+q.y,w:.05,d:.05,h,name:'stake'}; const ob=s.objs.find(o=>o.src===src); if(ob) Object.assign(ob,v); else peAddObj(s,'column',{...v,src}); }      // колышки забора-шнура: тонкие столбики
     (r.opens||[]).forEach((o,i)=>{ const w=s.walls.find(w=>w.src===pre+o.wall); if(!w) return; const src=pre+'o'+i+':'+o.wall, type=o.type==='door' ? 'door' : 'window'; okeep.add(src);
-      const v={type,wall:w.id,u:Math.max(0,Math.min(1,+o.u||0)),w:+o.w>0 ? +o.w : 1,...(+o.h>0 ? {h:+o.h} : {}),...(isFinite(+o.sill) && o.sill!=null ? {sill:+o.sill} : {})};
+      if(s.objs.some(q=>q.det===src)) return; const v={type,wall:w.id,u:Math.max(0,Math.min(1,+o.u||0)),w:+o.w>0 ? +o.w : 1,...(+o.h>0 ? {h:+o.h} : {}),...(isFinite(+o.sill) && o.sill!=null ? {sill:+o.sill} : {})};
       const ob=s.objs.find(q=>q.src===src); if(ob) Object.assign(ob,v); else peAddObj(s,type,{...v,src}); });
     s.objs=s.objs.filter(o=>!o.src || !o.src.startsWith(pre) || okeep.has(o.src));
     // электрика: устройства и провода от источника заменяют прежние с тем же префиксом (свои, нарисованные руками, остаются)
     { const ekeep=new Set(); for(const q of r.elec||[]){ const src=pre+'el:'+q.name; ekeep.add(src); let e=s.elec.find(x=>x.src===src);
+        if(!e && s.elec.some(x=>x.det===src)) continue;
         if(!e){ e=peAddEl(s,PE_EL[q.type] ? q.type : 'socket',+q.x,+q.y,{}); e.src=src; }
         Object.assign(e,{name:String(q.name),x:+q.x,y:+q.y,z:+q.z,watt:+q.watt||0}); if(+q.ph===3) e.ph=3; else delete e.ph; }
       s.elec=s.elec.filter(e=>!e.src || !e.src.startsWith(pre) || ekeep.has(e.src));
-      const wkeep=new Set(); for(const q of r.wires||[]){ const A=s.elec.find(e=>e.src===pre+'el:'+q.a), B=s.elec.find(e=>e.src===pre+'el:'+q.b); if(!A||!B||A===B) continue;
+      const wkeep=new Set(); for(const q of r.wires||[]){ const A=s.elec.find(e=>e.src===pre+'el:'+q.a||e.det===pre+'el:'+q.a), B=s.elec.find(e=>e.src===pre+'el:'+q.b||e.det===pre+'el:'+q.b); if(!A||!B||A===B) continue;
         const src=pre+'wire:'+q.a+'-'+q.b; wkeep.add(src); let w=s.wires.find(x=>x.src===src);
         if(!w){ w=peAddWire(s,A.id,B.id,{}); if(!w) continue; w.src=src; }
         w.cable=peCableOk(q.cable) ? q.cable : w.cable; if(+q.z>0) w.zr=+q.z; if(+q.amp>0) w.amp=+q.amp; else delete w.amp; }
@@ -510,6 +512,11 @@ function peHistUndo(h,cur){ peHistCommit(h,cur); if(!h.u.length) return null; h.
 function peHistRedo(h,cur){ peHistCommit(h,cur); if(!h.r.length) return null; h.u.push(h.base); h.base=h.r.pop(); return h.base; }
 function peParse(text){ try{ const o=JSON.parse(text); if(o && Array.isArray(o.pts)){ for(const k of ['walls','objs','cams','ants','rooms','slabs','roofs','levels','grounds','elec','wires','hv','pp']) if(!Array.isArray(o[k])) o[k]=[]; if(!(o.seq>0)) o.seq=1000; return o; } }catch(e){} return peNew(); }
 
+// отвязать объект от Site Plan: src → det (метка «я пришёл оттуда»), чтобы пересчёт текста его не трогал и не создавал заново; у стены — точки и проёмы
+function peDetach(s,kind,id){ const list=kind==='wall' ? s.walls : kind==='obj' ? s.objs : kind==='el' ? s.elec : kind==='hv' ? s.hv : null; const it=list&&list.find(o=>o.id===id); if(!it||!it.src) return false;
+  const src=it.src; it.det=src; delete it.src;
+  if(kind==='wall'){ for(const p of s.pts) if(p.src===src){ p.det=src; delete p.src; } for(const o of s.objs) if(o.wall===id && o.src){ o.det=o.src; delete o.src; } }
+  return true; }
 // ---------- привязка к земле (общее пространство с Video Overlay и Map) ----------
 // o: {lat, lon, north, alt} — где точка (0, 0) плана, азимут оси +y плана от севера (по часовой, °) и высота пола над уровнем моря, м
 const PE_R=6371008.8;
