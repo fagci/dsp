@@ -123,9 +123,9 @@ function spParse(text,o={}){
       if(elec.some(e=>e.name===nm)) return bad(type+': the name «'+nm+'» is already used');
       const wl=at.split('-'); if(wl.length>2 || (wl.length===2 && (!wl[0] || !wl[1] || wl[0]===wl[1]))) return bad(type+': a wall is «A-B» — two different corners of one room');
       const q={type,name:nm,a:pt(wl[0]),wall:wl.length===2 ? pt(wl[1]) : -1,along:0,off:0,dx:0,dy:0,h:{light:2.6,socket:.3,switch:1.1,panel:1.6,inlet:3,junction:2.4,load:.3}[type],w:{light:60,socket:200,load:2000}[type]||0,li};
-      for(let i=3;i<T.length;i+=2){ const k=T[i].toLowerCase(), v=spNum(T[i+1]); if(!['dx','dy','h','w','along','off'].includes(k) || !isFinite(v)) return bad(type+': unknown «'+T[i]+'» (dx dy along off h w)'); if(q.wall>=0 ? (k==='dx'||k==='dy') : (k==='along'||k==='off')) return bad(type+': «'+k+'» '+(q.wall>=0 ? 'is for a point; on a wall use along (from the first corner, m) and off (into the room, m)' : 'is for a wall «A-B»; at a point use dx and dy')); q[k]=v; }
+      for(let i=3;i<T.length;i+=2){ const k=T[i].toLowerCase(), v=spNum(T[i+1]); if(!['dx','dy','h','w','along','off','ph'].includes(k) || !isFinite(v)) return bad(type+': unknown «'+T[i]+'» (dx dy along off h w ph)'); if(q.wall>=0 ? (k==='dx'||k==='dy') : (k==='along'||k==='off')) return bad(type+': «'+k+'» '+(q.wall>=0 ? 'is for a point; on a wall use along (from the first corner, m) and off (into the room, m)' : 'is for a wall «A-B»; at a point use dx and dy')); q[k]=v; }
       if(q.wall>=0 && !(q.along>=0)) return bad(type+': along ≥ 0');
-      if(q.h<0 || q.w<0) return bad(type+': h, w ≥ 0'); elec.push(q); return; }
+      if(q.h<0 || q.w<0) return bad(type+': h, w ≥ 0'); if(q.ph!==undefined && (type!=='load' || (q.ph!==1 && q.ph!==3))) return bad(type+': ph — 1 or 3 phases, for a load only'); elec.push(q); return; }
     if(/^wire$/i.test(T[0])){                                                                 // «wire L1 SW1 S1 [cable 3x1.5] [z 2.5]» — провод по цепочке устройств
       const w={names:[],cable:null,z:null,amp:0,li};
       for(let i=1;i<T.length;i++){ const t=T[i].toLowerCase();
@@ -497,13 +497,13 @@ function spSolve(text,opt={}){
     if(q.wall>=0){                                                                          // на стене комнаты A-B: along — от угла A вдоль стены, off — вглубь комнаты (по внутренней грани; минус — наружу)
       const B=out.pts[q.wall], L=Math.hypot(B.x-p.x,B.y-p.y), nm=p.name+'-'+B.name;
       const room=P.polys.find(pl=>{ const k=pl.ids.length, i=pl.ids.indexOf(q.a), j=pl.ids.indexOf(q.wall); return i>=0 && j>=0 && ((i+1)%k===j || (j+1)%k===i); });
-      if(!room){ out.errors.push({line:q.li+1,text:nm,msg:q.type+' '+q.name+': «'+nm+'» is not a side of a room (corners next to each other in a room / poly)'}); return {type:q.type,name:q.name,at:nm,x:p.x,y:p.y,z:p.z+q.h,watt:q.w}; }
+      if(!room){ out.errors.push({line:q.li+1,text:nm,msg:q.type+' '+q.name+': «'+nm+'» is not a side of a room (corners next to each other in a room / poly)'}); return {type:q.type,name:q.name,at:nm,x:p.x,y:p.y,z:p.z+q.h,watt:q.w,...(q.ph===3 ? {ph:3} : {})}; }
       if(q.along>L+1e-6) out.errors.push({line:q.li+1,text:nm,msg:q.type+' '+q.name+': along '+q.along+' m is past the end of the wall «'+nm+'» ('+L.toFixed(2)+' m)'});
       const ux=(B.x-p.x)/(L||1), uy=(B.y-p.y)/(L||1); let nx=-uy, ny=ux, cx=0, cy=0; for(const i of room.ids){ cx+=out.pts[i].x; cy+=out.pts[i].y; }
       if((cx/room.ids.length-p.x)*nx+(cy/room.ids.length-p.y)*ny<0){ nx=-nx; ny=-ny; }
-      const a=Math.min(q.along,L); return {type:q.type,name:q.name,at:nm,x:p.x+ux*a+nx*q.off,y:p.y+uy*a+ny*q.off,z:p.z+q.h,watt:q.w};
+      const a=Math.min(q.along,L); return {type:q.type,name:q.name,at:nm,x:p.x+ux*a+nx*q.off,y:p.y+uy*a+ny*q.off,z:p.z+q.h,watt:q.w,...(q.ph===3 ? {ph:3} : {})};
     }
-    return {type:q.type,name:q.name,at:p.name,x:p.x+q.dx,y:p.y+q.dy,z:p.z+q.h,watt:q.w}; });
+    return {type:q.type,name:q.name,at:p.name,x:p.x+q.dx,y:p.y+q.dy,z:p.z+q.h,watt:q.w,...(q.ph===3 ? {ph:3} : {})}; });
   out.wires=[]; { const by=new Map(out.elec.map(e=>[e.name,e]));
     for(const w of P.wires){ for(let i=0;i+1<w.names.length;i++){ const A=by.get(w.names[i]), B=by.get(w.names[i+1]);
         if(!A||!B){ out.errors.push({line:w.li+1,text:'wire',msg:'wire: unknown device «'+(A ? w.names[i+1] : w.names[i])+'» (declare it with light / socket / switch)'}); continue; }
