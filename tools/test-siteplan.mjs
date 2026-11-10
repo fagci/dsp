@@ -6,7 +6,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float64Array,Float32Array,Set,Map,Number,String,JSON,isFinite,Infinity,Array,Object});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/siteplan-kernels.js'),'utf8')+';this.K={spSolve,spParse,spTilt,spPoly,spDXF,spGeoJSON,spSVG,spCSV,spFrame,spNice,spGridFrame,spToFrame,spFilePath,spFromFrame,spGridLines,spWalls,spHouse,spRoof,spRowToLine,spUniqueNames};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/siteplan-kernels.js'),'utf8')+';this.K={spSolve,spParse,spTilt,spPoly,spDXF,spGeoJSON,spSVG,spCSV,spFrame,spNice,spGridFrame,spToFrame,spFilePath,spFromFrame,spGridLines,spWalls,spHouse,spRoof,spRowToLine,spUniqueNames,spCanopy};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -272,4 +272,14 @@ for(const t of ['material Kit2-Kit3 concrete\nroom Hall 4.48 3.74 4.46 3.74\nroo
   const two=K.spUniqueNames('',L.concat(L.map(l=>l)).filter((l,i,a)=>true));
   ok('map write: two shapes with the same name in one batch get different names',new Set(two.filter(l=>/ gps /.test(l)).map(l=>l.split(' ')[0])).size===6,two.join(' | '));
   const S=K.spSolve(ex.replace('A gps 50 85 ±1','A gps 50 85 ±1')+'\n'+R.join('\n')); ok('map write: the result has no duplicate points',!S.errors.some(e=>/different points/.test(e.msg)) && S.pts.filter(p=>p.name==='polygon3_1').length===1); }
+// столб (post) и навес (canopy)
+{ const R=K.spSolve('A at 0 0\nB at 10 0\nC at 10 4\nD at 0 4\nroom H 10 4 10 4\nH1 at 0 0\nH2 at 10 0\nP at 5 -6\npost P h 3.2 d 0.25\ncanopy H1 H2 w 1.5 h 2.95 2.75 off 0.4 posts 2 5 8 d 0.12'), H=K.spHouse(R,{});
+  ok('post+canopy: no errors',R.errors.length===0,JSON.stringify(R.errors));
+  const p0=H.posts.find(q=>q.name==='P'); ok('post: at the point, given height and diameter',p0 && Math.abs(p0.x-5)<.05 && Math.abs(p0.y+6)<.05 && p0.h===3.2 && p0.d===.25,JSON.stringify(p0));
+  const cp=H.posts.filter(q=>q.name==='canopy post'); ok('canopy: three columns at 2, 5, 8 m from A, height at the outer edge',cp.length===3 && cp.every(q=>q.h===2.75),JSON.stringify(cp));
+  const rf=H.roofs.find(r=>r.type==='canopy'); ok('canopy: one slope, 10 m long, sloping from 2.95 to 2.75',rf && rf.faces.length===1 && rf.ridge===2.95 && rf.eave===2.75 && Math.abs(rf.area-10*Math.hypot(1.5,.2))<.01,rf && rf.area);
+  const ys=rf.faces[0].pts.map(q=>q[1]), yo=Math.max(...ys.map(Math.abs)), yi=Math.min(...ys.map(Math.abs)), h3=R.pts.find(q=>q.name==='H3');
+  ok('canopy: outside = away from the room, 0.4 m off the wall line, 1.5 m deep',Math.abs(yi-.4)<.05 && Math.abs(yo-1.9)<.05 && Math.sign(ys[0])===-Math.sign(h3.y),ys.join(',')+' H3.y='+h3.y); }
+ok('post: bad height → error',K.spSolve('P at 0 0\npost P h -1').errors.length===1 && K.spSolve('P at 0 0\npost P x 1').errors.length===1);
+ok('canopy: A = B → error',K.spSolve('P at 0 0\ncanopy P P').errors.length===1);
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
