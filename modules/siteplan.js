@@ -60,6 +60,9 @@ function spWriteMap(n){                                                     // �
   if(n.set?.plan) n.set.plan(v); else n.p.plan=v;
   n.fixLines.clear(); n.key=''; n.msg='written to the plan: '+L.length+' line'+(L.length>1 ? 's' : '');
 }
+// заготовка строки: ввод с нуля требует помнить синтаксис — выбираем слово, строка с именами комнаты, стороны и свободным именем встаёт в конец текста
+function spInsertTpl(n){ const k=n.p.tpl; if(!k || !SP_TPL.includes(k)) return; const line=spTemplate(k,n.res); setMod(n,'tpl','insert a line…');
+  const cur=String(n.p.plan||'').replace(/\s+$/,''), v=cur+(cur ? '\n' : '')+line; if(n.set?.plan) n.set.plan(v); else n.p.plan=v; n.msg='added: '+line+' — change the numbers and the names'; }
 function spAddGps(n){
   const lat=n.inLat ?? GeoMe.lat, lon=n.inLon ?? GeoMe.lon;
   if(lat==null || lon==null){ n.msg='no position — wire My Position (lat / lon / acc) or set it there'; return; }
@@ -187,6 +190,7 @@ def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, lazy:true, kw:'pl
   params:[{n:'plan',t:'code',plain:true,d:SP_DEF,fn:n=>spFileTick(n,n.fileName||String(n.p.file||'').trim()),label:'measurements, one per line: A-B 12.4 · A-B h 12.4 · A-B dz 1.2 · A-B az 45 · A-B-C 90 · A-B tilt 25 15 eye 1.6 · A z 120 · A gps lat lon ±3 · A at x y · poly A B C D · room Hall 4.48 3.74 4.46 3.74 (corners Hall1…, 90° unless «side/angle», «side/?» — not measured; d — diagonal 1-3) · wall Hall2-Hall3 Kit1-Kit4 0.4 [shift s] (rooms across a wall) · room … h 2.65 / height 2.7 (ceiling) · window zal1-zal2 1.20 1.40 h 1.45 sill 0.85 / door … (from corner, width) · outer 0.45 concrete / inner drywall / material A-B glass (walls) · mirror (flip left ↔ right) (± — error, m or °)',fn:n=>{ n.key=''; }},
           {n:'file',t:'text',d:'',label:'plan file in Files (e.g. Plans/dacha.txt; the pin «file» overrides). The measurements are read from it and your edits are written back; a new name creates the file from the current text. Empty — the first edit of the text creates Plans/siteplan-DATE-TIME.txt by itself'},
           {n:'fsave',t:'check',d:true,label:'save edits of the measurements to the file automatically'},
+          {n:'tpl',t:'select',opts:['insert a line…',...SP_TPL],d:'insert a line…',label:'insert a line: pick a word — the line with the names of the first room, its first side and a free device name goes to the end of the text (measurement, room, window, door, use, socket, light, switch, radiator, boiler, floor, heater, tee, manifold, pipe, duct, ahu, supply, extract)',fn:n=>spInsertTpl(n)},
           {n:'fload',t:'button',label:'↻ Reload the plan from the file',fn:n=>{ n.fileText=undefined; spFileLoad(n); }},
           {n:'fwrite',t:'button',label:'⬇ Save the plan to the file now',fn:n=>spFileSave(n)},
           {n:'table',t:'text',d:'',label:'Table lists with measurements, comma-separated. Columns: kind (d h dz az tilt ang poly) + a, b, c + value [+ sigma]; or name + lat, lon [+ acc, alt]; or name + x, y [+ z]; or a ready «line»',fn:n=>{ n.tblKey=''; }},

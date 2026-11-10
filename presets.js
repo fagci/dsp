@@ -8942,6 +8942,17 @@ const pe=addNode('planedit',40,220,{view:'plan',layer:'climate',snap:'0.1',hvcit
 pe.size.w=860; pe.size.h=620; applySize(pe);
 markWiresDirty();
 });
+preset('Plan Editor: Text and Hand Drawing Together — Insert Lines, Detach from Site Plan, Undo', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Text and hand drawing together. Site Plan: the parameter «insert a line…» — pick a word (room, window, door, radiator, socket, pipe, tee…) and the line with the names of the first room, its first side and a free device name goes to the end of the text; change the numbers. Plan Editor: what came from the text is recalculated on every change of the text, so a hand edit of such a wall or device is overwritten. Select it — the message says so and the strip has «Site Plan · detach»: after that the item is yours, the text no longer moves or duplicates it (its end points and openings go with a wall). Undo (↶) now only undoes your edits — the recalculation of the plan from the text is not a step of the history. Try: select the wall or the radiator, press detach, drag it, then edit the text.'});
+nt.size.w=1180; nt.size.h=110; applySize(nt);
+const sp=addNode('siteplan',40,180,{view:'plan',plan:'outer 0.40 brick\ninner drywall\nroom Liv 5.00 4.00 5.00 4.00\nroom Kit 4.00 4.00 4.00 4.00\nwall Liv2-Liv3 Kit1-Kit4 0.12\nLiv1 at 0 0\nLiv2 at 5 0\ndoor Liv4-Liv1 1.00 0.90\nwindow Liv1-Liv2 1.60 1.50 h 1.4 sill 0.9\nuse Kit kitchen\nboiler B1 Kit3-Kit4 along 2.8 off 0.3 kw 24\nradiator R1 Liv1-Liv2 along 1.5 off 0.1 w 1800\npipe B1 R1\nsocket S1 Liv1 dx 0.3 dy -0.4 h 0.3 w 300'});
+sp.size.w=520; sp.size.h=560; applySize(sp);
+const pe=addNode('planedit',600,180,{view:'plan',layer:'none',snap:'0.1'});
+pe.size.w=700; pe.size.h=620; applySize(pe);
+addEdge(sp.id,'rec',pe.id,'rec');
+markWiresDirty();
+});
 preset('Plan Editor: Wiring Groups — Consumers, Breakers, Cable and Voltage Drop', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Groups of the wiring. A group is everything fed by one cable leaving the panel (through junction boxes, switches and sockets further down). Plan Editor lists each group in the readout: devices, power, current I = P/(230 V·cosφ), the breaker (auto — the nearest standard rating not below the current; to set one by hand, select the first cable out of the panel and use «breaker» — in Site Plan «wire P1 J1 … amp 16»), the cable at the head, the cross-section the current needs, the longest run and the voltage drop to the farthest load (2ρLI/S per section, copper). A ⚠ says what is wrong: a breaker below the current, a cable that cannot take the breaker or its section current, a drop over 5 %. A panel line sums its groups with the demand factor 0.7 and picks the main breaker, the cable from the inlet is checked against it; consumers not wired to a panel are listed as «not fed». '+

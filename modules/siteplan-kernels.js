@@ -58,6 +58,20 @@ function spTilt(d,alphaDeg,eye=0,sd=0.03,sa=1){
   return {dz, s:Math.hypot(Math.tan(a)*sd, d/Math.cos(a)**2*sa*SP_D, 0.02)};
 }
 
+// ---------- заготовки строк: ключевое слово → строка с подставленными именами комнаты, стороны, свободным именем устройства ----------
+const SP_TPL=['measurement','room','window','door','use','socket','light','switch','radiator','boiler','floor','heater','tee','manifold','pipe','duct','ahu','supply','extract'];
+function spTemplate(kind,R){ R=R||{}; const names=R.names||[], used=new Set([...names,...(R.elec||[]).map(e=>e.name),...(R.hv||[]).map(e=>e.name)]);
+  const nm=pre=>{ for(let i=1;;i++){ const v=pre+i; if(!used.has(v)){ used.add(v); return v; } } };
+  const poly=(R.polys||[]).find(p=>!p.plot && p.names.length>=2), side=poly ? poly.names[0]+'-'+poly.names[1] : 'A-B', pt=poly ? poly.names[0] : (names[0]||'A'), room=poly ? (poly.names[0].replace(/\d+$/,'')||'Room') : 'Room';
+  const roomName=()=>{ for(let i=1;;i++){ const v='Room'+(i>1 ? i : ''); if(!names.some(n=>n.startsWith(v))) return v; } };
+  const heat=(R.hv||[]).filter(d=>['boiler','radiator','floor','manifold','tee'].includes(d.type)).map(d=>d.name), air=(R.hv||[]).filter(d=>['ahu','fan','supply','extract'].includes(d.type)).map(d=>d.name);
+  const T={measurement:'A-B 10.00',room:'room '+roomName()+' 4.00 3.00 4.00 3.00',window:'window '+side+' 1.20 1.40 h 1.4 sill 0.9',door:'door '+side+' 1.00 0.90',use:'use '+room+' living people 2',
+    socket:'socket '+nm('S')+' '+pt+' dx 0.3 dy 0.3 h 0.3 w 200',light:'light '+nm('L')+' '+pt+' dx 1 dy 1 h 2.6 w 60',switch:'switch '+nm('SW')+' '+pt+' dx 0.3 dy 0.3 h 1.1',
+    radiator:'radiator '+nm('R')+' '+side+' along 1.0 off 0.1 w 1200',boiler:'boiler '+nm('B')+' '+side+' along 1.0 off 0.3 kw 24',floor:'floor '+nm('F')+' '+pt+' dx 1 dy 1 area 10',heater:'heater '+nm('H')+' '+pt+' dx 1 dy 1 w 1500 fuel electric',
+    tee:'tee '+nm('TE')+' '+pt+' dx 1 dy 1 h 0.1',manifold:'manifold '+nm('M')+' '+pt+' dx 1 dy 1 h 0.8',pipe:'pipe '+(heat.length>1 ? heat.slice(-2).join(' ') : 'B1 R1'),duct:'duct '+(air.length>1 ? air.slice(-2).join(' ') : 'U1 SA1'),
+    ahu:'ahu '+nm('U')+' '+pt+' dx 0.5 dy 0.5 h 2.4 m3 250 eff 80',supply:'supply '+nm('SA')+' '+pt+' dx 1 dy 1 h 2.6',extract:'extract '+nm('EA')+' '+pt+' dx 1 dy 1 h 2.6'};
+  return T[kind]||''; }
+
 // ---------- разбор ----------
 function spNum(t){ if(t==null) return NaN; const s=String(t).replace(/^[±~]|^\+-/,'').replace(/(\d),(\d)/,'$1.$2'); return /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(s) ? +s : NaN; }
 function spParse(text,o={}){

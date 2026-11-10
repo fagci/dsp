@@ -223,10 +223,11 @@ function hvStats(s){ const n={}, len={pipe:0,duct:0}; for(const d of s.hv||[]) n
 // назначение комнат и устройства из Site Plan: r.hv [{type,name,x,y,z,watt,…}], r.pp [{a,b,dn,z}], r.uses [{name,use,people,tin,gas}]
 function hvImport(s,r,pre){ s.hv??=[]; s.pp??=[];
   const keep=new Set(); for(const q of r.hv||[]){ if(!HV_T[q.type]) continue; const src=pre+'hv:'+q.name; keep.add(src); let d=s.hv.find(x=>x.src===src);
+    if(!d && s.hv.some(x=>x.det===src)) continue;
     if(!d){ d=hvAdd(s,q.type,+q.x,+q.y,{}); d.src=src; }
     Object.assign(d,{name:String(q.name),x:+q.x,y:+q.y,z:+q.z,watt:+q.watt||0}); for(const k of ['area','m3','eff','pa']) if(q[k]!=null) d[k]=+q[k]; if(q.fuel) d.fuel=q.fuel; }
   s.hv=s.hv.filter(d=>!d.src||!d.src.startsWith(pre)||keep.has(d.src));
-  const lk=new Set(); for(const q of r.pp||[]){ const A=s.hv.find(d=>d.src===pre+'hv:'+q.a), B=s.hv.find(d=>d.src===pre+'hv:'+q.b); if(!A||!B||A===B) continue;
+  const lk=new Set(); for(const q of r.pp||[]){ const A=s.hv.find(d=>d.src===pre+'hv:'+q.a||d.det===pre+'hv:'+q.a), B=s.hv.find(d=>d.src===pre+'hv:'+q.b||d.det===pre+'hv:'+q.b); if(!A||!B||A===B) continue;
     const src=pre+'pp:'+q.a+'-'+q.b; let l=s.pp.find(x=>x.src===src); if(!l){ l=hvLink(s,A.id,B.id,{}); if(!l) continue; l.src=src; } lk.add(src);
     if(q.ins) l.ins=true; else delete l.ins; if(+q.dn>0) l.dn=+q.dn; else l.dn=0; if(+q.z>0) l.zr=+q.z; else delete l.zr; }
   s.pp=s.pp.filter(l=>(!l.src||!l.src.startsWith(pre)||lk.has(l.src)) && hvDev(s,l.a) && hvDev(s,l.b));
