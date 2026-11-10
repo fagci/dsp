@@ -7,7 +7,7 @@
    отдаёт стены, камеры и антенны как 3D-каркасы и маркеры; поза телефона с тех же входов lat / lon / alt / az / el / fov рисуется в плане.
    Ядро — planedit-kernels.js (тест tools/test-planedit.mjs). */
 
-const PE_TOOLS=[['select','☝','select'],['wall','▭','wall'],['point','•','point'],['door','🚪','door'],['window','▤','window'],['box','■','box'],['column','●','column'],['camera','🎥','camera'],['antenna','📶','TX'],['receiver','📡','RX'],['socket','⏚','socket'],['switch','⏻','switch'],['light','💡','light'],['load','⏍','load'],['panel','▦','panel'],['inlet','⤓','inlet'],['junction','⊡','box'],['wire','〰','wire'],['hvdev','♨','climate'],['hvlink','≋','pipe/duct'],['measure','📏','measure'],['erase','✕','erase']];
+const PE_TOOLS=[['select','☝','select'],['wall','▭','wall'],['rect','▢','room'],['point','•','point'],['door','🚪','door'],['window','▤','window'],['box','■','box'],['column','●','column'],['camera','🎥','camera'],['antenna','📶','TX'],['receiver','📡','RX'],['socket','⏚','socket'],['switch','⏻','switch'],['light','💡','light'],['load','⏍','load'],['panel','▦','panel'],['inlet','⤓','inlet'],['junction','⊡','box'],['wire','〰','wire'],['hvdev','♨','climate'],['hvlink','≋','pipe/duct'],['measure','📏','measure'],['erase','✕','erase']];
 const PE_BANDS=[88,144,433,868,915,1575,1800,2100,2437,3500,5200,5800,6000,24000];       // частоты для шагов ± у антенн, МГц
 const PE_MATS=Object.keys(PE_MAT);
 
@@ -40,7 +40,7 @@ function peUndo(n,redo){
   n.rev++; n.lastEdit=performance.now(); n.chain=null; n.chainPts=[]; redraw(n);
 }
 function peSelect(n,kind,id){ n.sel=kind ? {k:kind,id} : null; n.selKind=kind||''; peLoad(n); redraw(n); }
-function peItem(n,sel=n.sel){ if(!sel) return null; const s=n.sc; return sel.k==='pt' ? pePt(s,sel.id) : sel.k==='wall' ? peWall(s,sel.id) : sel.k==='obj' ? s.objs.find(o=>o.id===sel.id) : sel.k==='cam' ? s.cams.find(o=>o.id===sel.id) : sel.k==='ant' ? s.ants.find(o=>o.id===sel.id) : sel.k==='el' ? (s.elec||[]).find(o=>o.id===sel.id) : sel.k==='wire' ? (s.wires||[]).find(o=>o.id===sel.id) : sel.k==='hv' ? (s.hv||[]).find(o=>o.id===sel.id) : sel.k==='pp' ? (s.pp||[]).find(o=>o.id===sel.id) : null; }
+function peItem(n,sel=n.sel){ if(!sel) return null; const s=n.sc; return sel.k==='pt' ? pePt(s,sel.id) : sel.k==='wall' ? peWall(s,sel.id) : sel.k==='obj' ? s.objs.find(o=>o.id===sel.id) : sel.k==='cam' ? s.cams.find(o=>o.id===sel.id) : sel.k==='ant' ? s.ants.find(o=>o.id===sel.id) : sel.k==='el' ? (s.elec||[]).find(o=>o.id===sel.id) : sel.k==='wire' ? (s.wires||[]).find(o=>o.id===sel.id) : sel.k==='room' ? s.rooms.find(o=>o.id===sel.id) : sel.k==='hv' ? (s.hv||[]).find(o=>o.id===sel.id) : sel.k==='pp' ? (s.pp||[]).find(o=>o.id===sel.id) : null; }
 // выбранное → параметры панели
 function peLoad(n){
   const it=peItem(n), S=(k,v)=>{ if(v!==undefined) setMod(n,k,v); };
@@ -75,6 +75,7 @@ function peGizmo(n,P){
   let wx, wy, wz;
   if(k==='pt'){ wx=it.x; wy=it.y; wz=0; }
   else if(k==='wall'){ const [a,b]=peWallEnds(s,it); wx=(a.x+b.x)/2; wy=(a.y+b.y)/2; wz=0; }
+  else if(k==='room'){ const P=peRoomPoly(s,it); if(!P.length) return []; wx=P.reduce((a,q)=>a+q[0],0)/P.length; wy=P.reduce((a,q)=>a+q[1],0)/P.length; wz=0; }
   else if(k==='obj' && (it.type==='door'||it.type==='window')){
     const pl=peOpenPlace(s,it), w=peWall(s,it.wall); if(!pl || !w) return [];
     const [a,b]=peWallEnds(s,w), z=it.sill+it.h/2, A=P.pt(a.x,a.y,z), B=P.pt(b.x,b.y,z), l=Math.hypot(B[0]-A[0],B[1]-A[1])||1, u=[(B[0]-A[0])/l,(B[1]-A[1])/l], c=P.pt(pl.x,pl.y,z);
@@ -90,10 +91,11 @@ function peGizmo(n,P){
   out.push({ax:'xy',wz,b:[c[0]+sx*Lp*.42,c[1]+sy*Lp*.42],a:[c[0]+sx*Lp*.42,c[1]+sy*Lp*.42],col:'#fff'});
   return out;
 }
-function peMoveStart(n){ const it=peItem(n), k=n.sel.k; if(k==='wall'){ const [a,b]=peWallEnds(n.sc,it); return {wa:[a.x,a.y],wb:[b.x,b.y]}; } return {x:it.x,y:it.y}; }
+function peMoveStart(n){ const it=peItem(n), k=n.sel.k; if(k==='room') return {pts:it.pts.map(id=>{ const p=pePt(n.sc,id); return p ? [id,p.x,p.y] : null; }).filter(Boolean)}; if(k==='wall'){ const [a,b]=peWallEnds(n.sc,it); return {wa:[a.x,a.y],wb:[b.x,b.y]}; } return {x:it.x,y:it.y}; }
 function peMoveBy(n,g,dx,dy){
   const it=peItem(n), k=n.sel?.k; if(!it) return; dx=Math.round(dx*100)/100; dy=Math.round(dy*100)/100;
   if(k==='wall') peMoveWall(n.sc,it.id,g.wa[0]+dx,g.wa[1]+dy,g.wb[0]+dx,g.wb[1]+dy);
+  else if(k==='room'){ for(const [id,x,y] of g.pts){ const p=pePt(n.sc,id); if(p){ p.x=x+dx; p.y=y+dy; } } }                    // комната целиком: все её точки (общие с соседями тянут и соседние стены)
   else if(k==='pt') peDrag(n.sc,it.id,g.x+dx,g.y+dy);
   else if(k==='obj' && (it.type==='door'||it.type==='window')) return;
   else { it.x=g.x+dx; it.y=g.y+dy; }
@@ -114,6 +116,7 @@ function pePick(n,P,x,y){
   for(const o of s.objs){ let q; if(o.type==='door'||o.type==='window'){ const pl=peOpenPlace(s,o); if(!pl) continue; q=P.pt(pl.x,pl.y,o.sill+o.h/2); } else q=P.pt(o.x,o.y,(o.z||0)+o.h/2); hit('obj',o.id,q[0],q[1],R,2); }
   for(const p of s.pts){ const q=P.pt(p.x,p.y,0); hit('pt',p.id,q[0],q[1],R,3); if(P.d3){ const t=P.pt(p.x,p.y,Math.max(0,...s.walls.filter(w=>w.a===p.id||w.b===p.id).map(w=>w.h))); hit('pt',p.id,t[0],t[1],R,3); } }
   for(const w of s.walls){ const [a,b]=peWallEnds(s,w); for(const z of [0,w.h/2,w.h]){ const A=P.pt(a.x,a.y,z), B=P.pt(b.x,b.y,z), d=peSegDist(x,y,A[0],A[1],B[0],B[1]); if(d<=R*.7){ const sc=4000+d; if(!best||sc<best.sc) best={kind:'wall',id:w.id,sc}; } } }
+  if(!best && !P.d3 && n.p.tool==='select'){ const g=P.un(x,y,0); for(const r of s.rooms){ if(!peInPoly(peRoomPoly(s,r),g[0],g[1])) continue; best={kind:'room',id:r.id,sc:9000}; if(n.sel && n.sel.k==='room' && n.sel.id===r.id) break; } }   // внутри комнаты — выбрать её
   return best;
 }
 function peSegDist(x,y,ax,ay,bx,by){ const dx=bx-ax, dy=by-ay, L2=dx*dx+dy*dy||1e-9, u=Math.max(0,Math.min(1,((x-ax)*dx+(y-ay)*dy)/L2)); return Math.hypot(x-(ax+dx*u),y-(ay+dy*u)); }
@@ -157,6 +160,7 @@ function peIcon(cx,id,x,y,r,col){
     case 'measure': cx.save(); cx.rotate(-.6); cx.strokeRect(-10,-3.5,20,7); for(let k=-7;k<=7;k+=3.5) { P(k,-3.5,k,k%7===0 ? 1 : -.5); cx.stroke(); } cx.restore(); break;   // линейка с делениями
     case 'hvdev': cx.strokeRect(-8,-6,16,12); for(const k of [-4,0,4]){ P(k,-6,k,6); cx.stroke(); } P(-8,9,-5,9); cx.stroke(); P(5,9,8,9); cx.stroke(); break;                    // радиатор: секции на ножках
     case 'hvlink': P(-9,-4,2,-4,2,4,9,4); cx.stroke(); P(-9,1,-1,1,-1,9,9,9); cx.stroke(); break;                                                                          // труба: подача и обратка с коленом
+    case 'rect': cx.setLineDash([3,2]); cx.strokeRect(-8,-6,16,12); cx.setLineDash([]); for(const [a,b] of [[-8,-6],[8,6]]){ cx.beginPath(); cx.arc(a,b,2,0,7); cx.fill(); } break;                    // комната: прямоугольник по двум углам
     case 'erase': P(-7,-7,7,7); cx.stroke(); P(7,-7,-7,7); cx.stroke(); break;
     case '#view3D': P(-7,-3,0,-7,7,-3,7,5,0,9,-7,5); cx.closePath(); cx.stroke(); P(-7,-3,0,1,7,-3); cx.stroke(); P(0,1,0,9); cx.stroke(); break;   // переключить в 3D
     case '#viewPlan': cx.strokeRect(-8,-8,16,16); P(-8,1,2,1,2,-8); cx.stroke(); P(2,1,2,8); cx.stroke(); break;   // переключить в план (вид сверху)
@@ -181,6 +185,12 @@ function peDrawCamView(n,cx,W,H){
   n.camBox={x,y,w,h};
 }
 
+// ---------- комната по размерам: справа от выбранной (общая стена), иначе правее всего плана ----------
+function peAddRoomBySize(n){ const s=n.sc, w=+n.p.rw, h=+n.p.rh; if(!(w>=.3&&h>=.3)){ n.msg='room: width and depth ≥ 0.3 m'; redraw(n); return; }
+  const base=n.sel&&n.sel.k==='room' ? s.rooms.find(r=>r.id===n.sel.id) : null, at=peNextRoomPos(s,base), R=base ? peRoomRect(s,base) : null, y0=R ? R.y0 : at.y;
+  const r=peAddRectRoom(s,at.x,y0,w,h,{t:+n.p.wt,h:+n.p.wh,mat:n.p.mat}); if(!r){ n.msg='room: such a room is already here'; redraw(n); return; }
+  peSelect(n,'room',r.room.id); n.msg='room '+w+' × '+h+' m placed'+(base ? ' next to '+(base.name||base.id) : ''); peTouch(n); }
+
 // ---------- проверка плана: список проблем по правкам (кэш) и переход к следующей ----------
 function peCheck(n){ if(n.pcK!==n.rev){ n.pcK=n.rev; try{ n.pcR=pcCheck(n.sc); }catch(e){ n.pcR=[]; } } return n.pcR; }
 function peNextProblem(n){ const L=peCheck(n); if(!L.length){ n.msg='plan check: no problems'; redraw(n); return; }
@@ -194,6 +204,14 @@ function peHv(n){ const s=n.sc, o=peHvOpt(n.p), key=[n.rev,o.tout,o.ts,o.tr,o.in
 // ---------- действия инструментов ----------
 function peUse(n,P,tool,x,y,hit){
   const s=n.sc, p=n.p;
+  if(tool!=='rect') n.rectA=null;
+  if(tool==='rect'){                                                 // комната: два клика — противоположные углы (привязка к сетке и точкам); общие стороны с соседями — общие стены
+    const g=peGround(n,P,x,y,{}), c=g.pt ? {x:g.pt.x,y:g.pt.y} : {x:g.x,y:g.y};
+    if(!n.rectA){ n.rectA=c; n.msg='room: click the opposite corner (Esc cancels)'; redraw(n); return; }
+    const a=n.rectA, w=Math.abs(c.x-a.x), h=Math.abs(c.y-a.y); n.rectA=null;
+    if(w<.3||h<.3){ n.msg='room: too small (≥ 0.3 m a side)'; redraw(n); return; }
+    const r=peAddRectRoom(s,Math.min(a.x,c.x),Math.min(a.y,c.y),w,h,{t:+p.wt,h:+p.wh,mat:p.mat}); if(!r){ n.msg='room: such a room is already here'; redraw(n); return; }
+    peSelect(n,'room',r.room.id); n.msg='room '+w.toFixed(2)+' × '+h.toFixed(2)+' m — select it to change the size, the use and the name'; peTouch(n); return; }
   if(tool==='wall'){
     const g=peGround(n,P,x,y,{from:n.chain ? pePt(s,n.chain) : null}); let pt=g.pt; if(!pt) pt=peAddPoint(s,g.x,g.y);
     if(n.chain && n.chain!==pt.id){ const w=peAddWall(s,n.chain,pt.id,{t:+p.wt,h:+p.wh,mat:p.mat}); n.chainPts.push(pt.id);
@@ -307,7 +325,7 @@ function peGesture(n,cv){
       peMoveBy(n,peMoveStart(n),dx*Math.cos(a)-dy*Math.sin(a),dx*Math.sin(a)+dy*Math.cos(a)); ev.preventDefault(); }
     else if(ev.key==='+'||ev.key==='='||ev.key==='-'){ n.vw.user=true; n.vw.sc=clamp(n.vw.sc*(ev.key==='-' ? 1/1.25 : 1.25),2,600); redraw(n); ev.preventDefault(); }
     else if(ev.key==='Delete'||ev.key==='Backspace'){ peDeleteSel(n); ev.preventDefault(); }
-    else if(ev.key==='Escape'){ n.wfrom=null; n.wvia=[]; n.chain=null; n.chainPts=[]; n.ruler=null; setMod(n,'tool','select'); peSelect(n,null); n.msg=''; }
+    else if(ev.key==='Escape'){ n.rectA=null; n.wfrom=null; n.wvia=[]; n.chain=null; n.chainPts=[]; n.ruler=null; setMod(n,'tool','select'); peSelect(n,null); n.msg=''; }
     else if(ev.key==='f'||ev.key==='Home'){ peFit(n,cv.width,cv.height); redraw(n); } });
 }
 function peShift(n,P,dx,dy){ // сдвиг вида на экранный вектор: цель двигается по плоскости пола
@@ -439,6 +457,16 @@ function peChips(n){
     btn('length',()=>L().len.toFixed(2)+' m (+10%: '+L().total.toFixed(1)+')',()=>{});
     { const g=peGroups(s).groups.find(q=>q.head===it.id); if(g){ const B=[0,...PE_BREAKERS]; cyc('breaker',()=>(it.amp>0 ? it.amp+' A' : 'auto '+g.amp+' A')+' · '+g.name,d=>{ const i=Math.max(0,B.indexOf(+it.amp||0)); const v=B[(i+d+B.length)%B.length]; if(v>0) it.amp=v; else delete it.amp; }); } }
   }
+  else if(k==='room'){
+    const RR=()=>peRoomRect(s,it), uses=['auto',...HV_USES];
+    btn('name',()=>it.name||it.id,()=>{ const t=prompt('room name',it.name||''); if(t!==null) it.name=String(t).trim(); });
+    if(RR()){ num('width',()=>RR().w,v=>{ peRoomResize(s,it,v,RR().h); },.1,.5,100,' m'); num('depth',()=>RR().h,v=>{ peRoomResize(s,it,RR().w,v); },.1,.5,100,' m'); }
+    btn('area',()=>peRoomArea(s,it).toFixed(1)+' m²',()=>{});
+    cyc('use',()=>it.use ? it.use+(it.use===hvGuessUse(it.name) ? '' : ' ✎') : 'auto · '+hvGuessUse(it.name),d=>{ const i=uses.indexOf(it.use||'auto'); const v=uses[(i+d+uses.length)%uses.length]; if(v==='auto') delete it.use; else it.use=v; });
+    num('people (0 — auto)',()=>it.people>0 ? it.people : 0,v=>{ if(v>0) it.people=v; else delete it.people; },1,0,50,'');
+    num('temperature (0 — by use)',()=>it.tin>0 ? it.tin : 0,v=>{ if(v>0) it.tin=v; else delete it.tin; },1,0,35,' °C');
+    btn('kitchen stove',()=>it.gas ? 'gas' : 'electric',()=>{ if(it.gas) delete it.gas; else it.gas=true; });
+  }
   else if(k==='hv'){
     const ty=it.type;
     num('height',()=>it.z,v=>{ it.z=v; },.1,0,6,' m');
@@ -567,6 +595,9 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
           {n:'emit',t:'range',min:0,max:60,step:1,d:10,label:'repeat the records every … s (Video Overlay forgets objects after its «keep» time; 0 — only on change)',adv:true},
           {n:'pts',t:'select',opts:['auto','all'],d:'auto',label:'points: auto — hide the helper ones (wall ends and room corners from Site Plan) · all',adv:true},
           {n:'imp',t:'check',d:true,label:'input rec: add / move points by name (from Site Plan)',adv:true},
+          {n:'rw',t:'num',d:4,label:'ROOM — width, m (the button below places a room of rw × rh)'},
+          {n:'rh',t:'num',d:3,label:'ROOM — depth, m'},
+          {n:'addroom',t:'button',label:'＋ Room rw × rh (right of the selected room with a shared wall, else right of the plan)',fn:n=>peAddRoomBySize(n)},
           {n:'show',t:'select',opts:PC_SHOW,d:'all',label:'show: everything · structure only · electrics · heating · ventilation · cameras · radio (the other systems are hidden and not clickable; walls, rooms and doors always stay)'},
           {n:'chk',t:'check',d:true,label:'plan check: mark geometry problems on the plan (a ! in a ring) and list them in the readout'},
           {n:'nextprob',t:'button',label:'⚠ Next plan problem (selects it)',fn:n=>peNextProblem(n)},
@@ -622,6 +653,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     const lvOk=peLvShow(p.lv,P.d3);
     for(const r of s.rooms){ if(!lvOk(r.lv)) continue; const poly=peRoomPoly(s,r), rz=r.z0||0; cx.beginPath(); poly.forEach((q,i)=>{ const A=P.pt(q[0],q[1],rz); i ? cx.lineTo(A[0],A[1]) : cx.moveTo(A[0],A[1]); }); cx.closePath(); const hr=p.layer==='climate' ? (peHv(n)||{rooms:[]}).rooms.find(q=>q.id===r.id) : null;
       cx.fillStyle=hr ? 'rgba(255,'+Math.round(170-Math.min(1,hr.wm2/120)*130)+',60,'+(.08+Math.min(1,hr.wm2/120)*.2)+')' : 'rgba(79,195,247,.07)'; cx.fill();
+      if(n.sel && n.sel.k==='room' && n.sel.id===r.id){ cx.strokeStyle='#ffb74d'; cx.lineWidth=3; cx.stroke(); }
       if(P.sc>10){ const cxm=poly.reduce((a,q)=>a+q[0],0)/poly.length, cym=poly.reduce((a,q)=>a+q[1],0)/poly.length, A=P.pt(cxm,cym,rz); cx.fillStyle='rgba(150,170,180,.7)'; cx.font='11px sans-serif'; cx.textAlign='center'; cx.fillText(p.layer==='signal' ? (r.name||'') : hr ? (r.name||'')+' · '+hr.area.toFixed(1)+' m² · '+(hr.loss/1000).toFixed(2)+' kW ('+Math.round(hr.wm2)+' W/m²)'+(hr.air>0 ? ' · '+Math.round(hr.air)+' m³/h '+(hr.dir==='supply' ? '↓' : '↑') : '') : (r.name||'')+' '+peRoomArea(s,r).toFixed(1)+' m²',A[0],A[1]); } }
     // зоны видимости камер
     const occ=peOccluders(s);
@@ -748,6 +780,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
         else { cx.arc(x,y,7,0,7); cx.fill(); cx.stroke(); cx.beginPath(); if(ty==='fan'){ for(let k=0;k<3;k++){ const a=k*2.094; cx.moveTo(x,y); cx.lineTo(x+Math.cos(a)*5.5,y+Math.sin(a)*5.5); } } else if(ty==='supply'){ cx.moveTo(x-4,y); cx.lineTo(x+4,y); cx.moveTo(x,y-4); cx.lineTo(x,y+4); } else { cx.moveTo(x-4,y); cx.lineTo(x+4,y); } cx.stroke(); }
         if(P.sc>18 || isSel){ cx.fillStyle=col; cx.font='10px monospace'; cx.textAlign='center'; cx.fillText(e.name,x,y-13); } }
     }
+    if(n.rectA && p.tool==='rect'){ const A=P.pt(n.rectA.x,n.rectA.y,0); cx.strokeStyle='#ffb74d'; cx.lineWidth=2; cx.beginPath(); cx.arc(A[0],A[1],6,0,7); cx.moveTo(A[0]-10,A[1]); cx.lineTo(A[0]+10,A[1]); cx.moveTo(A[0],A[1]-10); cx.lineTo(A[0],A[1]+10); cx.stroke(); }
     if(p.chk!==false){ for(const q of peCheck(n)){ if(!(q.x||q.y)) continue;
         const sys=q.kind==='el'||q.kind==='wire' ? 'electrics' : q.kind==='hv' ? pcHvSys(((s.hv||[]).find(d=>d.id===q.id)||{}).type) : q.kind==='pp' ? 'heating' : null; if(sys && !pcShow(p.show,sys)) continue; const A=P.pt(q.x,q.y,0), hot=n.pcMark && n.pcMark.id===q.id && n.pcMark.msg===q.msg, col=q.sev==='err' ? '#ff1744' : '#ffb300';
         cx.strokeStyle=col; cx.lineWidth=hot ? 3 : 1.6; cx.fillStyle='rgba(16,22,26,.75)'; cx.beginPath(); cx.arc(A[0],A[1],hot ? 11 : 8,0,7); cx.fill(); cx.stroke(); cx.fillStyle=col; cx.font='bold '+(hot ? 13 : 10)+'px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle'; cx.fillText('!',A[0],A[1]+.5); cx.textBaseline='alphabetic'; } }

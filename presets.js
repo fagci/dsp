@@ -8906,6 +8906,16 @@ const pe=addNode('planedit',40,200,{view:'plan',layer:'none',snap:'0.1',show:'al
 pe.size.w=860; pe.size.h=620; applySize(pe);
 markWiresDirty();
 });
+preset('Plan Editor: Quick Rooms — Two Clicks or a Size, Use and Size on the Strip', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Rooms without a text: the tool «room» (a dashed rectangle on the strip) — click two opposite corners (the grid and the existing corners attract), and the four walls and the room appear with the thickness, height and material of the «wall» parameters. Tap inside a room to select it: the strip at the bottom has its name, width and depth (type or step; the left lower corner stays, a locked wall length is kept, shared corners drag the neighbour), the use (auto from the name — Кухня, Bath, Спальня…, or a list), the people, the temperature and the kitchen stove — what the heat loss and ventilation calculation reads. Arrows or the handles move the whole room. By size: set «ROOM — width» and «depth» and press «＋ Room»: it goes to the right of the selected room with a shared wall (no wall is built twice), or to the right of the whole plan. Hand corners with the «wall» tool still work: click the points, the first point closes the room. «Next plan problem» (plan check) reports overlaps and gaps, if any. Here three rooms are made this way.'});
+nt.size.w=1180; nt.size.h=130; applySize(nt);
+const sc=peNew(), o={t:.3,h:2.7,mat:'block'}, a=peAddRectRoom(sc,0,0,5,4,{...o,name:'Гостиная'}), b=peAddRectRoom(sc,5,0,4,4,{...o,name:'Кухня'}), c=peAddRectRoom(sc,0,4,3,2.5,{...o,name:'Ванная'});
+peAddObj(sc,'door',{wall:peAddWall(sc,a.pts[1],a.pts[2]).id,u:.5,w:.9,h:2.05,sill:0}); peAddObj(sc,'window',{wall:a.walls[0].id,u:.5,w:1.5,h:1.4,sill:.9}); b.room.gas=true;
+const pe=addNode('planedit',40,200,{view:'plan',layer:'climate',snap:'0.1',tool:'rect',rw:3,rh:3,wt:.3,mat:'block',scene:JSON.stringify(sc)});
+pe.size.w=860; pe.size.h=620; applySize(pe);
+markWiresDirty();
+});
 preset('Plan Editor: Wiring Groups — Consumers, Breakers, Cable and Voltage Drop', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Groups of the wiring. A group is everything fed by one cable leaving the panel (through junction boxes, switches and sockets further down). Plan Editor lists each group in the readout: devices, power, current I = P/(230 V·cosφ), the breaker (auto — the nearest standard rating not below the current; to set one by hand, select the first cable out of the panel and use «breaker» — in Site Plan «wire P1 J1 … amp 16»), the cable at the head, the cross-section the current needs, the longest run and the voltage drop to the farthest load (2ρLI/S per section, copper). A ⚠ says what is wrong: a breaker below the current, a cable that cannot take the breaker or its section current, a drop over 5 %. A panel line sums its groups with the demand factor 0.7 and picks the main breaker, the cable from the inlet is checked against it; consumers not wired to a panel are listed as «not fed». '+
