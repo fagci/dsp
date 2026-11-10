@@ -18,7 +18,7 @@ function pcLevelScene(s,idx){ if(idx==='all'||idx==null||!(s.levels||[]).length)
     wires:(s.wires||[]).filter(w=>{ const A=peElOf(s,w.a); return A && ok(A.z); }),pp:(s.pp||[]).filter(l=>{ const A=hvDev(s,l.a); return A && ok(A.z); }),cams:s.cams.filter(c=>ok(c.z)),ants:s.ants.filter(a=>ok(a.z))}; }
 
 // спецификация: комнаты (экспликация) и оборудование по системам
-function pcSpec(s,calc){ const C=calc||(s.rooms.length ? hvCalc(s,{}) : null), rooms=(C ? C.rooms : s.rooms.map(r=>({name:r.name||r.id,use:'',area:peRoomArea(s,r),vol:0,tin:0,loss:0,air:0,dir:'',norm:0}))), items=[];
+function pcSpec(s,calc,ld){ const C=calc||(s.rooms.length ? hvCalc(s,{}) : null), rooms=(C ? C.rooms : s.rooms.map(r=>({name:r.name||r.id,use:'',area:peRoomArea(s,r),vol:0,tin:0,loss:0,air:0,dir:'',norm:0}))), items=[];
   const E=peElecStats(s), NM={socket:'sockets',switch:'switches',light:'lights',panel:'panels',inlet:'inlets',junction:'junction boxes',load:'loads'};
   for(const k of Object.keys(NM)) if(E.n[k]){ const w=(s.elec||[]).filter(e=>e.type===k).reduce((a,e)=>a+(+e.watt||0),0); items.push({group:'electrics',name:NM[k],qty:E.n[k],note:w>0 ? Math.round(w)+' W' : ''}); }
   for(const [c,L] of Object.entries(E.cables).sort()) items.push({group:'electrics',name:'cable '+c,qty:+L.toFixed(1),unit:'m',note:'with a 10% reserve'});
@@ -37,9 +37,13 @@ function pcSpec(s,calc){ const C=calc||(s.rooms.length ? hvCalc(s,{}) : null), r
   for(const [t,nm] of [['ahu','supply-extract units'],['fan','fans'],['supply','supply terminals'],['extract','extract grilles']]) if(by(t).length) items.push({group:'ventilation',name:nm,qty:by(t).length,note:t==='ahu'||t==='fan' ? Math.round(by(t).reduce((a,d)=>a+(+d.m3||0),0))+' m³/h' : ''});
   for(const [d,L] of Object.entries(duct).sort((a,b)=>a[0]-b[0])) items.push({group:'ventilation',name:'duct Ø'+d,qty:+L.toFixed(1),unit:'m'});
   if(ductFree>0) items.push({group:'ventilation',name:'ducts not connected to a unit',qty:+ductFree.toFixed(1),unit:'m'});
+  if(ld){ const I=(name,qty,unit,note)=>items.push({group:'structure',name,qty:+(+qty).toFixed(unit==='m³' ? 1 : 0),unit:unit||'pcs',note:note||''});
+    if(ld.house.strip>0) I('strip footing concrete',ld.house.strip,'m³','depth '+ld.house.depth+' m, widths '+(ld.foundation.length ? Math.min(...ld.foundation.map(f=>f.b)).toFixed(2)+'…'+Math.max(...ld.foundation.map(f=>f.b)).toFixed(2)+' m' : ''));
+    const by={}; for(const l of ld.lintels) if(l.ibeam) by[l.ibeam]=(by[l.ibeam]||0)+l.n; for(const [no,n] of Object.entries(by).sort((a,b)=>a[0]-b[0])) I('I-beam No. '+no+' (lintels)',n,'pcs','bearing 0.15 m each side');
+    for(const f of ld.floors) if(f.As) I('slab over '+f.room+': A500 reinforcement',f.As,'cm²/m','t '+(f.t*100).toFixed(0)+' cm'); }
   if(typeof fenceItems==='function') items.push(...fenceItems(s));
   return {rooms,items,calc:C}; }
-function pcSpecCsv(s,calc){ const S=pcSpec(s,calc), q=v=>/[",;\n]/.test(String(v)) ? '"'+String(v).replace(/"/g,'""')+'"' : String(v), out=['section,name,use,area_m2,volume_m3,temp_C,heat_loss_W,air_m3h'];
+function pcSpecCsv(s,calc,ld){ const S=pcSpec(s,calc,ld), q=v=>/[",;\n]/.test(String(v)) ? '"'+String(v).replace(/"/g,'""')+'"' : String(v), out=['section,name,use,area_m2,volume_m3,temp_C,heat_loss_W,air_m3h'];
   for(const r of S.rooms) out.push(['room',r.name,r.use,(+r.area).toFixed(2),(+r.vol||0).toFixed(2),r.tin||'',Math.round(r.loss||0),Math.round(r.air||0)].map(q).join(','));
   out.push('','section,group,name,quantity,unit,note'); for(const i of S.items) out.push(['item',i.group,i.name,i.qty,i.unit||'pcs',i.note||''].map(q).join(','));
   return out.join('\n'); }
@@ -74,7 +78,7 @@ function pcSheet(s,opt={}){
   plan=plan.replace(/<svg [^>]*>/,'<svg x="'+ox.toFixed(2)+'" y="'+oy.toFixed(2)+'" width="'+w.toFixed(2)+'" height="'+h.toFixed(2)+'" viewBox="'+vb+'">').replace(/<\/svg>\s*$/,L.join('\n')+'\n</svg>');
   o.push(plan);
   // таблицы справа: экспликация, спецификация, основная надпись
-  const Sp=pcSpec(S,calc), tx=W-right-tabW+2, fs=2.6, lh=3.6; let y=top+6;
+  const Sp=pcSpec(S,calc,opt.ld), tx=W-right-tabW+2, fs=2.6, lh=3.6; let y=top+6;
   const text=(x,yy,t,o2={})=>'<text x="'+x.toFixed(2)+'" y="'+yy.toFixed(2)+'" font-size="'+(o2.size||fs)+'"'+(o2.bold ? ' font-weight="bold"' : '')+(o2.anchor ? ' text-anchor="'+o2.anchor+'"' : '')+(o2.fill ? ' fill="'+o2.fill+'"' : '')+'>'+psEsc(t)+'</text>';
   const cols=[[0,'№'],[6,'room'],[32,'m²'],[42,'t °C'],[54,'W'],[68,'m³/h']];
   o.push(text(tx,y,'Room explication',{bold:true,size:3})); y+=lh; for(const [cx,t] of cols) o.push(text(tx+cx,y,t,{bold:true,fill:'#555'})); y+=1; o.push('<line x1="'+tx+'" y1="'+y+'" x2="'+(tx+tabW-4)+'" y2="'+y+'" stroke="#000" stroke-width=".2"/>'); y+=lh-1;
