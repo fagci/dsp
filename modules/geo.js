@@ -1619,6 +1619,7 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
           {n:'follow',t:'check',d:false,label:'follow'},
           {n:'net',t:'check',d:true,label:'online'},
           {n:'mode',t:'select',opts:['view','edit','add','line','polygon','ruler','circle'],d:'view',label:'mode: view / edit (select, drag, form) / add (tap = new point) / line, polygon, ruler, circle (tap = vertex)'},
+          {n:'drawKeep',t:'check',d:true,label:'stay in the drawing mode after a shape is finished (draw the next one right away; off — back to «edit» each time)'},
           {n:'drawColor',t:'text',d:'#ffb400',label:'color of new shapes',adv:true},
           {n:'tools',t:'check',d:false,label:'mode buttons on the map (for tiles without settings)'},
           {n:'addName',t:'text',d:'P',label:'new point name prefix',adv:true},
@@ -2240,7 +2241,7 @@ function geoDraftTap(n,px,py){
     if(!d.pts.length){ d.pts.push(q); return; }
     const km=geoDist(d.pts[0][0],d.pts[0][1],q[0],q[1]);
     if(km>0) geoShapeDone(n,{gtype:'circle',lat:d.pts[0][0],lon:d.pts[0][1],radius:Math.round(km*1000),area_m2:Math.round(Math.PI*km*km*1e6)});
-    n.draft=null; setMod(n,'mode','edit'); return;
+    n.draft=null; if(n.p.drawKeep===false) setMod(n,'mode','edit'); return;
   }
   d.pts.push(q);
 }
@@ -2258,7 +2259,7 @@ function geoDraftFinish(n){
   const d=n.draft; if(!d || d.pts.length<geoDraftNeed(d.type)) return;
   const g=d.pts, c=[g.reduce((a,q)=>a+q[0],0)/g.length, g.reduce((a,q)=>a+q[1],0)/g.length];
   geoShapeDone(n,{gtype:d.type,geom:JSON.stringify(g),lat:+c[0].toFixed(6),lon:+c[1].toFixed(6),...geoShapeMetrics(d.type,g)});
-  n.draft=null; setMod(n,'mode','edit'); geoMapChanged(n);
+  n.draft=null; if(n.p.drawKeep===false) setMod(n,'mode','edit'); geoMapChanged(n);
 }
 function geoDraftText(n){
   if(n.p.mode==='link') return n.linkFrom ? '“'+n.linkFrom+'” → tap the second point' : 'tap the first point';
