@@ -395,6 +395,7 @@ const PRESET_CATS={
   'Site Plan: Plot with a Fence, Road, Bath House and a Cell Tower → Signal Indoors':'Maps & Locating',
   'Site Plan: Plot on a Satellite Map — Stakes and Cord, Buildings Drawn from the Photo':'Maps & Locating',
   'Image on Map: Your Own Aerial Photo of the Plot on the Map and under the Plan':'Maps & Locating',
+  'Plan Studio: Plan, Editor, Map and Your Own Photo in One Node':'Maps & Locating',
   'Plan Editor: Yard Cameras — Over the Fence by Height, the View from a Camera':'Maps & Locating',
   'Clinometer: Tree Height from the Phone Tilt → Site Plan':'Maps & Locating',
   'Signal Paths: Direct and Reflected Between Two Points':'Maps & Locating',
@@ -9037,6 +9038,16 @@ addEdge(gi.id,'rec',mp.id,'rec');
 addEdge(sp.id,'rec',pe.id,'rec');
 addEdge(gi.id,'rec',pe.id,'rec');
 addEdge(mp.id,'edit',sp.id,'rec');
+markWiresDirty();
+});
+preset('Plan Studio: Plan, Editor, Map and Your Own Photo in One Node', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Site Plan, Plan Editor, Map and Image on Map in one node, on tabs: Plan (measurements, GPS, 3D), Editor (walls, rooms, devices, signal, heating), Map (tiles, shapes you draw) and Photo (your own aerial image as a layer). The wires between them are inside: the Plan points go to the Editor, the Map and the Photo; the picture goes under the Editor plan and over the Map tiles; what you draw on the map comes back to the plan. '+
+  'Try it: the plot corners are GPS points on the «Plan» tab; on «Photo» pick a drone photo or a screenshot and click the corners A B C … on it (the names come from the plan; two points are enough, three or more fix the skew); on «Map» the picture lies over the tiles, on «Editor» it is the underlay for tracing. The parameters of each tab are in the groups «Plan · …», «Editor · …», «Map · …», «Photo · …» — only the active tab shows its groups. The outputs are the same as the four separate nodes had (area, perim, rms, rec, poly, loss, cover, pick, edit…).'});
+nt.size.w=720; nt.size.h=170; applySize(nt);
+const ps=addNode('planStudio',40,230,{tab:'Plan',sp_view:'plan',sp_plan:'# the plot from the cadastre, corners ± 0.1 m\nA gps 50.2715410 85.5971693 ±0.1\nB gps 50.2711228 85.5969435 ±0.1\nC gps 50.2711199 85.5969566 ±0.1\nD gps 50.2710742 85.5969372 ±0.1\nE gps 50.2710248 85.5971877 ±0.1\nF gps 50.2714701 85.5974605 ±0.1\nplot A B C D E F\nfence A B C D E F closed stakes every 6\n',
+  mp_tiles:'Esri Satellite',mp_mlat:50.2713,mp_mlon:85.5972,mp_mz:19,mp_mode:'view',mp_tools:true,im_names:'A B C F',pe_view:'plan',pe_layer:'none',pe_snap:'0.1'});
+ps.size.w=720; ps.size.h=760; applySize(ps);
 markWiresDirty();
 });
 preset('Site Plan: Plot with a Fence, Road, Bath House and a Cell Tower → Signal Indoors', function(){
