@@ -13,18 +13,27 @@ const PE_MATS=Object.keys(PE_MAT);
 
 // ---------- проекция: орбитальная камера, ортографическая ----------
 function peProj(n,W,H){
-  const d3=n.p.view==='3D', A=d3 ? (+n.p.vaz)*PE_D : 0, E=d3 ? (+n.p.vel)*PE_D : Math.PI/2, V=n.vw, ca=Math.cos(A), sa=Math.sin(A), ce=Math.cos(E), se=Math.sin(E), cx=W/2, cy=(H+PE_BAR)/2;
+  const d3=n.p.view==='3D', A=d3 ? (+n.p.vaz)*PE_D : 0, E=d3 ? (+n.p.vel)*PE_D : Math.PI/2, V=n.vw, ca=Math.cos(A), sa=Math.sin(A), ce=Math.cos(E), se=Math.sin(E), cx=W/2, cy=(H+peBarH(W))/2;
   const P={A,E,sc:V.sc,d3,ca,sa,ce,se,
     pt:(x,y,z)=>{ const X=x-V.tx, Y=y-V.ty, xr=X*ca+Y*sa, yr=-X*sa+Y*ca; return [cx+xr*V.sc, cy-(z*ce+yr*se)*V.sc, yr*ce-z*se]; },
     un:(sx,sy,z0)=>{ const xr=(sx-cx)/V.sc, yr=((cy-sy)/V.sc-z0*ce)/Math.max(se,.05); return [V.tx+xr*ca-yr*sa, V.ty+xr*sa+yr*ca]; }};
   return P;
 }
-const PE_BAR=(typeof matchMedia!=='undefined' && matchMedia('(pointer:coarse)').matches) ? 38 : 26;       // высота панели инструментов на холсте (на касании крупнее)
+const PE_BAR=(typeof matchMedia!=='undefined' && matchMedia('(pointer:coarse)').matches) ? 38 : 26;       // высота ряда панели инструментов на холсте (на касании крупнее)
+// панель инструментов — рядами: кнопка не уже ~1,15 высоты ряда; на узком холсте (телефон) значки переносятся на следующий ряд
+// холст узла может показываться уже, чем его пиксели (телефон): PE_K — пикселей холста на пиксель экрана, интерфейс масштабируется им, чтобы значки были читаемы
+let PE_K=1, PE_H=0; const peU=()=>PE_K>1.2 ? PE_K : 1, peSetK=cv=>{ const w=cv.getBoundingClientRect().width; PE_K=w>0 ? cv.width/w : 1; PE_H=cv.height; };
+const PE_NITEMS=PE_TOOLS.length+4;
+// ряд: на обычном холсте — PE_BAR; на уменьшенном (телефон) — 30, 26, 22, 18 пикселей экрана: первый, при котором панель занимает не больше трети высоты
+function peBarLayout(W){ const sizes=peU()>1 ? [30,26,22,18].map(c=>c*PE_K) : [PE_BAR]; let r=null;
+  for(const rh of sizes){ const cols=Math.max(4,Math.min(PE_NITEMS,Math.floor(W/(rh*1.1)))), rows=Math.ceil(PE_NITEMS/cols); r={cols,rows,rh,h:rows*rh,bw:W/cols}; if(!(PE_H>0) || r.h<=PE_H*.34) break; } return r; }
+const peBarH=W=>peBarLayout(W).h;
+function peBarIdx(W,x,y){ const L=peBarLayout(W), c=Math.floor(x/L.bw), r=Math.floor(y/L.rh), i=r*L.cols+c; return c>=0&&c<L.cols&&r>=0&&r<L.rows&&i<PE_NITEMS ? i : -1; }
 function peFit(n,W,H){
   let b=peBounds(n.sc,1.2); const V=n.vw; if(!b && n.under && n.under.b){ const u=n.under.b; b={x0:u.x0-.5,x1:u.x1+.5,y0:u.y0-.5,y1:u.y1+.5}; }
-  if(!b){ V.cw=W; V.ch=H; V.tx=3; V.ty=2; V.sc=Math.max(20,Math.min(W,H-PE_BAR)/9); V.fit=true; return; }
+  if(!b){ V.cw=W; V.ch=H; V.tx=3; V.ty=2; V.sc=Math.max(20,Math.min(W,H-peBarH(W))/9); V.fit=true; return; }
   V.tx=(b.x0+b.x1)/2; V.ty=(b.y0+b.y1)/2; const sp=Math.max(b.x1-b.x0,b.y1-b.y0,1), k=n.p.view==='3D' ? .8 : 1.0;
-  V.cw=W; V.ch=H; V.user=false; V.sc=Math.min((W-20)/Math.max(b.x1-b.x0,1),(H-PE_BAR-20)/Math.max((b.y1-b.y0)*(n.p.view==='3D' ? Math.sin((+n.p.vel)*PE_D) : 1)+(n.p.view==='3D' ? 3*Math.cos((+n.p.vel)*PE_D) : 0),1))*k; V.fit=true;
+  V.cw=W; V.ch=H; V.user=false; V.sc=Math.min((W-20)/Math.max(b.x1-b.x0,1),(H-peBarH(W)-20)/Math.max((b.y1-b.y0)*(n.p.view==='3D' ? Math.sin((+n.p.vel)*PE_D) : 1)+(n.p.view==='3D' ? 3*Math.cos((+n.p.vel)*PE_D) : 0),1))*k; V.fit=true;
 }
 
 // ---------- изменения сцены ----------
@@ -179,7 +188,7 @@ function peIcon(cx,id,x,y,r,col){
 // ---------- вид из выбранной камеры: окно в углу (тап — во весь холст); картинка пересчитывается при правке сцены или камеры ----------
 function peDrawCamView(n,cx,W,H){
   n.camBox=null; const c=n.sel && n.sel.k==='cam' ? n.sc.cams.find(q=>q.id===n.sel.id) : null; if(!c || n.p.camview===false) return;
-  const big=!!n.camBig, w=Math.round(big ? W-16 : Math.min(W*.46,380)), h=Math.round(Math.min(w*9/16,big ? H-PE_BAR-60 : H*.4)), x=W-w-8, y=PE_BAR+8;
+  const big=!!n.camBig, w=Math.round(big ? W-16 : Math.min(W*.46,380)), h=Math.round(Math.min(w*9/16,big ? H-peBarH(W)-60 : H*.4)), x=W-w-8, y=peBarH(W)+8;
   const k=Math.min(1,560/w), rw=Math.max(32,Math.round(w*k)), rh=Math.max(18,Math.round(h*k)), key=[n.rev,c.x,c.y,c.z,c.az,c.tilt,c.fov,rw,rh].join('|');
   if(!n.camImg || n.camImg.key!==key){ const R=peCamView(n.sc,c,rw,rh), cv=n.camImg?.cv || document.createElement('canvas'); cv.width=rw; cv.height=rh; cv.getContext('2d').putImageData(new ImageData(R.data,rw,rh),0,0); n.camImg={key,cv}; }
   const gr=cx.createLinearGradient(0,y,0,y+h); gr.addColorStop(0,'#9cc7e8'); gr.addColorStop(1,'#dbe9f2');                    // небо за сценой
@@ -201,10 +210,11 @@ function peLvAdd(n){ const s=n.sc, cur=n.p.lv==='all'||n.p.lv==null ? 0 : +n.p.l
 function peLvCopy(n){ const s=n.sc, cur=n.p.lv==='all'||n.p.lv==null ? 0 : +n.p.lv, to=cur+1; if(to>3){ n.msg='floors: up to 4 above the ground'; redraw(n); return; }
   const r=peCopyLevel(s,cur,to,+n.p.wh||2.7); if(!r){ n.msg='floor '+peLvName(cur)+' is empty: nothing to copy'; redraw(n); return; }
   setMod(n,'lv',String(to)); n.msg='floor '+peLvName(cur)+' copied to '+peLvName(to)+': '+r.walls+' walls, '+r.openings+' openings, '+r.rooms+' room'+(r.rooms===1 ? '' : 's')+' (devices stay on their floor)'; if(n.sel) peSelect(n,null); peTouch(n); }
-function peDrawLvBar(n,cx,W){ n.lvRects=[]; const ch=PE_BAR>30 ? 30 : 22, y=PE_BAR+6, k=n.p.lv==='all'||n.p.lv==null ? null : +n.p.lv, lab=k===null ? 'all floors' : 'floor '+peLvName(k)+((n.sc.levels||[]).length ? ' · z '+peLvZ(n.sc,k).toFixed(2) : '');
-  cx.font=Math.round(ch*.5)+'px sans-serif'; cx.textBaseline='middle'; cx.textAlign='center'; let x=6;
+function peDrawLvBar(n,cx,W){ n.lvRects=[]; const k=n.p.lv==='all'||n.p.lv==null ? null : +n.p.lv, narrow=W<460, lab=k===null ? (narrow ? 'all' : 'all floors') : (narrow ? peLvName(k) : 'floor '+peLvName(k)+((n.sc.levels||[]).length ? ' · z '+peLvZ(n.sc,k).toFixed(2) : ''));
+  let ch=(peU()>1 ? 24*PE_K : (PE_BAR>30 ? 30 : 22)); const y=peBarH(W)+6*peU(); cx.font=Math.round(ch*.5)+'px sans-serif'; let labW=Math.max(ch*2,cx.measureText(lab).width+14); if(4*ch+labW+5*3+6>W){ ch=Math.max(18*peU(),Math.floor((W-6-15-labW)/4)); cx.font=Math.round(ch*.5)+'px sans-serif'; labW=Math.max(ch*1.6,cx.measureText(lab).width+10); }
+  cx.textBaseline='middle'; cx.textAlign='center'; let x=6;
   const b=(txt,w,act)=>{ cx.fillStyle='rgba(20,26,30,.85)'; cx.fillRect(x,y,w,ch); cx.fillStyle='#dfe7ea'; cx.fillText(txt,x+w/2,y+ch/2+1); n.lvRects.push({x,y,w,h:ch,act}); x+=w+3; };
-  b('▼',ch,'down'); b(lab,Math.max(ch*3.2,cx.measureText(lab).width+14),'all'); b('▲',ch,'up'); b('＋',ch,'add'); b('⧉',ch,'copy'); cx.textBaseline='alphabetic'; }
+  b('▼',ch,'down'); b(lab,labW,'all'); b('▲',ch,'up'); b('＋',ch,'add'); b('⧉',ch,'copy'); cx.textBaseline='alphabetic'; }
 function peLvHit(n,q){ const r=(n.lvRects||[]).find(r=>q[0]>=r.x&&q[0]<=r.x+r.w&&q[1]>=r.y&&q[1]<=r.y+r.h); if(!r) return false;
   if(r.act==='down') peLvGo(n,-1); else if(r.act==='up') peLvGo(n,1); else if(r.act==='all'){ setMod(n,'lv','all'); n.msg='all floors: the plan shows the ground floor, 3D the house'; redraw(n); } else if(r.act==='add') peLvAdd(n); else peLvCopy(n); return true; }
 
@@ -287,7 +297,6 @@ function peGesture(n,cv){
   if(n._gcv===cv) return; n._gcv=cv; cv.style.touchAction='none'; cv.tabIndex=0; cv.style.outline='none';
   const Ptr=new Map(), clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
   const pos=ev=>{ const r=cv.getBoundingClientRect(); return [(ev.clientX-r.left)/r.width*cv.width,(ev.clientY-r.top)/r.height*cv.height]; };
-  const barHit=x=>{ const bw=cv.width/(PE_TOOLS.length+4); const i=Math.floor(x/bw); return i; };
   let g=null;
   cv.addEventListener('contextmenu',ev=>ev.preventDefault());
   cv.addEventListener('pointerdown',ev=>{
@@ -296,7 +305,8 @@ function peGesture(n,cv){
     if(n.camBox && q[0]>=n.camBox.x && q[0]<=n.camBox.x+n.camBox.w && q[1]>=n.camBox.y && q[1]<=n.camBox.y+n.camBox.h){ n.camBig=!n.camBig; redraw(n); g={mode:'chip'}; return; }   // окно вида из камеры: тап — крупно / мелко
     if(peLvHit(n,q)){ g={mode:'chip'}; return; }
     if(n.chipBox && q[1]>=n.chipBox.y){ const r=n.chipRects.find(r=>q[0]>=r.x && q[0]<=r.x+r.w && q[1]>=r.y && q[1]<=r.y+r.h); if(r) peChipHit(n,r); g={mode:'chip'}; return; }
-    if(q[1]<PE_BAR){ const i=barHit(q[0]); if(i<PE_TOOLS.length){ setMod(n,'tool',PE_TOOLS[i][0]); n.chain=null; n.chainPts=[]; n.wfrom=null; n.wvia=[]; } else if(i===PE_TOOLS.length){ setMod(n,'view',n.p.view==='3D' ? 'plan' : '3D'); peFit(n,cv.width,cv.height); } else if(i===PE_TOOLS.length+1){ peFit(n,cv.width,cv.height); } else peUndo(n,i>PE_TOOLS.length+2); redraw(n); g={mode:'bar'}; return; }
+    peSetK(cv);
+    if(q[1]<peBarH(cv.width)){ const i=peBarIdx(cv.width,q[0],q[1]); if(i<0){ g={mode:'bar'}; return; } if(i<PE_TOOLS.length){ setMod(n,'tool',PE_TOOLS[i][0]); n.chain=null; n.chainPts=[]; n.wfrom=null; n.wvia=[]; } else if(i===PE_TOOLS.length){ setMod(n,'view',n.p.view==='3D' ? 'plan' : '3D'); peFit(n,cv.width,cv.height); } else if(i===PE_TOOLS.length+1){ peFit(n,cv.width,cv.height); } else peUndo(n,i>PE_TOOLS.length+2); redraw(n); g={mode:'bar'}; return; }
     const P=peProj(n,cv.width,cv.height), hit=pePick(n,P,q[0],q[1]), tool=n.p.tool, pan=ev.button===1||ev.button===2||ev.shiftKey;
     g={mode:'none',x0:q[0],y0:q[1],moved:false,hit,tool};
     if(tool==='select' && !pan && hit){
@@ -536,7 +546,7 @@ function peChipHit(n,r){
 }
 function peDrawChips(n,cx,W,H,fg){
   n.chipRects=[]; n.chipBox=null; const C=n.sel ? peChips(n) : []; if(!C.length) return;
-  const ch=PE_BAR>30 ? 40 : 28, pad=4, fs=Math.round(ch*.38); cx.font=fs+'px sans-serif'; cx.textBaseline='middle';
+  const ch=peU()>1 ? 30*PE_K : (PE_BAR>30 ? 40 : 28), pad=4*peU(), fs=Math.round(ch*.38); cx.font=fs+'px sans-serif'; cx.textBaseline='middle';
   const widths=C.map(c=>c.kind==='button' ? Math.max(ch*2,cx.measureText(c.label+'  '+c.show()).width+16) : Math.max(ch*3.2,cx.measureText(c.label+'  '+c.show()).width+ch*2+16)), rows=[[]]; let x=pad;
   C.forEach((c,i)=>{ if(x+widths[i]>W-pad && rows[rows.length-1].length){ rows.push([]); x=pad; } rows[rows.length-1].push(i); x+=widths[i]+pad; });
   const top=H-rows.length*(ch+pad)-pad; cx.fillStyle='rgba(16,22,26,.92)'; cx.fillRect(0,top,W,H-top); n.chipBox={y:top};
@@ -675,7 +685,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     const hv=n.sc.rooms.length ? peHv(n) : null; return {lines:n.lines, rec, loss:hv ? hv.house.loss : null, vent:hv ? hv.house.Qtot : null, area:n.sc.rooms.length ? n.area : null, cover:n.camCov ? n.camCov.cover : null, sig:n.antHeat ? n.antHeat.share : null, ncam:n.sc.cams.length, nant:n.sc.ants.length, margin:n.minMargin};
   },
   draw(n,cv,cx){
-    const W=cv.width, H=cv.height, s=n.sc, p=n.p, L=[], fg=themeColor('--scr-txt')||'#9fb0b6'; peGesture(n,cv);
+    peSetK(cv); const W=cv.width, H=cv.height, s=n.sc, p=n.p, L=[], fg=themeColor('--scr-txt')||'#9fb0b6'; peGesture(n,cv);
     if(n.calcRev!==n.rev && !n.dragging) peRecalc(n);                          // расчёты не зависят от того, запущен ли движок
     if(!n.vw.fit){ peFit(n,W,H); } else if(!n.vw.user && (n.vw.cw!==W || n.vw.ch!==H)) peFit(n,W,H);       // раскладка узла изменилась (телефон, окно) — вписываем заново, пока вид не трогали
     { const ro=n.el.querySelector('.readout'); if(ro && !ro._wrapped){ ro._wrapped=true; ro.style.whiteSpace='pre-wrap'; ro.style.textAlign='left'; ro.style.overflowWrap='anywhere'; } }
@@ -683,7 +693,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     cx.fillStyle=themeColor('--screen')||'#0a0d0e'; cx.fillRect(0,0,W,H);
     // сетка
     { const step=(()=>{ const w=60/P.sc, e=Math.pow(10,Math.floor(Math.log10(w))), m=w/e; return (m<=1 ? 1 : m<=2 ? 2 : m<=5 ? 5 : 10)*e; })();
-      const a=P.un(0,PE_BAR,0), b=P.un(W,PE_BAR,0), c=P.un(0,H,0), d=P.un(W,H,0), x0=Math.min(a[0],b[0],c[0],d[0]), x1=Math.max(a[0],b[0],c[0],d[0]), y0=Math.min(a[1],b[1],c[1],d[1]), y1=Math.max(a[1],b[1],c[1],d[1]);
+      const a=P.un(0,peBarH(W),0), b=P.un(W,peBarH(W),0), c=P.un(0,H,0), d=P.un(W,H,0), x0=Math.min(a[0],b[0],c[0],d[0]), x1=Math.max(a[0],b[0],c[0],d[0]), y0=Math.min(a[1],b[1],c[1],d[1]), y1=Math.max(a[1],b[1],c[1],d[1]);
       cx.strokeStyle='rgba(150,170,180,.16)'; cx.lineWidth=1; cx.beginPath(); let cnt=0;
       for(let x=Math.floor(x0/step)*step;x<=x1 && cnt<400;x+=step,cnt++){ const A=P.pt(x,y0,0), B=P.pt(x,y1,0); cx.moveTo(A[0],A[1]); cx.lineTo(B[0],B[1]); }
       for(let y=Math.floor(y0/step)*step;y<=y1 && cnt<800;y+=step,cnt++){ const A=P.pt(x0,y,0), B=P.pt(x1,y,0); cx.moveTo(A[0],A[1]); cx.lineTo(B[0],B[1]); }
@@ -837,12 +847,12 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     if(p.layer==='loads'){ const C=peLd(n); if(C) for(const w of C.walls){ if(!lvOk(w.lv)) continue; const A=P.pt(w.x,w.y,P.d3 ? w.h : 0), col=w.ratio>1 ? '#ff1744' : w.ratio>.6 ? '#ffb300' : '#69f0ae'; cx.font='bold 10px monospace'; cx.textAlign='center'; const tx=Math.round(w.Nd)+' kN/m · '+Math.round(w.ratio*100)+'%'; cx.fillStyle='rgba(16,22,26,.8)'; cx.fillRect(A[0]-cx.measureText(tx).width/2-3,A[1]-17,cx.measureText(tx).width+6,13); cx.fillStyle=col; cx.fillText(tx,A[0],A[1]-7); } }
     peDrawLvBar(n,cx,W);
     // строка инструментов: подпись, если влезает, иначе только значок
-    { cx.fillStyle='rgba(20,26,30,.92)'; cx.fillRect(0,0,W,PE_BAR); const items=PE_TOOLS.map(t=>({id:t[0],ic:t[0],name:t[2]})).concat([{id:'#view',ic:p.view==='3D' ? '#viewPlan' : '#view3D',name:p.view==='3D' ? 'plan' : '3D'},{id:'#fit',ic:'#fit',name:'fit'},{id:'#undo',ic:'#undo',name:'undo'},{id:'#redo',ic:'#redo',name:'redo'}]), bw=W/items.length;
+    { const BL=peBarLayout(W), bw=BL.bw; cx.fillStyle='rgba(20,26,30,.92)'; cx.fillRect(0,0,W,BL.h); const items=PE_TOOLS.map(t=>({id:t[0],ic:t[0],name:t[2]})).concat([{id:'#view',ic:p.view==='3D' ? '#viewPlan' : '#view3D',name:p.view==='3D' ? 'plan' : '3D'},{id:'#fit',ic:'#fit',name:'fit'},{id:'#undo',ic:'#undo',name:'undo'},{id:'#redo',ic:'#redo',name:'redo'}]);
       cx.textBaseline='middle'; cx.textAlign='center';
-      items.forEach((it,i)=>{ const on=p.tool===it.id; cx.fillStyle=on ? '#ffb74d' : 'rgba(255,255,255,.06)'; cx.fillRect(i*bw+1,1,bw-2,PE_BAR-2); cx.fillStyle=on ? '#000' : '#dfe7ea';
-        const col=on ? '#000' : '#dfe7ea', r=Math.min(PE_BAR*.34,bw*.32); cx.font=Math.round(PE_BAR*.36)+'px sans-serif'; const tw=cx.measureText(it.name).width;
-        if(tw+2*r+10<bw){ const x0=i*bw+(bw-(2*r+4+tw))/2; peIcon(cx,it.ic,x0+r,PE_BAR/2,r,col); cx.textAlign='left'; cx.fillText(it.name,x0+2*r+4,PE_BAR/2+1); cx.textAlign='center'; }   // иконка и подпись, если влезает
-        else peIcon(cx,it.ic,i*bw+bw/2,PE_BAR/2,r,col); });
+      items.forEach((it,i)=>{ const gx=(i%BL.cols)*bw, gy=Math.floor(i/BL.cols)*BL.rh, on=p.tool===it.id; cx.fillStyle=on ? '#ffb74d' : 'rgba(255,255,255,.06)'; cx.fillRect(gx+1,gy+1,bw-2,BL.rh-2); cx.fillStyle=on ? '#000' : '#dfe7ea';
+        const col=on ? '#000' : '#dfe7ea', r=Math.min(BL.rh*.34,bw*.32); cx.font=Math.round(BL.rh*.36)+'px sans-serif'; const tw=cx.measureText(it.name).width;
+        if(tw+2*r+10<bw){ const x0=gx+(bw-(2*r+4+tw))/2; peIcon(cx,it.ic,x0+r,gy+BL.rh/2,r,col); cx.textAlign='left'; cx.fillText(it.name,x0+2*r+4,gy+BL.rh/2+1); cx.textAlign='center'; }   // иконка и подпись, если влезает
+        else peIcon(cx,it.ic,gx+bw/2,gy+BL.rh/2,r,col); });
       cx.textBaseline='alphabetic'; }
     peDrawCamView(n,cx,W,H);
     peDrawChips(n,cx,W,H,fg);
