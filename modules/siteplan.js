@@ -133,8 +133,8 @@ async function spFileLoad(n,soft,restore){                                      
     const text=await (await FileStore.get(f.rec.id)).blob.text(); if(tok!==n.fileTok) return;
     if(soft && String(n.p.plan||'')!==n.fileText) return;                  // в плане есть несохранённые правки — не затираем
     // страница только открылась: граф сохраняется при уходе со страницы, а файл — через 0,8 с после правки и мог отстать. Файл с тех пор не менялся (отпечаток тот же) —
-    // правки в плане новее: оставляем план, файл допишет такт. Файл изменили снаружи (Files, другое устройство) — берём файл
-    if(restore && String(n.p.plan||'').trim() && text!==String(n.p.plan||'') && n.p.fileSync===spHash(text)){ n.fileText=text; n.msg='«'+nm+'» is older than the plan — the plan is kept and written to the file'; redraw(n); return; }
+    // правки в плане новее: оставляем план, файл допишет такт. Файл изменили снаружи (Files, другое устройство) — берём файл; у узла без отпечатка (сохранён до этой правки) план считаем новее
+    if(restore && String(n.p.plan||'').trim() && text!==String(n.p.plan||'') && (n.p.fileSync===undefined || n.p.fileSync===spHash(text))){ n.fileText=text; n.msg='«'+nm+'» is older than the plan — the plan is kept and written to the file'; redraw(n); return; }
     n.fileText=text; n.p.fileSync=spHash(text);
     if(text!==String(n.p.plan||'')){ spSetPlan(n,text); n.msg='loaded «'+nm+'»'; }
     redraw(n);
