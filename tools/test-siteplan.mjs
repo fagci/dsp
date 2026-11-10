@@ -221,6 +221,9 @@ for(const t of ['material Kit2-Kit3 concrete\nroom Hall 4.48 3.74 4.46 3.74\nroo
     ok('cable: inlet 5x2.5, then 3x1.5',Q.wires.length===3 && Q.wires[0].cable==='5x2.5' && Q.wires[1].cable==='3x1.5' && Q.wires[2].cable==='3x1.5',JSON.stringify(Q.wires)); }
   { const Q=K.spSolve('room A 5 4 5 4\nlight L1 A1\nlight L2 A2\nwire L1 L2 cable 2x1.5'), W=K.spSolve('room A 5 4 5 4\nlight L1 A1\nlight L2 A2\nwire L1 L2 cable abc');
     ok('any «NxS» cable is accepted: 2x1.5',Q.errors.length===0 && Q.wires[0].cable==='2x1.5',JSON.stringify(Q.errors)); ok('a nonsense cable is an error',W.errors.length===1 && /cross-section/.test(W.errors[0].msg)); }
+  { const Q=K.spSolve('room A 5 4 5 4\npanel P1 A1 dx 0.3\nload LD1 A3 dx -0.5 w 3500\nwire P1 LD1 cable 3x2.5 amp 25'), l=Q.elec.find(x=>x.name==='LD1');
+    ok('load: 0.3 m, own watts; wire amp 25',Q.errors.length===0 && l.type==='load' && l.z===Q.pts[2].z+.3 && l.watt===3500 && Q.wires[0].amp===25,JSON.stringify(Q.errors)+JSON.stringify(Q.wires));
+    ok('load without w: 2000 W; bad amp is an error',K.spSolve('room A 5 4 5 4\nload LD1 A1').elec[0].watt===2000 && K.spSolve('room A 5 4 5 4\nload X A1\nload Y A2\nwire X Y amp 0').errors.length===1); }
   const B=K.spSolve('room A 4 3 4 3\nwire L1 L2'); ok('wire to an undeclared device is an error',B.errors.length>0 && /unknown device/.test(B.errors[0].msg)); }
 // электрика на стене комнаты: «socket S1 A1-A2 along 1 off 0.1» — от угла A1 вдоль стены, вглубь комнаты
 { const R=K.spSolve('room A 4 3 4 3\nsocket S1 A1-A2 along 1 off 0.1 h 0.3\nsocket S2 A2-A1 along 1\nlight L1 A3-A4 along 2 off -0.2'), e=Object.fromEntries(R.elec.map(x=>[x.name,x])), a1=P(R,'A1'), a2=P(R,'A2'), a3=P(R,'A3');

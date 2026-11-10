@@ -24,8 +24,8 @@
      roof gable|hip|shed|flat [30] [overhang 0.5] [ridge long|short] [level 2]   крыша над этажом (по умолчанию — верхним): угол, свес, конёк вдоль длинной / короткой стороны
      fence A B C … [h 1.8] [sheet|mesh|wood|brick|concrete|block|stakes] [every 5] [closed]   забор по точкам; stakes / колышки — колышки в точках и шнур между ними (every — шаг, м); (профлист, рабица, штакетник…; можно по-русски), для сигнала — стена
      road A B … [w 3.5] [asphalt|gravel|tile] · area A B C … [grass|asphalt|gravel|tile|garden|water]   дорога (полоса) и площадка — покрытие земли
-     light|socket|switch|panel|inlet|junction NAME POINT|A-B [dx м] [dy м | along м] [off м] [h м] [w Вт]   электрика (A-B — на стене комнаты: along — от угла A вдоль стены, off — вглубь комнаты): светильник, розетка, выключатель, щиток, ввод, распредкоробка у точки (смещение на восток / север, высота над точкой)
-     wire A B C [cable 3x1.5 · 2x1.5 · 5x2.5 … — любое «жилыxсечение»] [z 2.5]   провод по цепочке устройств (z — высота трассы); ввод — 5x2.5, розетка — 3x2.5, иначе 3x1.5
+     light|socket|switch|panel|inlet|junction|load NAME POINT|A-B [dx м] [dy м | along м] [off м] [h м] [w Вт]   электрика (A-B — на стене комнаты: along — от угла A вдоль стены, off — вглубь комнаты): светильник, розетка, выключатель, щиток, ввод, распредкоробка у точки (смещение на восток / север, высота над точкой)
+     wire A B C [cable 3x1.5 · 2x1.5 · 5x2.5 … — любое «жилыxсечение»] [z 2.5] [amp 16]   провод по цепочке устройств (z — высота трассы); ввод — 5x2.5, розетка — 3x2.5, иначе 3x1.5
      source NAME POINT [h 25] [eirp 43] [f 1800] [az 120] [bw 65]   внешний источник сигнала над точкой (вышка, соседский роутер; точка — по GPS, at или замерам)
      mirror                   отразить план слева направо (по рулетке и углам план не отличить от зеркального; с компасом / GPS не нужно)
      wall Hall2-Hall3 Kor4-Kor1 0.37 [shift 0]   стык через стену: Kor4-Kor1 параллельно Hall2-Hall3 по ту сторону стены 0.37, Kor4 напротив Hall2 (shift — сдвиг вдоль), Kor1 — в сторону Hall3
@@ -118,19 +118,20 @@ function spParse(text,o={}){
       const q={name:nm,a:pt(at),h:2,eirp:20,f:2437,az:0,bw:360,li};
       for(let i=3;i<T.length;i+=2){ const k=T[i].toLowerCase(), v=spNum(T[i+1]); if(!['h','eirp','f','az','bw'].includes(k) || !isFinite(v)) return bad('source: unknown «'+T[i]+'» (h eirp f az bw)'); q[k]=v; }
       if(!(q.f>0) || !(q.bw>0 && q.bw<=360)) return bad('source: f > 0, bw 1…360'); sources.push(q); return; }
-    if(/^(light|socket|switch|panel|inlet|junction)$/i.test(T[0])){                                                // электрика: «light L1 A [dx 1] [dy 0.5] [h 2.6] [w 60]» — светильник у точки A (смещение на восток / север, высота над точкой, Вт)
-      const type=T[0].toLowerCase(), nm=T[1], at=T[2]; if(!nm || !at) return bad(type+' NAME POINT|WALL [dx m] [dy m] [along m] [off m] [h height above the point, m] [w watts] — e.g. '+type+' '+(type==='light' ? 'L1 A dx 2 dy 1.5 h 2.6 w 60' : type==='socket' ? 'S1 A dx 0.3 h 0.3 w 200' : type==='panel' ? 'P1 A dx 0.3 dy 0.4 h 1.6' : type==='inlet' ? 'IN1 A dx 0.1 h 3' : type==='junction' ? 'J1 A dx 1 dy 0.5 h 2.4' : 'SW1 B dx 0.2 h 1.1'));
+    if(/^(light|socket|switch|panel|inlet|junction|load)$/i.test(T[0])){                                                // электрика: «light L1 A [dx 1] [dy 0.5] [h 2.6] [w 60]» — светильник у точки A (смещение на восток / север, высота над точкой, Вт)
+      const type=T[0].toLowerCase(), nm=T[1], at=T[2]; if(!nm || !at) return bad(type+' NAME POINT|WALL [dx m] [dy m] [along m] [off m] [h height above the point, m] [w watts] — e.g. '+type+' '+(type==='light' ? 'L1 A dx 2 dy 1.5 h 2.6 w 60' : type==='socket' ? 'S1 A dx 0.3 h 0.3 w 200' : type==='panel' ? 'P1 A dx 0.3 dy 0.4 h 1.6' : type==='inlet' ? 'IN1 A dx 0.1 h 3' : type==='junction' ? 'J1 A dx 1 dy 0.5 h 2.4' : type==='load' ? 'LD1 B dx -0.5 h 0.3 w 2000' : 'SW1 B dx 0.2 h 1.1'));
       if(elec.some(e=>e.name===nm)) return bad(type+': the name «'+nm+'» is already used');
       const wl=at.split('-'); if(wl.length>2 || (wl.length===2 && (!wl[0] || !wl[1] || wl[0]===wl[1]))) return bad(type+': a wall is «A-B» — two different corners of one room');
-      const q={type,name:nm,a:pt(wl[0]),wall:wl.length===2 ? pt(wl[1]) : -1,along:0,off:0,dx:0,dy:0,h:{light:2.6,socket:.3,switch:1.1,panel:1.6,inlet:3,junction:2.4}[type],w:{light:60,socket:200}[type]||0,li};
+      const q={type,name:nm,a:pt(wl[0]),wall:wl.length===2 ? pt(wl[1]) : -1,along:0,off:0,dx:0,dy:0,h:{light:2.6,socket:.3,switch:1.1,panel:1.6,inlet:3,junction:2.4,load:.3}[type],w:{light:60,socket:200,load:2000}[type]||0,li};
       for(let i=3;i<T.length;i+=2){ const k=T[i].toLowerCase(), v=spNum(T[i+1]); if(!['dx','dy','h','w','along','off'].includes(k) || !isFinite(v)) return bad(type+': unknown «'+T[i]+'» (dx dy along off h w)'); if(q.wall>=0 ? (k==='dx'||k==='dy') : (k==='along'||k==='off')) return bad(type+': «'+k+'» '+(q.wall>=0 ? 'is for a point; on a wall use along (from the first corner, m) and off (into the room, m)' : 'is for a wall «A-B»; at a point use dx and dy')); q[k]=v; }
       if(q.wall>=0 && !(q.along>=0)) return bad(type+': along ≥ 0');
       if(q.h<0 || q.w<0) return bad(type+': h, w ≥ 0'); elec.push(q); return; }
     if(/^wire$/i.test(T[0])){                                                                 // «wire L1 SW1 S1 [cable 3x1.5] [z 2.5]» — провод по цепочке устройств
-      const w={names:[],cable:null,z:null,li};
+      const w={names:[],cable:null,z:null,amp:0,li};
       for(let i=1;i<T.length;i++){ const t=T[i].toLowerCase();
         if(t==='cable'){ w.cable=T[++i]; if(!/^\d{1,2}x\d{1,3}(\.\d{1,2})?$/.test(w.cable||'') || !(+w.cable.split('x')[1]>0)) return bad('wire: cable — cores × cross-section, mm², e.g. 2x1.5 · 3x1.5 · 3x2.5 · 5x2.5 · 3x4'); }
         else if(t==='z'){ w.z=spNum(T[++i]); if(!(w.z>0 && w.z<10)) return bad('wire: z — run height, m'); }
+        else if(t==='amp'){ w.amp=spNum(T[++i]); if(!(w.amp>0 && w.amp<=250)) return bad('wire: amp — the breaker of the group, A (on the wire that leaves the panel), e.g. amp 16'); }
         else w.names.push(T[i]); }
       if(w.names.length<2) return bad('wire A B [C …] [cable 3x1.5] [z 2.5] — A, B… are names of lights, sockets and switches'); wires.push(w); return; }
     if(/^roof$/i.test(T[0])){                                                                // крыша: «roof gable 30 [overhang 0.5] [ridge long|short] [level 2]»
@@ -506,7 +507,7 @@ function spSolve(text,opt={}){
   out.wires=[]; { const by=new Map(out.elec.map(e=>[e.name,e]));
     for(const w of P.wires){ for(let i=0;i+1<w.names.length;i++){ const A=by.get(w.names[i]), B=by.get(w.names[i+1]);
         if(!A||!B){ out.errors.push({line:w.li+1,text:'wire',msg:'wire: unknown device «'+(A ? w.names[i+1] : w.names[i])+'» (declare it with light / socket / switch)'}); continue; }
-        if(A===B) continue; out.wires.push({a:A.name,b:B.name,cable:w.cable||(A.type==='inlet'||B.type==='inlet' ? '5x2.5' : A.type==='socket'||B.type==='socket' ? '3x2.5' : '3x1.5'),z:w.z}); } } }
+        if(A===B) continue; out.wires.push({a:A.name,b:B.name,cable:w.cable||(A.type==='inlet'||B.type==='inlet' ? '5x2.5' : A.type==='socket'||B.type==='socket' ? '3x2.5' : '3x1.5'),z:w.z,...(w.amp>0 ? {amp:w.amp} : {})}); } } }
   out.sources=P.sources.map(q=>{ const p=out.pts[q.a]; return {name:q.name,at:p.name,x:p.x,y:p.y,z:p.z+q.h,h:q.h,eirp:q.eirp,f:q.f,az:q.az,bw:q.bw,lat:p.lat,lon:p.lon}; });
   // проёмы: по стене между соседними углами контура; не влезает в стену — ошибка
   out.opens=[];
