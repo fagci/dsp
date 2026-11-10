@@ -122,8 +122,9 @@ async function spFileFind(path,create){
   }
   return {dir:id,name:P.name,rec:(await FileStore.list('files',id)).find(x=>x.name===P.name)||null};
 }
+const spHash=t=>{ let h=5381; t=String(t||''); for(let i=0;i<t.length;i++) h=((h<<5)+h+t.charCodeAt(i))|0; return t.length+':'+(h>>>0).toString(36); };   // отпечаток текста файла: что в файле было при последней сверке с планом
 function spSetPlan(n,v){ if(n.set?.plan) n.set.plan(v); else n.p.plan=v; n.key=''; }
-async function spFileLoad(n,soft){                                         // soft: из onChange — только если локальных правок нет
+async function spFileLoad(n,soft,restore){                                         // soft: из onChange — только если локальных правок нет
   const nm=n.fileName, tok=n.fileTok=(n.fileTok||0)+1;
   if(!nm){ n.fileText=null; return; }
   try{
@@ -131,7 +132,10 @@ async function spFileLoad(n,soft){                                         // so
     if(!f || !f.rec){ if(!soft){ n.fileText=null; n.msg='file «'+nm+'» is new — the plan will be saved there'; redraw(n); } return; }
     const text=await (await FileStore.get(f.rec.id)).blob.text(); if(tok!==n.fileTok) return;
     if(soft && String(n.p.plan||'')!==n.fileText) return;                  // в плане есть несохранённые правки — не затираем
-    n.fileText=text;
+    // страница только открылась: граф сохраняется при уходе со страницы, а файл — через 0,8 с после правки и мог отстать. Файл с тех пор не менялся (отпечаток тот же) —
+    // правки в плане новее: оставляем план, файл допишет такт. Файл изменили снаружи (Files, другое устройство) — берём файл
+    if(restore && String(n.p.plan||'').trim() && text!==String(n.p.plan||'') && n.p.fileSync===spHash(text)){ n.fileText=text; n.msg='«'+nm+'» is older than the plan — the plan is kept and written to the file'; redraw(n); return; }
+    n.fileText=text; n.p.fileSync=spHash(text);
     if(text!==String(n.p.plan||'')){ spSetPlan(n,text); n.msg='loaded «'+nm+'»'; }
     redraw(n);
   }catch(e){ n.msg='file: '+e.message; redraw(n); }
@@ -141,7 +145,7 @@ async function spFileSave(n){
   try{
     const f=await spFileFind(nm,true), blob=new Blob([text],{type:'text/plain'});
     if(f.rec) await FileStore.update(f.rec.id,{blob,mime:'text/plain'}); else await FileStore.put({space:'files',folderId:f.dir,name:f.name,mime:'text/plain',blob});
-    n.fileText=text; n.msg='saved «'+nm+'»';
+    n.fileText=text; n.p.fileSync=spHash(text); n.msg='saved «'+nm+'»';
   }catch(e){ n.msg='file: '+e.message; }
   redraw(n);
 }
@@ -154,7 +158,7 @@ function spAutoName(n){
   n.p.file=nm; if(typeof setMod==='function') setMod(n,'file',nm); n.fileName=nm; n.fileText=null; spFileSave(n);                  // файл новый (имя по секундам): пишем сразу, не дожидаясь такта движка
 }
 function spFileTick(n,want){                                               // вызывается из process: имя сменилось — загрузить; текст правили — сохранить с задержкой
-  if(want!==n.fileName){ n.fileName=want; n.fileText=undefined; clearTimeout(n.fileT); spFileLoad(n); return; }
+  if(want!==n.fileName){ const restore=!n.fileName; n.fileName=want; n.fileText=undefined; clearTimeout(n.fileT); spFileLoad(n,false,restore); return; }
   if(!want){ spAutoName(n); return; }
   if(n.fileText===undefined || !n.p.fsave) return;
   const t=String(n.p.plan||'');                                              // таймер не сбрасываем на каждом такте движка (иначе он не срабатывал бы никогда): только если текст другой
