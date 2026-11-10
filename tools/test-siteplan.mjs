@@ -282,4 +282,15 @@ for(const t of ['material Kit2-Kit3 concrete\nroom Hall 4.48 3.74 4.46 3.74\nroo
   ok('canopy: outside = away from the room, 0.4 m off the wall line, 1.5 m deep',Math.abs(yi-.4)<.05 && Math.abs(yo-1.9)<.05 && Math.sign(ys[0])===-Math.sign(h3.y),ys.join(',')+' H3.y='+h3.y); }
 ok('post: bad height → error',K.spSolve('P at 0 0\npost P h -1').errors.length===1 && K.spSolve('P at 0 0\npost P x 1').errors.length===1);
 ok('canopy: A = B → error',K.spSolve('P at 0 0\ncanopy P P').errors.length===1);
+// outer по комнатам / сторонам и колонны ends
+{ const R=K.spSolve('outer 0.4 brick\nroom A 6 4 6 4\nroom B 3 4 3 4\nwall A2-A3 B1-B4 0.2\nA1 at 0 0\nA2 at 6 0\nouter B 0.04 дерево\nouter A1-A2 0.1'), H=K.spHouse(R,{});
+  ok('outer by room: no errors',R.errors.length===0,JSON.stringify(R.errors));
+  const ow=H.walls.filter(w=>w.kind==='outer'), b=ow.filter(w=>/spw:B/.test(w.id)), a1=ow.find(w=>/spw:A1-A2/.test(w.id)), a3=ow.find(w=>/spw:A3-A4/.test(w.id));
+  ok('outer B 0.04 wood: outer sides of B are 4 cm wood',b.length>0 && b.every(w=>w.t===.04 && w.mat==='wood'),JSON.stringify(b.map(w=>[w.id,w.t,w.mat])));
+  ok('outer A1-A2 0.1: one side of A',a1 && a1.t===.1,a1 && a1.t); ok('other sides of A stay at the general outer 0.4 (brick)',a3 && a3.t===.4 && a3.mat==='brick',JSON.stringify(a3));
+  ok('the wall between A and B stays inner',H.walls.some(w=>w.kind==='inner' && Math.abs(w.t-.2)<.02)); }
+ok('outer: unknown room → error',K.spSolve('A1 at 0 0\nroom A 3 3 3 3\nouter Zed 0.04').errors.length===1 && K.spSolve('room A 3 3 3 3\nouter A').errors.length===1);
+{ const H=K.spHouse(K.spSolve('H1 at 0 0\nH2 at 10 0\nroom H 10 4 10 4\ncanopy H1 H2 w 1.5 h 3 2.8 off 0.04 posts 5 ends d 0.1'),{}), cp=H.posts.filter(q=>q.name==='canopy post');
+  ok('canopy ends: a column at each end (inset by d/2) + the given one → 3',cp.length===3,cp.length);
+  const R=K.spSolve('H1 at 0 0\nH2 at 10 0\nroom H 10 4 10 4\ncanopy H1 H2 off 0.04'), r=K.spHouse(R,{}).roofs.find(r=>r.type==='canopy'); ok('canopy: off 0.04 → the slope starts 4 cm from the line',r && Math.abs(Math.min(...r.faces[0].pts.map(q=>Math.abs(q[1])))-.04)<.01); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
