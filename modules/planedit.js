@@ -220,7 +220,7 @@ function peUse(n,P,tool,x,y,hit){
       if(n.wfrom && n.wfrom!==hit.id){ const l=hvLink(s,n.wfrom,hit.id,n.wvia&&n.wvia.length ? {via:n.wvia} : {}); if(l){ peSelect(n,'pp',l.id); n.msg=hvLinkKind(s,l)+' '+hvLinkLen(s,l).len.toFixed(2)+' m · click the next device to continue, Esc ends'; } else n.msg='a pipe joins boilers, radiators, floor loops and manifolds; a duct — units, fans, supply terminals and extract grilles'; n.wfrom=hit.id; n.wvia=[]; peTouch(n); return; }
       n.wfrom=hit.id; n.wvia=[]; n.msg='pipe / duct: click the next device (a click on empty floor adds a bend)'; redraw(n); return; }
     if(n.wfrom){ const g=peGround(n,P,x,y,{noPt:true}); (n.wvia??=[]).push([g.x,g.y]); redraw(n); return; }
-    n.msg='pipe / duct: click a boiler, radiator, floor loop, unit, fan or terminal first'; redraw(n); return; }
+    n.msg='pipe / duct: click a boiler, radiator, floor loop, tee, unit, fan or terminal first'; redraw(n); return; }
   if(tool==='receiver'){ const g=peGround(n,P,x,y,{noPt:true}), o=peAddRx(s,g.x,g.y,{}); peSelect(n,'ant',o.id); peTouch(n); return; }
   if(tool==='camera'||tool==='antenna'){
     const g=peGround(n,P,x,y,{noPt:true}); let az=0; const R=s.rooms[0]; if(R){ const P2=peRoomPoly(s,R), cx=P2.reduce((a,q)=>a+q[0],0)/P2.length, cy=P2.reduce((a,q)=>a+q[1],0)/P2.length; az=Math.round(peWrap360(Math.atan2(cx-g.x,cy-g.y)/PE_D)); }
@@ -448,6 +448,7 @@ function peChips(n){
     if(kind==='pipe') cyc('pipe',()=>it.dn>0 ? 'DN '+it.dn : 'auto',d=>{ const S=[0,...HV_PIPES.map(q=>q[0])], i=Math.max(0,S.indexOf(+it.dn||0)); it.dn=S[(i+d+S.length)%S.length]; });
     else cyc('duct',()=>it.dn>0 ? 'Ø '+it.dn : 'auto',d=>{ const S=[0,...HV_DUCTS], i=Math.max(0,S.indexOf(+it.dn||0)); it.dn=S[(i+d+S.length)%S.length]; });
     if(A&&B){ num('run height',()=>hvRunZ(s,A,B,it),v=>{ it.zr=v; },.1,0,6,it.zr>0 ? ' m' : ' m (auto)'); if(it.zr>0) btn('run height',()=>'fixed → auto',()=>{ delete it.zr; }); }
+    if(kind==='pipe') btn('insulation',()=>it.ins ? 'insulated' : 'bare',()=>{ if(it.ins) delete it.ins; else it.ins=true; });
     btn('length',()=>L().len.toFixed(2)+' m'+(kind==='pipe' ? ' (×2 with the return)' : ''),()=>{});
   }
   btn('delete',()=>'🗑',()=>{ peDeleteSel(n); });
@@ -559,7 +560,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
           {n:'emit',t:'range',min:0,max:60,step:1,d:10,label:'repeat the records every … s (Video Overlay forgets objects after its «keep» time; 0 — only on change)',adv:true},
           {n:'pts',t:'select',opts:['auto','all'],d:'auto',label:'points: auto — hide the helper ones (wall ends and room corners from Site Plan) · all',adv:true},
           {n:'imp',t:'check',d:true,label:'input rec: add / move points by name (from Site Plan)',adv:true},
-          {n:'hvtype',t:'select',opts:Object.keys(HV_T),d:'radiator',label:'climate device (the ♨ tool places it): boiler, radiator, floor (underfloor loop), heater (local: convector, stove, fireplace), manifold; ahu (supply-extract unit with recovery), fan, supply, extract. The ≋ tool joins them: pipes between water devices, ducts between air ones'},
+          {n:'hvtype',t:'select',opts:Object.keys(HV_T),d:'radiator',label:'climate device (the ♨ tool places it): boiler, radiator, floor (underfloor loop), heater (local: convector, stove, fireplace), manifold, tee (a free branch of a pipe); ahu (supply-extract unit with recovery), fan, supply, extract. The ≋ tool joins them: pipes between water devices, ducts between air ones'},
           {n:'hvtout',t:'select',opts:['-5','-10','-15','-20','-25','-30','-35','-40'],d:'-25',label:'outdoor design °C: the coldest five days of the region (heat loss)'},
           {n:'hvwater',t:'select',opts:['90/70','80/60','75/65','70/50','55/45','35/30'],d:'70/50',label:'water supply/return °C (70/50 — a condensing boiler; 55/45 — a heat pump; 35/30 — underfloor)'},
           {n:'hvins',t:'select',opts:['0','50','100','150','200'],d:'0',label:'wall insulation, mm of EPS (λ 0.04) on the outer walls'},
@@ -717,7 +718,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     }
     // отопление и вентиляция: трубы (красные) и воздуховоды (голубые) с подписью диаметра, устройства значками
     { const sel=n.sel, H=peHv(n), segOf=new Map(); if(H){ for(const g of H.heat.segs) segOf.set(g.link,g); for(const g of H.air.segs) segOf.set(g.link,g); }
-      const COL={boiler:'#ef5350',radiator:'#ff7043',floor:'#ffa726',heater:'#ffca28',manifold:'#bcaaa4',ahu:'#4dd0e1',fan:'#26c6da',supply:'#81d4fa',extract:'#b39ddb'};
+      const COL={boiler:'#ef5350',radiator:'#ff7043',floor:'#ffa726',heater:'#ffca28',manifold:'#bcaaa4',tee:'#ff8a80',ahu:'#4dd0e1',fan:'#26c6da',supply:'#81d4fa',extract:'#b39ddb'};
       for(const l of s.pp||[]){ const pa=hvLinkPath(s,l); if(!pa) continue; const air=hvLinkKind(s,l)==='duct', on=sel && sel.k==='pp' && sel.id===l.id, g=segOf.get(l.id);
         cx.strokeStyle=on ? '#fff' : g && !g.ok ? '#ff1744' : air ? '#4fc3f7' : '#ef5350'; cx.lineWidth=on ? 3.5 : air ? 3 : 2; cx.setLineDash(P.d3 ? [] : air ? [9,3] : []);
         cx.beginPath(); pa.forEach((q,k)=>{ const A=P.pt(q[0],q[1],P.d3 ? q[2] : 0); k ? cx.lineTo(A[0],A[1]) : cx.moveTo(A[0],A[1]); }); cx.stroke(); cx.setLineDash([]);
@@ -731,6 +732,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
         else if(ty==='radiator'){ cx.rect(x-8,y-5.5,16,11); cx.fill(); cx.stroke(); for(const k of [-4,0,4]){ cx.beginPath(); cx.moveTo(x+k,y-5.5); cx.lineTo(x+k,y+5.5); cx.stroke(); } }
         else if(ty==='floor'){ cx.rect(x-8,y-6,16,12); cx.fill(); cx.stroke(); cx.beginPath(); cx.moveTo(x-5,y-3); cx.lineTo(x+5,y-3); cx.lineTo(x+5,y); cx.lineTo(x-5,y); cx.lineTo(x-5,y+3); cx.lineTo(x+5,y+3); cx.stroke(); }
         else if(ty==='heater'){ cx.arc(x,y,7,0,7); cx.fill(); cx.stroke(); for(let k=0;k<8;k++){ const a=k*Math.PI/4; cx.beginPath(); cx.moveTo(x+Math.cos(a)*9,y+Math.sin(a)*9); cx.lineTo(x+Math.cos(a)*12,y+Math.sin(a)*12); cx.stroke(); } }
+        else if(ty==='tee'){ cx.arc(x,y,4,0,7); cx.fill(); cx.stroke(); cx.beginPath(); cx.moveTo(x-8,y); cx.lineTo(x-4,y); cx.moveTo(x+4,y); cx.lineTo(x+8,y); cx.moveTo(x,y+4); cx.lineTo(x,y+8); cx.stroke(); }
         else if(ty==='manifold'){ cx.rect(x-9,y-3,18,6); cx.fill(); cx.stroke(); for(const k of [-6,0,6]){ cx.beginPath(); cx.moveTo(x+k,y+3); cx.lineTo(x+k,y+8); cx.stroke(); } }
         else if(ty==='ahu'){ cx.rect(x-9,y-6,18,12); cx.fill(); cx.stroke(); cx.beginPath(); cx.moveTo(x-9,y-6); cx.lineTo(x+9,y+6); cx.moveTo(x+9,y-6); cx.lineTo(x-9,y+6); cx.stroke(); }
         else { cx.arc(x,y,7,0,7); cx.fill(); cx.stroke(); cx.beginPath(); if(ty==='fan'){ for(let k=0;k<3;k++){ const a=k*2.094; cx.moveTo(x,y); cx.lineTo(x+Math.cos(a)*5.5,y+Math.sin(a)*5.5); } } else if(ty==='supply'){ cx.moveTo(x-4,y); cx.lineTo(x+4,y); cx.moveTo(x,y-4); cx.lineTo(x,y+4); } else { cx.moveTo(x-4,y); cx.lineTo(x+4,y); } cx.stroke(); }
@@ -759,6 +761,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
         for(const r of H.rooms) L.push('  '+r.name+' ['+r.use+', '+r.tin+' °C]: '+Math.round(r.loss)+' W ('+Math.round(r.wm2)+' W/m²) · radiators of '+Math.round(r.need)+' W at ΔT 50 K'+(r.inst>0 ? ' · installed '+Math.round(r.inst)+' W ('+Math.round(r.cover*100)+'%)' : '')+(r.norm>0 ? ' · air '+Math.round(r.air)+' m³/h '+r.dir+' ('+r.ach.toFixed(1)+'/h)' : '')+(r.warn.length ? ' ⚠ '+r.warn.join('; ') : r.loss>1&&r.inst>0 ? ' ✓' : ''));
         if(h.boilerW || h.demand>0) L.push('boiler: demand '+kw(h.demand)+' → '+kw(h.boilerNeed)+' with 10% reserve · installed '+kw(h.boilerW)+(h.local>0 ? ' · local heaters '+kw(h.local) : ''));
         if(H.heat.pump) L.push('pump: '+Math.round(H.heat.pump.G)+' l/h at '+(H.heat.pump.dp/1000).toFixed(1)+' kPa ('+H.heat.pump.head.toFixed(1)+' m) to '+H.heat.pump.far+' · pipes '+st.pipe.toFixed(0)+' m with the return');
+        if(H.heat.pipeGain>0||H.heat.pipeLoss>0) L.push('pipes: '+Math.round(H.heat.pipeGain)+' W go into heated rooms'+(H.heat.pipeLoss>0 ? ', '+Math.round(H.heat.pipeLoss)+' W are lost: '+H.heat.pipeRooms.map(q=>q.room+' ('+Math.round(q.W)+' W)').join(', ')+' — insulate those runs (select the pipe → insulation)' : '')+' · bare pipe gives ~h·π·d·ΔT, insulated 0.15 W/(m·K)');
         for(const g of H.heat.segs) if(!g.ok) L.push('⚠ pipe '+g.from+'→'+g.to+' DN'+g.dn+': '+g.warn.join('; '));
         for(const g of H.heat.loops) L.push('floor '+g.name+': '+g.area.toFixed(0)+' m² → '+g.len.toFixed(0)+' m of pipe at a 150 mm step, '+g.loops+' loop'+(g.loops===1 ? '' : 's')+' of '+g.each.toFixed(0)+' m');
         if(h.Qtot>0) L.push('ventilation: '+Math.round(h.Qtot)+' m³/h ('+h.ach.toFixed(2)+' air changes per hour) · supply norm '+Math.round(h.Qsup)+', extract norm '+Math.round(h.Qext)+' m³/h'+(h.Qext>h.Qsup ? ' — the house is balanced up to the extract' : '')+' · unit with a 15% reserve: '+Math.round(h.Qtot*1.15)+' m³/h');

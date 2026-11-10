@@ -97,4 +97,23 @@ ok('Site Plan: fuel and area',Rs.hv.find(e=>e.name==='H1').fuel==='gas' && Rs.hv
 for(const [bt,msg] of [['pipe B1 U1','a pipe joins'],['duct B1 R1','a duct joins'],['pipe B1 H1','a pipe joins'],['radiator R9 A fuel coal','fuel'],['use Liv attic','use ROOM'],['pipe B1 Q9','unknown device'],['radiator R2 A foo 1','unknown']]){
   const e=S.spSolve(T+'\n'+bt).errors; ok('Site Plan error: «'+bt+'»',e.some(q=>q.msg.includes(msg)),JSON.stringify(e)); }
 ok('the same name twice is refused',S.spSolve(T+'\nradiator B1 A').errors.some(q=>/already used/.test(q.msg)));
+
+// тройник: труба делится в произвольной точке; тепло самих труб
+{ const q=K.peNew(); box(q,0,0,5,4,'Liv'); const B=K.hvAdd(q,'boiler',.5,2,{watt:24000}), E=K.hvAdd(q,'tee',.5,2), R1=K.hvAdd(q,'radiator',4.5,2,{watt:1000}), R2=K.hvAdd(q,'radiator',.5,3.5,{watt:1000});
+  ok('a tee takes pipes, not ducts',K.hvLink(q,B.id,E.id)!==null && K.hvLink(q,E.id,K.hvAdd(q,'extract',1,1).id)===null);
+  const lk=K.hvLink(q,E.id,R1.id); K.hvLink(q,E.id,R2.id);
+  let H=K.hvCalc(q,{tout:-25}); const sg=H.heat.segs.find(g=>g.to==='R1'), g0=H.heat.segs.find(g=>g.to==='TE1');
+  ok('the tee splits the flow: the boiler pipe carries both radiators',Math.abs(g0.P-2*1000*Math.pow(40/50,1.3))<1e-6 && Math.abs(sg.P-1000*Math.pow(40/50,1.3))<1e-6,JSON.stringify(g0));
+  ok('no radiator is "not connected"',!H.warns.some(w=>/not connected/.test(w)));
+  near('bare pipe in a heated room: h·π·d · 4 m · ((70−20)+(50−20))',sg.q,10*Math.PI*.016*4*80,.01);
+  lk.ins=true; H=K.hvCalc(q,{tout:-25}); near('insulated: 0.15 W/(m·K)',H.heat.segs.find(g=>g.to==='R1').q,.15*4*80,.01);
+  ok('pipe heat in a heated room counts toward the room cover',H.rooms[0].pipe>0 && H.rooms[0].inst>H.rooms[0].rad); }
+{ const q=K.peNew(); box(q,0,0,5,4,'Liv'); const B=K.hvAdd(q,'boiler',-3,2,{watt:24000}), R=K.hvAdd(q,'radiator',2,2,{watt:1000}); K.hvLink(q,B.id,R.id);
+  const H=K.hvCalc(q,{tout:-25}), U=10*Math.PI*.016;
+  near('outside the rooms the pipe loses heat to −25 °C (the last 0.3 m before the wall count as the room)',H.heat.pipeLoss,U*2.75*170,.5); near('inside it gives heat to the room',H.heat.pipeGain,U*2.25*80,.5);
+  ok('the loss is named, and the boiler demand grows by it',H.heat.pipeRooms[0].room==='outside the rooms' && Math.abs(H.house.demand-(H.rooms[0].loss+H.heat.pipeLoss))<1e-6,JSON.stringify(H.heat.pipeRooms));
+  const un=K.peNew(); box(un,0,0,5,4,'Garage'); const b2=K.hvAdd(un,'boiler',-3,2,{watt:24000}), r2=K.hvAdd(un,'radiator',-1,2,{watt:1000}); K.hvAdd(un,'radiator',2,2); K.hvLink(un,b2.id,r2.id);
+  ok('a pipe through an unheated garage is a loss, not a gain',K.hvCalc(un,{tout:-25}).heat.pipeLoss>0); }
+{ const T2=['A at 0 0','B at 5 0','C at 5 4','D at 0 4','A-B 5','B-C 4','C-D 5','D-A 4','A-C 6.4031','poly A B C D','room Liv 5 4 5 4','boiler B1 A dx 0.5 dy -0.5 kw 24','tee TE1 A dx 1 dy -1','radiator R1 B dx -0.5 dy -1 w 1500','pipe B1 TE1 R1 ins','pipe TE1 R1'].join('\n');
+  const Q=S.spSolve(T2); ok('Site Plan: tee; «ins» marks every pipe of its chain',Q.errors.length===0 && Q.hv.some(e=>e.type==='tee') && Q.pp[0].ins===true && Q.pp[1].ins===true && !Q.pp[2].ins,JSON.stringify(Q.errors)+JSON.stringify(Q.pp)); }
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad ? 1 : 0);

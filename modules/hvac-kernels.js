@@ -17,12 +17,13 @@ const HV_T={
   floor:{z:0,pre:'F',watt:0,area:10},
   heater:{z:.3,pre:'H',watt:1500,fuel:'electric'},
   manifold:{z:.8,pre:'M',watt:0},
+  tee:{z:.1,pre:'TE',watt:0},
   ahu:{z:2.4,pre:'AHU',watt:0,m3:300,eff:80,pa:150},
   fan:{z:2.4,pre:'FN',watt:0,m3:100,pa:100},
   supply:{z:2.6,pre:'SA',watt:0,m3:0},
   extract:{z:2.6,pre:'EA',watt:0,m3:0}
 };
-const HV_HEAT=new Set(['boiler','radiator','floor','manifold']), HV_AIR=new Set(['ahu','fan','supply','extract']);
+const HV_HEAT=new Set(['boiler','radiator','floor','manifold','tee']), HV_AIR=new Set(['ahu','fan','supply','extract']);
 const HV_USES=['living','bedroom','kitchen','bath','wc','laundry','boiler','hall','office','garage','store'];
 // температура в комнате по назначению, °C (СП 60 / ГОСТ 30494)
 const HV_TIN={living:20,bedroom:20,kitchen:20,bath:24,wc:18,laundry:18,boiler:18,hall:18,office:20,garage:5,store:16};
@@ -30,6 +31,7 @@ const HV_TIN={living:20,bedroom:20,kitchen:20,bath:24,wc:18,laundry:18,boiler:18
 const HV_LAM={brick:.7,concrete:1.7,block:.18,drywall:.21,wood:.14,metal:45};
 const HV_PIPES=[[16,12],[20,16],[25,20.4],[32,26],[40,32.6],[50,40.8],[63,51.4]];                    // труба (PEX / PP-R): наружный и внутренний диаметры, мм
 const HV_DUCTS=[80,100,125,160,200,250,315,400,500,630];                                              // круглые воздуховоды, мм
+const HV_PIPE_U=.15, HV_PIPE_H=10;                                                                         // Вт/(м·К): утеплённая труба; голая — h·π·d (конвекция и излучение, h = 10 Вт/(м²·К))
 const HV_DEF={tout:-25,ts:70,tr:50,uw:1.4,ud:1.8,ins:0,floorU:.3,roofU:.25,kb:1.1,qf:70,vmax:.7,dhw:0,gd:5000};
 
 // ---------- устройства и трассы ----------
@@ -110,7 +112,7 @@ function hvCalc(s,o={}){
   s.hv??=[]; s.pp??=[];
   const infos=s.rooms.map(r=>{ const P=peRoomPoly(s,r), use=hvRoomUse(r), area=peRoomArea(s,r), h=hvRoomH(s,r);
     const people=r.people>=0&&r.people!=null&&r.people!=='' ? +r.people : use==='bedroom' ? (area>=14 ? 2 : 1) : use==='living' ? Math.max(1,Math.round(area/18)) : use==='office' ? 1 : 0;
-    return {r,id:r.id,name:r.name||r.id,P,use,area,h,vol:area*h,z0:hvRoomZ(s,r),lv:r.lv||0,tin:r.tin>0||r.tin<0 ? +r.tin : HV_TIN[use],gas:!!r.gas,people,cen:hvCentroid(P),dev:[],trans:{walls:0,win:0,door:0,floor:0,roof:0},vent:0,warn:[]}; });
+    return {r,id:r.id,name:r.name||r.id,P,use,area,h,vol:area*h,z0:hvRoomZ(s,r),lv:r.lv||0,tin:r.tin>0||r.tin<0 ? +r.tin : HV_TIN[use],gas:!!r.gas,people,cen:hvCentroid(P),dev:[],trans:{walls:0,win:0,door:0,floor:0,roof:0},vent:0,pipe:0,warn:[]}; });
   // устройства по комнатам
   for(const d of s.hv){ d.room=undefined; const R=hvRoomOf(infos,d.x,d.y,d.z||0); if(R){ R.dev.push(d); d.room=R.id; } }
   const roomDev=(R,t)=>R.dev.filter(d=>d.type===t);
@@ -147,14 +149,8 @@ function hvCalc(s,o={}){
     R.heater=roomDev(R,'heater').reduce((a,d)=>a+(+d.watt||0),0);
     R.inst=R.rad+R.floorW+R.heater; R.cover=R.loss>0 ? R.inst/R.loss : 1;
     R.need=R.loss>0 ? R.loss/Math.max(kr,.05) : 0;                                                     // номинал радиаторов (ΔT 50 К), покрывающий потери
-    if(R.loss>1 && R.tin>=12 && R.inst<=0) R.warn.push('no heating device');
-    else if(R.loss>1 && R.cover<.95) R.warn.push('heating covers only '+Math.round(R.cover*100)+'% of the loss (needs '+Math.round(R.loss)+' W, has '+Math.round(R.inst)+' W)');
     if(R.floorW>0 && R.area>0 && R.floorW/R.area>100) R.warn.push('floor heating gives '+Math.round(R.floorW/R.area)+' W/m² — above the comfort limit of ~100 W/m² (29 °C floor)');
     if(R.norm>0 && s.hv.some(d=>hvIsAir(d.type))){ const want=R.dir==='supply' ? 'supply' : 'extract'; if(!roomDev(R,want).length) R.warn.push('no '+want+' terminal for '+Math.round(R.air)+' m³/h'); } }
-  // котёл
-  const hydro=infos.filter(R=>R.rad>0||R.floorW>0), demand=hydro.reduce((a,R)=>a+R.loss,0)+(+opt.dhw||0);
-  const boilerW=s.hv.filter(d=>d.type==='boiler').reduce((a,d)=>a+(+d.watt||0),0), boilerNeed=demand*1.1;
-  if(hydro.length && !boilerW) warns.push('radiators without a boiler: add a boiler and connect it with pipes'); else if(boilerW && boilerW<boilerNeed-1) warns.push('boiler '+Math.round(boilerW)+' W is below the demand '+Math.round(boilerNeed)+' W (loss '+Math.round(demand)+' W + 10%)');
   // водяная сеть
   const heat={segs:[],pump:null,loops:[],boilers:s.hv.filter(d=>d.type==='boiler').map(d=>d.name)}, seenH=new Set();
   const emit=d=>d.type==='radiator' ? (+d.watt||0)*Math.pow(Math.max(0,(tmean-((hvRoomOf(infos,d.x,d.y,d.z||0)||{tin:20}).tin))/50),1.3) : d.type==='floor' ? (+d.watt>0 ? +d.watt : (+d.area||0)*opt.qf) : 0;
@@ -169,6 +165,21 @@ function hvCalc(s,o={}){
     for(const id of T.order){ const d=hvDev(s,id); if(d.type!=='radiator'&&d.type!=='floor') continue; const dd=(pathDp.get(id)||0)+(d.type==='floor' ? 15000 : 8000); if(dd>worst){ worst=dd; worstName=d.name; } }
     const Ptot=cur.get(B.id)||0, Gtot=Ptot/(1.163*dT)/.977; if(T.order.length>1) heat.pump=heat.pump ? {...heat.pump,G:heat.pump.G+Gtot} : {G:Gtot,dp:worst,far:worstName,head:worst/(HV_RHO_W*9.81)};
     if(T.order.length>1 && Ptot>B.watt+1) warns.push('boiler '+B.name+' is smaller than the emitters on its pipes ('+Math.round(Ptot)+' W)'); }
+  // тепло самих труб: по трассе шагом 0,25 м — в комнату, где она проходит (подача и обратка); в неотапливаемую (tin < 12) и вне комнат — потери
+  heat.pipeGain=0; heat.pipeLoss=0; heat.pipeRooms=[];
+  { const byRoom=new Map(); for(const g of heat.segs){ const l=s.pp.find(x=>x.id===g.link), pa=l&&hvLinkPath(s,l); if(!pa) continue; const A=hvDev(s,l.a), B=hvDev(s,l.b), zl=((A.z||0)+(B.z||0))/2, d=g.dn*Math.PI/1000, U=l.ins ? HV_PIPE_U : HV_PIPE_H*d; g.q=0; g.ins=!!l.ins;
+      const P=[]; for(let i=1;i<pa.length-1;i++) P.push(pa[i]);                                                                  // горизонтальная часть: от высоты трассы у A до высоты у B
+      for(let i=1;i<P.length;i++){ const x0=P[i-1][0], y0=P[i-1][1], x1=P[i][0], y1=P[i][1], L=Math.hypot(x1-x0,y1-y0), n=Math.max(1,Math.ceil(L/.25)), st=L/n;
+        for(let k=0;k<n;k++){ const u=(k+.5)/n, x=x0+(x1-x0)*u, y=y0+(y1-y0)*u, R=hvRoomOf(infos,x,y,zl)||[[.3,0],[-.3,0],[0,.3],[0,-.3]].map(o=>hvRoomOf(infos,x+o[0],y+o[1],zl)).find(Boolean), Ta=R ? R.tin : opt.tout, w=U*st*((opt.ts-Ta)+(opt.tr-Ta)); if(w<=0) continue; g.q+=w;
+          const heated=R && R.tin>=12; if(heated){ R.pipe+=w; heat.pipeGain+=w; } else { heat.pipeLoss+=w; const key=R ? R.id : '—'; byRoom.set(key,(byRoom.get(key)||0)+w); } } } }
+    heat.pipeRooms=[...byRoom].map(([id,w])=>({room:id==='—' ? 'outside the rooms' : (infos.find(R=>R.id===id)||{name:id}).name,W:w})); }
+  for(const R of infos){ R.inst+=R.pipe; R.cover=R.loss>0 ? R.inst/R.loss : 1;
+    if(R.loss>1 && R.tin>=12 && R.inst<=0) R.warn.unshift('no heating device');
+    else if(R.loss>1 && R.cover<.95) R.warn.unshift('heating covers only '+Math.round(R.cover*100)+'% of the loss (needs '+Math.round(R.loss)+' W, has '+Math.round(R.inst)+' W'+(R.pipe>0 ? ', of them pipes '+Math.round(R.pipe)+' W' : '')+')'); }
+  // котёл
+  const hydro=infos.filter(R=>R.rad>0||R.floorW>0||R.pipe>0), demand=hydro.reduce((a,R)=>a+R.loss,0)+heat.pipeLoss+(+opt.dhw||0);
+  const boilerW=s.hv.filter(d=>d.type==='boiler').reduce((a,d)=>a+(+d.watt||0),0), boilerNeed=demand*1.1;
+  if(hydro.length && !boilerW) warns.push('radiators without a boiler: add a boiler and connect it with pipes'); else if(boilerW && boilerW<boilerNeed-1) warns.push('boiler '+Math.round(boilerW)+' W is below the demand '+Math.round(boilerNeed)+' W (loss '+Math.round(demand)+' W + 10%)');
   for(const d of s.hv) if((d.type==='radiator'||d.type==='floor') && !seenH.has(d.id)) warns.push((d.type==='radiator' ? 'radiator ' : 'floor loop ')+d.name+' is not connected to a boiler by pipes');
   for(const d of s.hv.filter(d=>d.type==='floor')){ const len=(+d.area||0)/.15, n=Math.max(1,Math.ceil(len/100)); heat.loops.push({name:d.name,area:+d.area||0,len,loops:n,each:len/n}); }
   // воздушная сеть
@@ -197,11 +208,11 @@ function hvCalc(s,o={}){
   // итоги
   const sum=k=>infos.reduce((a,R)=>a+R[k],0), loss=sum('loss'), trans=infos.reduce((a,R)=>a+R.trans.sum,0), vent=sum('vent'), Vtot=sum('vol'), Atot=sum('area');
   const heated=infos.filter(R=>R.tin>=12), dRef=heated.length ? heated.reduce((a,R)=>a+R.tin*R.area,0)/heated.reduce((a,R)=>a+R.area,0)-opt.tout : 20-opt.tout;
-  const kwh=dRef>0 ? loss/dRef*24*opt.gd/1000 : 0, recov=ahu.length ? .335*Math.min(Qtot,ahu.reduce((a,d)=>a+(+d.m3||0),0))*(20-opt.tout)*Math.max(0,Math.min(.95,(+ahu[0].eff||0)/100)) : 0;
-  const house={rooms:infos.length,area:Atot,vol:Vtot,loss,trans,vent,wm2:Atot>0 ? loss/Atot : 0,demand,boilerW,boilerNeed,Qtot,Qsup:Ssup,Qext:Sext,ach:Vtot>0 ? Qtot/Vtot : 0,mechSup,mechExt,recov,kwh,gas:kwh/(9.3*.92),eta,dRef,
+  const kwh=dRef>0 ? (loss+heat.pipeLoss)/dRef*24*opt.gd/1000 : 0, recov=ahu.length ? .335*Math.min(Qtot,ahu.reduce((a,d)=>a+(+d.m3||0),0))*(20-opt.tout)*Math.max(0,Math.min(.95,(+ahu[0].eff||0)/100)) : 0;
+  const house={pipeGain:heat.pipeGain,pipeLoss:heat.pipeLoss,rooms:infos.length,area:Atot,vol:Vtot,loss,trans,vent,wm2:Atot>0 ? loss/Atot : 0,demand,boilerW,boilerNeed,Qtot,Qsup:Ssup,Qext:Sext,ach:Vtot>0 ? Qtot/Vtot : 0,mechSup,mechExt,recov,kwh,gas:kwh/(9.3*.92),eta,dRef,
     local:infos.reduce((a,R)=>a+R.heater,0)};
   if(Math.abs(mechSup-mechExt)>Math.max(20,.1*Math.max(mechSup,mechExt)) && mechSup>0 && mechExt>0) warns.push('supply '+Math.round(mechSup)+' and extract '+Math.round(mechExt)+' m³/h are unbalanced (house under '+(mechSup<mechExt ? 'negative' : 'positive')+' pressure)');
-  return {opt,rooms:infos.map(R=>({id:R.id,name:R.name,use:R.use,area:R.area,h:R.h,vol:R.vol,tin:R.tin,people:R.people,gas:R.gas,trans:R.trans,vent:R.vent,loss:R.loss,wm2:R.wm2,rad:R.rad,floorW:R.floorW,heater:R.heater,inst:R.inst,cover:R.cover,need:R.need,norm:R.norm,dir:R.dir,air:R.air,ach:R.ach,cen:R.cen,dev:R.dev.map(d=>d.name),warn:R.warn})),house,heat,air,warns};
+  return {opt,rooms:infos.map(R=>({id:R.id,name:R.name,use:R.use,area:R.area,h:R.h,vol:R.vol,tin:R.tin,people:R.people,gas:R.gas,trans:R.trans,vent:R.vent,loss:R.loss,wm2:R.wm2,rad:R.rad,floorW:R.floorW,heater:R.heater,inst:R.inst,pipe:R.pipe,cover:R.cover,need:R.need,norm:R.norm,dir:R.dir,air:R.air,ach:R.ach,cen:R.cen,dev:R.dev.map(d=>d.name),warn:R.warn})),house,heat,air,warns};
 }
 
 // сводка: числа устройств, длины трасс (труб — с подачей и обраткой)
@@ -215,7 +226,7 @@ function hvImport(s,r,pre){ s.hv??=[]; s.pp??=[];
   s.hv=s.hv.filter(d=>!d.src||!d.src.startsWith(pre)||keep.has(d.src));
   const lk=new Set(); for(const q of r.pp||[]){ const A=s.hv.find(d=>d.src===pre+'hv:'+q.a), B=s.hv.find(d=>d.src===pre+'hv:'+q.b); if(!A||!B||A===B) continue;
     const src=pre+'pp:'+q.a+'-'+q.b; let l=s.pp.find(x=>x.src===src); if(!l){ l=hvLink(s,A.id,B.id,{}); if(!l) continue; l.src=src; } lk.add(src);
-    if(+q.dn>0) l.dn=+q.dn; else l.dn=0; if(+q.z>0) l.zr=+q.z; else delete l.zr; }
+    if(q.ins) l.ins=true; else delete l.ins; if(+q.dn>0) l.dn=+q.dn; else l.dn=0; if(+q.z>0) l.zr=+q.z; else delete l.zr; }
   s.pp=s.pp.filter(l=>(!l.src||!l.src.startsWith(pre)||lk.has(l.src)) && hvDev(s,l.a) && hvDev(s,l.b));
   for(const u of r.uses||[]){ const room=s.rooms.find(q=>q.name===u.name); if(!room) continue; if(HV_USES.includes(u.use)) room.use=u.use; if(u.people>=0&&u.people!=null) room.people=+u.people; if(u.tin>0) room.tin=+u.tin; if(u.gas) room.gas=true; }
 }
