@@ -218,6 +218,13 @@ function peDrawLvBar(n,cx,W){ n.lvRects=[]; const k=n.p.lv==='all'||n.p.lv==null
 function peLvHit(n,q){ const r=(n.lvRects||[]).find(r=>q[0]>=r.x&&q[0]<=r.x+r.w&&q[1]>=r.y&&q[1]<=r.y+r.h); if(!r) return false;
   if(r.act==='down') peLvGo(n,-1); else if(r.act==='up') peLvGo(n,1); else if(r.act==='all'){ setMod(n,'lv','all'); n.msg='all floors: the plan shows the ground floor, 3D the house'; redraw(n); } else if(r.act==='add') peLvAdd(n); else peLvCopy(n); return true; }
 
+// ---------- мастер «новый дом»: сцена целиком по размерам; если на плане уже что-то есть — второе нажатие подтверждает замену ----------
+function peNewHouse(n){ const s=n.sc, busy=s.pts.length||s.rooms.length||s.objs.length||(s.elec||[]).length||(s.hv||[]).length||s.cams.length||s.ants.length, now=performance.now();
+  if(busy && !(n.wzArm && now-n.wzArm<7000)){ n.wzArm=now; n.msg='the scene is not empty: press «Build the house» once more within 7 s to replace it (↶ brings it back)'; redraw(n); return; }
+  n.wzArm=0; const p=n.p; n.sc=peBuildHouse({w:+p.wzw,d:+p.wzd,floors:+p.wzf,layout:p.wzlay,roof:p.wzroof,angle:+p.wzang,h:+p.wh,t:+p.wt,mat:p.mat,slab:.22});
+  n.sel=null; n.selKind=''; n.chain=null; n.chainPts=[]; n.wfrom=null; n.wvia=[]; n.rectA=null; n.vw.fit=false; setMod(n,'lv','all');
+  n.msg='house '+(+p.wzw)+' × '+(+p.wzd)+' m, '+n.sc.rooms.length+' room'+(n.sc.rooms.length===1 ? '' : 's')+', '+(+p.wzf)+' floor'+(+p.wzf===1 ? '' : 's')+(n.sc.roofs.length ? ', '+p.wzroof+' roof' : '')+' — change anything by hand; the climate, the loads and the sheet read it'; peTouch(n); }
+
 // ---------- комната по размерам: справа от выбранной (общая стена), иначе правее всего плана ----------
 function peAddRoomBySize(n){ const s=n.sc, w=+n.p.rw, h=+n.p.rh; if(!(w>=.3&&h>=.3)){ n.msg='room: width and depth ≥ 0.3 m'; redraw(n); return; }
   const base=n.sel&&n.sel.k==='room' ? s.rooms.find(r=>r.id===n.sel.id) : null, at=peNextRoomPos(s,base), R=base ? peRoomRect(s,base) : null, y0=R ? R.y0 : at.y;
@@ -269,14 +276,15 @@ function peUse(n,P,tool,x,y,hit){
     const w=peWall(s,hit.id), u=peWallU(n,P,w,x,y), o=peAddObj(s,tool,{wall:w.id,u}); peSelect(n,'obj',o.id); peTouch(n); return;
   }
   if(tool==='box'||tool==='column'){ const g=peGround(n,P,x,y,{noPt:true}), o=peAddObj(s,tool,{x:g.x,y:g.y,z:LV.z}); peSelect(n,'obj',o.id); peTouch(n); return; }
-  if(PE_EL[tool]){ const g=peGround(n,P,x,y,{noPt:true}), e=peAddEl(s,tool,g.x,g.y,{}); e.z+=LV.z; peSelect(n,'el',e.id); peTouch(n); return; }
+  const wsn=(g,type)=>{ if(p.wsnap===false || !PE_WALL_DEV.has(type)) return; const q=peSnapToWall(s,g.x,g.y,LV.k,.6); if(q){ g.x=q.x; g.y=q.y; n.msg=type+' on the wall '+q.wall.id; } };
+  if(PE_EL[tool]){ const g=peGround(n,P,x,y,{noPt:true}); wsn(g,tool); const e=peAddEl(s,tool,g.x,g.y,{}); e.z+=LV.z; peSelect(n,'el',e.id); peTouch(n); return; }
   if(tool==='wire'){                                               // провод: клик по устройству, затем по второму (цепочка продолжается от второго); пустое место — точка изгиба трассы
     if(hit && hit.kind==='el'){
       if(n.wfrom && n.wfrom!==hit.id){ const w=peAddWire(s,n.wfrom,hit.id,n.wvia&&n.wvia.length ? {via:n.wvia} : {}); if(w){ peSelect(n,'wire',w.id); const L=peWireLen(s,w); n.msg='wire '+L.len.toFixed(2)+' m ('+L.total.toFixed(2)+' m with the reserve) · click the next device to continue, Esc ends'; } n.wfrom=hit.id; n.wvia=[]; peTouch(n); return; }
       n.wfrom=hit.id; n.wvia=[]; n.msg='wire: click the next device (a click on empty floor adds a bend)'; redraw(n); return; }
     if(n.wfrom){ const g=peGround(n,P,x,y,{noPt:true}); (n.wvia??=[]).push([g.x,g.y]); redraw(n); return; }
     n.msg='wire: click a socket, switch or light first'; redraw(n); return; }
-  if(tool==='hvdev'){ const g=peGround(n,P,x,y,{noPt:true}), type=HV_T[p.hvtype] ? p.hvtype : 'radiator', e=hvAdd(s,type,g.x,g.y,{}); e.z+=LV.z; peSelect(n,'hv',e.id); peTouch(n); return; }
+  if(tool==='hvdev'){ const g=peGround(n,P,x,y,{noPt:true}), type=HV_T[p.hvtype] ? p.hvtype : 'radiator'; wsn(g,type); const e=hvAdd(s,type,g.x,g.y,{}); e.z+=LV.z; peSelect(n,'hv',e.id); peTouch(n); return; }
   if(tool==='hvlink'){                                              // труба / воздуховод: клик по устройству, затем по второму (цепочка продолжается); пустое место — изгиб трассы
     if(hit && hit.kind==='hv'){
       if(n.wfrom && n.wfrom!==hit.id){ const l=hvLink(s,n.wfrom,hit.id,n.wvia&&n.wvia.length ? {via:n.wvia} : {}); if(l){ peSelect(n,'pp',l.id); n.msg=hvLinkKind(s,l)+' '+hvLinkLen(s,l).len.toFixed(2)+' m · click the next device to continue, Esc ends'; } else n.msg='a pipe joins boilers, radiators, floor loops and manifolds; a duct — units, fans, supply terminals and extract grilles'; n.wfrom=hit.id; n.wvia=[]; peTouch(n); return; }
@@ -567,13 +575,14 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
   // area — площадь комнат, м²; margin — наименьший запас приёмников над чувствительностью, дБ; cover — доля комнат под камерами, 0…1; sig — доля комнат с сигналом выше порога, 0…1; ncam / nant — число
   ins:[{n:'rec',t:'rec'},{n:'lat',t:'num'},{n:'lon',t:'num'},{n:'alt',t:'num'},{n:'az',t:'num'},{n:'el',t:'num'},{n:'fov',t:'num'}],
   outs:[{n:'lines',t:'txt'},{n:'rec',t:'rec'},{n:'area',t:'num'},{n:'loss',t:'num'},{n:'vent',t:'num'},{n:'cover',t:'num'},{n:'sig',t:'num'},{n:'ncam',t:'num'},{n:'nant',t:'num'},{n:'margin',t:'num'}],
-  groups:[{n:'View & snapping',open:false},{n:'Walls, rooms, openings'},{n:'Cameras',open:false},{n:'Radio',open:false},{n:'Climate',open:false},{n:'Loads',open:false},{n:'Plan check',open:false},{n:'Underlay',open:false},{n:'Project & export',open:false},{n:'Geo reference',open:false},{n:'Edit'}],
+  groups:[{n:'New house',open:false},{n:'View & snapping',open:false},{n:'Walls, rooms, openings'},{n:'Cameras',open:false},{n:'Radio',open:false},{n:'Climate',open:false},{n:'Loads',open:false},{n:'Plan check',open:false},{n:'Underlay',open:false},{n:'Project & export',open:false},{n:'Geo reference',open:false},{n:'Edit'}],
   params:[{n:'tool',t:'select',opts:PE_TOOLS.map(t=>t[0]),d:'select',label:'tool (also the strip on the canvas)',fn:n=>{ n.chain=null; n.chainPts=[]; n.wfrom=null; n.wvia=[]; redraw(n); }},
           {n:'view',t:'select',opts:['plan','3D'],d:'plan',label:'view'},
           {n:'vaz',g:'View & snapping',t:'range',min:-180,max:180,step:1,d:-30,label:'3D: turn, °'},
           {n:'vel',g:'View & snapping',t:'range',min:5,max:90,step:1,d:40,label:'3D: elevation, °'},
           {n:'snap',g:'View & snapping',t:'select',opts:['0','0.05','0.1','0.25','0.5','1'],d:'0.1',label:'snap to the grid, m (0 — off)'},
           {n:'ortho',g:'View & snapping',t:'check',d:true,label:'walls snap to 15° steps'},
+          {n:'wsnap',g:'View & snapping',t:'check',d:true,label:'devices on walls: a socket, switch, panel, load, radiator, boiler, heater, manifold put within 0.6 m of a wall of the floor stands on its face (the side you tapped; inside the wall — the room side)'},
           {n:'lv',t:'select',opts:['all','-2','-1','0','1','2','3'],d:'all',label:'level: all (3D — the house above the ground with the roof, plan — the ground floor) · a number — that floor (3D — it and the ones below; 0 — ground, −1 — cellar); the signal is computed 1 m above its floor',fn:n=>{ n.rev=(n.rev||0)+1; redraw(n); }},
           {n:'camview',g:'Cameras',t:'check',d:true,label:'the view from the selected camera (3D, a window in the corner; tap it to enlarge)'},
           {n:'ztgt',g:'Cameras',t:'range',min:.1,max:3,step:.1,d:1,label:'cameras: the target height above the floor, m (a person ≈ 1, a face ≈ 1.6, a car number plate ≈ 0.5) — a wall, a fence or a box hides it only where the line of sight passes within their height',fn:n=>{ n.rev=(n.rev||0)+1; redraw(n); }},
@@ -649,6 +658,13 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
           {n:'emit',g:'Geo reference',t:'range',min:0,max:60,step:1,d:10,label:'repeat the records every … s (Video Overlay forgets objects after its «keep» time; 0 — only on change)',adv:true},
           {n:'pts',g:'View & snapping',t:'select',opts:['auto','all'],d:'auto',label:'points: auto — hide the helper ones (wall ends and room corners from Site Plan) · all',adv:true},
           {n:'imp',g:'Geo reference',t:'check',d:true,label:'input rec: add / move points by name (from Site Plan)',adv:true},
+          {n:'wzw',g:'New house',t:'num',d:10,label:'house width, m (west–east)'},
+          {n:'wzd',g:'New house',t:'num',d:8,label:'house depth, m (south–north)'},
+          {n:'wzf',g:'New house',t:'select',opts:['1','2','3'],d:'1',label:'floors (the upper ones copy the lower: bedrooms and a bath, no entrance door)'},
+          {n:'wzlay',g:'New house',t:'select',opts:Object.keys(PW_LAYOUTS),d:'three rooms',label:'layout: one room · living + kitchen · + bath · living, bedroom, kitchen, bath'},
+          {n:'wzroof',g:'New house',t:'select',opts:PW_ROOFS,d:'gable',label:'roof: gable · hip · shed · none (the overhang is 0.5 m)'},
+          {n:'wzang',g:'New house',t:'select',opts:['20','30','35','45'],d:'30',label:'roof slope, ° (snow load falls with it: none at 60°)'},
+          {n:'wzgo',g:'New house',t:'button',label:'✦ Build the house (wall thickness, height and material from «Walls, rooms, openings»; replaces the scene — press twice if it is not empty; ↶ brings it back)',fn:n=>peNewHouse(n)},
           {n:'rw',g:'Walls, rooms, openings',t:'num',d:4,label:'new room width, m (the button below places a room rw × rh)'},
           {n:'rh',g:'Walls, rooms, openings',t:'num',d:3,label:'new room depth, m'},
           {n:'addroom',g:'Walls, rooms, openings',t:'button',label:'＋ Room rw × rh (right of the selected room with a shared wall, else right of the plan)',fn:n=>peAddRoomBySize(n)},

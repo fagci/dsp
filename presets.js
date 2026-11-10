@@ -8976,6 +8976,15 @@ pe.size.w=760; pe.size.h=620; applySize(pe);
 addEdge(sp.id,'rec',pe.id,'rec');
 markWiresDirty();
 });
+preset('Plan Editor: New House in One Press — Size, Floors, Layout, Roof', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A house in one press. Group «New house» in Plan Editor: width, depth, floors (1–3), the layout (one room · living + kitchen · + bath · living, bedroom, kitchen and bath), the roof (gable, hip, shed, none) and its slope; the wall thickness, height and material are taken from the group «Walls, rooms, openings». The button «✦ Build the house» makes the outer and inner walls, the rooms with their use, a window in each outer wall (a small one for the bath), the entrance door on the south side of the living room, doors so that every room can be reached, the slabs between the floors and the roof; the upper floors are bedrooms and a bath. Then it is an ordinary plan: move a corner, drag a wall, put a radiator on a wall (devices snap to the wall face), switch the layer to «climate» or «loads», export the sheet. With something already on the plan the button asks to be pressed twice (↶ brings the old plan back). Here a house of 10 × 8 m, two floors, brick 40 cm, a gable roof of 30° is built; try another layout, floors or a roof and press the button again.'});
+nt.size.w=1180; nt.size.h=130; applySize(nt);
+const sc=peBuildHouse({w:10,d:8,floors:2,layout:'three rooms',roof:'gable',angle:30,h:2.7,t:.4,mat:'brick'});
+const pe=addNode('planedit',40,200,{view:'3D',lv:'all',layer:'none',snap:'0.1',wzw:10,wzd:8,wzf:'2',wzlay:'three rooms',wzroof:'gable',wzang:'30',wt:.4,mat:'brick',scene:JSON.stringify(sc)});
+pe.size.w=860; pe.size.h=640; applySize(pe);
+markWiresDirty();
+});
 preset('Plan Editor: Wiring Groups — Consumers, Breakers, Cable and Voltage Drop', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Groups of the wiring. A group is everything fed by one cable leaving the panel (through junction boxes, switches and sockets further down). Plan Editor lists each group in the readout: devices, power, current I = P/(230 V·cosφ), the breaker (auto — the nearest standard rating not below the current; to set one by hand, select the first cable out of the panel and use «breaker» — in Site Plan «wire P1 J1 … amp 16»), the cable at the head, the cross-section the current needs, the longest run and the voltage drop to the farthest load (2ρLI/S per section, copper). A ⚠ says what is wrong: a breaker below the current, a cable that cannot take the breaker or its section current, a drop over 5 %. A panel line sums its groups with the demand factor 0.7 and picks the main breaker, the cable from the inlet is checked against it; consumers not wired to a panel are listed as «not fed». '+

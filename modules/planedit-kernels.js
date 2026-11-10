@@ -230,6 +230,15 @@ function peBoxes(s){
 }
 // положение проёма в плане: центр и вдоль-вектор (для рисования)
 function peOpenPlace(s,o){ const w=peWall(s,o.wall); if(!w) return null; const [a,b]=peWallEnds(s,w), L=Math.hypot(b.x-a.x,b.y-a.y)||1; return {x:a.x+(b.x-a.x)*o.u,y:a.y+(b.y-a.y)*o.u,ux:(b.x-a.x)/L,uy:(b.y-a.y)/L,t:w.t,L}; }
+// привязка устройства к стене: ближайшая стена этажа lv в пределах tol от её грани; точка встаёт на грань со стороны щелчка (щелчок внутри стены — со стороны комнаты)
+const PE_WALL_DEV=new Set(['socket','switch','panel','load','inlet','radiator','boiler','heater','manifold']);
+function peSnapToWall(s,x,y,lv=0,tol=.6){ let best=null;
+  for(const w of s.walls){ if((w.lv||0)!==(lv||0) || w.fk || w.mat==='mesh' || w.mat==='cord') continue; const [a,b]=peWallEnds(s,w); if(!a||!b) continue; const dx=b.x-a.x, dy=b.y-a.y, L=Math.hypot(dx,dy); if(L<.05) continue;
+    const ux=dx/L, uy=dy/L, along=(x-a.x)*ux+(y-a.y)*uy; if(along<0||along>L) continue; const side=-(x-a.x)*uy+(y-a.y)*ux, d=Math.abs(side)-(w.t||.2)/2;   // side>0 — слева от a→b
+    if(d>tol) continue; if(!best||d<best.d) best={w,a,ux,uy,along,side,d,L}; }
+  if(!best) return null; const {w,a,ux,uy,along,side}=best, nx=-uy, ny=ux; let sg=side>=0 ? 1 : -1;
+  if(Math.abs(side)<.05){ const mx=a.x+ux*along, my=a.y+uy*along, off=(w.t||.2)/2+.15, inL=s.rooms.some(r=>(r.lv||0)===(lv||0) && peInPoly(peRoomPoly(s,r),mx+nx*off,my+ny*off)), inR=s.rooms.some(r=>(r.lv||0)===(lv||0) && peInPoly(peRoomPoly(s,r),mx-nx*off,my-ny*off)); if(inR&&!inL) sg=-1; else if(inL&&!inR) sg=1; }
+  const o=(w.t||.2)/2+.03; return {x:+(a.x+ux*along+nx*sg*o).toFixed(3),y:+(a.y+uy*along+ny*sg*o).toFixed(3),wall:w,u:along/best.L,nx:nx*sg,ny:ny*sg}; }
 // ближайшая стена к точке: {wall,u,d,x,y} (u — доля, x,y — проекция)
 function peNearestWall(s,x,y){
   let best=null;
