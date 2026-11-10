@@ -80,7 +80,7 @@ function spTemplate(kind,R){ R=R||{}; const names=R.names||[], used=new Set([...
 function spNum(t){ if(t==null) return NaN; const s=String(t).replace(/^[±~]|^\+-/,'').replace(/(\d),(\d)/,'$1.$2'); return /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(s) ? +s : NaN; }
 function spParse(text,o={}){
   const sd=o.sd>0 ? o.sd : 0.03, sa=o.sa>0 ? o.sa : 2, sg=o.sg>0 ? o.sg : 5, eye0=o.eye||0;
-  const names=[], idx=new Map(), obs=[], polys=[], errors=[], opens=[], outerSel=[], edgeT=[]; let mirror=false, height=NaN, outer=NaN, outerMat=null, innerMat=null; const edgeMat=[];
+  const names=[], idx=new Map(), obs=[], polys=[], errors=[], opens=[], outerSel=[], edgeT=[], edgeOM=[]; let mirror=false, height=NaN, outer=NaN, outerMat=null, innerMat=null; const edgeMat=[];
   const levels=[{name:'1',z:0,zSet:true,li:-1}], roofs=[], fences=[], grounds=[], sources=[], posts=[], canopies=[], elec=[], wires=[], pps=[], uses=[]; let lvCur=levels[0], slab={t:.25,mat:'concrete'};
   const pt=n=>{ if(!idx.has(n)){ idx.set(n,names.length); names.push(n); } return idx.get(n); };
   const one=(raw,li,depth=0)=>{
@@ -244,12 +244,12 @@ function spParse(text,o={}){
     const sides=[]; if(w.includes('-')){ const [a,b]=w.split('-'); if(idx.has(a) && idx.has(b)) for(const pl of polys){ const k=pl.ids.length; pl.ids.forEach((id,i)=>{ const j=pl.ids[(i+1)%k]; if((id===idx.get(a) && j===idx.get(b)) || (id===idx.get(b) && j===idx.get(a))) sides.push([id,j]); }); } }
     else for(const pl of polys){ if(pl.plot || !pl.ids.every(id=>new RegExp('^'+w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\d+$').test(names[id]))) continue; pl.ids.forEach((id,i)=>sides.push([id,pl.ids[(i+1)%pl.ids.length]])); }
     if(!sides.length){ errors.push({line:sel.li+1,text:w,msg:'outer: «'+w+'» is neither a room (ver → ver1…ver4) nor a side of a room (ver1-ver2)'}); continue; }
-    for(const [a,b] of sides){ if(sel.mt) edgeMat.push({a,b,mat:sel.mt,li:sel.li}); if(isFinite(sel.t)) edgeT.push({a,b,t:sel.t,li:sel.li}); } }
+    for(const [a,b] of sides){ if(sel.mt) edgeOM.push({a,b,mat:sel.mt,li:sel.li}); if(isFinite(sel.t)) edgeT.push({a,b,t:sel.t,li:sel.li}); } }
   // отметки этажей без z: над предыдущим (по тексту) — его пол + высота его комнат + перекрытие
   for(let i=0;i<levels.length;i++){ const L=levels[i]; if(L.zSet) continue;                 // над самым верхним из уже известных
     let pv=null; for(let k=0;k<i;k++) if(!pv || levels[k].z>pv.z) pv=levels[k];
     let hh=0; for(const pl of polys) if(pl.lv===pv) hh=Math.max(hh,pl.h>0 ? pl.h : height>0 ? height : 2.7); L.z=pv.z+(hh||2.7)+slab.t; }
-  return {names,obs,polys,errors,mirror,opens,posts,canopies,edgeT,outer,outerMat,innerMat,edgeMat,levels,roofs,slab,fences,grounds,sources,elec,wires,pps,uses};
+  return {names,obs,polys,errors,mirror,opens,posts,canopies,edgeT,edgeOM,outer,outerMat,innerMat,edgeMat,levels,roofs,slab,fences,grounds,sources,elec,wires,pps,uses};
 }
 
 // «room ИМЯ 4.48 3.74 4.46 3.74 [d 5.8] [d2 5.9]» — комната обходом по периметру: стороны по порядку, углы ИМЯ1, ИМЯ2… расставляются сами.
@@ -605,6 +605,7 @@ function spSolve(text,opt={}){
   for(const m of P.edgeMat||[]){ const side=P.polys.some(pl=>{ const k=pl.ids.length; return pl.ids.some((id,i)=>(id===m.a && pl.ids[(i+1)%k]===m.b) || (id===m.b && pl.ids[(i+1)%k]===m.a)); });
     if(!side){ out.errors.push({line:m.li+1,text:P.names[m.a]+'-'+P.names[m.b],msg:'material: '+P.names[m.a]+'-'+P.names[m.b]+' is not a side of a room'}); continue; }
     out.mats.edge[[P.names[m.a],P.names[m.b]].sort().join('|')]=m.mat; }
+  out.mats.edgeOM={}; for(const m of P.edgeOM||[]) out.mats.edgeOM[[P.names[m.a],P.names[m.b]].sort().join('|')]=m.mat;
   out.mats.edgeT={}; for(const m of P.edgeT||[]) out.mats.edgeT[[P.names[m.a],P.names[m.b]].sort().join('|')]=m.t;
   out.ground=out.pts.length ? out.pts.map(p=>p.z) : [];
   out.edges=[]; { const seen=new Set(); for(const o of obs) if((o.k==='d'||o.k==='h'||o.k==='dz'||o.k==='az') && o.b!==undefined){ const key=Math.min(o.a,o.b)+'-'+Math.max(o.a,o.b); if(!seen.has(key)){ seen.add(key); out.edges.push([o.a,o.b]); } } }
@@ -632,7 +633,7 @@ function spPoly(pts){
 // поэтому дверь между комнатами пробивает общую стену насквозь, как ни записана — со стороны любой комнаты.
 // → {walls:[{id,x1,y1,x2,y2,t,h,kind:'outer'|'inner'}], opens:[{wall,u (0…1 от x1,y1),w,h,sill,type}]}
 function spWalls(R,o={}){
-  const M=o.mats||R.mats||{}, mOut=M.outer||'brick', mIn=M.inner||mOut, eMat=e=>(M.edge||{})[[e.a,e.b].sort().join('|')], eT=e=>(M.edgeT||{})[[e.a,e.b].sort().join('|')];
+  const M=o.mats||R.mats||{}, mOut=M.outer||'brick', mIn=M.inner||mOut, eMat=e=>(M.edge||{})[[e.a,e.b].sort().join('|')], eT=e=>(M.edgeT||{})[[e.a,e.b].sort().join('|')], eOM=e=>(M.edgeOM||{})[[e.a,e.b].sort().join('|')];
   const outer=o.outer>0 ? o.outer : .4, maxGap=o.maxGap>0 ? o.maxGap : .8, P=n=>R.pts.find(p=>p.name===n), E=[], rooms=[];
   (o.polys||R.polys).forEach((pl,ri)=>{
     const V=pl.names.map(P), m=V.length; let a2=0; for(let i=0;i<m;i++){ const p=V[i], q=V[(i+1)%m]; a2+=p.x*q.y-q.x*p.y; }
@@ -685,7 +686,7 @@ function spWalls(R,o={}){
     if(lo<.01 && pe.convexEnd && !byEnd(pe)){ const t=pl?.t||0; lo-=t/Math.max(.3,pe.sinEnd); }
     if(hi>e.L-.01 && e.convexEnd && byEnd(e)){ const t=e.next.pieces[0]?.t||0; hi+=t/Math.max(.3,e.sinEnd); }
     const ox=e.nx*pc.t/2, oy=e.ny*pc.t/2, h=Math.max(e.h,pc.inner ? pc.f.h : 0);
-    const w={id:'spw:'+e.a+'-'+e.b+':'+k,x1:e.px+e.ux*lo+ox,y1:e.py+e.uy*lo+oy,x2:e.px+e.ux*hi+ox,y2:e.py+e.uy*hi+oy,t:+pc.t.toFixed(3),h:h>0 ? h : 0,kind:pc.inner ? 'inner' : 'outer',mat:eMat(e)||(pc.inner ? eMat(pc.f)||mIn : mOut),e,lo,hi};
+    const w={id:'spw:'+e.a+'-'+e.b+':'+k,x1:e.px+e.ux*lo+ox,y1:e.py+e.uy*lo+oy,x2:e.px+e.ux*hi+ox,y2:e.py+e.uy*hi+oy,t:+pc.t.toFixed(3),h:h>0 ? h : 0,kind:pc.inner ? 'inner' : 'outer',mat:eMat(e)||(pc.inner ? (eOM(e) && eOM(e)===eOM(pc.f) ? eOM(e) : eMat(pc.f)||mIn) : eOM(e)||mOut),e,lo,hi};   // «outer ver … дерево»: наружные стены этих комнат и перегородки между ними; стена с другой комнатой (домом) — обычная
     walls.push(w); key.set(pc,w);
   });
   // без перекрытий: ось стены не должна заходить в тело другой — иначе луч там пересечёт две оси и потери удвоятся; конец, ушедший в другую стену,
