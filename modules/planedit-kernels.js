@@ -7,10 +7,10 @@
 
 const PE_D=Math.PI/180;
 // затухание стены, дБ на 10 см толщины: уровень сигнала на пути через стену = мат × толщина / 0,1 м
-const PE_MAT={brick:4,concrete:6,block:3,drywall:1.5,wood:2,glass:1,metal:20,mesh:6,cord:0};          // mesh — сетка-рабица (забор): 0,05 м → 3 дБ          // block — газо- / пеноблок (ячеистый бетон)
+const PE_MAT={brick:4,concrete:6,block:3,drywall:1.5,wood:2,glass:1,metal:20,mesh:6,cord:0,picket:3,euro:12,weld:8,bars:10,stone:4,hedge:1.5};   // забор: picket — штакетник с зазорами, euro — евроштакетник (металл с зазорами), weld — сварная 3D-панель, bars — ковка / решётка, stone — габион (камень в сетке), hedge — живая изгородь          // mesh — сетка-рабица (забор): 0,05 м → 3 дБ          // block — газо- / пеноблок (ячеистый бетон)
 // частотная зависимость: потери = таблица (на 2,4 ГГц) × (f / 2,4 ГГц)^k; k — по материалу (эмпирика типа ITU-R P.2040: плотные материалы растут быстрее, металл почти не зависит)
-const PE_MATCOL={brick:[196,132,104],concrete:[168,174,180],block:[214,206,186],drywall:[230,229,222],wood:[190,146,96],glass:[150,206,232],metal:[118,128,148],mesh:[160,170,180],cord:[236,196,58]};   // цвет стены по материалу (3D / план)
-const PE_MATK={brick:.8,concrete:.9,block:.8,mesh:.3,drywall:.5,wood:.6,glass:.6,metal:.1};
+const PE_MATCOL={brick:[196,132,104],concrete:[168,174,180],block:[214,206,186],drywall:[230,229,222],wood:[190,146,96],glass:[150,206,232],metal:[118,128,148],mesh:[160,170,180],cord:[236,196,58],picket:[222,190,130],euro:[96,125,139],weld:[120,144,156],bars:[84,90,98],stone:[150,142,130],hedge:[76,140,72]};   // цвет стены по материалу (3D / план)
+const PE_MATK={brick:.8,concrete:.9,block:.8,mesh:.3,drywall:.5,wood:.6,glass:.6,metal:.1,picket:.4,euro:.15,weld:.3,bars:.15,stone:.8,hedge:.4};
 const PE_OPEN_LOSS={door:3,window:2};                          // проём: тонкая дверь / стекло, дБ на 2,4 ГГц
 const PE_OPEN_K={door:.4,window:.6};
 const peFk=(f,k)=>Math.pow(Math.max(30,Math.min(100000,f||2400))/2400,k);
@@ -311,7 +311,7 @@ function peWallLoss(s,ax,ay,x,y,f=2400,az,z,skip){
 }
 // ---------- отражения (метод мнимых источников) ----------
 // потери на отражение от грани, дБ (|Γ|² типичных стройматериалов на 1–6 ГГц): металл почти зеркало, гипсокартон — слабо
-const PE_REFL={brick:7,concrete:5,block:8,drywall:11,wood:9,glass:6,metal:1,mesh:6};
+const PE_REFL={brick:7,concrete:5,block:8,drywall:11,wood:9,glass:6,metal:1,mesh:6,picket:9,euro:2,weld:6,bars:3,stone:7,hedge:10};
 const peReflLoss=mat=>PE_REFL[mat]??8;
 // отражающие грани: у каждой стены две — по обе стороны оси на t/2; n — наружу от стены на эту сторону
 function peFaces(s){ const F=[]; for(const w of s.walls){ const [a,b]=peWallEnds(s,w), L=Math.hypot(b.x-a.x,b.y-a.y); if(L<.05) continue; const ux=(b.x-a.x)/L, uy=(b.y-a.y)/L;
@@ -425,7 +425,7 @@ function peImportPoints(s,recs){
     for(const q of r.walls){ const src=pre+q.id; keep.add(src); let w=s.walls.find(w=>w.src===src);
       if(!w && s.walls.some(x=>x.det===src)) continue;                                                       // отвязанная стена — своя
       if(!w){ const a=peAddPoint(s,+q.x1,+q.y1), b=peAddPoint(s,+q.x2,+q.y2); a.src=b.src=src; w=peAddWall(s,a.id,b.id,{t:+q.t,h:+q.h>0 ? +q.h : 2.7}); w.src=src; }
-      const [a,b]=peWallEnds(s,w); a.x=+q.x1; a.y=+q.y1; b.x=+q.x2; b.y=+q.y2; w.t=+q.t>0 ? +q.t : w.t; if(+q.h>0) w.h=+q.h; if(q.mat && PE_MAT[q.mat]!=null) w.mat=q.mat;
+      const [a,b]=peWallEnds(s,w); a.x=+q.x1; a.y=+q.y1; b.x=+q.x2; b.y=+q.y2; w.t=+q.t>0 ? +q.t : w.t; if(+q.h>0) w.h=+q.h; if(q.mat && PE_MAT[q.mat]!=null) w.mat=q.mat; if(q.fk) w.fk=String(q.fk); else delete w.fk;
       if(+q.z0) w.z0=+q.z0; else delete w.z0; if(+q.lv) w.lv=+q.lv; else delete w.lv; }
     s.slabs=Array.isArray(r.slabs) ? r.slabs.map(q=>({z:+q.z,t:+q.t,mat:q.mat,lv:+q.lv||0,poly:q.poly})) : [];          // перекрытия, крыша, этажи — целиком от источника
     s.roofs=Array.isArray(r.roofs) ? r.roofs.map(q=>({...q})) : [];

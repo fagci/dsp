@@ -22,7 +22,7 @@
      level 2 [z 2.95] · level cellar z -2.2   этаж: комнаты ниже по тексту — на нём (без z — над самым верхним из уже объявленных: его пол + высота комнат + перекрытие); подвал — с минусом
      slab 0.25 concrete       перекрытия между этажами (толщина, материал) · same A B — B ровно над / под A (угол этажа над углом нижнего)
      roof gable|hip|shed|flat [30] [overhang 0.5] [ridge long|short] [level 2]   крыша над этажом (по умолчанию — верхним): угол, свес, конёк вдоль длинной / короткой стороны
-     fence A B C … [h 1.8] [sheet|mesh|wood|brick|concrete|block|stakes] [every 5] [closed]   забор по точкам; stakes / колышки — колышки в точках и шнур между ними (every — шаг, м); (профлист, рабица, штакетник…; можно по-русски), для сигнала — стена
+     fence A B C … [h 1.8] [sheet|mesh|wood|picket|euro|panel|forged|brick|concrete|block|gabion|hedge|stakes] [every 5] [closed] [gate 1 3.5] [wicket 2 [1.0] [at 0.5]]   забор по точкам; stakes / колышки — колышки в точках и шнур между ними (every — шаг, м); (профлист, рабица, штакетник…; можно по-русски), для сигнала — стена
      road A B … [w 3.5] [asphalt|gravel|tile] · area A B C … [grass|asphalt|gravel|tile|garden|water]   дорога (полоса) и площадка — покрытие земли
      light|socket|switch|panel|inlet|junction|load NAME POINT|A-B [dx м] [dy м | along м] [off м] [h м] [w Вт]   электрика (A-B — на стене комнаты: along — от угла A вдоль стены, off — вглубь комнаты): светильник, розетка, выключатель, щиток, ввод, распредкоробка у точки (смещение на восток / север, высота над точкой)
      wire A B C [cable 3x1.5 · 2x1.5 · 5x2.5 … — любое «жилыxсечение»] [z 2.5] [amp 16]   провод по цепочке устройств (z — высота трассы); ввод — 5x2.5, розетка — 3x2.5, иначе 3x1.5
@@ -42,8 +42,9 @@ const SP_MAT={brick:'brick',concrete:'concrete',block:'block',drywall:'drywall',
   'кирпич':'brick','бетон':'concrete','газоблок':'block','пеноблок':'block','шлакоблок':'block','шлакобетон':'block','керамзитоблок':'block','керамзитобетон':'block','блок':'block','гипсокартон':'drywall','гкл':'drywall','дерево':'wood','брус':'wood','стекло':'glass','металл':'metal'};
 const spMat=t=>SP_MAT[String(t||'').toLowerCase()]||null;
 // заборы: материал → {mat (Plan Editor), t (толщина, м)}; профлист — металл (сплошной лист экранирует), рабица — сетка (теряет немного, ячейка меньше волны не на всех частотах)
-const SP_FENCE_SPEC={stakes:{mat:'cord',t:.01},sheet:{mat:'metal',t:.1},mesh:{mat:'mesh',t:.05},wood:{mat:'wood',t:.03},brick:{mat:'brick',t:.25},concrete:{mat:'concrete',t:.15},block:{mat:'block',t:.2}};
-const SP_FENCE={stakes:'stakes',stake:'stakes',pegs:'stakes',peg:'stakes',cord:'stakes','колышки':'stakes','колья':'stakes','шнур':'stakes',sheet:'sheet',metal:'sheet','профлист':'sheet','металл':'sheet',mesh:'mesh','сетка':'mesh','рабица':'mesh',wood:'wood','дерево':'wood','штакетник':'wood',brick:'brick','кирпич':'brick',concrete:'concrete','бетон':'concrete',block:'block','блок':'block','газоблок':'block'};
+const SP_FENCE_SPEC={stakes:{mat:'cord',t:.01},sheet:{mat:'metal',t:.1},mesh:{mat:'mesh',t:.05},wood:{mat:'wood',t:.03},brick:{mat:'brick',t:.25},concrete:{mat:'concrete',t:.15},block:{mat:'block',t:.2},
+  picket:{mat:'picket',t:.03,h:1.5},euro:{mat:'euro',t:.03,h:1.8},panel:{mat:'weld',t:.05,h:1.5},forged:{mat:'bars',t:.02,h:1.5},gabion:{mat:'stone',t:.3,h:1.5},hedge:{mat:'hedge',t:.6,h:1.8}};   // h — высота по умолчанию, если не задана
+const SP_FENCE={stakes:'stakes',stake:'stakes',pegs:'stakes',peg:'stakes',cord:'stakes','колышки':'stakes','колья':'stakes','шнур':'stakes',sheet:'sheet',metal:'sheet','профлист':'sheet','металл':'sheet',mesh:'mesh','сетка':'mesh','рабица':'mesh',wood:'wood','дерево':'wood','штакетник':'wood',brick:'brick','кирпич':'brick',concrete:'concrete','бетон':'concrete',block:'block','блок':'block','газоблок':'block',picket:'picket','рейки':'picket',euro:'euro','евроштакетник':'euro','евро':'euro',panel:'panel','3d':'panel','3д':'panel','панель':'panel',forged:'forged',bars:'forged','ковка':'forged','кованый':'forged','решётка':'forged',gabion:'gabion','габион':'gabion',hedge:'hedge','изгородь':'hedge','живая':'hedge'};
 const SP_COVER={asphalt:'asphalt','асфальт':'asphalt',gravel:'gravel','гравий':'gravel','щебень':'gravel',tile:'tile','плитка':'tile',grass:'grass','газон':'grass','трава':'grass',garden:'garden','огород':'garden','грядки':'garden',water:'water','вода':'water','пруд':'water'};
 
 function spFrame(lat0,lon0){
@@ -116,14 +117,15 @@ function spParse(text,o={}){
     if(/^same$/i.test(T[0])){ const a=T[1], b=T[2]; if(!a || !b || T.length>3) return bad('same A B — B stands exactly above / below A (plan position)'); obs.push({k:'same',a:pt(a),b:pt(b),s:sig??.01,li}); return; }
     // участок: забор, дорога, площадка, внешний источник сигнала
     if(/^fence$/i.test(T[0])){                                                               // «fence A B C … [h 1.8] [sheet|mesh|wood|brick|concrete|block] [closed]»
-      const f={ids:[],h:1.8,mat:'sheet',closed:false,every:0,li}; let hSet=false;
+      const f={ids:[],h:1.8,mat:'sheet',closed:false,every:0,gates:[],li}; let hSet=false;
       for(let i=1;i<T.length;i++){ const t=T[i].toLowerCase();
+        if(t==='gate'||t==='wicket'||t==='ворота'||t==='калитка'){ const g={k:Math.round(spNum(T[i+1])),w:t==='gate'||t==='ворота' ? 3.5 : 1,u:.5,gate:t==='gate'||t==='ворота'}; i++; if(!(g.k>=1)) return bad('fence: '+t+' SEGMENT [WIDTH] [at 0.5] — the number of the segment (1 — A-B), the width, m, and where along it (0…1)'); if(spNum(T[i+1])>0 && T[i+1].toLowerCase()!=='at'){ g.w=spNum(T[++i]); } if((T[i+1]||'').toLowerCase()==='at'){ g.u=spNum(T[i+2]); i+=2; if(!(g.u>=0 && g.u<=1)) return bad('fence: at — 0…1 along the segment'); } if(!(g.w>.5 && g.w<12)) return bad('fence: the width of a gate / wicket is 0.5…12 m'); f.gates.push(g); continue; }
         if(t==='h'){ f.h=spNum(T[++i]); hSet=true; if(!(f.h>0 && f.h<10)) return bad('fence: h — height, m'); }
         else if(t==='every'){ f.every=spNum(T[++i]); if(!(f.every>=.5 && f.every<=100)) return bad('fence: every — the stake step, m (0.5…100); the stakes always stand at the points'); }
         else if(t==='closed') f.closed=true;
         else if(SP_FENCE[t]) f.mat=SP_FENCE[t];
         else f.ids.push(pt(T[i])); }
-      if(f.ids.length<2) return bad('fence A B [C …] [h 1.8] [sheet|mesh|wood|brick|concrete|block|stakes] [every 5] [closed]'); if(f.every>0 && f.mat!=='stakes') return bad('fence: «every» is for stakes (pegs with a cord)'); if(f.mat==='stakes' && !hSet) f.h=1; fences.push(f); return; }
+      if(f.ids.length<2) return bad('fence A B [C …] [h 1.8] [sheet|mesh|wood|picket|euro|panel|forged|brick|concrete|block|gabion|hedge|stakes] [every 5] [closed] [gate 1 3.5] [wicket 2]'); { const segs=f.ids.length-1+(f.closed && f.ids.length>2 ? 1 : 0); for(const g of f.gates) if(g.k>segs) return bad('fence: gate / wicket on the segment '+g.k+', the fence has '+segs); if(f.gates.length && f.mat==='stakes') return bad('fence: a cord of stakes has no gates'); } if(f.every>0 && f.mat!=='stakes') return bad('fence: «every» is for stakes (pegs with a cord)'); if(f.mat==='stakes' && !hSet) f.h=1; else if(!hSet && SP_FENCE_SPEC[f.mat].h) f.h=SP_FENCE_SPEC[f.mat].h; fences.push(f); return; }
     if(/^(road|area)$/i.test(T[0])){                                                         // «road A B … [w 3.5] [asphalt|gravel|tile]» · «area A B C … [grass|asphalt|gravel|tile|garden|water]»
       const kind=T[0].toLowerCase(), g={kind,ids:[],w:3.5,cover:kind==='road' ? 'asphalt' : 'grass',li};
       for(let i=1;i<T.length;i++){ const t=T[i].toLowerCase();
@@ -533,7 +535,7 @@ function spSolve(text,opt={}){
     out.levels=used.map((L,i)=>({name:L.name,z:L.z,idx:i-g})); out.roofSpecs=P.roofs; out.slab=P.slab; }
   // участок: точки уже решены
   const XY=i=>[out.pts[i].x,out.pts[i].y];
-  out.fences=P.fences.map(f=>({...SP_FENCE_SPEC[f.mat],kind:f.mat,h:f.h,every:f.every||0,closed:f.closed,names:f.ids.map(i=>P.names[i]),pts:f.ids.map(XY)}));
+  out.fences=P.fences.map(f=>({...SP_FENCE_SPEC[f.mat],kind:f.mat,gates:f.gates,h:f.h,every:f.every||0,closed:f.closed,names:f.ids.map(i=>P.names[i]),pts:f.ids.map(XY)}));
   out.grounds=P.grounds.map(g=>({kind:g.kind,cover:g.cover,w:g.w,names:g.ids.map(i=>P.names[i]),pts:g.ids.map(XY)}));
   // электрика: устройства у точек, провода по именам
   out.elec=P.elec.map(q=>{ const p=out.pts[q.a];
@@ -712,7 +714,8 @@ function spHouse(R,o={}){
   (R.fences||[]).forEach((f,i)=>{ const P=f.pts.slice(); if(f.closed && P.length>2) P.push(P[0]);
     for(let k=0;k+1<P.length;k++){ const [x1,y1]=P[k], [x2,y2]=P[k+1]; if(Math.hypot(x2-x1,y2-y1)<.02) continue;
       if(f.kind==='stakes') out.walls.push({id:'fence:'+i+':'+k,x1,y1,x2,y2,t:f.t,h:.03,mat:f.mat,kind:'fence',z0:+Math.max(0,f.h-.04).toFixed(3),lv:0});      // шнур — тонкая полоса у верхушек колышков
-      else out.walls.push({id:'fence:'+i+':'+k,x1,y1,x2,y2,t:f.t,h:f.h,mat:f.mat,kind:'fence',z0:0,lv:0}); }
+      else out.walls.push({id:'fence:'+i+':'+k,x1,y1,x2,y2,t:f.t,h:f.h,mat:f.mat,kind:'fence',fk:f.kind,z0:0,lv:0}); }
+    for(const g of f.gates||[]){ const id='fence:'+i+':'+(g.k-1), w=out.walls.find(q=>q.id===id); if(!w) continue; const L=Math.hypot(w.x2-w.x1,w.y2-w.y1), ww=Math.min(g.w,L), u=Math.max(ww/2/L,Math.min(1-ww/2/L,g.u)); out.opens.push({wall:id,u:+u.toFixed(4),w:+ww.toFixed(3),h:Math.min(f.h,2.2),sill:0,type:'door',gate:g.gate}); }
     if(f.kind==='stakes'){                                                                  // колышки: в каждой точке и, если задан шаг, через каждые «every» м вдоль линии
       const pts=f.closed && f.pts.length>2 ? f.pts.concat([f.pts[0]]) : f.pts, put=(x,y)=>out.stakes.push({id:'fence:'+i+':s'+out.stakes.length,x:+x.toFixed(3),y:+y.toFixed(3),h:f.h});
       for(let k=0;k<pts.length;k++){ if(!(f.closed && k===pts.length-1)) put(pts[k][0],pts[k][1]);
