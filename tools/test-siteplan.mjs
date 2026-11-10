@@ -292,6 +292,13 @@ ok('canopy: A = B → error',K.spSolve('P at 0 0\ncanopy P P').errors.length===1
 { const H=K.spHouse(K.spSolve('material block\nroom A 6 4 6 4\nroom B 3 4 3 4\nroom C 2 4 2 4\nwall A2-A3 B1-B4 0.2\nwall B2-B3 C1-C4 0.1\nA1 at 0 0\nA2 at 6 0\nouter B C 0.04 дерево'),{});
   const m=id=>H.walls.filter(w=>w.id.includes(id)).map(w=>w.kind+':'+w.mat).join(',');
   ok('outer wood for B, C: the wall B–C is wood, the wall A–B (shared with the block house) stays block',H.walls.some(w=>w.kind==='inner' && Math.abs(w.t-.1)<.02 && w.mat==='wood') && H.walls.some(w=>w.kind==='inner' && Math.abs(w.t-.2)<.02 && w.mat==='block'),H.walls.map(w=>w.id+' '+w.kind+' '+w.t+' '+w.mat).join(' | ')); }
+{ const base='A1 at 0 0\nA2 at 6 0\nroom A 6 4 6 4\nroom B 3 4 3 4\nwall A2-A3 B1-B4 0.2\n';
+  const mk=(extra,swap)=>{ const t=swap ? base.replace('room A 6 4 6 4\nroom B 3 4 3 4','room B 3 4 3 4\nroom A 6 4 6 4').replace('A1 at 0 0\nA2 at 6 0','A1 at 0 0\nA2 at 6 0') : base; const R=K.spSolve(t+extra), H=K.spHouse(R,{}); return {R,H,inner:H.walls.filter(w=>w.kind==='inner').map(w=>w.mat).join()}; };
+  ok('shared wall: «material» on one side only → that material, in any order of the rooms',mk('material A2-A3 wood').inner==='wood' && mk('material B1-B4 wood').inner==='wood' && mk('material A2-A3 wood',true).inner==='wood' && mk('material B1-B4 wood',true).inner==='wood');
+  ok('shared wall: «material» beats the group «outer room material» of the other side',mk('material A2-A3 glass\nouter B 0.04 дерево').inner==='glass' && mk('material A2-A3 glass\nouter B 0.04 дерево',true).inner==='glass');
+  const c1=mk('material A2-A3 wood\nmaterial B1-B4 glass'), c2=mk('material A2-A3 wood\nmaterial B1-B4 glass',true);
+  ok('shared wall: two different materials → an error (not a silent pick by order), the same result in any order',c1.R.errors.length===1 && c2.R.errors.length===1 && c1.inner===c2.inner,JSON.stringify([c1.R.errors,c2.R.errors,c1.inner,c2.inner]));
+  ok('one side, two materials / thicknesses → an error',mk('material A1-A2 wood\nmaterial A1-A2 glass').R.errors.length===1 && mk('outer A 0.04\nouter A1-A2 0.1').R.errors.length===1); }
 ok('outer: unknown room → error',K.spSolve('A1 at 0 0\nroom A 3 3 3 3\nouter Zed 0.04').errors.length===1 && K.spSolve('room A 3 3 3 3\nouter A').errors.length===1);
 { const H=K.spHouse(K.spSolve('H1 at 0 0\nH2 at 10 0\nroom H 10 4 10 4\ncanopy H1 H2 w 1.5 h 3 2.8 off 0.04 posts 5 ends d 0.1'),{}), cp=H.posts.filter(q=>q.name==='canopy post');
   ok('canopy ends: a column at each end (inset by d/2) + the given one → 3',cp.length===3,cp.length);

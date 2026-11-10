@@ -604,9 +604,10 @@ function spSolve(text,opt={}){
   out.mats={outer:P.outerMat||'brick',inner:P.innerMat||P.outerMat||'brick',edge:{}};
   for(const m of P.edgeMat||[]){ const side=P.polys.some(pl=>{ const k=pl.ids.length; return pl.ids.some((id,i)=>(id===m.a && pl.ids[(i+1)%k]===m.b) || (id===m.b && pl.ids[(i+1)%k]===m.a)); });
     if(!side){ out.errors.push({line:m.li+1,text:P.names[m.a]+'-'+P.names[m.b],msg:'material: '+P.names[m.a]+'-'+P.names[m.b]+' is not a side of a room'}); continue; }
-    out.mats.edge[[P.names[m.a],P.names[m.b]].sort().join('|')]=m.mat; }
-  out.mats.edgeOM={}; for(const m of P.edgeOM||[]) out.mats.edgeOM[[P.names[m.a],P.names[m.b]].sort().join('|')]=m.mat;
-  out.mats.edgeT={}; for(const m of P.edgeT||[]) out.mats.edgeT[[P.names[m.a],P.names[m.b]].sort().join('|')]=m.t;
+    const k=[P.names[m.a],P.names[m.b]].sort().join('|'); if(out.mats.edge[k] && out.mats.edge[k]!==m.mat) out.errors.push({line:m.li+1,text:k.replace('|','-'),msg:'material: the side '+k.replace('|','-')+' is given twice — '+out.mats.edge[k]+' and '+m.mat});
+    out.mats.edge[k]=m.mat; }
+  out.mats.edgeOM={}; for(const m of P.edgeOM||[]){ const k=[P.names[m.a],P.names[m.b]].sort().join('|'); if(out.mats.edgeOM[k] && out.mats.edgeOM[k]!==m.mat) out.errors.push({line:m.li+1,text:k.replace('|','-'),msg:'outer: the side '+k.replace('|','-')+' gets two materials — '+out.mats.edgeOM[k]+' and '+m.mat}); out.mats.edgeOM[k]=m.mat; }
+  out.mats.edgeT={}; for(const m of P.edgeT||[]){ const k=[P.names[m.a],P.names[m.b]].sort().join('|'); if(out.mats.edgeT[k]!==undefined && out.mats.edgeT[k]!==m.t) out.errors.push({line:m.li+1,text:k.replace('|','-'),msg:'outer: the side '+k.replace('|','-')+' gets two thicknesses — '+out.mats.edgeT[k]+' and '+m.t}); out.mats.edgeT[k]=m.t; }
   out.ground=out.pts.length ? out.pts.map(p=>p.z) : [];
   out.edges=[]; { const seen=new Set(); for(const o of obs) if((o.k==='d'||o.k==='h'||o.k==='dz'||o.k==='az') && o.b!==undefined){ const key=Math.min(o.a,o.b)+'-'+Math.max(o.a,o.b); if(!seen.has(key)){ seen.add(key); out.edges.push([o.a,o.b]); } } }
   return out;
@@ -676,6 +677,10 @@ function spWalls(R,o={}){
   // наружный угол закрывает одна стена — та, что в нём кончается (если её строит эта комната), иначе следующая: без перекрытий, луч через угол
   // не пересекает две оси (потери не удваиваются)
   const walls=[], key=new Map(), own=pc=>pc && !(pc.inner && pc.f.ri<pc.ri);
+  // материал общей стены не зависит от порядка комнат в тексте: явный «material A-B» с любой стороны важнее группового «outer КОМНАТА … материал» (он только если обе стороны в одной группе), иначе — «inner»
+  const nm=x=>x.a+'-'+x.b, shared=(e,f)=>{ const a=eMat(e), b=eMat(f);
+    if(a && b && a!==b){ const msg='wall '+nm(e)+' / '+nm(f)+': two different materials, '+a+' and '+b+' — set it on one side'; if(R.errors && !R.errors.some(q=>q.msg===msg)) R.errors.push({line:0,text:nm(e),msg}); return a<b ? a : b; }
+    return a||b||(eOM(e) && eOM(e)===eOM(f) ? eOM(e) : mIn); };
   for(const e of E) for(const pc of e.pieces) pc.ri=e.ri;
   for(const e of E) e.pieces.forEach((pc,k)=>{
     if(!own(pc)) return;
@@ -686,7 +691,7 @@ function spWalls(R,o={}){
     if(lo<.01 && pe.convexEnd && !byEnd(pe)){ const t=pl?.t||0; lo-=t/Math.max(.3,pe.sinEnd); }
     if(hi>e.L-.01 && e.convexEnd && byEnd(e)){ const t=e.next.pieces[0]?.t||0; hi+=t/Math.max(.3,e.sinEnd); }
     const ox=e.nx*pc.t/2, oy=e.ny*pc.t/2, h=Math.max(e.h,pc.inner ? pc.f.h : 0);
-    const w={id:'spw:'+e.a+'-'+e.b+':'+k,x1:e.px+e.ux*lo+ox,y1:e.py+e.uy*lo+oy,x2:e.px+e.ux*hi+ox,y2:e.py+e.uy*hi+oy,t:+pc.t.toFixed(3),h:h>0 ? h : 0,kind:pc.inner ? 'inner' : 'outer',mat:eMat(e)||(pc.inner ? (eOM(e) && eOM(e)===eOM(pc.f) ? eOM(e) : eMat(pc.f)||mIn) : eOM(e)||mOut),e,lo,hi};   // «outer ver … дерево»: наружные стены этих комнат и перегородки между ними; стена с другой комнатой (домом) — обычная
+    const w={id:'spw:'+e.a+'-'+e.b+':'+k,x1:e.px+e.ux*lo+ox,y1:e.py+e.uy*lo+oy,x2:e.px+e.ux*hi+ox,y2:e.py+e.uy*hi+oy,t:+pc.t.toFixed(3),h:h>0 ? h : 0,kind:pc.inner ? 'inner' : 'outer',mat:pc.inner ? shared(e,pc.f) : eMat(e)||eOM(e)||mOut,e,lo,hi};   // «outer ver … дерево»: наружные стены этих комнат и перегородки между ними; стена с другой комнатой (домом) — обычная
     walls.push(w); key.set(pc,w);
   });
   // без перекрытий: ось стены не должна заходить в тело другой — иначе луч там пересечёт две оси и потери удвоятся; конец, ушедший в другую стену,
