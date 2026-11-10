@@ -814,6 +814,26 @@ function spRowToLine(r){
   if(has(a) && isFinite(z) && !isFinite(x) && !isFinite(y)) return nm(a)+' z '+f(z)+sg(sig);
   return '';
 }
+// строки фигур с карты («NAME_1 gps …», … «poly NAME_1 …») к тексту плана: имя, уже занятое в плане (polygon1 снова после перезагрузки карты), заменяется свободным (polygon2, 3…),
+// иначе точки двух фигур сливаются в одну и план «сыплется»
+function spUniqueNames(existing,lines){
+  const used=new Set(String(existing||'').replace(/#.*/g,' ').split(/[\s;]+/).filter(Boolean)), groups=[]; let cur=[];
+  for(const l of lines){ cur.push(l); if(/^(poly|plot|fence)\s/.test(l)){ groups.push(cur); cur=[]; } }
+  if(cur.length) groups.push(cur);
+  const clash=b=>{ const re=new RegExp('^'+b.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'_\\d+$'); for(const u of used) if(re.test(u)) return true; return false; };
+  const out=[];
+  for(const g of groups){
+    let text=g.join('\n'); const bases=new Set(); for(const l of g){ const m=/^(\S+?)_\d+ gps /.exec(l); if(m) bases.add(m[1]); }
+    for(const b of bases){
+      if(!clash(b)) continue;
+      const m=/^(.*?)(\d+)$/.exec(b); let k=1, nb; do{ nb=m ? m[1]+(+m[2]+k) : b+(k+1); k++; }while(clash(nb) && k<1000);
+      text=text.replace(new RegExp('(^|\\s)'+b.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'_(\\d+)(?=\\s|$)','gm'),(x,pre,i)=>pre+nb+'_'+i);
+    }
+    for(const t of text.split(/[\s;]+/)) if(t) used.add(t);
+    out.push(...text.split('\n'));
+  }
+  return out;
+}
 const spRowsToText=rows=>(rows||[]).map(spRowToLine).filter(Boolean).join('\n');
 
 // путь к файлу плана в Files: «Plans/дача.txt» → {dirs:['Plans'], name:'дача.txt'}; без расширения добавляется .txt; пусто — null

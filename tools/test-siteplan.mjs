@@ -6,7 +6,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float64Array,Float32Array,Set,Map,Number,String,JSON,isFinite,Infinity,Array,Object});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/siteplan-kernels.js'),'utf8')+';this.K={spSolve,spParse,spTilt,spPoly,spDXF,spGeoJSON,spSVG,spCSV,spFrame,spNice,spGridFrame,spToFrame,spFilePath,spFromFrame,spGridLines,spWalls,spHouse,spRoof,spRowToLine};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/siteplan-kernels.js'),'utf8')+';this.K={spSolve,spParse,spTilt,spPoly,spDXF,spGeoJSON,spSVG,spCSV,spFrame,spNice,spGridFrame,spToFrame,spFilePath,spFromFrame,spGridLines,spWalls,spHouse,spRoof,spRowToLine,spUniqueNames};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -258,4 +258,13 @@ for(const t of ['material Kit2-Kit3 concrete\nroom Hall 4.48 3.74 4.46 3.74\nroo
   ok('map shape with too few vertices → nothing',K.spRowToLine({gtype:'polygon',name:'x',geom:[[50,85],[50,86]]})==='' && K.spRowToLine({gtype:'polygon',name:'x',geom:'oops'})==='');
   const R=K.spSolve(K.spRowToLine({gtype:'polygon',name:'plot',geom:[[50.0001,85],[50,85.0003],[50.0002,85.0003]]}));
   ok('the lines from a map polygon solve without errors and give an area',R.errors.length===0 && R.polys[0].area>0 && R.georef,JSON.stringify(R.errors)); }
+// запись с карты: занятое имя фигуры заменяется свободным
+{ const ex='A gps 50 85 ±1\npoly polygon1_1 polygon1_2 polygon1_3\npolygon1_1 gps 50.1 85.1 ± 0.5\npolygon2_1 gps 50.2 85.2 ± 0.5\n# polygon3_1 in a comment';
+  const L=['polygon1_1 gps 50.3 85.3 ± 0.5','polygon1_2 gps 50.3 85.4 ± 0.5','polygon1_3 gps 50.4 85.4 ± 0.5','poly polygon1_1 polygon1_2 polygon1_3'];
+  const R=K.spUniqueNames(ex,L);
+  ok('map write: polygon1 is taken (and polygon2) → polygon3, all lines renamed',R.length===4 && R[0]==='polygon3_1 gps 50.3 85.3 ± 0.5' && R[3]==='poly polygon3_1 polygon3_2 polygon3_3',R.join(' | '));
+  ok('map write: a free name stays',K.spUniqueNames('A gps 1 1',L).join('|')===L.join('|'));
+  const two=K.spUniqueNames('',L.concat(L.map(l=>l)).filter((l,i,a)=>true));
+  ok('map write: two shapes with the same name in one batch get different names',new Set(two.filter(l=>/ gps /.test(l)).map(l=>l.split(' ')[0])).size===6,two.join(' | '));
+  const S=K.spSolve(ex.replace('A gps 50 85 ±1','A gps 50 85 ±1')+'\n'+R.join('\n')); ok('map write: the result has no duplicate points',!S.errors.some(e=>/different points/.test(e.msg)) && S.pts.filter(p=>p.name==='polygon3_1').length===1); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);

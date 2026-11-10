@@ -54,8 +54,9 @@ function spRun(n,I){
 }
 
 function spWriteMap(n){                                                     // точки и фигуры, пришедшие с Map (rec), — в текст плана: они переживают перезагрузку, а записи со входа — нет
-  const L=[...n.fixLines.values()]; if(!L.length){ n.msg='nothing to write: wire Map (pick / edit) to «rec» and add points or shapes on the map'; return; }
-  const cur=String(n.p.plan||'').replace(/\s+$/,''), v=cur+(cur ? '\n' : '')+'# from the map\n'+L.join('\n');
+  let L=[...n.fixLines.values()]; if(!L.length){ n.msg='nothing to write: wire Map (pick / edit) to «rec» and add points or shapes on the map'; return; }
+  const cur=String(n.p.plan||'').replace(/\s+$/,''); L=spUniqueNames(cur,L);                 // фигура с занятым именем (polygon1 снова) получает свободное
+  const v=cur+(cur ? '\n' : '')+'# from the map\n'+L.join('\n');
   if(n.set?.plan) n.set.plan(v); else n.p.plan=v;
   n.fixLines.clear(); n.key=''; n.msg='written to the plan: '+L.length+' line'+(L.length>1 ? 's' : '');
 }
