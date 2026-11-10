@@ -105,7 +105,8 @@ const peCableS=c=>+String(c).split('x')[1]||0;
 const peAmpOf=c=>{ const S=peCableS(c), ks=Object.keys(PE_AMPACITY).map(Number).sort((a,b)=>a-b); let a=0; for(const k of ks) if(k<=S+1e-9) a=PE_AMPACITY[k]; return a; };   // ближайшее сечение не больше заданного
 const peNeedS=I=>{ const ks=Object.keys(PE_AMPACITY).map(Number).sort((a,b)=>a-b); for(const k of ks) if(PE_AMPACITY[k]>=I) return k; return ks[ks.length-1]; };
 const peBrkFor=I=>PE_BREAKERS.find(b=>b>=I-1e-9)||PE_BREAKERS[PE_BREAKERS.length-1];
-const peDevAmp=e=>{ const w=+e.watt||0; return w/(PE_U*(e.type==='light' ? 1 : PE_COSF)); };
+const PE_U3=400;                                                                          // линейное напряжение; трёхфазная группа — симметричная нагрузка, ток фазы I = P/(√3·400·cosφ)
+const peDevAmp=(e,t3)=>{ const w=+e.watt||0, c=e.type==='light' ? 1 : PE_COSF; return t3 ? w/(Math.sqrt(3)*PE_U3*c) : w/(PE_U*c); };
 function peGroups(s){
   const el=s.elec||[], wi=s.wires||[], by=new Map(el.map(e=>[e.id,e])), adj=new Map(el.map(e=>[e.id,[]]));
   for(const w of wi) if(by.has(w.a)&&by.has(w.b)){ adj.get(w.a).push([w.b,w]); adj.get(w.b).push([w.a,w]); }
@@ -119,25 +120,32 @@ function peGroups(s){
       for(let i=0;i<order.length;i++){ const id=order[i], d=par.get(id).dist;
         for(const [nb,ww] of adj.get(id)){ const q=by.get(nb); if(stop(q)||seen.has(nb)||nb===P.id) continue; seen.add(nb); par.set(nb,{wire:ww,from:id,dist:d+peWireLen(s,ww).len}); order.push(nb); } }
       // ток по участкам: что ниже по линии
-      const cur=new Map(order.map(id=>[id,peDevAmp(by.get(id))]));
+      const t3=order.some(id=>by.get(id).ph===3), cur=new Map(order.map(id=>[id,peDevAmp(by.get(id),t3)]));
       for(let i=order.length-1;i>0;i--){ const p=par.get(order[i]); cur.set(p.from,(cur.get(p.from)||0)+cur.get(order[i])); }
       const watt=order.reduce((a,id)=>a+(+by.get(id).watt||0),0), I=cur.get(o.id)||0;
       const amp=+w.amp>0 ? +w.amp : peBrkFor(I), name=w.gname||(P.name+'/'+(++k));
       const segs=order.map(id=>{ const p=par.get(id), c=cur.get(id), a=peAmpOf(p.wire.cable); return {wire:p.wire.id,cable:p.wire.cable,I:c,ok:a>=c-1e-9,allowed:a,need:peNeedS(c)}; });
       // падение напряжения до каждого потребителя; худший — по длине пути
-      let drop=0, far=null; for(const id of order){ if(!(+by.get(id).watt>0)) continue; let du=0, x=id; while(par.has(x)){ const p=par.get(x), S=peCableS(p.wire.cable)||1; du+=2*PE_RHO*peWireLen(s,p.wire).len*cur.get(x)/S; x=p.from; } if(du>drop){ drop=du; far=by.get(id).name; } }
+      let drop=0, far=null; for(const id of order){ if(!(+by.get(id).watt>0)) continue; let du=0, x=id; while(par.has(x)){ const p=par.get(x), S=peCableS(p.wire.cable)||1; du+=(t3 ? Math.sqrt(3) : 2)*PE_RHO*peWireLen(s,p.wire).len*cur.get(x)/S; x=p.from; } if(du>drop){ drop=du; far=by.get(id).name; } }
       const trunk=segs[0], bad=[];
       if(amp<I-1e-9) bad.push('breaker '+amp+' A is below the current '+I.toFixed(1)+' A');
       for(const g of segs) if(g.allowed<amp-1e-9){ bad.push('cable '+g.cable+' ('+g.allowed+' A) is weaker than the '+amp+' A breaker'); break; }
       if(!bad.length) for(const g of segs) if(!g.ok){ bad.push('cable '+g.cable+' cannot carry the '+g.I.toFixed(1)+' A of its section'); break; }
-      if(drop/PE_U*100>PE_DROP) bad.push('voltage drop '+(drop/PE_U*100).toFixed(1)+'% > '+PE_DROP+'%');
-      pg.push({name,panel:P.name,head:w.id,devs:order.map(id=>by.get(id).name),watt,I,amp,cable:trunk.cable,need:peNeedS(Math.max(I,amp)),drop,dropPct:drop/PE_U*100,far,len:Math.max(...order.map(id=>par.get(id).dist)),segs,warn:bad,ok:!bad.length});
+      const Ub=t3 ? PE_U3 : PE_U;
+      if(t3 && order.some(id=>(+by.get(id).watt>0) && by.get(id).ph!==3)) bad.push('single-phase devices on a three-phase line');
+      if(t3 && segs.some(g=>(+String(g.cable).split('x')[0]||0)<4)) bad.push('a three-phase line needs 4+ cores (5x… with PE)');
+      if(drop/Ub*100>PE_DROP) bad.push('voltage drop '+(drop/Ub*100).toFixed(1)+'% > '+PE_DROP+'%');
+      pg.push({name,panel:P.name,head:w.id,devs:order.map(id=>by.get(id).name),watt,I,amp,cable:trunk.cable,need:peNeedS(Math.max(I,amp)),drop,dropPct:drop/Ub*100,ph:t3 ? 3 : 1,far,len:Math.max(...order.map(id=>par.get(id).dist)),segs,warn:bad,ok:!bad.length});
     }
     groups.push(...pg);
-    const W=pg.reduce((a,g)=>a+g.watt,0), I=pg.reduce((a,g)=>a+g.I,0)*PE_KC;
+    // фазы: трёхфазные группы грузят все три, однофазные раскладываются по наименее загруженной (сначала самые мощные)
+    const ph=[0,0,0]; for(const g of pg) if(g.ph===3) for(let i=0;i<3;i++) ph[i]+=g.I;
+    for(const g of pg.filter(g=>g.ph!==3).sort((a,b)=>b.I-a.I)){ const i=ph.indexOf(Math.min(...ph)); ph[i]+=g.I; g.phase='L'+(i+1); }
+    for(const g of pg) if(g.ph===3) g.phase='L1+L2+L3';
+    const W=pg.reduce((a,g)=>a+g.watt,0), I=Math.max(...ph)*PE_KC, imb=Math.max(...ph)>0 ? (Math.max(...ph)-Math.min(...ph))/Math.max(...ph)*100 : 0;
     // питающий провод щитка — к вводу
     let feed=null; for(const w of wi){ const o=w.a===P.id ? by.get(w.b) : w.b===P.id ? by.get(w.a) : null; if(o&&o.type==='inlet'){ feed={wire:w.id,cable:w.cable,allowed:peAmpOf(w.cable)}; break; } }
-    panels.push({name:P.name,groups:pg.length,watt:W,demandW:W*PE_KC,I,main:peBrkFor(I),feed,feedOk:!feed||feed.allowed>=I-1e-9});
+    panels.push({name:P.name,phases:ph.map(x=>x*PE_KC),imbalance:imb,three:pg.some(g=>g.ph===3),groups:pg.length,watt:W,demandW:W*PE_KC,I,main:peBrkFor(I),feed,feedOk:!feed||feed.allowed>=I-1e-9});
   }
   const orphans=el.filter(e=>(+e.watt>0)&&!seen.has(e.id)).map(e=>e.name);                                   // потребители без питания от щитка
   return {groups,panels,orphans};
@@ -408,7 +416,7 @@ function peImportPoints(s,recs){
     // электрика: устройства и провода от источника заменяют прежние с тем же префиксом (свои, нарисованные руками, остаются)
     { const ekeep=new Set(); for(const q of r.elec||[]){ const src=pre+'el:'+q.name; ekeep.add(src); let e=s.elec.find(x=>x.src===src);
         if(!e){ e=peAddEl(s,PE_EL[q.type] ? q.type : 'socket',+q.x,+q.y,{}); e.src=src; }
-        Object.assign(e,{name:String(q.name),x:+q.x,y:+q.y,z:+q.z,watt:+q.watt||0}); }
+        Object.assign(e,{name:String(q.name),x:+q.x,y:+q.y,z:+q.z,watt:+q.watt||0}); if(+q.ph===3) e.ph=3; else delete e.ph; }
       s.elec=s.elec.filter(e=>!e.src || !e.src.startsWith(pre) || ekeep.has(e.src));
       const wkeep=new Set(); for(const q of r.wires||[]){ const A=s.elec.find(e=>e.src===pre+'el:'+q.a), B=s.elec.find(e=>e.src===pre+'el:'+q.b); if(!A||!B||A===B) continue;
         const src=pre+'wire:'+q.a+'-'+q.b; wkeep.add(src); let w=s.wires.find(x=>x.src===src);

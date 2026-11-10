@@ -273,7 +273,6 @@ ok('an empty scene has no bounds and no grid',K.peGrid(K.peNew())===null);
   K.peImportPoints(t,[rec]); ok('import from Site Plan: devices and a wire',t.elec.length===2 && t.wires.length===1 && t.wires[0].zr===2.4);
   rec.elec=[rec.elec[0]]; rec.wires=[]; K.peImportPoints(t,[rec]); ok('re-import replaces the set: the removed device and its wire go',t.elec.length===1 && t.wires.length===0);
   const own=K.peAddEl(t,'socket',9,9); K.peImportPoints(t,[rec]); ok('a hand-drawn device survives a re-import',t.elec.includes(own)); }
-console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
 
 // группы: расчёт линий от щитка
 { const q=K.peNew(); const P1=K.peAddEl(q,'panel',0,0), IN=K.peAddEl(q,'inlet',0,.5), J=K.peAddEl(q,'junction',4,0), L1=K.peAddEl(q,'light',6,0), L2=K.peAddEl(q,'light',8,0), SW=K.peAddEl(q,'switch',6,1), S1=K.peAddEl(q,'socket',0,6), BO=K.peAddEl(q,'load',0,12,{watt:3500}), XX=K.peAddEl(q,'load',20,20);
@@ -290,9 +289,20 @@ console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
   { const w=K.peWireLen(q,q.wires.find(x=>x.id===h2.id)).len; const wb=K.peWireLen(q,q.wires.find(x=>x.a===S1.id&&x.b===BO.id)).len, I=3500/(230*.95), Is=I+200/(230*.95);
     near('voltage drop to the far load = 2ρL·I/S per section',K.peGroups(q).groups[1].drop,2*.0175*w*(I+200/(230*.95))/2.5+2*.0175*wb*I/2.5,1e-9); }
   ok('an unwired load is reported as not fed',G.orphans.join()==='LD2',G.orphans.join());
-  ok('panel: demand ×0.7, main breaker, feed cable 5x2.5 (27 A)',(()=>{ const p=G.panels[0], I=(g1.I+g2.I)*.7; return p.groups===2 && Math.abs(p.I-I)<1e-9 && p.main===K.peGroups(q).panels[0].main && p.feed.cable==='5x2.5'; })());
+  ok('panel: demand ×0.7 on the busiest phase, main breaker, feed cable 5x2.5 (27 A)',(()=>{ const p=G.panels[0], I=Math.max(g1.I,g2.I)*.7; return p.groups===2 && Math.abs(p.I-I)<1e-9 && p.main===K.peGroups(q).panels[0].main && p.feed.cable==='5x2.5'; })());
   { const t=K.peNew(), pn=K.peAddEl(t,'panel',0,0), ld=K.peAddEl(t,'load',60,0,{watt:3000}); K.peAddWire(t,pn.id,ld.id,{cable:'3x1.5'}); const g=K.peGroups(t).groups[0];
     ok('a 60 m run on 1.5 mm² gives a big drop → warning',g.dropPct>5 && g.warn.some(m=>/voltage drop/.test(m)),g.dropPct+' '+g.warn.join()); }
   const t2=K.peNew(); const rec={id:'sp:walls',kind:'plan walls',walls:[],opens:[],elec:[{type:'panel',name:'P1',x:0,y:0,z:1.6,watt:0},{type:'load',name:'LD1',x:2,y:0,z:.3,watt:2000}],wires:[{a:'P1',b:'LD1',cable:'3x2.5',amp:16}]};
   K.peImportPoints(t2,[rec]); ok('import keeps the breaker of the group (amp 16)',t2.wires[0].amp===16 && K.peGroups(t2).groups[0].amp===16); }
 
+// трёхфазные потребители и раскладка по фазам
+{ const q=K.peNew(), P1=K.peAddEl(q,'panel',0,0), H=K.peAddEl(q,'load',5,0,{watt:9000,ph:3}), A=K.peAddEl(q,'load',0,5,{watt:3000}), B=K.peAddEl(q,'load',0,-5,{watt:2000}), C=K.peAddEl(q,'load',-5,0,{watt:2500});
+  K.peAddWire(q,P1.id,H.id,{cable:'5x4'}); K.peAddWire(q,P1.id,A.id,{cable:'3x2.5'}); K.peAddWire(q,P1.id,B.id,{cable:'3x2.5'}); K.peAddWire(q,P1.id,C.id,{cable:'3x2.5'});
+  const G=K.peGroups(q), h=G.groups[0], I3=9000/(Math.sqrt(3)*400*.95);
+  ok('three-phase group: I = P/(√3·400·cosφ), 13.7 A per phase',h.ph===3 && Math.abs(h.I-I3)<1e-9 && h.amp===16 && h.ok,JSON.stringify(h.warn));
+  ok('single-phase groups go to three different phases',new Set(G.groups.slice(1).map(g=>g.phase)).size===3,G.groups.map(g=>g.phase).join());
+  const pn=G.panels[0], sum=(3000+2000+2500)/(230*.95); ok('panel: every phase carries the 3-phase current plus one group',pn.three && pn.phases.every(x=>x>=I3*.7-1e-9) && Math.abs(pn.phases.reduce((a,x)=>a+x,0)/.7-(3*I3+sum))<1e-9,JSON.stringify(pn));
+  q.wires[0].cable='3x4'; ok('3 cores on a three-phase line are flagged',/4\+ cores/.test(K.peGroups(q).groups[0].warn.join()));
+  const t=K.peNew(), p2=K.peAddEl(t,'panel',0,0), l3=K.peAddEl(t,'load',3,0,{watt:7000,ph:3}), s1=K.peAddEl(t,'socket',6,0); K.peAddWire(t,p2.id,l3.id,{cable:'5x2.5'}); K.peAddWire(t,l3.id,s1.id,{cable:'5x2.5'});
+  ok('a single-phase socket on a three-phase line is flagged',/single-phase/.test(K.peGroups(t).groups[0].warn.join())); }
+console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
