@@ -8928,6 +8928,20 @@ const pe=addNode('planedit',40,200,{view:'3D',lv:'all',layer:'climate',snap:'0.5
 pe.size.w=860; pe.size.h=620; applySize(pe);
 markWiresDirty();
 });
+preset('Plan Editor: Drawing Sheet and Specification — Plan to Scale, Explication, Title Block, CSV', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'From the plan to a drawing sheet. The parameters «PROJECT — name / address / drawn by» (advanced) fill the title block; «city» sets the design outdoor temperature and the degree-days (approximate, check the SP 131.13330 table for your site); «paper» is A3 or A4. «⬇ Sheet SVG» makes a sheet of the floor that is on (all floors — the ground): a frame, the plan at a standard scale chosen so that it fits (1:20 … 1:1000) with the wall lengths and the overall dimensions, the electrics, pipes (red) and ducts (blue dashed) with the devices, the room explication (area, temperature, heat loss, air), the equipment and materials list (boiler, radiators, pipes by DN with the return line, ducts by diameter, cable with the 10 % reserve) and the title block — print it in the real size or open it in a vector editor. «⬇ Specification CSV» is the same lists as a table for a spreadsheet or an order. Here a small house is drawn with heating (a tee, bare and insulated pipes), a supply-extract unit and wiring, in Novosibirsk.'});
+nt.size.w=1180; nt.size.h=140; applySize(nt);
+const sc=peNew(), o={t:.4,h:2.7,mat:'block'}, a=peAddRectRoom(sc,0,0,5,4,{...o,name:'Гостиная'}), b=peAddRectRoom(sc,5,0,4,4,{...o,name:'Кухня'}), c=peAddRectRoom(sc,0,4,3,2.5,{...o,name:'Санузел'});
+peAddObj(sc,'window',{wall:a.walls[0].id,u:.5,w:1.5,h:1.4,sill:.9}); peAddObj(sc,'window',{wall:b.walls[2].id,u:.5,w:1.2,h:1.2,sill:1}); b.room.gas=true;
+const bo=hvAdd(sc,'boiler',8,3.5,{watt:24000}), te=hvAdd(sc,'tee',5,2), r1=hvAdd(sc,'radiator',2.5,.3,{watt:1800}), r2=hvAdd(sc,'radiator',7,.3,{watt:1500}), r3=hvAdd(sc,'radiator',1.5,5.8,{watt:600});
+hvLink(sc,bo.id,te.id).ins=true; hvLink(sc,te.id,r1.id); hvLink(sc,te.id,r2.id); hvLink(sc,te.id,r3.id,{via:[[2,2],[2,5.5]]});
+const u=hvAdd(sc,'ahu',7.5,2,{m3:250}), sa=hvAdd(sc,'supply',2.5,2), e1=hvAdd(sc,'extract',7,3), e2=hvAdd(sc,'extract',1.5,5); hvLink(sc,u.id,sa.id); hvLink(sc,u.id,e1.id); hvLink(sc,u.id,e2.id,{via:[[4,2],[4,5]]});
+const pn=peAddEl(sc,'panel',.3,2.5), s1=peAddEl(sc,'socket',1,1), l1=peAddEl(sc,'light',2.5,2); peAddWire(sc,pn.id,s1.id); peAddWire(sc,pn.id,l1.id);
+const pe=addNode('planedit',40,220,{view:'plan',layer:'climate',snap:'0.1',hvcity:'Novosibirsk',pname:'Дом на Лесной',paddr:'Новосибирск, ул. Лесная, 5',pby:'',paper:'A3',scene:JSON.stringify(sc)});
+pe.size.w=860; pe.size.h=620; applySize(pe);
+markWiresDirty();
+});
 preset('Plan Editor: Wiring Groups — Consumers, Breakers, Cable and Voltage Drop', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Groups of the wiring. A group is everything fed by one cable leaving the panel (through junction boxes, switches and sockets further down). Plan Editor lists each group in the readout: devices, power, current I = P/(230 V·cosφ), the breaker (auto — the nearest standard rating not below the current; to set one by hand, select the first cable out of the panel and use «breaker» — in Site Plan «wire P1 J1 … amp 16»), the cable at the head, the cross-section the current needs, the longest run and the voltage drop to the farthest load (2ρLI/S per section, copper). A ⚠ says what is wrong: a breaker below the current, a cable that cannot take the breaker or its section current, a drop over 5 %. A panel line sums its groups with the demand factor 0.7 and picks the main breaker, the cable from the inlet is checked against it; consumers not wired to a panel are listed as «not fed». '+
