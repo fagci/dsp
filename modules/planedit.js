@@ -362,7 +362,7 @@ function peUnderBuild(n){
   try{
     const k=Math.min(1,1600/Math.max(u.w,u.h)), cw=Math.max(1,Math.round(u.w*k)), ch=Math.max(1,Math.round(u.h*k)), c=document.createElement('canvas'); c.width=cw; c.height=ch;
     const x=c.getContext('2d',{willReadFrequently:true}); x.drawImage(u.bm,0,0,cw,ch); const src=x.getImageData(0,0,cw,ch).data, H=u.H;
-    const H2=[H[0]/k,H[1]/k,H[2],H[3]/k,H[4]/k,H[5],H[6]/k,H[7]/k,H[8]], b=pmUnderBounds(H2,u.up,cw,ch);
+    const H2=[H[0]/k,H[1]/k,H[2],H[3]/k,H[4]/k,H[5],H[6]/k,H[7]/k,H[8]], b=pmUnderBounds(H2,u.up,cw,ch,u.span||80);
     if(!b){ u.err='the underlay is degenerate or too large (the horizon in the frame?): calibrate on a closer plane'; return; }
     const R=pmRectify(src,cw,ch,H2,u.up,b,100,1600); if(!R){ u.err='cannot rectify the image'; return; }
     const o=document.createElement('canvas'); o.width=R.w; o.height=R.h; o.getContext('2d').putImageData(new ImageData(R.data,R.w,R.h),0,0); u.cv=o; u.b=b; u.res=R.res;
@@ -530,7 +530,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     const num=v=>typeof v==='number' && isFinite(v) ? v : null;
     const pose={lat:num(I.lat),lon:num(I.lon),alt:num(I.alt),az:num(I.az),el:num(I.el),fov:num(I.fov)};
     if(JSON.stringify(pose)!==JSON.stringify(n.inPose)){ n.inPose=pose; redraw(n); }
-    for(const r of recList(I.rec)){ if(r && r.kind==='underlay' && r.bm){ const sig=JSON.stringify([r.H,r.up,r.w,r.h]); if(!n.under || n.under.sig!==sig){ n.under={bm:r.bm,w:r.w,h:r.h,H:r.H,up:r.up||0,sig,cv:null,b:null,err:''}; peUnderBuild(n); n.vw.fit=false; redraw(n); } else n.under.bm=r.bm; } }
+    for(const r of recList(I.rec)){ if(r && r.kind==='underlay' && r.bm){ const sig=JSON.stringify([r.H,r.up,r.w,r.h,r.span]); if(!n.under || n.under.sig!==sig){ n.under={bm:r.bm,w:r.w,h:r.h,H:r.H,up:r.up||0,span:+r.span>0 ? +r.span : 80,sig,cv:null,b:null,err:''}; peUnderBuild(n); n.vw.fit=false; redraw(n); } else n.under.bm=r.bm; } }
     if(n.p.imp){ const rows=recList(I.rec).filter(r=>r && ((r.x!=null && r.y!=null && (r.name!=null||r.label!=null)) || r.kind==='plan poly' || r.kind==='plan opening' || r.kind==='plan walls')); if(rows.length){ rows.forEach(r=>{ if(r.name==null && r.label!=null) r.name=r.label; }); if(peImportPoints(n.sc,rows)){ peTouch(n); n.vw.fit=false; } } }
     const now=performance.now();
     if(n.heatPartial && !n.dragging){ n.heatPartial=false; n.rev=(n.rev||0)+1; }

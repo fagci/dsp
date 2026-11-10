@@ -393,6 +393,7 @@ const PRESET_CATS={
   'Plan Editor: Wiring and Lighting — Lights, Switches, Sockets and Cable Length':'Maps & Locating',
   'Site Plan: Plot with a Fence, Road, Bath House and a Cell Tower → Signal Indoors':'Maps & Locating',
   'Site Plan: Plot on a Satellite Map — Stakes and Cord, Buildings Drawn from the Photo':'Maps & Locating',
+  'Image on Map: Your Own Aerial Photo of the Plot on the Map and under the Plan':'Maps & Locating',
   'Plan Editor: Yard Cameras — Over the Fence by Height, the View from a Camera':'Maps & Locating',
   'Clinometer: Tree Height from the Phone Tilt → Site Plan':'Maps & Locating',
   'Signal Paths: Direct and Reflected Between Two Points':'Maps & Locating',
@@ -8895,6 +8896,29 @@ addEdge(sp.id,'poly',mp.id,'rec');
 addEdge(sp.id,'rec',mp.id,'rec');
 addEdge(mp.id,'edit',sp.id,'rec');
 addEdge(sp.id,'rec',pe.id,'rec');
+markWiresDirty();
+});
+preset('Image on Map: Your Own Aerial Photo of the Plot on the Map and under the Plan', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'When the satellite tiles are old, lay your own picture over them: a drone orthophoto, a screenshot of a newer map, a photo from a roof or a hill. 1) Image on Map: pick the image (it is saved in Files); 2) click on it the corners of the plot in the order of «names» (A B C F — the points Site Plan knows with their coordinates); the readout shows the metres per pixel and the residual. '+
+  '3) The picture appears on the Map over the tiles (opacity in the parameters) and under the Plan Editor plan — trace the fence and the buildings over it: on the map (polygon / line modes, then «⬇ Write points and shapes…» in Site Plan) or by hand in Plan Editor. Three or more points also correct the skew; four show how far off the clicks are. '+
+  'The image lives in Files, so it works offline; the Map tiles under it need the network (or the cache).'});
+nt.size.w=1180; nt.size.h=130; applySize(nt);
+const sp=addNode('siteplan',40,190,{view:'plan',plan:'# the plot from the cadastre (EPSG:3857 → WGS84), corners ± 0.1 m\nA gps 50.2715410 85.5971693 ±0.1\nB gps 50.2711228 85.5969435 ±0.1\nC gps 50.2711199 85.5969566 ±0.1\nD gps 50.2710742 85.5969372 ±0.1\nE gps 50.2710248 85.5971877 ±0.1\nF gps 50.2714701 85.5974605 ±0.1\nplot A B C D E F\nfence A B C D E F closed stakes every 6\n'});
+sp.size.w=420; sp.size.h=470; applySize(sp);
+const gi=addNode('geoImage',480,190,{names:'A B C F',alpha:.85});
+gi.size.w=520; gi.size.h=470; applySize(gi);
+const mp=addNode('geoMap',1020,190,{tiles:'Esri Satellite',mlat:50.2713,mlon:85.5972,mz:19,mode:'view',tools:true});
+mp.size.w=520; mp.size.h=470; applySize(mp);
+const pe=addNode('planedit',1560,190,{view:'plan',layer:'none',snap:'0.1'});
+pe.size.w=520; pe.size.h=470; applySize(pe);
+addEdge(sp.id,'rec',gi.id,'rec');
+addEdge(sp.id,'poly',mp.id,'rec');
+addEdge(sp.id,'rec',mp.id,'rec');
+addEdge(gi.id,'rec',mp.id,'rec');
+addEdge(sp.id,'rec',pe.id,'rec');
+addEdge(gi.id,'rec',pe.id,'rec');
+addEdge(mp.id,'edit',sp.id,'rec');
 markWiresDirty();
 });
 preset('Site Plan: Plot with a Fence, Road, Bath House and a Cell Tower → Signal Indoors', function(){
