@@ -1496,6 +1496,9 @@ const GEO_TILES={
   'OpenFreeMap (vector)':{vec:'light', tilejson:'https://tiles.openfreemap.org/planet', max:14, attr:'© OpenMapTiles, © OpenStreetMap contributors — OpenFreeMap'},
   'OpenFreeMap Dark (vector)':{vec:'dark', tilejson:'https://tiles.openfreemap.org/planet', max:14, attr:'© OpenMapTiles, © OpenStreetMap contributors — OpenFreeMap'},
   'Esri Satellite':{url:ESRI+'World_Imagery/MapServer/tile/{z}/{y}/{x}', max:19, attr:'Tiles © Esri — Maxar, Earthstar Geographics, USDA, USGS'},
+  'Esri Clarity':{url:'https://clarity.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', max:19, attr:'Tiles © Esri — Maxar, Earthstar Geographics, USDA, USGS (World Imagery Clarity)'},
+  'Esri Wayback':{url:'https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/{rel}/{z}/{y}/{x}', max:19, attr:'Tiles © Esri — World Imagery Wayback (release in the «wayback release» parameter)'},
+  'Sentinel-2 cloudless 2024':{url:'https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless-2024_3857/default/g/{z}/{y}/{x}.jpg', max:14, attr:'Sentinel-2 cloudless 2024 © EOX IT Services GmbH (contains modified Copernicus Sentinel data 2024), CC BY-NC-SA'},
   'Esri Topo':{url:ESRI+'World_Topo_Map/MapServer/tile/{z}/{y}/{x}', max:19, attr:'Tiles © Esri — USGS, NOAA, Esri'},
   'Esri Streets':{url:ESRI+'World_Street_Map/MapServer/tile/{z}/{y}/{x}', max:19, attr:'Tiles © Esri — HERE, Garmin, OpenStreetMap contributors'},
   'Relief (DEM)':{dem:'color', url:'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png', max:12, attr:'Terrain: Terrarium (SRTM, NED, GMTED, …) via AWS'},
@@ -1518,6 +1521,9 @@ function geoSrc(n,which){
     const u=String(n.p[which==='tiles' ? 'tileUrl' : 'tileUrl2']||'').trim();
     return /\{z\}/.test(u) && /\{x\}/.test(u) && /\{y\}/.test(u) ? {id:'custom:'+u, url:u, max:19, attr:'custom tiles'} : null;
   }
+  if(name==='Esri Wayback'){                                                      // архив Esri World Imagery: номер релиза (из waybackconfig.json) — в параметре wbRel; у каждого релиза свой кэш
+    const rel=String(n.p.wbRel||'').replace(/\D/g,'')||'43291', t=GEO_TILES[name];
+    return {...t, url:t.url.replace('{rel}',rel), id:'wayback:'+rel, from:null, code:0, want:name}; }
   let nm=name, from=null, code=0;
   if(which==='tiles' && n.p.tileFallback!==false && GEO_TILES[name] && !GEO_TILES[name].dem){          // основа лежит (403 / 429 / сеть) — временно берём запасную
     const c=geoTileChoose(name,Object.keys(GEO_TILES),GeoTiles.stat,Date.now()); nm=c.name; from=c.from; code=c.code; }
@@ -1599,6 +1605,7 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
   w:480, view:{h:360}, resize:true,
   params:[{n:'ttl',t:'range',min:0,max:1440,step:1,d:0,label:'keep, min (0 — forever)'},
           {n:'tiles',t:'select',opts:GEO_TILE_OPTS,d:'none',label:'tiles'},
+          {n:'wbRel',t:'text',d:'43291',label:'tiles = Esri Wayback: release number (43291 — 2026-10-29, 63116 — 2026-09-24, 26334 — 2026-08-05; the list with dates: s3-us-west-2.amazonaws.com/config.maptiles.arcgis.com/waybackconfig.json)',adv:true},
           {n:'tileFallback',t:'check',d:true,label:'tiles: if the server refuses (403 / 429 / unreachable), take a spare map for 5 minutes (the note is on the map)'},
           {n:'overlay',t:'select',opts:GEO_OV_OPTS,d:'none',label:'overlay layer (relief shading, railways, trails…)'},
           {n:'ovAlpha',t:'range',min:.1,max:1,step:.05,d:.7,label:'overlay opacity'},
