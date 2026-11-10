@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float64Array,Float32Array,Set,Map,Number,String,JSON,isFinite,Infinity,Array,Object,RegExp});
 const src=['modules/planedit-kernels.js','modules/hvac-kernels.js','modules/plancheck-kernels.js'].map(f=>fs.readFileSync(path.join(root,f),'utf8')).join('\n');
-vm.runInContext(src+';this.K={peNew,peAddPoint,peAddWall,peAddRoom,peAddObj,peAddEl,peAddWire,hvAdd,hvLink,pcCheck,pcShow,pcHvSys,PC_SHOW,peAddPolyRoom,peAddRectRoom,peSplitWall,peAddObj,peImportPoints,peDetach,pePt,peEnsureLevel,peCopyLevel,peOnLevel,peLevelRange,peAddWall,hvRoomZ,peRoomRect,peRoomResize,peNextRoomPos,peRoomArea,peWallLen,peSetLen,peLock};',ctx);
+vm.runInContext(src+';this.K={peNew,peAddPoint,peAddWall,peAddRoom,peAddObj,peAddEl,peAddWire,hvAdd,hvLink,pcCheck,pcShow,pcHvSys,PC_SHOW,peAddPolyRoom,peAddRectRoom,peSplitWall,peAddObj,peImportPoints,peDetach,pePt,peSnapToWall,PE_WALL_DEV,peEnsureLevel,peCopyLevel,peOnLevel,peLevelRange,peAddWall,hvRoomZ,peRoomRect,peRoomResize,peNextRoomPos,peRoomArea,peWallLen,peSetLen,peLock};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 function box(s,x0,y0,w,h,name,o={}){ const P=[[x0,y0],[x0+w,y0],[x0+w,y0+h],[x0,y0+h]].map(q=>K.peAddPoint(s,q[0],q[1])); const ids=P.map(p=>p.id);
@@ -81,6 +81,17 @@ ok('no rooms at all: devices are not checked',K.pcCheck((()=>{ const q=K.peNew()
   const s1=q.elec.find(e=>e.name==='S1'); ok('detach a device; a re-import with a moved device leaves it alone, no duplicate',K.peDetach(q,'el',s1.id) && (()=>{ const r3=rec(); r3.elec[0].x=9; K.peImportPoints(q,[r3]); return q.elec.length===1 && q.elec[0].x===1; })());
   const h1=q.hv.find(d=>d.name==='R1'); ok('the same for a heating device',K.peDetach(q,'hv',h1.id) && (()=>{ const r3=rec(); r3.hv[0].x=9; K.peImportPoints(q,[r3]); return q.hv.length===1 && q.hv[0].x===2; })());
   ok('a hand-drawn item cannot be detached',K.peDetach(q,'el',s1.id)===false); }
+// привязка к стене
+{ const q=K.peNew(); K.peAddRectRoom(q,0,0,5,4,{t:.4,h:2.7,mat:'brick'});
+  const a=K.peSnapToWall(q,2.5,.3,0,.6); ok('a tap inside the room near the south wall: on its inner face (0.2 + 0.03), x kept',a && Math.abs(a.y-.23)<1e-9 && a.x===2.5,JSON.stringify(a));
+  const b=K.peSnapToWall(q,2.5,-.3,0,.6); ok('a tap outside: on the outer face',b && Math.abs(b.y+.23)<1e-9);
+  const c=K.peSnapToWall(q,2.5,.0,0,.6); ok('a tap in the wall axis: the room side (the room is above)',c && c.y>0,JSON.stringify(c));
+  ok('far from the walls: no snap',K.peSnapToWall(q,2.5,2,0,.6)===null);
+  const d=K.peSnapToWall(q,5.1,2,0,.6); ok('the east wall: x on its face, y kept',d && Math.abs(d.x-(5-.23))<1e-9 || d && Math.abs(d.x-5.23)<1e-9,JSON.stringify(d));
+  ok('beyond the end of a wall: not that wall',K.peSnapToWall(q,7,.1,0,.6)===null);
+  ok('another floor is ignored',K.peSnapToWall(q,2.5,.3,1,.6)===null);
+  const up=K.peAddRectRoom(q,0,0,5,4,{t:.4,h:2.7,mat:'brick',lv:1,z0:2.95}); ok('...and its own floor is found',K.peSnapToWall(q,2.5,.3,1,.6)!==null);
+  ok('lights and cameras are not wall devices, sockets and radiators are',!K.PE_WALL_DEV.has('light') && K.PE_WALL_DEV.has('socket') && K.PE_WALL_DEV.has('radiator')); }
 // слои
 ok('layers: all shows everything, one shows only itself',K.pcShow('all','electrics') && K.pcShow('electrics','electrics') && !K.pcShow('heating','electrics') && K.pcShow(undefined,'radio'));
 ok('heat devices vs air devices',K.pcHvSys('radiator')==='heating' && K.pcHvSys('heater')==='heating' && K.pcHvSys('ahu')==='ventilation' && K.pcHvSys('extract')==='ventilation');
