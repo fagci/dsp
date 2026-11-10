@@ -200,6 +200,8 @@ function peDrawCamView(n,cx,W,H){
 }
 
 // ---------- этажи: выбранный этаж, видимость предметов по высоте, переключатель на холсте ----------
+// крыша видна на «всех этажах»; навес — ещё и на первом этаже (в 3D — и выше), он стоит у земли
+const peRoofOn=(r,lv,d3)=>lv==='all' || lv==null || (r.type==='canopy' && (d3 ? +lv>=0 : +lv===0));
 const peVisible=(n,P,sys,list)=>sys===null || pcShow(n.p.show,sys) ? list.filter(e=>peOnLevel(n.sc,n.p.lv,e.z||0,P.d3)) : [];
 const peLinkOnLv=(n,P,s,l,hv)=>{ const A=hv ? hvDev(s,l.a) : peElOf(s,l.a); return peOnLevel(s,n.p.lv,A ? A.z||0 : 0,P.d3); };
 function peLvInfo(n){ const s=n.sc, k=n.p.lv==='all'||n.p.lv==null ? 0 : +n.p.lv; if(k!==0) peEnsureLevel(s,k,+n.p.wh||2.7); return {k,z:peLvZ(s,k)}; }
@@ -738,7 +740,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     for(const c of peVisible(n,P,'cameras',s.cams)){ const poly=peVisPoly(c,occ,2,zT); cx.beginPath(); poly.forEach((q,i)=>{ const A=P.pt(q[0],q[1],P.d3 ? peLvZ(s,p.lv) : 0); i ? cx.lineTo(A[0],A[1]) : cx.moveTo(A[0],A[1]); }); cx.closePath(); cx.fillStyle='rgba(125,255,154,.10)'; cx.fill(); cx.strokeStyle='rgba(125,255,154,.55)'; cx.lineWidth=1; cx.stroke(); }
     // блоки: стены, ящики, колонны — по глубине издали к близким
     { const raw=peBoxes(s).filter(b=>b.kind!=='wall' || lvOk(b.lv)), cam=[P.sa,-P.ca], sel=n.sel;
-      const roofPolys=P.d3 && (p.lv==='all' || p.lv==null) ? (s.roofs||[]).flatMap(r=>r.faces.map(f=>({pts:f.pts,rgb:f.kind==='roof' ? [150,78,64] : (PE_MATCOL[r.wallMat]||[200,208,214])}))) : [];
+      const roofPolys=P.d3 ? (s.roofs||[]).filter(r=>peRoofOn(r,p.lv,true)).flatMap(r=>r.faces.map(f=>({pts:f.pts,rgb:f.kind==='roof' ? [150,78,64] : (PE_MATCOL[r.wallMat]||[200,208,214])}))) : [];
       if(P.d3) for(const g of s.grounds||[]) roofPolys.push({pts:g.poly.map(q=>[q[0],q[1],.005]),rgb:PE_GC[g.cover]||PE_GC.grass});
       if(P.d3) for(const sl of s.slabs||[]) if(lvOk(sl.lv)) roofPolys.push({pts:sl.poly.map(q=>[q[0],q[1],sl.z]),rgb:PE_MATCOL[sl.mat]||[168,174,180]});   // перекрытия — пол этажа
       if(P.d3){            // 3D: z-буфер — порядок блоков не важен, пересечения объёмов тоже рисуются верно; пока вид двигают — вдвое грубее, потом дорисовывается начисто
@@ -763,14 +765,14 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     if(!P.d3){ cx.lineWidth=1.6; cx.strokeStyle='#ecc43a'; cx.beginPath(); for(const w of s.walls){ if(w.mat!=='cord' || !lvOk(w.lv)) continue; const [a,b]=peWallEnds(s,w), A=P.pt(a.x,a.y,0), B=P.pt(b.x,b.y,0); cx.moveTo(A[0],A[1]); cx.lineTo(B[0],B[1]); } cx.stroke();
       for(const o of s.objs){ if(o.name!=='stake') continue; const A=P.pt(o.x,o.y,0); cx.beginPath(); cx.arc(A[0],A[1],Math.max(3,o.w*P.sc/2),0,7); cx.fillStyle='#fff3c4'; cx.fill(); cx.strokeStyle='#8a6a00'; cx.lineWidth=1; cx.stroke(); } }
     // крыша на плане — пунктиром (скаты и конёк)
-    if(!P.d3 && (p.lv==='all' || p.lv==null)) for(const r of s.roofs||[]){ cx.strokeStyle='rgba(255,138,101,.75)'; cx.lineWidth=1; cx.setLineDash([6,4]);
+    if(!P.d3) for(const r of (s.roofs||[]).filter(r=>peRoofOn(r,p.lv,false))){ cx.strokeStyle='rgba(255,138,101,.75)'; cx.lineWidth=1; cx.setLineDash([6,4]);
       for(const f of r.faces){ if(f.kind!=='roof') continue; cx.beginPath(); f.pts.forEach((c,k)=>{ const A=P.pt(c[0],c[1],0); k ? cx.lineTo(A[0],A[1]) : cx.moveTo(A[0],A[1]); }); cx.closePath(); cx.stroke(); } cx.setLineDash([]); }
     // символы проёмов в плане
     if(P.se>.75) for(const o of s.objs){ if(o.type!=='door'&&o.type!=='window') continue; const pl=peOpenPlace(s,o); if(!pl) continue; const h=o.w/2, a=P.pt(pl.x-pl.ux*h,pl.y-pl.uy*h,0), b=P.pt(pl.x+pl.ux*h,pl.y+pl.uy*h,0);
       if(o.type==='window'){ cx.strokeStyle='#6fd0ff'; cx.lineWidth=2.5; cx.beginPath(); cx.moveTo(a[0],a[1]); cx.lineTo(b[0],b[1]); cx.stroke(); }
       else { const hinge=a, ang=Math.atan2(-(b[1]-a[1]),b[0]-a[0]), r=Math.hypot(b[0]-a[0],b[1]-a[1]); cx.strokeStyle='#c9a06a'; cx.lineWidth=1.5; cx.beginPath(); cx.arc(hinge[0],hinge[1],r,-ang,-ang-Math.PI/2,true); cx.stroke(); cx.beginPath(); cx.moveTo(hinge[0],hinge[1]); cx.lineTo(hinge[0]+Math.sin(ang)*r*0+Math.cos(-ang-Math.PI/2)*r,hinge[1]+Math.sin(-ang-Math.PI/2)*r); cx.stroke(); } }
     // замки длин и размеры
-    const roofOn=P.d3 && (p.lv==='all' || p.lv==null) && (s.roofs||[]).length;                 // под крышей размеры стен не видны — не пишем их поверх
+    const roofOn=P.d3 && (p.lv==='all' || p.lv==null) && (s.roofs||[]).some(r=>r.type!=='canopy');                 // под крышей размеры стен не видны — не пишем их поверх
     if(P.sc>14 && !roofOn) for(const w of s.walls){ if(!lvOk(w.lv)) continue; const [a,b]=peWallEnds(s,w), A=P.pt(a.x,a.y,P.d3 ? (w.z0||0)+w.h : 0), B=P.pt(b.x,b.y,P.d3 ? (w.z0||0)+w.h : 0), len=peWallLen(s,w); cx.font='10px monospace'; cx.textAlign='center'; cx.fillStyle=w.len>0 ? '#ffb74d' : 'rgba(180,195,200,.8)'; cx.fillText((w.len>0 ? '🔒' : '')+len.toFixed(2),(A[0]+B[0])/2,(A[1]+B[1])/2-5); }
     // точки
     const hidPts=p.pts==='all' ? null : peHiddenPts(s);

@@ -18,13 +18,14 @@
      window A-B 1.20 1.40 [h 1.45] [sill 0.85]   окно в стене A-B: от угла A до ближнего края 1.20, ширина 1.40, высота, подоконник от пола (door — дверь, h 2.05, sill 0)
      outer 0.45 [concrete] · inner drywall · material block (все стены) · material A-B glass   материалы: наружных стен, стен между комнатами, стены на стороне A-B (и «wall … 0.37 brick»);
                               brick concrete block drywall wood glass metal (или кирпич бетон газоблок шлакоблок гипсокартон дерево стекло металл)
+     outer ver tamb A1-A2 0.04 дерево   только для комнат ver, tamb и стороны A1-A2 (остальные наружные — по общему outer): толщина и материал
      outer 0.45               толщина наружных стен (0.4 по умолчанию); внутренние — по щели между комнатами (стены строятся снаружи от замера, spWalls)
      level 2 [z 2.95] · level cellar z -2.2   этаж: комнаты ниже по тексту — на нём (без z — над самым верхним из уже объявленных: его пол + высота комнат + перекрытие); подвал — с минусом
      slab 0.25 concrete       перекрытия между этажами (толщина, материал) · same A B — B ровно над / под A (угол этажа над углом нижнего)
      roof gable|hip|shed|flat [30] [overhang 0.5] [ridge long|short] [level 2]   крыша над этажом (по умолчанию — верхним): угол, свес, конёк вдоль длинной / короткой стороны
      fence A B C … [h 1.8] [sheet|mesh|wood|picket|euro|panel|forged|brick|concrete|block|gabion|hedge|stakes] [every 5] [closed] [gate 1 3.5] [wicket 2 [1.0] [at 0.5]]   забор по точкам; stakes / колышки — колышки в точках и шнур между ними (every — шаг, м); (профлист, рабица, штакетник…; можно по-русски), для сигнала — стена
      post P [h 3] [d 0.15]    столб в точке P (колонна, опора; точка — по замерам, GPS или at)
-     canopy A B [w 1.53] [h 2.95 2.75] [off 0.4] [from 0] [to 10.6] [posts 4.05 5.43 6.56] [d 0.12]   навес вдоль линии A-B снаружи здания: w — вылет, h — высота у стены и у наружного края (скат), off — от линии замера до наружной грани стены (по умолчанию — толщина наружной стены), from/to — границы вдоль A→B, posts — колонны по наружному краю: расстояния от A (накопительно)
+     canopy A B [w 1.53] [h 2.95 2.75] [off 0.4] [from 0] [to 10.6] [posts 4.05 5.43 6.56] [ends] [d 0.12]   навес вдоль линии A-B снаружи здания: w — вылет, h — высота у стены и у наружного края (скат), off — от линии замера до наружной грани стены (по умолчанию — толщина наружной стены), from/to — границы вдоль A→B, posts — колонны по наружному краю: расстояния от A (накопительно), ends — ещё по колонне на обоих концах
      road A B … [w 3.5] [asphalt|gravel|tile] · area A B C … [grass|asphalt|gravel|tile|garden|water]   дорога (полоса) и площадка — покрытие земли
      light|socket|switch|panel|inlet|junction|load NAME POINT|A-B [dx м] [dy м | along м] [off м] [h м] [w Вт]   электрика (A-B — на стене комнаты: along — от угла A вдоль стены, off — вглубь комнаты): светильник, розетка, выключатель, щиток, ввод, распредкоробка у точки (смещение на восток / север, высота над точкой)
      wire A B C [cable 3x1.5 · 2x1.5 · 5x2.5 … — любое «жилыxсечение»] [z 2.5] [amp 16]   провод по цепочке устройств (z — высота трассы); ввод — 5x2.5, розетка — 3x2.5, иначе 3x1.5
@@ -79,7 +80,7 @@ function spTemplate(kind,R){ R=R||{}; const names=R.names||[], used=new Set([...
 function spNum(t){ if(t==null) return NaN; const s=String(t).replace(/^[±~]|^\+-/,'').replace(/(\d),(\d)/,'$1.$2'); return /^[-+]?(\d+\.?\d*|\.\d+)(e[-+]?\d+)?$/i.test(s) ? +s : NaN; }
 function spParse(text,o={}){
   const sd=o.sd>0 ? o.sd : 0.03, sa=o.sa>0 ? o.sa : 2, sg=o.sg>0 ? o.sg : 5, eye0=o.eye||0;
-  const names=[], idx=new Map(), obs=[], polys=[], errors=[], opens=[]; let mirror=false, height=NaN, outer=NaN, outerMat=null, innerMat=null; const edgeMat=[];
+  const names=[], idx=new Map(), obs=[], polys=[], errors=[], opens=[], outerSel=[], edgeT=[]; let mirror=false, height=NaN, outer=NaN, outerMat=null, innerMat=null; const edgeMat=[];
   const levels=[{name:'1',z:0,zSet:true,li:-1}], roofs=[], fences=[], grounds=[], sources=[], posts=[], canopies=[], elec=[], wires=[], pps=[], uses=[]; let lvCur=levels[0], slab={t:.25,mat:'concrete'};
   const pt=n=>{ if(!idx.has(n)){ idx.set(n,names.length); names.push(n); } return idx.get(n); };
   const one=(raw,li,depth=0)=>{
@@ -106,7 +107,11 @@ function spParse(text,o={}){
       if(hd.length!==2 || !(from>=0) || !(w>0)) return bad(kind+' A-B from width [h height] [sill height] — from: corner A to the near edge, m');
       for(let i=4;i<T.length;i+=2){ const k=T[i].toLowerCase(), v=spNum(T[i+1]); if((k!=='h' && k!=='sill') || !(v>=0) || (k==='h' && !(v>0))) return bad(kind+': unknown «'+T[i]+'» (h height, sill height)'); o[k]=v; }
       o.a=pt(hd[0]); o.b=pt(hd[1]); if(o.a===o.b) return bad('same point'); opens.push(o); return; }
-    if(/^outer$/i.test(T[0])){ for(const t of T.slice(1)){ const v=spNum(t), m=spMat(t); if(v>0 && v<3) outer=v; else if(m) outerMat=m; else return bad('outer [thickness m] [material: '+Object.keys(SP_MAT).slice(0,7).join(' ')+']'); } return; }
+    if(/^outer$/i.test(T[0])){                                                               // «outer 0.45 [материал]» — все наружные стены; «outer ver tamb A1-A2 0.04 дерево» — только комнаты ver, tamb и сторона A1-A2
+      let t=NaN, mt=null; const nm=[];
+      for(const x of T.slice(1)){ const v=spNum(x), m=spMat(x); if(v>0 && v<3) t=v; else if(m) mt=m; else if(/^[^\s]+$/.test(x) && !/^[-+]?\d/.test(x)) nm.push(x); else return bad('outer [room | A-B …] [thickness m] [material: '+Object.keys(SP_MAT).slice(0,7).join(' ')+']'); }
+      if(!nm.length){ if(isFinite(t)) outer=t; if(mt) outerMat=mt; return; }
+      if(!isFinite(t) && !mt) return bad('outer '+nm.join(' ')+': give a thickness (0.04) and / or a material'); outerSel.push({nm,t,mt,li}); return; }
     if(/^inner$/i.test(T[0])){ const m=spMat(T[1]); if(!m || T.length>2) return bad('inner material — for the walls between rooms: '+Object.keys(SP_MAT).slice(0,7).join(' ')); innerMat=m; return; }
     if(/^material$/i.test(T[0]) && T.length===2 && spMat(T[1])){ outerMat=spMat(T[1]); return; }                  // «material шлакоблок» — все стены, если внутренние не заданы отдельно (inner)
     if(/^material$/i.test(T[0])){ const hd=(T[1]||'').split('-'), m=spMat(T[2]); if(hd.length!==2 || !m) return bad('material A-B '+Object.keys(SP_MAT).slice(0,7).join('|')+' — the wall on the side A-B of a room'); edgeMat.push({a:pt(hd[0]),b:pt(hd[1]),mat:m,li}); return; }
@@ -134,9 +139,10 @@ function spParse(text,o={}){
       for(let i=2;i<T.length;i+=2){ const k=T[i].toLowerCase(), v=spNum(T[i+1]); if((k!=='h' && k!=='d') || !(v>0 && v<(k==='h' ? 30 : 3))) return bad('post: unknown or bad «'+T[i]+'» (h height 0…30 m, d diameter 0…3 m)'); q[k]=v; }
       posts.push(q); return; }
     if(/^canopy$/i.test(T[0])){                                                              // «canopy A B [w 1.53] [h 2.95 2.75] [off 0.4] [from u] [to u] [posts u1 u2 …] [d 0.12]» — навес вдоль A-B снаружи
-      const c={a:pt(T[1]||''),b:pt(T[2]||''),w:1.5,h1:2.7,h2:2.5,off:NaN,from:NaN,to:NaN,posts:[],d:.12,li}; const usage='canopy A B [w width] [h at-wall at-edge] [off m] [from u] [to u] [posts u1 u2 …] [d m] — u is measured from A along A→B';
+      const c={a:pt(T[1]||''),b:pt(T[2]||''),w:1.5,h1:2.7,h2:2.5,off:NaN,from:NaN,to:NaN,posts:[],d:.12,li}; const usage='canopy A B [w width] [h at-wall at-edge] [off m] [from u] [to u] [posts u1 u2 …] [ends] [d m] — u is measured from A along A→B';
       if(!T[1] || !T[2] || c.a===c.b) return bad(usage);
       for(let i=3;i<T.length;){ const k=T[i].toLowerCase();
+        if(k==='ends'){ c.ends=true; i++; continue; }
         if(k==='posts'){ i++; while(i<T.length && isFinite(spNum(T[i]))) c.posts.push(spNum(T[i++])); if(!c.posts.length || c.posts.some(u=>u<0)) return bad('canopy: posts u1 u2 … — distances from A, ≥ 0'); continue; }
         if(k==='h'){ c.h1=spNum(T[i+1]); c.h2=isFinite(spNum(T[i+2])) ? spNum(T[i+2]) : c.h1; i+=isFinite(spNum(T[i+2])) ? 3 : 2; if(!(c.h1>0 && c.h2>0)) return bad('canopy: h — heights, m'); continue; }
         const v=spNum(T[i+1]); if(!['w','off','from','to','d'].includes(k) || !isFinite(v)) return bad('canopy: unknown «'+T[i]+'» — '+usage); if((k==='w'||k==='d') && !(v>0)) return bad('canopy: '+k+' > 0'); c[k]=v; i+=2; }
@@ -234,11 +240,16 @@ function spParse(text,o={}){
   String(text||'').split('\n').forEach((raw0,li)=>raw0.replace(/#.*/,'').split(';').forEach(raw=>one(raw,li)));   // # — комментарий до конца строки; «;» — несколько замеров в строке
   { const seen=new Map(); for(const n of names){ const k=n.toLowerCase(); if(seen.has(k) && seen.get(k)!==n) errors.push({line:0,text:n,msg:'«'+seen.get(k)+'» and «'+n+'» are different points — names are case-sensitive'}); else seen.set(k,n); } }
   for(const pl of polys) if(!(pl.h>0) && height>0) pl.h=height;
+  for(const sel of outerSel) for(const w of sel.nm){                                       // «outer ver tamb A-B 0.04 дерево»: комната — все её стороны, A-B — одна сторона; общие стены (между комнатами) от этого не меняются
+    const sides=[]; if(w.includes('-')){ const [a,b]=w.split('-'); if(idx.has(a) && idx.has(b)) for(const pl of polys){ const k=pl.ids.length; pl.ids.forEach((id,i)=>{ const j=pl.ids[(i+1)%k]; if((id===idx.get(a) && j===idx.get(b)) || (id===idx.get(b) && j===idx.get(a))) sides.push([id,j]); }); } }
+    else for(const pl of polys){ if(pl.plot || !pl.ids.every(id=>new RegExp('^'+w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'\\d+$').test(names[id]))) continue; pl.ids.forEach((id,i)=>sides.push([id,pl.ids[(i+1)%pl.ids.length]])); }
+    if(!sides.length){ errors.push({line:sel.li+1,text:w,msg:'outer: «'+w+'» is neither a room (ver → ver1…ver4) nor a side of a room (ver1-ver2)'}); continue; }
+    for(const [a,b] of sides){ if(sel.mt) edgeMat.push({a,b,mat:sel.mt,li:sel.li}); if(isFinite(sel.t)) edgeT.push({a,b,t:sel.t,li:sel.li}); } }
   // отметки этажей без z: над предыдущим (по тексту) — его пол + высота его комнат + перекрытие
   for(let i=0;i<levels.length;i++){ const L=levels[i]; if(L.zSet) continue;                 // над самым верхним из уже известных
     let pv=null; for(let k=0;k<i;k++) if(!pv || levels[k].z>pv.z) pv=levels[k];
     let hh=0; for(const pl of polys) if(pl.lv===pv) hh=Math.max(hh,pl.h>0 ? pl.h : height>0 ? height : 2.7); L.z=pv.z+(hh||2.7)+slab.t; }
-  return {names,obs,polys,errors,mirror,opens,posts,canopies,outer,outerMat,innerMat,edgeMat,levels,roofs,slab,fences,grounds,sources,elec,wires,pps,uses};
+  return {names,obs,polys,errors,mirror,opens,posts,canopies,edgeT,outer,outerMat,innerMat,edgeMat,levels,roofs,slab,fences,grounds,sources,elec,wires,pps,uses};
 }
 
 // «room ИМЯ 4.48 3.74 4.46 3.74 [d 5.8] [d2 5.9]» — комната обходом по периметру: стороны по порядку, углы ИМЯ1, ИМЯ2… расставляются сами.
@@ -594,6 +605,7 @@ function spSolve(text,opt={}){
   for(const m of P.edgeMat||[]){ const side=P.polys.some(pl=>{ const k=pl.ids.length; return pl.ids.some((id,i)=>(id===m.a && pl.ids[(i+1)%k]===m.b) || (id===m.b && pl.ids[(i+1)%k]===m.a)); });
     if(!side){ out.errors.push({line:m.li+1,text:P.names[m.a]+'-'+P.names[m.b],msg:'material: '+P.names[m.a]+'-'+P.names[m.b]+' is not a side of a room'}); continue; }
     out.mats.edge[[P.names[m.a],P.names[m.b]].sort().join('|')]=m.mat; }
+  out.mats.edgeT={}; for(const m of P.edgeT||[]) out.mats.edgeT[[P.names[m.a],P.names[m.b]].sort().join('|')]=m.t;
   out.ground=out.pts.length ? out.pts.map(p=>p.z) : [];
   out.edges=[]; { const seen=new Set(); for(const o of obs) if((o.k==='d'||o.k==='h'||o.k==='dz'||o.k==='az') && o.b!==undefined){ const key=Math.min(o.a,o.b)+'-'+Math.max(o.a,o.b); if(!seen.has(key)){ seen.add(key); out.edges.push([o.a,o.b]); } } }
   return out;
@@ -620,7 +632,7 @@ function spPoly(pts){
 // поэтому дверь между комнатами пробивает общую стену насквозь, как ни записана — со стороны любой комнаты.
 // → {walls:[{id,x1,y1,x2,y2,t,h,kind:'outer'|'inner'}], opens:[{wall,u (0…1 от x1,y1),w,h,sill,type}]}
 function spWalls(R,o={}){
-  const M=o.mats||R.mats||{}, mOut=M.outer||'brick', mIn=M.inner||mOut, eMat=e=>(M.edge||{})[[e.a,e.b].sort().join('|')];
+  const M=o.mats||R.mats||{}, mOut=M.outer||'brick', mIn=M.inner||mOut, eMat=e=>(M.edge||{})[[e.a,e.b].sort().join('|')], eT=e=>(M.edgeT||{})[[e.a,e.b].sort().join('|')];
   const outer=o.outer>0 ? o.outer : .4, maxGap=o.maxGap>0 ? o.maxGap : .8, P=n=>R.pts.find(p=>p.name===n), E=[], rooms=[];
   (o.polys||R.polys).forEach((pl,ri)=>{
     const V=pl.names.map(P), m=V.length; let a2=0; for(let i=0;i<m;i++){ const p=V[i], q=V[(i+1)%m]; a2+=p.x*q.y-q.x*p.y; }
@@ -644,12 +656,12 @@ function spWalls(R,o={}){
       let best=null; for(const c of cov) if(c.lo<=mid && mid<=c.hi && (!best || c.d<best.d)) best=c;
       const last=e.pieces[e.pieces.length-1];
       if(last && last.f===(best?.f||null) && Math.abs(last.hi-lo)<.03) last.hi=hi;
-      else e.pieces.push({lo,hi,t:best ? best.d : outer,f:best ? best.f : null,inner:!!best}); }
+      else e.pieces.push({lo,hi,t:best ? best.d : (eT(e)??outer),f:best ? best.f : null,inner:!!best,fixed:!best && eT(e)!=null}); }
     if(e.pieces.length){ e.pieces[0].lo=0; e.pieces[e.pieces.length-1].hi=e.L; }
   }
   // фасад ровный: наружная грань не мерилась (она — принятая толщина), поэтому почти совпадающие наружные грани (параллельны, расходятся < align)
   // сводятся в одну линию, а толщина каждой стены подгоняется; внутренние грани (замер) не двигаются
-  const align=o.align>=0 ? o.align : .08, OP=[]; for(const e of E) for(const pc of e.pieces) if(!pc.inner) OP.push({e,pc});
+  const align=o.align>=0 ? o.align : .08, OP=[]; for(const e of E) for(const pc of e.pieces) if(!pc.inner && !pc.fixed) OP.push({e,pc});
   const par=OP.map((_,i)=>i), fd=i=>par[i]===i ? i : (par[i]=fd(par[i]));
   const face=({e,pc})=>{ const m=(pc.lo+pc.hi)/2; return [e.px+e.ux*m+e.nx*pc.t,e.py+e.uy*m+e.ny*pc.t]; };
   for(let i=0;i<OP.length;i++) for(let j=i+1;j<OP.length;j++){ const A=OP[i].e, B=OP[j].e; if(A.nx*B.nx+A.ny*B.ny<.9994) continue;
@@ -770,7 +782,7 @@ function spCanopy(c,outer){
   const face={kind:'roof',pts:[P(u0,off,z1),P(u1,off,z1),P(u1,off+w,z2),P(u0,off+w,z2)]};
   const area=(u1-u0)*Math.hypot(w,z1-z2), ang=Math.atan2(Math.abs(z1-z2),w)/SP_D;
   return {roof:{type:'canopy',angle:+ang.toFixed(2),faces:[face],area,ridge:Math.max(z1,z2),eave:Math.min(z1,z2),wallMat:'wood'},
-    posts:c.posts.map(u=>{ const v=off+w-c.d/2, p=P(u,v,0); return {x:p[0],y:p[1],h:z2}; })};
+    posts:(c.ends ? [u0+c.d/2,u1-c.d/2] : []).concat(c.posts).map(u=>{ const v=off+w-c.d/2, p=P(u,v,0); return {x:p[0],y:p[1],h:z2}; })};
 }
 // крыша над стенами ws: оси — вдоль первой стороны первой комнаты (a→b), прямоугольник по наружным граням + свес; zE — верх стен.
 // gable — двускатная (фронтоны — стены), hip — вальмовая, shed — односкатная (высокая сторона — дальняя от a-b), flat — плоская.
