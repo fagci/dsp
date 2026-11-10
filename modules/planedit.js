@@ -595,6 +595,9 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
         const T=C.map(c=>P.pt(c[0],c[1],b.z1)); cx.beginPath(); T.forEach((t,i)=>i ? cx.lineTo(t[0],t[1]) : cx.moveTo(t[0],t[1])); cx.closePath(); cx.fillStyle=col(.92); cx.fill();
         if(P.d3){ cx.strokeStyle='rgba(0,0,0,.4)'; cx.lineWidth=.6; cx.stroke(); }
       } }
+    // забор из колышков и шнура: на плане всегда виден (шнур не тоньше 1,6 px, колышек не мельче 3 px), в 3D — своя геометрия (тонкие столбики и полоса у верхушек)
+    if(!P.d3){ cx.lineWidth=1.6; cx.strokeStyle='#ecc43a'; cx.beginPath(); for(const w of s.walls){ if(w.mat!=='cord' || !lvOk(w.lv)) continue; const [a,b]=peWallEnds(s,w), A=P.pt(a.x,a.y,0), B=P.pt(b.x,b.y,0); cx.moveTo(A[0],A[1]); cx.lineTo(B[0],B[1]); } cx.stroke();
+      for(const o of s.objs){ if(o.name!=='stake') continue; const A=P.pt(o.x,o.y,0); cx.beginPath(); cx.arc(A[0],A[1],Math.max(3,o.w*P.sc/2),0,7); cx.fillStyle='#fff3c4'; cx.fill(); cx.strokeStyle='#8a6a00'; cx.lineWidth=1; cx.stroke(); } }
     // крыша на плане — пунктиром (скаты и конёк)
     if(!P.d3 && (p.lv==='all' || p.lv==null)) for(const r of s.roofs||[]){ cx.strokeStyle='rgba(255,138,101,.75)'; cx.lineWidth=1; cx.setLineDash([6,4]);
       for(const f of r.faces){ if(f.kind!=='roof') continue; cx.beginPath(); f.pts.forEach((c,k)=>{ const A=P.pt(c[0],c[1],0); k ? cx.lineTo(A[0],A[1]) : cx.moveTo(A[0],A[1]); }); cx.closePath(); cx.stroke(); } cx.setLineDash([]); }

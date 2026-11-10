@@ -392,6 +392,7 @@ const PRESET_CATS={
   'Plan Editor: Wi-Fi with Reflections — Rays to a Receiver':'Maps & Locating',
   'Plan Editor: Wiring and Lighting — Lights, Switches, Sockets and Cable Length':'Maps & Locating',
   'Site Plan: Plot with a Fence, Road, Bath House and a Cell Tower → Signal Indoors':'Maps & Locating',
+  'Site Plan: Plot on a Satellite Map — Stakes and Cord, Buildings Drawn from the Photo':'Maps & Locating',
   'Plan Editor: Yard Cameras — Over the Fence by Height, the View from a Camera':'Maps & Locating',
   'Clinometer: Tree Height from the Phone Tilt → Site Plan':'Maps & Locating',
   'Signal Paths: Direct and Reflected Between Two Points':'Maps & Locating',
@@ -8874,6 +8875,24 @@ const sp=addNode('siteplan',40,200,{view:'plan',plan:'outer 0.40 brick\ninner dr
 sp.size.w=520; sp.size.h=560; applySize(sp);
 const pe=addNode('planedit',600,200,{view:'plan',layer:'none',snap:'0.1'});
 pe.size.w=700; pe.size.h=620; applySize(pe);
+addEdge(sp.id,'rec',pe.id,'rec');
+markWiresDirty();
+});
+preset('Site Plan: Plot on a Satellite Map — Stakes and Cord, Buildings Drawn from the Photo', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The plot from the cadastre on a satellite photo, and the plot fence drawn as stakes and a cord. Site Plan: the corners are GPS points (± 0.1 m for cadastre coordinates), «plot A B C …» is the boundary (area, perimeter, the map — no walls), «fence A B C … closed stakes every 6» are the pegs at the corners and every 6 m between them with a cord at the top; in Plan Editor they are yellow dots and a line. '+
+  'Map (Esri Satellite): the plan comes to it on «rec» (the boundary in orange, the stakes line in yellow) and what you draw comes back from «edit» to Site Plan. Switch the map to «polygon» and tap the corners of a building in the photo, or to «line» for a fence run; double-tap or the ✓ button finishes. In Site Plan press «⬇ Write points and shapes from rec (Map) into the plan text»: every vertex becomes a GPS point (± 0.5 m — eyeballed from the photo, correct it by hand), a polygon becomes «poly» (a building with walls), a polygon named plot… — «plot», fence… — a closed stakes fence, a line — an open stakes fence. Rename a shape on the map before writing (the name is the prefix of its points). '+
+  'Satellite tiles need the network (the last tiles viewed stay in the browser cache); the plan itself works offline.'});
+nt.size.w=1180; nt.size.h=210; applySize(nt);
+const sp=addNode('siteplan',40,290,{view:'plan',plan:'# the plot from the cadastre (EPSG:3857 → WGS84), corners ± 0.1 m\nA gps 50.2715410 85.5971693 ±0.1\nB gps 50.2711228 85.5969435 ±0.1\nC gps 50.2711199 85.5969566 ±0.1\nD gps 50.2710742 85.5969372 ±0.1\nE gps 50.2710248 85.5971877 ±0.1\nF gps 50.2714701 85.5974605 ±0.1\nplot A B C D E F\n# the fence: stakes at the corners and every 6 m, a cord between them\nfence A B C D E F closed stakes every 6\n'});
+sp.size.w=480; sp.size.h=520; applySize(sp);
+const mp=addNode('geoMap',560,290,{tiles:'Esri Satellite',mlat:50.2713,mlon:85.5972,mz:19,mode:'view',tools:true});
+mp.size.w=620; mp.size.h=520; applySize(mp);
+const pe=addNode('planedit',1200,290,{view:'plan',layer:'none',snap:'0.1'});
+pe.size.w=620; pe.size.h=520; applySize(pe);
+addEdge(sp.id,'poly',mp.id,'rec');
+addEdge(sp.id,'rec',mp.id,'rec');
+addEdge(mp.id,'edit',sp.id,'rec');
 addEdge(sp.id,'rec',pe.id,'rec');
 markWiresDirty();
 });

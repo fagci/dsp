@@ -12,7 +12,8 @@
      A z 120.5                высота A, м
      A gps 55.03 82.92 [±3] [alt 120]   GPS-замер (несколько — усредняются по весу)
      A at 10 5                координаты A в локальной системе, м
-     poly A B C D             контур — площадь и периметр
+     poly A B C D             контур — площадь и периметр (комната: вокруг него строятся стены)
+     plot A B C D             контур участка — площадь, периметр, карта; без стен (границу покажут колышки: fence … stakes)
      room Hall … h 2.65 · poly … h 2.65 · height 2.7   высота потолка комнаты / по умолчанию для всех (уходит в высоту стен Plan Editor, объём)
      window A-B 1.20 1.40 [h 1.45] [sill 0.85]   окно в стене A-B: от угла A до ближнего края 1.20, ширина 1.40, высота, подоконник от пола (door — дверь, h 2.05, sill 0)
      outer 0.45 [concrete] · inner drywall · material block (все стены) · material A-B glass   материалы: наружных стен, стен между комнатами, стены на стороне A-B (и «wall … 0.37 brick»);
@@ -21,7 +22,7 @@
      level 2 [z 2.95] · level cellar z -2.2   этаж: комнаты ниже по тексту — на нём (без z — над самым верхним из уже объявленных: его пол + высота комнат + перекрытие); подвал — с минусом
      slab 0.25 concrete       перекрытия между этажами (толщина, материал) · same A B — B ровно над / под A (угол этажа над углом нижнего)
      roof gable|hip|shed|flat [30] [overhang 0.5] [ridge long|short] [level 2]   крыша над этажом (по умолчанию — верхним): угол, свес, конёк вдоль длинной / короткой стороны
-     fence A B C … [h 1.8] [sheet|mesh|wood|brick|concrete|block] [closed]   забор по точкам (профлист, рабица, штакетник…; можно по-русски), для сигнала — стена
+     fence A B C … [h 1.8] [sheet|mesh|wood|brick|concrete|block|stakes] [every 5] [closed]   забор по точкам; stakes / колышки — колышки в точках и шнур между ними (every — шаг, м); (профлист, рабица, штакетник…; можно по-русски), для сигнала — стена
      road A B … [w 3.5] [asphalt|gravel|tile] · area A B C … [grass|asphalt|gravel|tile|garden|water]   дорога (полоса) и площадка — покрытие земли
      light|socket|switch|panel|inlet|junction NAME POINT|A-B [dx м] [dy м | along м] [off м] [h м] [w Вт]   электрика (A-B — на стене комнаты: along — от угла A вдоль стены, off — вглубь комнаты): светильник, розетка, выключатель, щиток, ввод, распредкоробка у точки (смещение на восток / север, высота над точкой)
      wire A B C [cable 3x1.5 · 2x1.5 · 5x2.5 … — любое «жилыxсечение»] [z 2.5]   провод по цепочке устройств (z — высота трассы); ввод — 5x2.5, розетка — 3x2.5, иначе 3x1.5
@@ -37,8 +38,8 @@ const SP_MAT={brick:'brick',concrete:'concrete',block:'block',drywall:'drywall',
   'кирпич':'brick','бетон':'concrete','газоблок':'block','пеноблок':'block','шлакоблок':'block','шлакобетон':'block','керамзитоблок':'block','керамзитобетон':'block','блок':'block','гипсокартон':'drywall','гкл':'drywall','дерево':'wood','брус':'wood','стекло':'glass','металл':'metal'};
 const spMat=t=>SP_MAT[String(t||'').toLowerCase()]||null;
 // заборы: материал → {mat (Plan Editor), t (толщина, м)}; профлист — металл (сплошной лист экранирует), рабица — сетка (теряет немного, ячейка меньше волны не на всех частотах)
-const SP_FENCE_SPEC={sheet:{mat:'metal',t:.1},mesh:{mat:'mesh',t:.05},wood:{mat:'wood',t:.03},brick:{mat:'brick',t:.25},concrete:{mat:'concrete',t:.15},block:{mat:'block',t:.2}};
-const SP_FENCE={sheet:'sheet',metal:'sheet','профлист':'sheet','металл':'sheet',mesh:'mesh','сетка':'mesh','рабица':'mesh',wood:'wood','дерево':'wood','штакетник':'wood',brick:'brick','кирпич':'brick',concrete:'concrete','бетон':'concrete',block:'block','блок':'block','газоблок':'block'};
+const SP_FENCE_SPEC={stakes:{mat:'cord',t:.01},sheet:{mat:'metal',t:.1},mesh:{mat:'mesh',t:.05},wood:{mat:'wood',t:.03},brick:{mat:'brick',t:.25},concrete:{mat:'concrete',t:.15},block:{mat:'block',t:.2}};
+const SP_FENCE={stakes:'stakes',stake:'stakes',pegs:'stakes',peg:'stakes',cord:'stakes','колышки':'stakes','колья':'stakes','шнур':'stakes',sheet:'sheet',metal:'sheet','профлист':'sheet','металл':'sheet',mesh:'mesh','сетка':'mesh','рабица':'mesh',wood:'wood','дерево':'wood','штакетник':'wood',brick:'brick','кирпич':'brick',concrete:'concrete','бетон':'concrete',block:'block','блок':'block','газоблок':'block'};
 const SP_COVER={asphalt:'asphalt','асфальт':'asphalt',gravel:'gravel','гравий':'gravel','щебень':'gravel',tile:'tile','плитка':'tile',grass:'grass','газон':'grass','трава':'grass',garden:'garden','огород':'garden','грядки':'garden',water:'water','вода':'water','пруд':'water'};
 
 function spFrame(lat0,lon0){
@@ -97,13 +98,14 @@ function spParse(text,o={}){
     if(/^same$/i.test(T[0])){ const a=T[1], b=T[2]; if(!a || !b || T.length>3) return bad('same A B — B stands exactly above / below A (plan position)'); obs.push({k:'same',a:pt(a),b:pt(b),s:sig??.01,li}); return; }
     // участок: забор, дорога, площадка, внешний источник сигнала
     if(/^fence$/i.test(T[0])){                                                               // «fence A B C … [h 1.8] [sheet|mesh|wood|brick|concrete|block] [closed]»
-      const f={ids:[],h:1.8,mat:'sheet',closed:false,li};
+      const f={ids:[],h:1.8,mat:'sheet',closed:false,every:0,li}; let hSet=false;
       for(let i=1;i<T.length;i++){ const t=T[i].toLowerCase();
-        if(t==='h'){ f.h=spNum(T[++i]); if(!(f.h>0 && f.h<10)) return bad('fence: h — height, m'); }
+        if(t==='h'){ f.h=spNum(T[++i]); hSet=true; if(!(f.h>0 && f.h<10)) return bad('fence: h — height, m'); }
+        else if(t==='every'){ f.every=spNum(T[++i]); if(!(f.every>=.5 && f.every<=100)) return bad('fence: every — the stake step, m (0.5…100); the stakes always stand at the points'); }
         else if(t==='closed') f.closed=true;
         else if(SP_FENCE[t]) f.mat=SP_FENCE[t];
         else f.ids.push(pt(T[i])); }
-      if(f.ids.length<2) return bad('fence A B [C …] [h 1.8] [sheet|mesh|wood|brick|concrete|block] [closed]'); fences.push(f); return; }
+      if(f.ids.length<2) return bad('fence A B [C …] [h 1.8] [sheet|mesh|wood|brick|concrete|block|stakes] [every 5] [closed]'); if(f.every>0 && f.mat!=='stakes') return bad('fence: «every» is for stakes (pegs with a cord)'); if(f.mat==='stakes' && !hSet) f.h=.5; fences.push(f); return; }
     if(/^(road|area)$/i.test(T[0])){                                                         // «road A B … [w 3.5] [asphalt|gravel|tile]» · «area A B C … [grass|asphalt|gravel|tile|garden|water]»
       const kind=T[0].toLowerCase(), g={kind,ids:[],w:3.5,cover:kind==='road' ? 'asphalt' : 'grass',li};
       for(let i=1;i<T.length;i++){ const t=T[i].toLowerCase();
@@ -142,8 +144,8 @@ function spParse(text,o={}){
         else return bad('roof: unknown «'+T[i]+'»'); }
       roofs.push(r); return; }
     if(/^height$/i.test(T[0])){ const v=spNum(T[1]); if(!(v>0)) return bad('height needs a number, m'); height=v; return; }     // высота потолка по умолчанию для всех комнат
-    if(/^poly$/i.test(T[0])){ let h=NaN; { const i=T.findIndex((t,k)=>k>0 && /^h$/i.test(t)); if(i>0){ h=spNum(T[i+1]); if(!(h>0)) return bad('poly … h needs a height, m'); T.splice(i,2); } }
-      const ids=T.slice(1).map(pt); if(ids.length<3){ bad('poly needs 3+ points'); return; } polys.push({ids,h,lv:lvCur}); return; }
+    if(/^(poly|plot)$/i.test(T[0])){ const isPlot=/^plot$/i.test(T[0]); let h=NaN; { const i=T.findIndex((t,k)=>k>0 && /^h$/i.test(t)); if(i>0){ h=spNum(T[i+1]); if(!(h>0)) return bad('poly … h needs a height, m'); T.splice(i,2); } }
+      const ids=T.slice(1).map(pt); if(ids.length<3){ bad(T[0]+' needs 3+ points'); return; } polys.push({ids,h,lv:lvCur,plot:isPlot}); return; }
     const head=T[0].split('-'), kw=(T[1]||'').toLowerCase(), v=spNum(T[1]);
     if(head.length===1){                                                                    // одна точка
       const a=pt(head[0]);
@@ -482,12 +484,12 @@ function spSolve(text,opt={}){
     else if(N){ const x0=out.pts[0].x; for(const p of out.pts) p.x=2*x0-p.x; out.mirror=true; }
   }
   // контуры
-  for(const pl of P.polys){ const q=spPoly(pl.ids.map(i=>out.pts[i])); if(pl.h>0){ q.h=pl.h; q.volume=q.area*pl.h; } q.level=pl.lv.name; q.z0=pl.lv.z; out.polys.push(q); }
+  for(const pl of P.polys){ const q=spPoly(pl.ids.map(i=>out.pts[i])); if(pl.h>0){ q.h=pl.h; q.volume=q.area*pl.h; } q.level=pl.lv.name; q.z0=pl.lv.z; q.plot=!!pl.plot; out.polys.push(q); }
   { const used=P.levels.filter(L=>P.polys.some(pl=>pl.lv===L)).sort((a,b)=>a.z-b.z), g=Math.max(0,used.findIndex(L=>L.z>=-.5));   // номер этажа: 0 — первый с полом не ниже −0.5 м, подвалы — минус
     out.levels=used.map((L,i)=>({name:L.name,z:L.z,idx:i-g})); out.roofSpecs=P.roofs; out.slab=P.slab; }
   // участок: точки уже решены
   const XY=i=>[out.pts[i].x,out.pts[i].y];
-  out.fences=P.fences.map(f=>({...SP_FENCE_SPEC[f.mat],kind:f.mat,h:f.h,closed:f.closed,names:f.ids.map(i=>P.names[i]),pts:f.ids.map(XY)}));
+  out.fences=P.fences.map(f=>({...SP_FENCE_SPEC[f.mat],kind:f.mat,h:f.h,every:f.every||0,closed:f.closed,names:f.ids.map(i=>P.names[i]),pts:f.ids.map(XY)}));
   out.grounds=P.grounds.map(g=>({kind:g.kind,cover:g.cover,w:g.w,names:g.ids.map(i=>P.names[i]),pts:g.ids.map(XY)}));
   // электрика: устройства у точек, провода по именам
   out.elec=P.elec.map(q=>{ const p=out.pts[q.a];
@@ -641,10 +643,10 @@ function spWalls(R,o={}){
 // Стены — по каждому этажу отдельно (spWalls), с отметкой пола z0 и номером этажа lv; перекрытие — пол этажа, под которым есть другой этаж
 // (контуры комнат, толщина и материал из «slab»); крыша — по наружному контуру стен этажа (spRoof). → {walls, opens, slabs, roofs, levels}
 function spHouse(R,o={}){
-  const out={walls:[],opens:[],slabs:[],roofs:[],levels:R.levels||[{name:'1',z:0,idx:0}]};
+  const out={walls:[],opens:[],slabs:[],roofs:[],stakes:[],levels:R.levels||[{name:'1',z:0,idx:0}]};
   const lvs=out.levels, slab=R.slab||{t:.25,mat:'concrete'};
   for(const L of lvs){
-    const sub=R.polys.filter(pl=>(pl.level??'1')===L.name); if(!sub.length) continue;
+    const sub=R.polys.filter(pl=>(pl.level??'1')===L.name && !pl.plot); if(!sub.length) continue;                 // plot — контур участка: без стен
     const W=spWalls(R,{...o,polys:sub}), pre=lvs.length>1 ? 'L'+L.name+':' : '';
     // есть этаж выше — наружные стены доходят до его пола (сквозь толщину перекрытия), иначе по фасаду пустая полоса
     const up=lvs.filter(M=>M.z>L.z+.01).sort((a,b)=>a.z-b.z)[0];
@@ -656,7 +658,13 @@ function spHouse(R,o={}){
   // участок: заборы — стены (для сигнала и картинки), покрытие земли — плоские многоугольники, внешние источники
   (R.fences||[]).forEach((f,i)=>{ const P=f.pts.slice(); if(f.closed && P.length>2) P.push(P[0]);
     for(let k=0;k+1<P.length;k++){ const [x1,y1]=P[k], [x2,y2]=P[k+1]; if(Math.hypot(x2-x1,y2-y1)<.02) continue;
-      out.walls.push({id:'fence:'+i+':'+k,x1,y1,x2,y2,t:f.t,h:f.h,mat:f.mat,kind:'fence',z0:0,lv:0}); } });
+      if(f.kind==='stakes') out.walls.push({id:'fence:'+i+':'+k,x1,y1,x2,y2,t:f.t,h:.03,mat:f.mat,kind:'fence',z0:+Math.max(0,f.h-.04).toFixed(3),lv:0});      // шнур — тонкая полоса у верхушек колышков
+      else out.walls.push({id:'fence:'+i+':'+k,x1,y1,x2,y2,t:f.t,h:f.h,mat:f.mat,kind:'fence',z0:0,lv:0}); }
+    if(f.kind==='stakes'){                                                                  // колышки: в каждой точке и, если задан шаг, через каждые «every» м вдоль линии
+      const pts=f.closed && f.pts.length>2 ? f.pts.concat([f.pts[0]]) : f.pts, put=(x,y)=>out.stakes.push({id:'fence:'+i+':s'+out.stakes.length,x:+x.toFixed(3),y:+y.toFixed(3),h:f.h});
+      for(let k=0;k<pts.length;k++){ if(!(f.closed && k===pts.length-1)) put(pts[k][0],pts[k][1]);
+        if(f.every>0 && k+1<pts.length){ const [x1,y1]=pts[k], [x2,y2]=pts[k+1], L=Math.hypot(x2-x1,y2-y1), m=Math.max(1,Math.round(L/f.every));
+          for(let j=1;j<m;j++) put(x1+(x2-x1)*j/m,y1+(y2-y1)*j/m); } } } });
   out.grounds=[];
   for(const g of R.grounds||[]){
     if(g.kind==='area'){ out.grounds.push({cover:g.cover,poly:g.pts.map(q=>q.slice())}); continue; }
@@ -667,7 +675,7 @@ function spHouse(R,o={}){
   for(const spec of R.roofSpecs||[]){
     const L=spec.level!=null ? lvs.find(q=>q.name===spec.level) : lvs.slice().sort((a,b)=>b.z-a.z)[0];
     if(!L){ (R.errors||[]).push({line:spec.li+1,text:'roof',msg:'roof: no level «'+spec.level+'»'}); continue; }
-    const ws=out.walls.filter(w=>w.lv===L.idx), first=R.polys.find(pl=>(pl.level??'1')===L.name); if(!ws.length || !first) continue;
+    const ws=out.walls.filter(w=>w.lv===L.idx), first=R.polys.find(pl=>(pl.level??'1')===L.name && !pl.plot); if(!ws.length || !first) continue;
     let H=0; for(const w of ws) H=Math.max(H,w.h||0); for(const pl of R.polys) if((pl.level??'1')===L.name) H=Math.max(H,pl.h||0); if(!(H>0)) H=2.7;
     const a=R.pts.find(q=>q.name===first.names[0]), b=R.pts.find(q=>q.name===first.names[1]);
     out.roofs.push(spRoof(ws,spec,L.z+H,a,b,o.outerMat||R.mats?.outer||'brick'));
@@ -781,6 +789,14 @@ function spRowToLine(r){
   const num=v=>{ if(!has(v)) return NaN; const x=Number(String(v).trim().replace(',','.')); return isFinite(x) ? x : NaN; };
   const f=v=>String(+v.toFixed(6)), sg=v=>isFinite(v) && v>0 ? ' ± '+f(v) : '';
   const raw=g('line','text','dsl'); if(typeof raw==='string' && raw.trim()) return raw.trim();
+  { const gt=String(g('gtype')??'').trim().toLowerCase();                                // фигура с карты (Map: gtype polygon | line, geom [[lat,lon],…]): вершины — GPS-точки, дальше контур или забор
+    if(gt==='polygon' || gt==='line'){
+      let G=g('geom'); if(typeof G==='string'){ try{ G=JSON.parse(G); }catch(e){ G=null; } }
+      const base=nm(g('name','label','id')??'S')||'S', V=(Array.isArray(G) ? G : []).filter(q=>Array.isArray(q) && Math.abs(+q[0])<=90 && Math.abs(+q[1])<=180 && isFinite(+q[0]) && isFinite(+q[1]));
+      if(V.length<(gt==='polygon' ? 3 : 2)) return '';
+      const ids=V.map((q,i)=>base+'_'+(i+1)), out=V.map((q,i)=>ids[i]+' gps '+f(+q[0])+' '+f(+q[1])+' ± 0.5');
+      out.push(gt==='line' ? 'fence '+ids.join(' ')+' stakes' : /^(plot|уч)/i.test(base) ? 'plot '+ids.join(' ') : /^(fence|забор|колы)/i.test(base) ? 'fence '+ids.join(' ')+' stakes closed' : 'poly '+ids.join(' '));
+      return out.join('\n'); } }
   const kind=String(g('kind','type','k')??'').trim().toLowerCase(), sig=num(g('sigma','s','err','error','±'));
   const a=g('a','from','p1','name','point'), b=g('b','to','p2'), c=g('c','p3'), val=num(g('value','v','d','dist','distance','len','length','m'));
   if(kind==='poly'){ const l=g('names','points','poly')??[a,b,c].filter(has).join(' '); const ids=String(l).split(/[\s,;]+/).filter(Boolean).map(nm); return ids.length>=3 ? 'poly '+ids.join(' ') : ''; }

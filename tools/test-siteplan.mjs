@@ -6,7 +6,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float64Array,Float32Array,Set,Map,Number,String,JSON,isFinite,Infinity,Array,Object});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/siteplan-kernels.js'),'utf8')+';this.K={spSolve,spParse,spTilt,spPoly,spDXF,spGeoJSON,spSVG,spCSV,spFrame,spNice,spGridFrame,spToFrame,spFilePath,spFromFrame,spGridLines,spWalls,spHouse,spRoof};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/siteplan-kernels.js'),'utf8')+';this.K={spSolve,spParse,spTilt,spPoly,spDXF,spGeoJSON,spSVG,spCSV,spFrame,spNice,spGridFrame,spToFrame,spFilePath,spFromFrame,spGridLines,spWalls,spHouse,spRoof,spRowToLine};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -238,4 +238,24 @@ for(const t of ['material Kit2-Kit3 concrete\nroom Hall 4.48 3.74 4.46 3.74\nroo
   Q=K.spSolve('room A 4 3 4 3\nsocket S1 A1-A2 dx 1'); ok('dx on a wall is an error',Q.errors.length===1 && /for a point/.test(Q.errors[0].msg),JSON.stringify(Q.errors));
   Q=K.spSolve('room A 4 3 4 3\nsocket S1 A1 along 1'); ok('along at a point is an error',Q.errors.length===1 && /for a wall/.test(Q.errors[0].msg),JSON.stringify(Q.errors));
   Q=K.spSolve('room A 4 3 4 3\nsocket S1 A1-A1'); ok('a wall of one corner is an error',Q.errors.length===1,JSON.stringify(Q.errors)); }
+// колышки и шнур вместо забора, контур участка без стен, фигуры с карты
+{ const R=K.spSolve('A at 0 0\nB at 10 0\nC at 10 6\nD at 0 6\nplot A B C D\nfence A B C D closed stakes every 5'), H=K.spHouse(R,{});
+  ok('stakes: no errors',R.errors.length===0,JSON.stringify(R.errors));
+  ok('plot: area and perimeter, but no walls of its own',Math.abs(R.polys[0].area-60)<.02 && R.polys[0].plot===true && !H.walls.some(w=>w.kind==='outer'),JSON.stringify(H.walls.map(w=>w.kind)));
+  ok('stakes: a cord (thin, no signal loss) between the corner pegs, 4 sides',H.walls.length===4 && H.walls.every(w=>w.mat==='cord' && w.t===.01 && w.kind==='fence'));
+  ok('stakes: 4 corners + 1 per 10 m side (every 5), none extra on the 6 m side → 6',H.stakes.length===6,H.stakes.length);
+  ok('stakes: default height 0.5 m, the cord near the top',H.stakes.every(q=>q.h===.5) && H.walls.every(w=>Math.abs(w.z0-.46)<1e-9));
+  const Q=K.spSolve('A at 0 0\nB at 10 0\nfence A B stakes h 0.8'), HQ=K.spHouse(Q,{});
+  ok('stakes: an open line, two pegs at the ends, the given height',HQ.stakes.length===2 && HQ.stakes[0].h===.8 && HQ.walls.length===1,JSON.stringify(HQ.stakes));
+  ok('«every» only for stakes',K.spSolve('A at 0 0\nB at 10 0\nfence A B mesh every 5').errors.length===1);
+  const Z=K.spSolve('A at 0 0\nB at 10 0\nC at 10 6\nD at 0 6\nroom H 4 3 4 3\nH1 at 20 20\nplot A B C D'), HZ=K.spHouse(Z,{});
+  ok('plot next to a room: only the room gets walls',HZ.walls.length>0 && HZ.walls.every(w=>w.x1>=15 && w.x2>=15),JSON.stringify(HZ.walls.slice(0,2))); }
+{ const L=K.spRowToLine({gtype:'polygon',name:'house1',geom:JSON.stringify([[50.1,85.1],[50.1,85.2],[50.2,85.2]])}).split('\n');
+  ok('map polygon → 3 GPS points and a poly',L.length===4 && /^house1_1 gps 50.1 85.1 ± 0.5$/.test(L[0]) && L[3]==='poly house1_1 house1_2 house1_3',L.join(' | '));
+  ok('map polygon named plot… → plot',K.spRowToLine({gtype:'polygon',name:'plot',geom:[[50,85],[50,86],[51,86]]}).split('\n').pop()==='plot plot_1 plot_2 plot_3');
+  ok('map polygon named fence… → a closed fence on stakes',K.spRowToLine({gtype:'polygon',name:'fence2',geom:[[50,85],[50,86],[51,86]]}).split('\n').pop()==='fence fence2_1 fence2_2 fence2_3 stakes closed');
+  ok('map line → a fence on stakes',K.spRowToLine({gtype:'line',name:'L1',geom:[[50,85],[50,86]]}).split('\n').pop()==='fence L1_1 L1_2 stakes');
+  ok('map shape with too few vertices → nothing',K.spRowToLine({gtype:'polygon',name:'x',geom:[[50,85],[50,86]]})==='' && K.spRowToLine({gtype:'polygon',name:'x',geom:'oops'})==='');
+  const R=K.spSolve(K.spRowToLine({gtype:'polygon',name:'plot',geom:[[50.0001,85],[50,85.0003],[50.0002,85.0003]]}));
+  ok('the lines from a map polygon solve without errors and give an area',R.errors.length===0 && R.polys[0].area>0 && R.georef,JSON.stringify(R.errors)); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
