@@ -105,7 +105,7 @@ function spParse(text,o={}){
         else if(t==='closed') f.closed=true;
         else if(SP_FENCE[t]) f.mat=SP_FENCE[t];
         else f.ids.push(pt(T[i])); }
-      if(f.ids.length<2) return bad('fence A B [C …] [h 1.8] [sheet|mesh|wood|brick|concrete|block|stakes] [every 5] [closed]'); if(f.every>0 && f.mat!=='stakes') return bad('fence: «every» is for stakes (pegs with a cord)'); if(f.mat==='stakes' && !hSet) f.h=.5; fences.push(f); return; }
+      if(f.ids.length<2) return bad('fence A B [C …] [h 1.8] [sheet|mesh|wood|brick|concrete|block|stakes] [every 5] [closed]'); if(f.every>0 && f.mat!=='stakes') return bad('fence: «every» is for stakes (pegs with a cord)'); if(f.mat==='stakes' && !hSet) f.h=1; fences.push(f); return; }
     if(/^(road|area)$/i.test(T[0])){                                                         // «road A B … [w 3.5] [asphalt|gravel|tile]» · «area A B C … [grass|asphalt|gravel|tile|garden|water]»
       const kind=T[0].toLowerCase(), g={kind,ids:[],w:3.5,cover:kind==='road' ? 'asphalt' : 'grass',li};
       for(let i=1;i<T.length;i++){ const t=T[i].toLowerCase();
