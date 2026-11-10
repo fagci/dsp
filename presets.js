@@ -8891,6 +8891,21 @@ pe.size.w=700; pe.size.h=620; applySize(pe);
 addEdge(sp.id,'rec',pe.id,'rec');
 markWiresDirty();
 });
+preset('Plan Editor: Plan Check and Views — Geometry Problems, Electrics / Heating / Ventilation Separately', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Plan check and views. The plan below has a few deliberate mistakes: a window wider than its wall, a door on top of a window, a socket outside the house, two devices with one name, a boiler outside the rooms. Plan Editor marks each with a ! in a ring (red — error, amber — warning), lists them in the readout («plan check») and the button «Next plan problem» selects them one by one. The check also looks for walls with no length or height, walls lying on each other, windows above the wall, rooms with fewer than 3 corners, crossing or overlapping outlines, a room side without a wall, devices above the ceiling, wires and pipes with no end. The parameter «show» keeps one system on the plan — electrics, heating, ventilation, cameras or radio (structure: walls, rooms and doors only); the hidden items are not clickable either, so a crowded plan can be drawn system by system. Fix the mistakes (select an item and drag or delete it) and the markers go away.'});
+nt.size.w=1180; nt.size.h=130; applySize(nt);
+const sc=peNew(), P=[[0,0],[5,0],[5,4],[0,4]].map(q=>peAddPoint(sc,q[0],q[1]).id), W=P.map((a,i)=>peAddWall(sc,a,P[(i+1)%4],{t:.4,h:2.7,mat:'brick'}));
+const Q=[[5,0],[9,0],[9,4],[5,4]].map((q,i)=>i===0||i===3 ? P[i===0 ? 1 : 2] : peAddPoint(sc,q[0],q[1]).id), W2=[1,2,3].map(i=>peAddWall(sc,Q[i-1],Q[i],{t:.4,h:2.7,mat:'brick'})); peAddWall(sc,Q[3],Q[0],{t:.4,h:2.7,mat:'brick'});
+peAddRoom(sc,P,'Liv'); peAddRoom(sc,Q,'Kit');
+peAddObj(sc,'window',{wall:W[0].id,u:.5,w:6,h:1.4,sill:.9}); peAddObj(sc,'door',{wall:W[3].id,u:.5,w:.9,h:2.05,sill:0}); peAddObj(sc,'window',{wall:W[3].id,u:.55,w:1.2,h:1.2,sill:.9});
+const so=peAddEl(sc,'socket',1,1), s2=peAddEl(sc,'socket',3,1); s2.name=so.name; peAddEl(sc,'socket',14,2); const lt=peAddEl(sc,'light',2.5,2); peAddWire(sc,so.id,lt.id);
+const bo=hvAdd(sc,'boiler',20,2,{watt:24000}), ra=hvAdd(sc,'radiator',2.5,.3,{watt:1500}), r2=hvAdd(sc,'radiator',7,.3,{watt:1200}); hvLink(sc,bo.id,ra.id); hvLink(sc,ra.id,r2.id);
+const fa=hvAdd(sc,'fan',8,3.5,{m3:100}), ex=hvAdd(sc,'extract',7,2,{}); hvLink(sc,fa.id,ex.id);
+const pe=addNode('planedit',40,200,{view:'plan',layer:'none',snap:'0.1',show:'all',scene:JSON.stringify(sc)});
+pe.size.w=860; pe.size.h=620; applySize(pe);
+markWiresDirty();
+});
 preset('Plan Editor: Wiring Groups — Consumers, Breakers, Cable and Voltage Drop', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Groups of the wiring. A group is everything fed by one cable leaving the panel (through junction boxes, switches and sockets further down). Plan Editor lists each group in the readout: devices, power, current I = P/(230 V·cosφ), the breaker (auto — the nearest standard rating not below the current; to set one by hand, select the first cable out of the panel and use «breaker» — in Site Plan «wire P1 J1 … amp 16»), the cable at the head, the cross-section the current needs, the longest run and the voltage drop to the farthest load (2ρLI/S per section, copper). A ⚠ says what is wrong: a breaker below the current, a cable that cannot take the breaker or its section current, a drop over 5 %. A panel line sums its groups with the demand factor 0.7 and picks the main breaker, the cable from the inlet is checked against it; consumers not wired to a panel are listed as «not fed». '+
