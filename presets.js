@@ -8953,6 +8953,18 @@ pe.size.w=700; pe.size.h=620; applySize(pe);
 addEdge(sp.id,'rec',pe.id,'rec');
 markWiresDirty();
 });
+preset('Site Plan: Fences — Picket, Euro, 3D Panel, Forged, Brick, Gabion, Hedge, Gates, Signal Through a Fence', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Fences of many kinds. Site Plan: «fence A B C … picket|euro|panel|forged|brick|concrete|block|gabion|hedge|sheet|mesh|wood|stakes [h 1.5] [closed] [gate 1 3.5] [wicket 2 1.0 at 0.3]» — a type is a word (Russian too: евроштакетник, ковка, габион, живая…), the height is the type\'s own unless set, «gate N W» / «wicket N W» put a gate (over 2 m) or a wicket in the N-th segment (1 — A-B). Every type is a wall for the radio model: loss per 10 cm at 2.4 GHz — sheet 20 dB, gabion 4 (0.3 m → 12), hedge 1.5 (0.6 m → 9), welded 3D panel 8 (0.05 m → 4), euro picket 12 (0.03 m → 3.6), forged 10 (0.02 m → 2), picket 3 (0.03 m → 0.9), brick 0.25 m → 10; it grows with the frequency. Here an access point stands in the middle of the yard and four receivers wait behind four fences — see «signal» in the readout (layer «signal»). In Plan Editor a wall gets a type by hand: select it, «fence type» on the strip. The readout sums each type, «⬇ Specification CSV» and the sheet list the materials: posts with the pitch of the type and the ends of the run (+2 at each gate), sheets, pickets, rails, concrete for the posts, bricks and blocks with 5 %, strip footing, baskets with stone, plants.'});
+nt.size.w=1180; nt.size.h=140; applySize(nt);
+const sp=addNode('siteplan',40,200,{view:'plan',plan:'# a yard 30 × 20 m, four sides — four kinds of fence, gates by the numbers of the segments (1 = first pair)\nA at 0 0\nB at 30 0\nC at 30 20\nD at 0 20\nplot A B C D\nfence A B picket gate 1 4\nfence B C euro wicket 1 1\nfence C D panel\nfence D A brick wicket 1\n# inside: a hedge and a gabion wall\nE at 8 8\nF at 22 8\nG at 22 14\nfence E F hedge\nfence F G gabion'});
+sp.size.w=520; sp.size.h=520; applySize(sp);
+const sc=peNew(); peAddAnt(sc,15,10,{z:2.4,eirp:20,f:2437,name:'AP'}); peAddRx(sc,15,-4,{name:'S (picket)'}); peAddRx(sc,34,10,{name:'E (euro)'}); peAddRx(sc,15,24,{name:'N (panel)'}); peAddRx(sc,-4,10,{name:'W (brick)'});
+const pe=addNode('planedit',600,200,{view:'plan',layer:'signal',snap:'0.5',refl:'0',scene:JSON.stringify(sc)});
+pe.size.w=760; pe.size.h=620; applySize(pe);
+addEdge(sp.id,'rec',pe.id,'rec');
+markWiresDirty();
+});
 preset('Plan Editor: Wiring Groups — Consumers, Breakers, Cable and Voltage Drop', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Groups of the wiring. A group is everything fed by one cable leaving the panel (through junction boxes, switches and sockets further down). Plan Editor lists each group in the readout: devices, power, current I = P/(230 V·cosφ), the breaker (auto — the nearest standard rating not below the current; to set one by hand, select the first cable out of the panel and use «breaker» — in Site Plan «wire P1 J1 … amp 16»), the cable at the head, the cross-section the current needs, the longest run and the voltage drop to the farthest load (2ρLI/S per section, copper). A ⚠ says what is wrong: a breaker below the current, a cable that cannot take the breaker or its section current, a drop over 5 %. A panel line sums its groups with the demand factor 0.7 and picks the main breaker, the cable from the inlet is checked against it; consumers not wired to a panel are listed as «not fed». '+

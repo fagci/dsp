@@ -37,6 +37,7 @@ function pcSpec(s,calc){ const C=calc||(s.rooms.length ? hvCalc(s,{}) : null), r
   for(const [t,nm] of [['ahu','supply-extract units'],['fan','fans'],['supply','supply terminals'],['extract','extract grilles']]) if(by(t).length) items.push({group:'ventilation',name:nm,qty:by(t).length,note:t==='ahu'||t==='fan' ? Math.round(by(t).reduce((a,d)=>a+(+d.m3||0),0))+' m³/h' : ''});
   for(const [d,L] of Object.entries(duct).sort((a,b)=>a[0]-b[0])) items.push({group:'ventilation',name:'duct Ø'+d,qty:+L.toFixed(1),unit:'m'});
   if(ductFree>0) items.push({group:'ventilation',name:'ducts not connected to a unit',qty:+ductFree.toFixed(1),unit:'m'});
+  if(typeof fenceItems==='function') items.push(...fenceItems(s));
   return {rooms,items,calc:C}; }
 function pcSpecCsv(s,calc){ const S=pcSpec(s,calc), q=v=>/[",;\n]/.test(String(v)) ? '"'+String(v).replace(/"/g,'""')+'"' : String(v), out=['section,name,use,area_m2,volume_m3,temp_C,heat_loss_W,air_m3h'];
   for(const r of S.rooms) out.push(['room',r.name,r.use,(+r.area).toFixed(2),(+r.vol||0).toFixed(2),r.tin||'',Math.round(r.loss||0),Math.round(r.air||0)].map(q).join(','));
