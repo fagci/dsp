@@ -26,6 +26,9 @@
      road A B … [w 3.5] [asphalt|gravel|tile] · area A B C … [grass|asphalt|gravel|tile|garden|water]   дорога (полоса) и площадка — покрытие земли
      light|socket|switch|panel|inlet|junction|load NAME POINT|A-B [dx м] [dy м | along м] [off м] [h м] [w Вт]   электрика (A-B — на стене комнаты: along — от угла A вдоль стены, off — вглубь комнаты): светильник, розетка, выключатель, щиток, ввод, распредкоробка у точки (смещение на восток / север, высота над точкой)
      wire A B C [cable 3x1.5 · 2x1.5 · 5x2.5 … — любое «жилыxсечение»] [z 2.5] [amp 16]   провод по цепочке устройств (z — высота трассы); ввод — 5x2.5, розетка — 3x2.5, иначе 3x1.5
+     boiler|radiator|floor|heater|manifold|ahu|fan|supply|extract NAME POINT|A-B [dx|dy|along|off м] [h м] [kw N | w Вт] [m3 м³/ч] [eff %] [pa Па] [area м²] [fuel electric|gas|wood]   отопление и вентиляция: котёл, радиатор (w — номинал при ΔT 50), тёплый пол (area), местный нагреватель, коллектор; установка, вентилятор, приточный диффузор, вытяжная решётка
+     pipe A B C [dn 20] [z 0.1] · duct A B C [d 160] [z 2.6]   труба (отопление) и воздуховод (вентиляция) по цепочке устройств; dn / d — вручную, иначе подбор по скорости
+     use Liv living|bedroom|kitchen|bath|wc|laundry|boiler|hall|office|garage|store [people 3] [tin 22] [gas]   назначение комнаты для расчёта теплопотерь и воздухообмена (без строки — по названию)
      source NAME POINT [h 25] [eirp 43] [f 1800] [az 120] [bw 65]   внешний источник сигнала над точкой (вышка, соседский роутер; точка — по GPS, at или замерам)
      mirror                   отразить план слева направо (по рулетке и углам план не отличить от зеркального; с компасом / GPS не нужно)
      wall Hall2-Hall3 Kor4-Kor1 0.37 [shift 0]   стык через стену: Kor4-Kor1 параллельно Hall2-Hall3 по ту сторону стены 0.37, Kor4 напротив Hall2 (shift — сдвиг вдоль), Kor1 — в сторону Hall3
@@ -59,7 +62,7 @@ function spNum(t){ if(t==null) return NaN; const s=String(t).replace(/^[±~]|^\+
 function spParse(text,o={}){
   const sd=o.sd>0 ? o.sd : 0.03, sa=o.sa>0 ? o.sa : 2, sg=o.sg>0 ? o.sg : 5, eye0=o.eye||0;
   const names=[], idx=new Map(), obs=[], polys=[], errors=[], opens=[]; let mirror=false, height=NaN, outer=NaN, outerMat=null, innerMat=null; const edgeMat=[];
-  const levels=[{name:'1',z:0,zSet:true,li:-1}], roofs=[], fences=[], grounds=[], sources=[], elec=[], wires=[]; let lvCur=levels[0], slab={t:.25,mat:'concrete'};
+  const levels=[{name:'1',z:0,zSet:true,li:-1}], roofs=[], fences=[], grounds=[], sources=[], elec=[], wires=[], pps=[], uses=[]; let lvCur=levels[0], slab={t:.25,mat:'concrete'};
   const pt=n=>{ if(!idx.has(n)){ idx.set(n,names.length); names.push(n); } return idx.get(n); };
   const one=(raw,li,depth=0)=>{
     const line=raw.trim(); if(!line) return;
@@ -118,6 +121,30 @@ function spParse(text,o={}){
       const q={name:nm,a:pt(at),h:2,eirp:20,f:2437,az:0,bw:360,li};
       for(let i=3;i<T.length;i+=2){ const k=T[i].toLowerCase(), v=spNum(T[i+1]); if(!['h','eirp','f','az','bw'].includes(k) || !isFinite(v)) return bad('source: unknown «'+T[i]+'» (h eirp f az bw)'); q[k]=v; }
       if(!(q.f>0) || !(q.bw>0 && q.bw<=360)) return bad('source: f > 0, bw 1…360'); sources.push(q); return; }
+    if(/^(boiler|radiator|floor|heater|manifold|ahu|fan|supply|extract)$/i.test(T[0])){                                  // отопление и вентиляция: «radiator R1 A-B along 1 off 0.1 w 1200» — устройство у точки или на стене комнаты
+      const type=T[0].toLowerCase(), nm=T[1], at=T[2]; if(!nm || !at) return bad(type+' NAME POINT|WALL [dx m] [dy m] [along m] [off m] [h m] [kw N | w W] [m3 m³/h] [eff %] [pa Pa] [area m²] [fuel electric|gas|wood] — e.g. '+(type==='boiler' ? 'boiler B1 A dx 0.5 kw 24' : type==='radiator' ? 'radiator R1 A-B along 1 off 0.1 w 1200' : type==='floor' ? 'floor F1 A dx 1 dy 1 area 12' : type==='heater' ? 'heater H1 A dx 1 w 1500 fuel electric' : type==='ahu' ? 'ahu U1 A dx 0.5 h 2.4 m3 300 eff 80' : type==='fan' ? 'fan FN1 B-C along 1 h 2.4 m3 100' : type==='manifold' ? 'manifold M1 A dx 1 h 0.8' : type+' T1 A dx 1 dy 1 h 2.6'));
+      if(elec.some(e=>e.name===nm)) return bad(type+': the name «'+nm+'» is already used');
+      const wl=at.split('-'); if(wl.length>2 || (wl.length===2 && (!wl[0] || !wl[1] || wl[0]===wl[1]))) return bad(type+': a wall is «A-B» — two different corners of one room');
+      const q={type,name:nm,a:pt(wl[0]),wall:wl.length===2 ? pt(wl[1]) : -1,along:0,off:0,dx:0,dy:0,h:{boiler:.3,radiator:.5,floor:0,heater:.3,manifold:.8,ahu:2.4,fan:2.4,supply:2.6,extract:2.6}[type],w:{boiler:24000,radiator:1200,heater:1500}[type]||0,li,hv:true};
+      if(type==='floor') q.area=10; if(type==='ahu'){ q.m3=300; q.eff=80; q.pa=150; } if(type==='fan'){ q.m3=100; q.pa=100; } if(type==='supply'||type==='extract') q.m3=0; if(type==='heater') q.fuel='electric';
+      for(let i=3;i<T.length;i+=2){ const k=T[i].toLowerCase();
+        if(k==='fuel'){ const f=(T[i+1]||'').toLowerCase(); if(!['electric','gas','wood'].includes(f)) return bad(type+': fuel — electric, gas or wood'); q.fuel=f; continue; }
+        const v=spNum(T[i+1]); if(!['dx','dy','h','w','kw','along','off','m3','eff','pa','area'].includes(k) || !isFinite(v)) return bad(type+': unknown «'+T[i]+'» (dx dy along off h w kw m3 eff pa area fuel)');
+        if(q.wall>=0 ? (k==='dx'||k==='dy') : (k==='along'||k==='off')) return bad(type+': «'+k+'» '+(q.wall>=0 ? 'is for a point; on a wall use along and off' : 'is for a wall «A-B»; at a point use dx and dy'));
+        if(k==='kw') q.w=v*1000; else q[k]=v; }
+      if(q.wall>=0 && !(q.along>=0)) return bad(type+': along ≥ 0');
+      if(q.h<0 || q.w<0 || (q.area!=null && !(q.area>0)) || (q.m3!=null && q.m3<0) || (q.eff!=null && (q.eff<0||q.eff>95))) return bad(type+': h, w ≥ 0; area > 0; m3 ≥ 0; eff 0…95'); elec.push(q); return; }
+    if(/^(pipe|duct)$/i.test(T[0])){                                                              // «pipe B1 M1 R1 [dn 20] [z 0.1]» · «duct U1 T1 [d 160] [z 2.6]» — трасса по цепочке устройств
+      const kind=T[0].toLowerCase(), w={kind,names:[],dn:0,z:null,li};
+      for(let i=1;i<T.length;i++){ const t=T[i].toLowerCase();
+        if(t==='dn'||t==='d'){ w.dn=spNum(T[++i]); if(!(w.dn>=10 && w.dn<=800)) return bad(kind+': '+t+' — diameter, mm (pipe 16…63, duct 80…630)'); }
+        else if(t==='z'){ w.z=spNum(T[++i]); if(!(w.z>0 && w.z<10)) return bad(kind+': z — run height, m'); }
+        else w.names.push(T[i]); }
+      if(w.names.length<2) return bad(kind+' A B [C …] [dn mm] [z m] — A, B… are names of '+(kind==='pipe' ? 'boilers, radiators, floor loops and manifolds' : 'units, fans, supply terminals and extract grilles')); pps.push(w); return; }
+    if(/^use$/i.test(T[0])){                                                                       // «use Liv living people 3 tin 22 gas» — назначение комнаты
+      const nm=T[1], kind=(T[2]||'').toLowerCase(); if(!nm || !['living','bedroom','kitchen','bath','wc','laundry','boiler','hall','office','garage','store'].includes(kind)) return bad('use ROOM living|bedroom|kitchen|bath|wc|laundry|boiler|hall|office|garage|store [people N] [tin °C] [gas]');
+      const u={name:nm,use:kind,li}; for(let i=3;i<T.length;i++){ const t=T[i].toLowerCase(); if(t==='gas') u.gas=true; else if(t==='people'||t==='tin'){ const v=spNum(T[++i]); if(!isFinite(v) || (t==='people' && v<0)) return bad('use: '+t+' — a number'); u[t]=v; } else return bad('use: unknown «'+T[i]+'» (people tin gas)'); }
+      uses.push(u); return; }
     if(/^(light|socket|switch|panel|inlet|junction|load)$/i.test(T[0])){                                                // электрика: «light L1 A [dx 1] [dy 0.5] [h 2.6] [w 60]» — светильник у точки A (смещение на восток / север, высота над точкой, Вт)
       const type=T[0].toLowerCase(), nm=T[1], at=T[2]; if(!nm || !at) return bad(type+' NAME POINT|WALL [dx m] [dy m] [along m] [off m] [h height above the point, m] [w watts] — e.g. '+type+' '+(type==='light' ? 'L1 A dx 2 dy 1.5 h 2.6 w 60' : type==='socket' ? 'S1 A dx 0.3 h 0.3 w 200' : type==='panel' ? 'P1 A dx 0.3 dy 0.4 h 1.6' : type==='inlet' ? 'IN1 A dx 0.1 h 3' : type==='junction' ? 'J1 A dx 1 dy 0.5 h 2.4' : type==='load' ? 'LD1 B dx -0.5 h 0.3 w 2000' : 'SW1 B dx 0.2 h 1.1'));
       if(elec.some(e=>e.name===nm)) return bad(type+': the name «'+nm+'» is already used');
@@ -178,7 +205,7 @@ function spParse(text,o={}){
   for(let i=0;i<levels.length;i++){ const L=levels[i]; if(L.zSet) continue;                 // над самым верхним из уже известных
     let pv=null; for(let k=0;k<i;k++) if(!pv || levels[k].z>pv.z) pv=levels[k];
     let hh=0; for(const pl of polys) if(pl.lv===pv) hh=Math.max(hh,pl.h>0 ? pl.h : height>0 ? height : 2.7); L.z=pv.z+(hh||2.7)+slab.t; }
-  return {names,obs,polys,errors,mirror,opens,outer,outerMat,innerMat,edgeMat,levels,roofs,slab,fences,grounds,sources,elec,wires};
+  return {names,obs,polys,errors,mirror,opens,outer,outerMat,innerMat,edgeMat,levels,roofs,slab,fences,grounds,sources,elec,wires,pps,uses};
 }
 
 // «room ИМЯ 4.48 3.74 4.46 3.74 [d 5.8] [d2 5.9]» — комната обходом по периметру: стороны по порядку, углы ИМЯ1, ИМЯ2… расставляются сами.
@@ -504,6 +531,15 @@ function spSolve(text,opt={}){
       const a=Math.min(q.along,L); return {type:q.type,name:q.name,at:nm,x:p.x+ux*a+nx*q.off,y:p.y+uy*a+ny*q.off,z:p.z+q.h,watt:q.w,...(q.ph===3 ? {ph:3} : {})};
     }
     return {type:q.type,name:q.name,at:p.name,x:p.x+q.dx,y:p.y+q.dy,z:p.z+q.h,watt:q.w,...(q.ph===3 ? {ph:3} : {})}; });
+  out.elec.forEach((e,i)=>{ const q=P.elec[i]; if(!q.hv) return; e.hv=true; for(const k of ['m3','eff','pa','area','fuel']) if(q[k]!=null) e[k]=q[k]; });              // отопление и вентиляция — отдельным списком
+  out.hv=out.elec.filter(e=>e.hv); out.elec=out.elec.filter(e=>!e.hv);
+  out.pp=[]; { const by=new Map(out.hv.map(e=>[e.name,e])), AIR=new Set(['ahu','fan','supply','extract']);
+    for(const w of P.pps){ for(let i=0;i+1<w.names.length;i++){ const A=by.get(w.names[i]), B=by.get(w.names[i+1]);
+        if(!A||!B){ out.errors.push({line:w.li+1,text:w.kind,msg:w.kind+': unknown device «'+(A ? w.names[i+1] : w.names[i])+'» (declare it with '+(w.kind==='pipe' ? 'boiler / radiator / floor / manifold' : 'ahu / fan / supply / extract')+')'}); continue; }
+        if(A===B) continue;
+        if((w.kind==='duct')!==(AIR.has(A.type) && AIR.has(B.type)) || (w.kind==='pipe' && (AIR.has(A.type)||AIR.has(B.type)||A.type==='heater'||B.type==='heater'))){ out.errors.push({line:w.li+1,text:w.kind,msg:w.kind+' '+A.name+' '+B.name+': '+(w.kind==='pipe' ? 'a pipe joins boilers, radiators, floor loops and manifolds (a heater has no pipes)' : 'a duct joins units, fans, supply terminals and extract grilles')}); continue; }
+        out.pp.push({a:A.name,b:B.name,dn:w.dn,z:w.z}); } } }
+  out.uses=P.uses;
   out.wires=[]; { const by=new Map(out.elec.map(e=>[e.name,e]));
     for(const w of P.wires){ for(let i=0;i+1<w.names.length;i++){ const A=by.get(w.names[i]), B=by.get(w.names[i+1]);
         if(!A||!B){ out.errors.push({line:w.li+1,text:'wire',msg:'wire: unknown device «'+(A ? w.names[i+1] : w.names[i])+'» (declare it with light / socket / switch)'}); continue; }
