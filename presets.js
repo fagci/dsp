@@ -8916,6 +8916,18 @@ const pe=addNode('planedit',40,200,{view:'plan',layer:'climate',snap:'0.1',tool:
 pe.size.w=860; pe.size.h=620; applySize(pe);
 markWiresDirty();
 });
+preset('Plan Editor: Floors — Switch, Add, Copy a Floor, Items Stay on Their Own Floor', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Floors on the canvas. The bar under the tools (top left) is the floor switch: ▼ ▲ (or PageDown / PageUp) go down and up, the label returns to «all floors» (the plan shows the ground, 3D — the whole house), ＋ adds a floor above (z = the wall height + a 0.25 m slab), ⧉ copies the current floor to the one above: walls, doors and windows, rooms with their use (the lower floor stays). Everything you draw or place goes to the floor that is on: walls, rooms (the tool «room» and «＋ Room»), sockets, radiators, cameras get its height; items of other floors are hidden in the plan and cannot be clicked, in 3D the floors below stay. The same outline on another floor is its own room and its own walls, so the check does not mix them. The calculation reads the floors: a room under another has no roof loss, the upper floor loses nothing to the ground; the layer «climate» and the readout count both. Here a ground floor was drawn, copied up, and the bathroom and a radiator were put on the upper floor.'});
+nt.size.w=1180; nt.size.h=130; applySize(nt);
+const sc=peNew(), o={t:.3,h:2.7,mat:'block'}, a=peAddRectRoom(sc,0,0,5,4,{...o,name:'Гостиная'}), b=peAddRectRoom(sc,5,0,4,4,{...o,name:'Кухня'});
+peAddObj(sc,'window',{wall:a.walls[0].id,u:.5,w:1.5,h:1.4,sill:.9}); peAddObj(sc,'door',{wall:a.walls[3].id,u:.5,w:.9,h:2.05,sill:0});
+const c=peCopyLevel(sc,0,1,2.7); sc.rooms.filter(r=>r.lv===1).forEach((r,i)=>{ r.name=i ? 'Спальня 2' : 'Спальня 1'; r.use='bedroom'; });
+const Z=peLvZ(sc,1), s1=peAddEl(sc,'socket',1,1,{}); const r1=hvAdd(sc,'radiator',2.5,.3,{watt:1500}); r1.z+=Z; const r0=hvAdd(sc,'radiator',2.5,.3,{watt:1800});
+const pe=addNode('planedit',40,200,{view:'3D',lv:'all',layer:'climate',snap:'0.5',wt:.3,mat:'block',scene:JSON.stringify(sc)});
+pe.size.w=860; pe.size.h=620; applySize(pe);
+markWiresDirty();
+});
 preset('Plan Editor: Wiring Groups — Consumers, Breakers, Cable and Voltage Drop', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Groups of the wiring. A group is everything fed by one cable leaving the panel (through junction boxes, switches and sockets further down). Plan Editor lists each group in the readout: devices, power, current I = P/(230 V·cosφ), the breaker (auto — the nearest standard rating not below the current; to set one by hand, select the first cable out of the panel and use «breaker» — in Site Plan «wire P1 J1 … amp 16»), the cable at the head, the cross-section the current needs, the longest run and the voltage drop to the farthest load (2ρLI/S per section, copper). A ⚠ says what is wrong: a breaker below the current, a cable that cannot take the breaker or its section current, a drop over 5 %. A panel line sums its groups with the demand factor 0.7 and picks the main breaker, the cable from the inlet is checked against it; consumers not wired to a panel are listed as «not fed». '+

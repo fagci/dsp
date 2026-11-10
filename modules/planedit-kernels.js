@@ -25,9 +25,9 @@ function peId(s,p){ return p+(s.seq++); }
 const pePt=(s,id)=>s.pts.find(p=>p.id===id);
 function peAddPoint(s,x,y){ const p={id:peId(s,'p'),x,y}; s.pts.push(p); return p; }
 function peAddWall(s,a,b,o={}){
-  if(a===b) return null;
-  let w=s.walls.find(w=>(w.a===a&&w.b===b)||(w.a===b&&w.b===a)); if(w) return w;
-  w={id:peId(s,'w'),a,b,t:o.t??.2,h:o.h??2.7,mat:o.mat||'brick',len:0}; s.walls.push(w); return w;
+  if(a===b) return null; const lv=o.lv||0;
+  let w=s.walls.find(w=>(w.lv||0)===lv && ((w.a===a&&w.b===b)||(w.a===b&&w.b===a))); if(w) return w;      // та же пара точек на другом этаже — другая стена
+  w={id:peId(s,'w'),a,b,t:o.t??.2,h:o.h??2.7,mat:o.mat||'brick',len:0}; if(lv){ w.lv=lv; w.z0=o.z0||0; } s.walls.push(w); return w;
 }
 const peWall=(s,id)=>s.walls.find(w=>w.id===id);
 function peWallEnds(s,w){ const a=pePt(s,w.a), b=pePt(s,w.b); return [a,b]; }
@@ -63,7 +63,7 @@ function peSplitWall(s,w,p){ if(w.src) return null; const [a,b]=peWallEnds(s,w);
   const w2={...w,id:peId(s,'w'),a:p.id,b:w.b,len:0}; w.b=p.id; w.len=0;
   for(const o of s.objs) if(o.wall===w.id){ const pos=o.u*L; if(pos<d) o.u=pos/d; else { o.wall=w2.id; o.u=(pos-d)/(L-d); } }
   s.walls.push(w2);
-  for(const r of s.rooms){ const n=r.pts.length; for(let i=0;i<n;i++){ const x=r.pts[i], y=r.pts[(i+1)%n]; if((x===w.a&&y===w2.b)||(x===w2.b&&y===w.a)){ r.pts.splice(i+1,0,p.id); break; } } }
+  for(const r of s.rooms){ if((r.lv||0)!==(w.lv||0)) continue; const n=r.pts.length; for(let i=0;i<n;i++){ const x=r.pts[i], y=r.pts[(i+1)%n]; if((x===w.a&&y===w2.b)||(x===w2.b&&y===w.a)){ r.pts.splice(i+1,0,p.id); break; } } }
   return w2; }
 const peOnSeg=(p,a,b,tol=.05)=>{ const dx=b.x-a.x, dy=b.y-a.y, L2=dx*dx+dy*dy; if(L2<1e-12) return false; const u=((p.x-a.x)*dx+(p.y-a.y)*dy)/L2; if(u<=0||u>=1) return false; return Math.hypot(p.x-(a.x+dx*u),p.y-(a.y+dy*u))<=tol && Math.hypot(p.x-a.x,p.y-a.y)>tol && Math.hypot(p.x-b.x,p.y-b.y)>tol; };
 function peAddPolyRoom(s,P,o={}){ if(!Array.isArray(P)||P.length<3) return null; let ids=[]; for(const q of P){ const p=peFindPt(s,+q[0],+q[1])||peAddPoint(s,+q[0],+q[1]); if(ids[ids.length-1]!==p.id) ids.push(p.id); }
@@ -71,9 +71,9 @@ function peAddPolyRoom(s,P,o={}){ if(!Array.isArray(P)||P.length<3) return null;
   // существующие точки на сторонах нового контура становятся его углами (сторона не накладывается на чужую стену); новые углы на чужих стенах режут их
   { const ext=[]; for(let i=0;i<ids.length;i++){ const A=pePt(s,ids[i]), B=pePt(s,ids[(i+1)%ids.length]); ext.push(ids[i]);
       const mid=s.pts.filter(p=>!ids.includes(p.id) && peOnSeg(p,A,B)).sort((u,v)=>Math.hypot(u.x-A.x,u.y-A.y)-Math.hypot(v.x-A.x,v.y-A.y)); for(const p of mid) ext.push(p.id); } ids=ext; }
-  for(const id of ids){ const p=pePt(s,id); for(const w of s.walls.slice()){ if(w.a===id||w.b===id) continue; const [a,b]=peWallEnds(s,w); if(a&&b&&peOnSeg(p,a,b)) peSplitWall(s,w,p); } }
-  if(s.rooms.some(r=>r.pts.length===ids.length && ids.every(i=>r.pts.includes(i)))) return null;
-  const ws=ids.map((a,i)=>peAddWall(s,a,ids[(i+1)%ids.length],{t:o.t>0 ? o.t : undefined,h:o.h>0 ? o.h : undefined,mat:o.mat})); const r=peAddRoom(s,ids,o.name); if(o.lv) r.lv=o.lv; return {room:r,walls:ws,pts:ids}; }
+  for(const id of ids){ const p=pePt(s,id); for(const w of s.walls.slice()){ if(w.a===id||w.b===id||(w.lv||0)!==(o.lv||0)) continue; const [a,b]=peWallEnds(s,w); if(a&&b&&peOnSeg(p,a,b)) peSplitWall(s,w,p); } }
+  if(s.rooms.some(r=>(r.lv||0)===(o.lv||0) && r.pts.length===ids.length && ids.every(i=>r.pts.includes(i)))) return null;
+  const ws=ids.map((a,i)=>peAddWall(s,a,ids[(i+1)%ids.length],{t:o.t>0 ? o.t : undefined,h:o.h>0 ? o.h : undefined,mat:o.mat,lv:o.lv,z0:o.z0})); const r=peAddRoom(s,ids,o.name); if(o.lv){ r.lv=o.lv; r.z0=o.z0||0; } return {room:r,walls:ws,pts:ids}; }
 const peAddRectRoom=(s,x0,y0,w,h,o={})=>w>0&&h>0 ? peAddPolyRoom(s,[[x0,y0],[x0+w,y0],[x0+w,y0+h],[x0,y0+h]],o) : null;
 // прямоугольная ли комната (4 точки, стороны по осям): {x0,y0,x1,y1,w,h}
 function peRoomRect(s,r){ if(!r||r.pts.length!==4) return null; const P=r.pts.map(id=>pePt(s,id)); if(P.some(p=>!p)) return null; const xs=[...new Set(P.map(p=>+p.x.toFixed(3)))], ys=[...new Set(P.map(p=>+p.y.toFixed(3)))];
@@ -476,6 +476,24 @@ function peSnapFace(s,x,y,tol){
 // какой этаж показывать: sel — 'all' или номер; в плане 'all' — первый этаж (0), в 3D — все и крыша; номер в 3D — он и всё ниже (разрез)
 // «all» в 3D — дом над землёй (подвал — при выборе −1 / 0: земля не непрозрачная)
 function peLvShow(sel,d3){ if(sel==='all' || sel==null) return d3 ? lv=>(lv||0)>=0 : lv=>(lv||0)===0; const k=+sel; return d3 ? lv=>(lv||0)<=k : lv=>(lv||0)===k; }
+// ---------- этажи: список, создание, копия этажа, этаж устройства по высоте ----------
+const peLvName=i=>i===0 ? '1' : i>0 ? String(i+1) : 'B'+(-i);
+function peEnsureLevel(s,idx,h=2.7,slab=.25){ s.levels??=[]; const has=i=>s.levels.find(q=>q.idx===i); if(!s.levels.length) s.levels.push({name:'1',z:0,idx:0});
+  for(let g=0;!has(idx)&&g<20;g++){ if(idx>0){ const top=Math.max(...s.levels.map(q=>q.idx)), T=has(top); s.levels.push({name:peLvName(top+1),z:+(T.z+h+slab).toFixed(3),idx:top+1}); }
+    else { const bot=Math.min(...s.levels.map(q=>q.idx)), B=has(bot); s.levels.push({name:peLvName(bot-1),z:+(B.z-h-slab).toFixed(3),idx:bot-1}); } }
+  return has(idx)||null; }
+// высотный диапазон этажа idx: [z0, z1) — до пола следующего (верхний — без предела; нижний — без нижнего)
+function peLevelRange(s,idx){ const L=(s.levels||[]).slice().sort((a,b)=>a.idx-b.idx), me=L.find(q=>q.idx===idx), up=L.find(q=>q.idx>idx), low=L.find(q=>q.idx<idx);
+  return {z0:me ? (low ? me.z : -Infinity) : (idx===0 ? (low ? 0 : -Infinity) : 0),z1:up ? up.z : Infinity}; }
+// виден ли предмет на высоте z при выбранном этаже: «all» в плане — этаж 0, в 3D — всё; число — этот этаж (в 3D — и нижние)
+function peOnLevel(s,sel,z,d3){ if(!(s.levels||[]).length) return true; const all=sel==='all'||sel==null; if(all && d3) return true; const R=peLevelRange(s,all ? 0 : +sel); return d3 ? z<R.z1-.3 : (z>=R.z0-.3 && z<R.z1-.3); }
+// копия этажа from на этаж to: точки, стены, проёмы, комнаты (устройства и камеры остаются)
+function peCopyLevel(s,from,to,h=2.7){ const ws=s.walls.filter(w=>(w.lv||0)===from), rs=s.rooms.filter(r=>(r.lv||0)===from); if(!ws.length&&!rs.length) return null; const L=peEnsureLevel(s,to,h); if(!L) return null;
+  const pm=new Map(), P=id=>{ if(!pm.has(id)){ const p=pePt(s,id); pm.set(id,peAddPoint(s,p.x,p.y).id); } return pm.get(id); }, wm=new Map(); let nw=0, no=0, nr=0;
+  for(const w of ws){ const a=P(w.a), b=P(w.b), c=peAddWall(s,a,b,{t:w.t,h:w.h,mat:w.mat,lv:to,z0:L.z}); if(c){ wm.set(w.id,c.id); nw++; } }
+  for(const o of s.objs.slice()){ if(!wm.has(o.wall)) continue; const {id,src,wall,...rest}=o; const c=peAddObj(s,o.type,{...rest,wall:wm.get(o.wall)}); if(c) no++; }
+  for(const r of rs){ const c=peAddRoom(s,r.pts.map(P),r.name); for(const k of ['use','people','tin','gas','free','nofloor','noroof']) if(r[k]!=null) c[k]=r[k]; c.lv=to; c.z0=L.z; nr++; }
+  return {walls:nw,openings:no,rooms:nr,level:L}; }
 const peLvZ=(s,sel)=>{ const L=(s.levels||[]).find(q=>q.idx===(sel==='all' ? 0 : +sel)); return L ? L.z : 0; };
 // служебные точки, которые не рисуются (при «points: auto»): концы стен из Site Plan и углы комнат, у которых нет своих стен
 function peHiddenPts(s){

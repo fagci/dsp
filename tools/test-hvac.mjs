@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float64Array,Float32Array,Set,Map,Number,String,JSON,isFinite,Infinity,Array,Object,RegExp});
 const src=['modules/planedit-kernels.js','modules/hvac-kernels.js'].map(f=>fs.readFileSync(path.join(root,f),'utf8')).join('\n');
-vm.runInContext(src+';this.K={peNew,peAddPoint,peAddWall,peAddRoom,peAddObj,peParse,peImportPoints,peDel,hvAdd,hvLink,hvLinkLen,hvLinkPath,hvCalc,hvStats,hvGuessUse,hvWallU,hvPickPipe,hvPickDuct,hvPipeDrop,hvDuctDrop,HV_DUCTS,HV_PIPES};',ctx);
+vm.runInContext(src+';this.K={peNew,peAddPoint,peAddWall,peAddRoom,peAddObj,peParse,peImportPoints,peDel,hvAdd,hvLink,hvLinkLen,hvLinkPath,hvCalc,hvStats,hvGuessUse,peAddRectRoom,peCopyLevel,hvWallU,hvPickPipe,hvPickDuct,hvPipeDrop,hvDuctDrop,HV_DUCTS,HV_PIPES};',ctx);
 vm.runInContext(fs.readFileSync(path.join(root,'modules/siteplan-kernels.js'),'utf8')+';this.S={spSolve};',ctx);
 const K=ctx.K, S=ctx.S;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
@@ -116,4 +116,9 @@ ok('the same name twice is refused',S.spSolve(T+'\nradiator B1 A').errors.some(q
   ok('a pipe through an unheated garage is a loss, not a gain',K.hvCalc(un,{tout:-25}).heat.pipeLoss>0); }
 { const T2=['A at 0 0','B at 5 0','C at 5 4','D at 0 4','A-B 5','B-C 4','C-D 5','D-A 4','A-C 6.4031','poly A B C D','room Liv 5 4 5 4','boiler B1 A dx 0.5 dy -0.5 kw 24','tee TE1 A dx 1 dy -1','radiator R1 B dx -0.5 dy -1 w 1500','pipe B1 TE1 R1 ins','pipe TE1 R1'].join('\n');
   const Q=S.spSolve(T2); ok('Site Plan: tee; «ins» marks every pipe of its chain',Q.errors.length===0 && Q.hv.some(e=>e.type==='tee') && Q.pp[0].ins===true && Q.pp[1].ins===true && !Q.pp[2].ins,JSON.stringify(Q.errors)+JSON.stringify(Q.pp)); }
+// два этажа, нарисованных руками: у нижней комнаты нет кровли, у верхней — нет пола по грунту
+{ const q=K.peNew(); K.peAddRectRoom(q,0,0,5,4,{name:'Low',t:.4,h:2.7,mat:'brick'}); K.peCopyLevel(q,0,1,2.7); q.rooms.find(r=>r.lv===1).name='Up';
+  const H=K.hvCalc(q,{tout:-25}), lo=H.rooms.find(r=>r.name==='Low'), up=H.rooms.find(r=>r.name==='Up');
+  ok('the ground room has a floor and no roof, the upper one — a roof and no floor',lo.trans.floor>0 && lo.trans.roof===0 && up.trans.floor===0 && up.trans.roof>0,JSON.stringify([lo.trans,up.trans]));
+  const d=K.hvAdd(q,'radiator',2.5,.3,{watt:1000}); d.z+=q.levels.find(l=>l.idx===1).z; ok('a radiator drawn on the upper floor belongs to the upper room',K.hvCalc(q,{tout:-25}).rooms.find(r=>r.name==='Up').dev.includes('R1')); }
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad ? 1 : 0);
