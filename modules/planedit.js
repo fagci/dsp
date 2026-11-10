@@ -216,8 +216,8 @@ function peNextProblem(n){ const L=peCheck(n); if(!L.length){ n.msg='plan check:
   if(['wall','obj','el','hv','wire','pp'].includes(q.kind) && peItem(n,{k:q.kind==='wire' ? 'wire' : q.kind,id:q.id})) peSelect(n,q.kind,q.id); else redraw(n); }
 
 // ---------- отопление и вентиляция: расчёт по сцене и настройкам узла (кэш по правкам) ----------
-function peHvOpt(p){ const w=String(p.hvwater||'70/50').split('/'); return {tout:+p.hvtout||-25,ts:+w[0]||70,tr:+w[1]||50,ins:+p.hvins||0,uw:parseFloat(p.hvglaz)||1.4}; }
-function peHv(n){ const s=n.sc, o=peHvOpt(n.p), key=[n.rev,o.tout,o.ts,o.tr,o.ins,o.uw].join('|'); if(n.hvK!==key){ n.hvK=key; try{ n.hvR=s.rooms.length ? hvCalc(s,o) : null; }catch(e){ n.hvR=null; } } return n.hvR; }
+function peHvOpt(p){ const w=String(p.hvwater||'70/50').split('/'), C=HV_CITIES[p.hvcity]; return {tout:C ? C[0] : +p.hvtout||-25,...(C ? {gd:C[1]} : {}),ts:+w[0]||70,tr:+w[1]||50,ins:+p.hvins||0,uw:parseFloat(p.hvglaz)||1.4}; }
+function peHv(n){ const s=n.sc, o=peHvOpt(n.p), key=[n.rev,o.tout,o.ts,o.tr,o.ins,o.uw,o.gd].join('|'); if(n.hvK!==key){ n.hvK=key; try{ n.hvR=s.rooms.length ? hvCalc(s,o) : null; }catch(e){ n.hvR=null; } } return n.hvR; }
 
 // ---------- действия инструментов ----------
 function peUse(n,P,tool,x,y,hit){
@@ -411,6 +411,11 @@ function pePlanStart(n){
     n.msg=(kind==='cam' ? 'cameras' : 'antennas')+': '+list.length+' placed → '+Math.round(100*res.cover)+'% '+(kind==='cam' ? 'seen' : 'above '+opt.thr+' dBm')+' of '+res.area.toFixed(1)+' m² ('+res.curve.map((v,i)=>(i+1)+': '+Math.round(100*v)+'%').join(', ')+(res.base>0 ? '; already covered before: '+Math.round(100*res.base)+'%' : '')+'; '+res.candidates+' candidates)'; redraw(n); };
   setTimeout(step,0);
 }
+function peSheetOpt(n){ const k=n.p.lv==='all'||n.p.lv==null ? 'all' : +n.p.lv; return {paper:n.p.paper||'A3',level:k,hvopt:peHvOpt(n.p),proj:{name:n.p.pname||'',addr:n.p.paddr||'',by:n.p.pby||'',date:new Date().toISOString().slice(0,10)}}; }
+const peSlug=t=>String(t||'plan').trim().replace(/[^\p{L}\p{N}]+/gu,'-').replace(/^-|-$/g,'').slice(0,40)||'plan';
+function peExportSheet(n){ const s=n.sc; if(!s.pts.length){ n.msg='nothing to export yet'; redraw(n); return; } const svg=pcSheet(s,peSheetOpt(n)); if(!svg){ n.msg='nothing to draw on this floor'; redraw(n); return; }
+  sitepDl(peSlug(n.p.pname)+'-sheet.svg',svg,'image/svg+xml'); n.msg='exported the sheet '+(n.p.paper||'A3')+', '+(svg.match(/1:(\d+)/)||[])[0]; redraw(n); }
+function peExportSpec(n){ const s=n.sc; if(!s.pts.length){ n.msg='nothing to export yet'; redraw(n); return; } const o=peSheetOpt(n); sitepDl(peSlug(n.p.pname)+'-spec.csv',pcSpecCsv(pcLevelScene(s,o.level),s.rooms.length ? hvCalc(pcLevelScene(s,o.level),o.hvopt) : null),'text/csv'); n.msg='exported the specification'; redraw(n); }
 function peExport(n,kind){
   const s=n.sc; if(!s.pts.length){ n.msg='nothing to export yet'; redraw(n); return; }
   if(kind==='svg') sitepDl('plan.svg',peSVG(s,{scale:+n.p.escale,dims:!!n.p.edims,coverage:!!n.p.ecov,north:n.georef ? +n.p.north : undefined}),'image/svg+xml');
@@ -573,6 +578,12 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
           {n:'escale',t:'select',opts:['20','50','100','200'],d:'50',label:'EXPORT — SVG scale 1:…'},
           {n:'edims',t:'check',d:true,label:'SVG: wall dimensions'},
           {n:'ecov',t:'check',d:false,label:'SVG: camera view zones'},
+          {n:'pname',t:'text',d:'',label:'PROJECT — name (the title block of the sheet)',adv:true},
+          {n:'paddr',t:'text',d:'',label:'PROJECT — address / object',adv:true},
+          {n:'pby',t:'text',d:'',label:'PROJECT — drawn by',adv:true},
+          {n:'paper',t:'select',opts:['A3','A4'],d:'A3',label:'SHEET — paper (the scale is chosen from 1:20 … 1:1000 so that the plan fits; the floor on is the one drawn)'},
+          {n:'esheet',t:'button',label:'⬇ Sheet SVG (plan to scale with dimensions and systems, room explication, specification, title block)',fn:n=>peExportSheet(n)},
+          {n:'espec',t:'button',label:'⬇ Specification CSV (rooms with heat loss and air, equipment, pipes, ducts, cable)',fn:n=>peExportSpec(n)},
           {n:'esvg',t:'button',label:'⬇ SVG (to scale, walls with thickness, doors, windows, dimensions)',fn:n=>peExport(n,'svg')},
           {n:'edxf',t:'button',label:'⬇ DXF 2D (layers: walls, doors, windows, objects, rooms, cameras, antennas, text)',fn:n=>peExport(n,'dxf')},
           {n:'edxf3',t:'button',label:'⬇ DXF 3D (adds the walls and objects as 3D faces)',fn:n=>peExport(n,'dxf3')},
@@ -622,7 +633,8 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
           {n:'chk',t:'check',d:true,label:'plan check: mark geometry problems on the plan (a ! in a ring) and list them in the readout'},
           {n:'nextprob',t:'button',label:'⚠ Next plan problem (selects it)',fn:n=>peNextProblem(n)},
           {n:'hvtype',t:'select',opts:Object.keys(HV_T),d:'radiator',label:'climate device (the ♨ tool places it): boiler, radiator, floor (underfloor loop), heater (local: convector, stove, fireplace), manifold, tee (a free branch of a pipe); ahu (supply-extract unit with recovery), fan, supply, extract. The ≋ tool joins them: pipes between water devices, ducts between air ones'},
-          {n:'hvtout',t:'select',opts:['-5','-10','-15','-20','-25','-30','-35','-40'],d:'-25',label:'outdoor design °C: the coldest five days of the region (heat loss)'},
+          {n:'hvcity',t:'select',opts:['custom',...Object.keys(HV_CITIES)],d:'custom',label:'city: sets the outdoor design temperature and the degree-days of the season (approximate; «custom» — the temperature below, 5000 degree-days)'},
+          {n:'hvtout',t:'select',opts:['-5','-10','-15','-20','-25','-30','-35','-40'],d:'-25',label:'outdoor design °C: the coldest five days of the region (heat loss; ignored when a city is set)'},
           {n:'hvwater',t:'select',opts:['90/70','80/60','75/65','70/50','55/45','35/30'],d:'70/50',label:'water supply/return °C (70/50 — a condensing boiler; 55/45 — a heat pump; 35/30 — underfloor)'},
           {n:'hvins',t:'select',opts:['0','50','100','150','200'],d:'0',label:'wall insulation, mm of EPS (λ 0.04) on the outer walls'},
           {n:'hvglaz',t:'select',opts:['5.0 single','2.6 double','1.4 low-e double','0.9 triple'],d:'1.4 low-e double',label:'windows U, W/(m²·K) (heat loss)'},
