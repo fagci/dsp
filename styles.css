@@ -261,7 +261,7 @@ body.noedit #bar .ed{display:none}
 .dash-pane.bare>.dash-rail{display:none!important}
 .dash-pane.bare.scroll>.dash-body{padding-right:0}
 .dash-pane.bare .node .io3>.mid{padding:0}
-.dash-pane.bare .node .io3>.mid>:not(canvas.view.main):not(.tbl-ui):not(.chat):not(.sa-ov):not(.geo-ov):not(.vp){display:none!important}
+.dash-pane.bare .node .io3>.mid>:not(canvas.view.main):not(.vtabs):not(.tbl-ui):not(.chat):not(.sa-ov):not(.geo-ov):not(.vp){display:none!important}
 .dash-body .vp-stage{flex:1 1 0;aspect-ratio:auto;min-height:0}
 .dash-pane.bare .vp-src{display:none}
 .dash-pane.bare .tbl-ui>:not(.tbl-list){display:none!important}
@@ -316,12 +316,22 @@ body.noedit #bar .ed{display:none}
   #scrim.open{display:block}
   #main{flex-direction:column}
   /* внизу — зазор под жест «домой»: статус лежит в нём (fixed), чтобы свайп по панели не сворачивал приложение */
-  #bar{order:2;flex-wrap:nowrap;overflow-x:auto;gap:5px;padding:7px;padding-bottom:calc(26px + env(safe-area-inset-bottom));
-    scrollbar-width:none;border-bottom:0;border-top:1px solid var(--line)}
+  #bar{order:2;flex-wrap:nowrap;overflow-x:auto;gap:2px;padding:5px 6px;padding-bottom:calc(24px + env(safe-area-inset-bottom));
+    scrollbar-width:none;border-bottom:0;border-top:1px solid var(--line);overscroll-behavior-x:contain}
   #canvas{order:1}
   #bar::-webkit-scrollbar{display:none}
-  #bar button{flex:0 0 auto;padding:8px 11px}
-  #bar .sp{display:none}
+  /* кнопка под палец: 44×42 (правило с :has(.i) выше весомее простого #bar button — отступ значков задаём им же) */
+  #bar button,#bar button:has(.i){flex:0 0 auto;min-width:44px;height:42px;padding:0 10px}
+  #bar .i{width:20px;height:20px}
+  #bar .sp,#bar .sep{display:none}
+  /* панель прокручивается: на первом экране — то, что нужно с телефона (меню, пуск, тайлы, вписать, отмена, цепочка), файлы и очистка — в конце */
+  #menu{order:-20} #run{order:-19} #errBadge,#net{order:-18;align-self:center;margin:0 4px} #dash,#dashPages{order:-17} #fit{order:-16}
+  #undo,#redo{order:-15} #chain{order:-14} #dup,#align,#arrange{order:-13} #lod,#bundle{order:-12} #power{order:-11}
+  #helpBtn,#settings{order:-10} #load,#save{order:-9} #clear{order:-8} #wipe{order:-7}
+  #bar :is(#run,#dash,#fit,#undo,#chain,#dup,#lod,#power,#helpBtn,#load,#clear,#wipe){margin-left:5px}
+  /* справа — затухание, пока есть что прокручивать: липкая полоска в конце ряда, под пальцем прозрачна */
+  #bar::after{content:'';order:99;flex:0 0 22px;align-self:stretch;position:sticky;right:0;pointer-events:none;
+    background:linear-gradient(to right,transparent,var(--panel) 85%)}
   #stat{position:fixed;left:0;right:0;bottom:env(safe-area-inset-bottom);height:20px;line-height:20px;padding:0 24px;
     text-align:center;font-size:10px;z-index:1;pointer-events:none;flex:none}
   .pitem{padding:8px 12px 8px 20px}
@@ -338,6 +348,9 @@ body.noedit #bar .ed{display:none}
   .slidernum input[type=number]{font-size:14px}
   .nhead{padding:8px}
   .nhead .x{padding:0 6px;font-size:14px}
+  /* кнопки шапки — под палец: зона касания на всю высоту шапки */
+  .nhead :is(.x,.ren,.rst,.xpd,.hlp,.fsb,.pipb,.wpb,.flb){align-self:stretch;display:flex;align-items:center;justify-content:center;min-width:30px;margin:-8px 0;padding:0 7px}
+  .pcat summary{padding-top:11px;padding-bottom:9px;font-size:10px}
   .nhead .ren,.nhead .rst,.nhead .xpd,.nhead .hlp{padding:0 6px;font-size:13px}
   .rz-r,.rz-l{width:14px}
   .rz-r{right:-10px}
@@ -697,6 +710,17 @@ body.noedit #bar .ed{display:none}
 @media (pointer:coarse){ .pgh{min-height:30px} }
 /* списки (таблица, закладки, диапазоны): в тайле список идёт первым и занимает всю высоту, настройки — под ним */
 .dash-body .node .io3>.mid>:is(.tbl-ui,.bm-ui,.bp-ui){order:-1}
+/* узкая панель на тач-экране (телефон, класс nar ставит dashNarSync) и узлы с viewTop (класс vtop): сначала картинка / журнал, параметры — под ними; высоту считает dashFit */
+.dash-pane.nar .node .io3>.mid>.prm,.dash-pane.nar .node .io3>.mid>.advWrap,
+.node.vtop .io3>.mid>.prm,.node.vtop .io3>.mid>.advWrap{order:1}
+.dash-pane.nar .node .io3>.mid>canvas.view.main,.node.vtop .io3>.mid>canvas.view.main{margin-top:0}
+/* полоса вкладок над холстом (Plan Studio): остаётся и в режиме «только холст» */
+.vtabs{display:flex;gap:2px;flex:none;min-width:0}
+#canvas #content .node .io3>.mid>.vtabs{grid-column:1/-1}
+.vtabs button{flex:1 1 0;min-width:0;padding:4px 6px;background:var(--panel2);color:var(--dim);border:0;border-bottom:2px solid transparent;border-radius:3px 3px 0 0;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vtabs button.on{color:var(--hi,var(--txt));font-weight:700;border-bottom-color:var(--acc)}
+.dash-pane.bare .vtabs{padding:4px 4px 0}
+@media (pointer:coarse){ .vtabs button{min-height:40px;font-size:13px} }
 /* режим «только главное» в тайле: остаются строки .pri, группы без них и advanced прячутся */
 .dash-pane.compact :is(.advToggle,.advWrap,.pgh,.pr-btns){display:none}
 .dash-pane.compact .pgrp:not(:has(.pri)){display:none}
@@ -754,6 +778,26 @@ canvas.view.fs-fb{position:fixed!important;inset:0;width:100vw!important;height:
 #setPanel select:focus-visible,#setPanel input:focus{outline:1px solid var(--acc);outline-offset:-1px}
 #setPanel p{margin:0;color:var(--dim);font-size:11px;line-height:1.4}
 #setPanel code{font:11px var(--mono)}
+/* телефон: разделы — строкой сверху (прокручивается), содержимое на всю ширину окна; раньше колонка разделов + min-width секции выходили за экран */
+@media (max-width:600px){
+  #setPanel{flex-direction:column;max-height:calc(100dvh - 100px)}
+  #setTabs{flex-direction:row;flex-wrap:wrap;align-self:stretch;min-width:0;gap:4px;
+    border-right:0;border-bottom:1px solid var(--line);padding:0 0 8px;margin:0 0 10px}
+  #setTabs button{flex:1 1 auto;text-align:center;font-size:12px}
+  #setBody>section{min-width:0}
+  #setPanel input{max-width:none}
+  #setPanel label>span:first-child{flex:0 1 auto;min-width:0}
+  #gwBox,#crBox{border-top:0;padding-top:0}                /* черта уже есть под строкой разделов */
+}
+@media (pointer:coarse){
+  #setPanel{font-size:13px;padding:12px}
+  #setPanel button,#setPanel select,#setPanel input:not([type=checkbox]):not([type=range]):not([type=color]){min-height:38px;padding:7px 10px}
+  #setTabs button{padding:8px 6px}
+  #setPanel input[type=checkbox]{width:22px;height:22px;flex:none}
+  #setPanel input[type=color]{min-height:38px;min-width:64px}
+  #setPanel p,#setPanel code{font-size:12px}
+  #setBody>section{gap:10px}
+}
 /* выбор устройства в параметре узла: список из Settings → Devices или свой адрес */
 .devpick{display:flex;flex-direction:column;gap:3px;flex:1;min-width:0;align-items:stretch}
 /* учётка в узле: список + правка, форма на всю ширину узла (поля крупнее, подписи слева, с отступом от пинов) */
@@ -1391,7 +1435,7 @@ select.aed-b{padding:0 6px}
 #canvas #content .node.xp .nbody{flex:1 1 0;min-height:0;display:flex;flex-direction:column}
 #canvas #content .node.xp .io3{flex:1 1 0;min-height:0}
 #canvas #content .node.xp .io3>.mid{flex:1 1 0;min-height:0;min-width:0;display:flex!important;flex-direction:column;padding:0;margin:0}
-#canvas #content .node.xp .io3>.mid>:not(canvas.view.main):not(.tbl-ui):not(.chat):not(.sa-ov):not(.vp){display:none!important}
+#canvas #content .node.xp .io3>.mid>:not(canvas.view.main):not(.vtabs):not(.tbl-ui):not(.chat):not(.sa-ov):not(.vp){display:none!important}
 #canvas #content .node.xp .io3>.mid>.vp{flex:1 1 0;min-height:0}
 /* пины под канву: иначе перекрывают кнопки в углу (A у спектра); торчащая за рамку половинка пина по-прежнему нажимается */
 #canvas #content .node.xp .io3>.col{z-index:0}

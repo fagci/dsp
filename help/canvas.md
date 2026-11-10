@@ -7,6 +7,10 @@
 - **→+ (quick chain)** in the toolbar, with one module selected: the picker shows what fits the free output of the selected module, connects the new module and selects it — repeat to grow a chain.
 - Patches can be dragged from the list onto the canvas: they are *added* to the current graph.
 
+## On a phone
+- The toolbar is at the bottom and scrolls sideways: menu, run, tiles, fit, undo / redo and quick chain come first, files and clear are at the end.
+- A preset opens fitted to the screen. Select a module and press **tiles**: it fills the screen — the picture on top, the parameters under it (scroll), the corner-arrows button leaves the picture alone. Plan Studio keeps its tabs in every mode.
+
 ## Moving around
 - Drag an empty spot to pan, wheel or pinch to zoom, **Fit** (the corners button) shows everything.
 - Drag a module by its header. Select several with Shift+click, then **Align** or **Duplicate** from the toolbar.
