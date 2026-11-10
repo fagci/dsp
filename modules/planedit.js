@@ -745,13 +745,13 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
       if(P.d3) for(const sl of s.slabs||[]) if(lvOk(sl.lv)) roofPolys.push({pts:sl.poly.map(q=>[q[0],q[1],sl.z]),rgb:PE_MATCOL[sl.mat]||[168,174,180]});   // перекрытия — пол этажа
       if(P.d3){            // 3D: z-буфер — порядок блоков не важен, пересечения объёмов тоже рисуются верно; пока вид двигают — вдвое грубее, потом дорисовывается начисто
         const fast=performance.now()-(n.fastT||0)<260, k=fast ? .55 : peSS(W,H), zw=Math.max(8,Math.round(W*k)), zh=Math.max(8,Math.round(H*k));
-        const R=peZRaster(raw,(x,y,z)=>{ const q=P.pt(x,y,z); return [q[0]*k,q[1]*k,q[2]]; },zw,zh,{cam,ce:P.ce,sel:sel ? new Set([sel.id]) : null,polys:roofPolys,color:b=>b.kind==='wall' ? (PE_MATCOL[b.mat]||[200,208,214]) : b.kind==='box' ? [201,143,90] : [160,168,173]});
+        const R=peZRaster(raw,(x,y,z)=>{ const q=P.pt(x,y,z); return [q[0]*k,q[1]*k,q[2]]; },zw,zh,{cam,ce:P.ce,sel:sel ? new Set([sel.id]) : null,polys:roofPolys,color:b=>b.kind==='wall' ? (PE_MATCOL[b.mat]||[200,208,214]) : b.kind==='column' && PE_MATCOL[b.mat] ? PE_MATCOL[b.mat] : b.kind==='box' ? [201,143,90] : [160,168,173]});
         if(!n.zcv){ n.zcv=document.createElement('canvas'); } if(n.zcv.width!==zw||n.zcv.height!==zh){ n.zcv.width=zw; n.zcv.height=zh; }
         n.zcv.getContext('2d').putImageData(new ImageData(R.data,zw,zh),0,0); cx.save(); cx.imageSmoothingEnabled=true; cx.imageSmoothingQuality='high'; cx.drawImage(n.zcv,0,0,W,H); cx.restore(); }
       const order=P.d3 ? [] : peBoxOrder(raw,{dx:cam[0],dy:cam[1],h:P.ce},b=>P.pt(b.cx,b.cy,(b.z0+b.z1)/2)[2]);
       for(const bi of order){ const b=raw[bi];
         const nx=-b.uy, ny=b.ux, h=b.l/2, q=b.t/2, C=[[b.cx+b.ux*h+nx*q,b.cy+b.uy*h+ny*q],[b.cx+b.ux*h-nx*q,b.cy+b.uy*h-ny*q],[b.cx-b.ux*h-nx*q,b.cy-b.uy*h-ny*q],[b.cx-b.ux*h+nx*q,b.cy-b.uy*h+ny*q]];
-        const base=b.kind==='wall' ? (PE_MATCOL[b.mat]||[200,208,214]) : b.kind==='box' ? [201,143,90] : [160,168,173], isSel=sel && (sel.id===b.ref || (sel.k==='pt'&&false));
+        const base=b.kind==='wall' ? (PE_MATCOL[b.mat]||[200,208,214]) : b.kind==='column' && PE_MATCOL[b.mat] ? PE_MATCOL[b.mat] : b.kind==='box' ? [201,143,90] : [160,168,173], isSel=sel && (sel.id===b.ref || (sel.k==='pt'&&false));
         const col=(k,a)=>'rgb('+base.map(v=>Math.round(Math.min(255,v*k+(isSel?40:0)))).join(',')+')';
         // боковые грани, обращённые к камере
         const sides=[[0,1,[ b.ux, b.uy]],[1,2,[-nx,-ny]],[2,3,[-b.ux,-b.uy]],[3,0,[nx,ny]]];

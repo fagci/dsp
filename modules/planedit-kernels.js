@@ -224,7 +224,7 @@ function peBoxes(s){
   }
   for(const o of s.objs){
     if(o.type==='box'){ const r=o.rot*PE_D; out.push({cx:o.x,cy:o.y,ux:Math.sin(r),uy:Math.cos(r),l:o.w,t:o.d,z0:o.z||0,z1:(o.z||0)+o.h,kind:'box',ref:o.id}); }
-    else if(o.type==='column') out.push({cx:o.x,cy:o.y,ux:0,uy:1,l:o.d,t:o.w,z0:o.z||0,z1:(o.z||0)+o.h,kind:'column',ref:o.id});
+    else if(o.type==='column') out.push({cx:o.x,cy:o.y,ux:0,uy:1,l:o.d,t:o.w,z0:o.z||0,z1:(o.z||0)+o.h,kind:'column',ref:o.id,...(o.mat ? {mat:o.mat} : {})});
   }
   return out;
 }
@@ -447,7 +447,7 @@ function peImportPoints(s,recs){
     for(const w of s.walls.filter(w=>w.src && w.src.startsWith(pre) && !keep.has(w.src))){ s.walls=s.walls.filter(q=>q!==w); s.objs=s.objs.filter(o=>o.wall!==w.id); s.pts=s.pts.filter(p=>p.src!==w.src); }
     const okeep=new Set();
     for(const q of r.stakes||[]){ const src=pre+'stake:'+q.id; okeep.add(src); const h=+q.h>0 ? +q.h : .5, v={x:+q.x,y:+q.y,w:.05,d:.05,h,name:'stake'}; const ob=s.objs.find(o=>o.src===src); if(ob) Object.assign(ob,v); else peAddObj(s,'column',{...v,src}); }      // колышки забора-шнура: тонкие столбики
-    for(const q of r.posts||[]){ const src=pre+'post:'+q.id; okeep.add(src); const d=+q.d>0 ? +q.d : .15, v={x:+q.x,y:+q.y,w:d,d,h:+q.h>0 ? +q.h : 2.7,name:String(q.name||'post')}; const ob=s.objs.find(o=>o.src===src); if(ob) Object.assign(ob,v); else peAddObj(s,'column',{...v,src}); }      // столбы и колонны навеса Site Plan
+    for(const q of r.posts||[]){ const src=pre+'post:'+q.id; okeep.add(src); const d=+q.d>0 ? +q.d : .15, v={x:+q.x,y:+q.y,w:d,d,h:+q.h>0 ? +q.h : 2.7,name:String(q.name||'post'),mat:PE_MATCOL[q.mat] ? q.mat : 'wood'}; const ob=s.objs.find(o=>o.src===src); if(ob) Object.assign(ob,v); else peAddObj(s,'column',{...v,src}); }      // столбы и колонны навеса Site Plan
     (r.opens||[]).forEach((o,i)=>{ const w=s.walls.find(w=>w.src===pre+o.wall); if(!w) return; const src=pre+'o'+i+':'+o.wall, type=o.type==='door' ? 'door' : 'window'; okeep.add(src);
       if(s.objs.some(q=>q.det===src)) return; const v={type,wall:w.id,u:Math.max(0,Math.min(1,+o.u||0)),w:+o.w>0 ? +o.w : 1,...(+o.h>0 ? {h:+o.h} : {}),...(isFinite(+o.sill) && o.sill!=null ? {sill:+o.sill} : {})};
       const ob=s.objs.find(q=>q.src===src); if(ob) Object.assign(ob,v); else peAddObj(s,type,{...v,src}); });
@@ -716,7 +716,7 @@ function peScenePolys(s){
   const GC={asphalt:[95,98,104],gravel:[170,165,150],tile:[196,170,146],grass:[120,175,90],garden:[150,115,70],water:[90,150,210]};
   for(const g of s.grounds||[]) out.push({pts:g.poly.map(q=>[q[0],q[1],.004]),rgb:GC[g.cover]||GC.grass});
   for(const r of s.rooms){ const z=(r.z0||0)+.006; out.push({pts:peRoomPoly(s,r).map(q=>[q[0],q[1],z]),rgb:[206,202,190]}); }
-  for(const bx of peBoxes(s)){ const C=peBoxCorners(bx), rgb=bx.kind==='wall' ? (PE_MATCOL[bx.mat]||[200,208,214]) : bx.kind==='box' ? [201,143,90] : [160,168,173];
+  for(const bx of peBoxes(s)){ const C=peBoxCorners(bx), rgb=bx.kind==='wall' ? (PE_MATCOL[bx.mat]||[200,208,214]) : bx.kind==='column' && PE_MATCOL[bx.mat] ? PE_MATCOL[bx.mat] : bx.kind==='box' ? [201,143,90] : [160,168,173];
     out.push({pts:C.map(c=>[c[0],c[1],bx.z1]),rgb},{pts:C.map(c=>[c[0],c[1],bx.z0]).reverse(),rgb});
     for(let i=0;i<4;i++){ const p=C[i], q=C[(i+1)%4]; out.push({pts:[[p[0],p[1],bx.z0],[q[0],q[1],bx.z0],[q[0],q[1],bx.z1],[p[0],p[1],bx.z1]],rgb}); } }
   for(const sl of s.slabs||[]){ const rgb=PE_MATCOL[sl.mat]||[168,174,180]; out.push({pts:sl.poly.map(q=>[q[0],q[1],sl.z]),rgb},{pts:sl.poly.map(q=>[q[0],q[1],sl.z-(sl.t||.25)]),rgb}); }
