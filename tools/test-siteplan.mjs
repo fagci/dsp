@@ -244,7 +244,7 @@ for(const t of ['material Kit2-Kit3 concrete\nroom Hall 4.48 3.74 4.46 3.74\nroo
   ok('plot: area and perimeter, but no walls of its own',Math.abs(R.polys[0].area-60)<.02 && R.polys[0].plot===true && !H.walls.some(w=>w.kind==='outer'),JSON.stringify(H.walls.map(w=>w.kind)));
   ok('stakes: a cord (thin, no signal loss) between the corner pegs, 4 sides',H.walls.length===4 && H.walls.every(w=>w.mat==='cord' && w.t===.01 && w.kind==='fence'));
   ok('stakes: 4 corners + 1 per 10 m side (every 5), none extra on the 6 m side → 6',H.stakes.length===6,H.stakes.length);
-  ok('stakes: default height 0.5 m, the cord near the top',H.stakes.every(q=>q.h===.5) && H.walls.every(w=>Math.abs(w.z0-.46)<1e-9));
+  ok('stakes: default height 1 m, the cord near the top',H.stakes.every(q=>q.h===1) && H.walls.every(w=>Math.abs(w.z0-.96)<1e-9));
   const Q=K.spSolve('A at 0 0\nB at 10 0\nfence A B stakes h 0.8'), HQ=K.spHouse(Q,{});
   ok('stakes: an open line, two pegs at the ends, the given height',HQ.stakes.length===2 && HQ.stakes[0].h===.8 && HQ.walls.length===1,JSON.stringify(HQ.stakes));
   ok('«every» only for stakes',K.spSolve('A at 0 0\nB at 10 0\nfence A B mesh every 5').errors.length===1);
