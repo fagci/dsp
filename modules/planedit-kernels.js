@@ -7,9 +7,9 @@
 
 const PE_D=Math.PI/180;
 // затухание стены, дБ на 10 см толщины: уровень сигнала на пути через стену = мат × толщина / 0,1 м
-const PE_MAT={brick:4,concrete:6,block:3,drywall:1.5,wood:2,glass:1,metal:20,mesh:6};          // mesh — сетка-рабица (забор): 0,05 м → 3 дБ          // block — газо- / пеноблок (ячеистый бетон)
+const PE_MAT={brick:4,concrete:6,block:3,drywall:1.5,wood:2,glass:1,metal:20,mesh:6,cord:0};          // mesh — сетка-рабица (забор): 0,05 м → 3 дБ          // block — газо- / пеноблок (ячеистый бетон)
 // частотная зависимость: потери = таблица (на 2,4 ГГц) × (f / 2,4 ГГц)^k; k — по материалу (эмпирика типа ITU-R P.2040: плотные материалы растут быстрее, металл почти не зависит)
-const PE_MATCOL={brick:[196,132,104],concrete:[168,174,180],block:[214,206,186],drywall:[230,229,222],wood:[190,146,96],glass:[150,206,232],metal:[118,128,148],mesh:[160,170,180]};   // цвет стены по материалу (3D / план)
+const PE_MATCOL={brick:[196,132,104],concrete:[168,174,180],block:[214,206,186],drywall:[230,229,222],wood:[190,146,96],glass:[150,206,232],metal:[118,128,148],mesh:[160,170,180],cord:[236,196,58]};   // цвет стены по материалу (3D / план)
 const PE_MATK={brick:.8,concrete:.9,block:.8,mesh:.3,drywall:.5,wood:.6,glass:.6,metal:.1};
 const PE_OPEN_LOSS={door:3,window:2};                          // проём: тонкая дверь / стекло, дБ на 2,4 ГГц
 const PE_OPEN_K={door:.4,window:.6};
@@ -156,7 +156,7 @@ function peNearestWall(s,x,y){
 // отрезки-препятствия [x0,y0,x1,y1]: сплошные части стен и габариты ящиков / колонн выше minH
 // препятствия для взгляда: отрезки [x1,y1,x2,y2,id,z0,z1] — с высотой (взгляд проходит над / под ними); сетка-рабица и стекло прозрачны;
 // у проёма стена остаётся под подоконником и над проёмом; o.slabs — перекрытия (взгляд с этажа на этаж через них не проходит)
-const PE_SEE_THROUGH={mesh:1,glass:1};
+const PE_SEE_THROUGH={mesh:1,glass:1,cord:1};
 function peOccluders(s,minH=0){
   const o=[];
   for(const w of s.walls){ if(PE_SEE_THROUGH[w.mat]) continue; const [a,b]=peWallEnds(s,w), P=peWallParts(s,w), ux=(b.x-a.x)/(P.L||1), uy=(b.y-a.y)/(P.L||1), z0=w.z0||0, z1=z0+w.h;
@@ -351,6 +351,7 @@ function peImportPoints(s,recs){
     s.ants=s.ants.filter(a=>!a.src || !a.src.startsWith(pre) || skeep.has(a.src));
     for(const w of s.walls.filter(w=>w.src && w.src.startsWith(pre) && !keep.has(w.src))){ s.walls=s.walls.filter(q=>q!==w); s.objs=s.objs.filter(o=>o.wall!==w.id); s.pts=s.pts.filter(p=>p.src!==w.src); }
     const okeep=new Set();
+    for(const q of r.stakes||[]){ const src=pre+'stake:'+q.id; okeep.add(src); const h=+q.h>0 ? +q.h : .5, v={x:+q.x,y:+q.y,w:.05,d:.05,h,name:'stake'}; const ob=s.objs.find(o=>o.src===src); if(ob) Object.assign(ob,v); else peAddObj(s,'column',{...v,src}); }      // колышки забора-шнура: тонкие столбики
     (r.opens||[]).forEach((o,i)=>{ const w=s.walls.find(w=>w.src===pre+o.wall); if(!w) return; const src=pre+'o'+i+':'+o.wall, type=o.type==='door' ? 'door' : 'window'; okeep.add(src);
       const v={type,wall:w.id,u:Math.max(0,Math.min(1,+o.u||0)),w:+o.w>0 ? +o.w : 1,...(+o.h>0 ? {h:+o.h} : {}),...(isFinite(+o.sill) && o.sill!=null ? {sill:+o.sill} : {})};
       const ob=s.objs.find(q=>q.src===src); if(ob) Object.assign(ob,v); else peAddObj(s,type,{...v,src}); });

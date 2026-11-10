@@ -31,14 +31,19 @@ function spRecords(R){
   rec.push({id:'sp:walls',t,kind:'plan walls',walls:W.walls.map(w=>({id:w.id,x1:+w.x1.toFixed(3),y1:+w.y1.toFixed(3),x2:+w.x2.toFixed(3),y2:+w.y2.toFixed(3),t:w.t,h:w.h,kind:w.kind,mat:w.mat,z0:w.z0||0,lv:w.lv||0})),
     opens:W.opens.map(o=>({...o,u:+o.u.toFixed(4)})),slabs:(W.slabs||[]).map(q=>({...q,poly:q.poly.map(r3)})),
     roofs:(W.roofs||[]).map(r=>({type:r.type,area:+r.area.toFixed(2),ridge:+r.ridge.toFixed(3),eave:+r.eave.toFixed(3),wallMat:r.wallMat,faces:r.faces.map(f=>({kind:f.kind,pts:f.pts.map(r3)}))})),
-    levels:W.levels||[],grounds:(W.grounds||[]).map(g=>({cover:g.cover,poly:g.poly.map(r3)})),elec:(R.elec||[]).map(e=>({type:e.type,name:e.name,x:+e.x.toFixed(3),y:+e.y.toFixed(3),z:+e.z.toFixed(2),watt:e.watt})),wires:(R.wires||[]).map(w=>({a:w.a,b:w.b,cable:w.cable,z:w.z})),sources:(W.sources||[]).map(q=>({name:q.name,x:+q.x.toFixed(3),y:+q.y.toFixed(3),z:+q.z.toFixed(2),eirp:q.eirp,f:q.f,az:q.az,bw:q.bw}))});
+    stakes:(W.stakes||[]).map(q=>({id:q.id,x:q.x,y:q.y,h:q.h})),levels:W.levels||[],grounds:(W.grounds||[]).map(g=>({cover:g.cover,poly:g.poly.map(r3)})),elec:(R.elec||[]).map(e=>({type:e.type,name:e.name,x:+e.x.toFixed(3),y:+e.y.toFixed(3),z:+e.z.toFixed(2),watt:e.watt})),wires:(R.wires||[]).map(w=>({a:w.a,b:w.b,cable:w.cable,z:w.z})),sources:(W.sources||[]).map(q=>({name:q.name,x:+q.x.toFixed(3),y:+q.y.toFixed(3),z:+q.z.toFixed(2),eirp:q.eirp,f:q.f,az:q.az,bw:q.bw}))});
   R.polys.forEach((pl,i)=>{
     const nm0=pl.names.map(x=>x.replace(/\d+$/,'')), rname=nm0.every(x=>x && x===nm0[0]) ? nm0[0] : '';
     const lv=(R.levels||[]).find(q=>q.name===(pl.level??'1'));
-    rec.push({id:'sp:room:'+i,t,kind:'plan poly',nowalls:true,name:rname,z0:lv ? lv.z : 0,lv:lv ? lv.idx : 0,names:pl.names.slice(),area_m2:+pl.area.toFixed(2),...(pl.h>0 ? {h:pl.h,volume_m3:+pl.volume.toFixed(2)} : {})});
+    if(!pl.plot) rec.push({id:'sp:room:'+i,t,kind:'plan poly',nowalls:true,name:rname,z0:lv ? lv.z : 0,lv:lv ? lv.idx : 0,names:pl.names.slice(),area_m2:+pl.area.toFixed(2),...(pl.h>0 ? {h:pl.h,volume_m3:+pl.volume.toFixed(2)} : {})});
     if(!R.georef) return;
     const q=pl.names.map(nm=>R.pts.find(p=>p.name===nm)), path=q.map(p=>[+p.lat.toFixed(8),+p.lon.toFixed(8)]); path.push(path[0]);
-    poly.push({id:'sp:poly:'+i,label:pl.area.toFixed(1)+' m²',lat:path[0][0],lon:path[0][1],icon:'dot',color:'#4fc3f7',path,area_m2:+pl.area.toFixed(2),perimeter_m:+pl.perimeter.toFixed(2),slope_deg:+pl.slope.toFixed(1)});
+    poly.push({id:'sp:poly:'+i,label:(pl.plot ? 'plot ' : '')+pl.area.toFixed(1)+' m²',lat:path[0][0],lon:path[0][1],icon:'dot',color:pl.plot ? '#ffb400' : '#4fc3f7',path,area_m2:+pl.area.toFixed(2),perimeter_m:+pl.perimeter.toFixed(2),slope_deg:+pl.slope.toFixed(1)});
+  });
+  if(R.georef) (R.fences||[]).forEach((f,i)=>{                                              // заборы и колышки — на карту: линия (или контур, если closed) жёлтым; фигуры такого вида Map умеет править
+    const q=f.names.map(nm=>R.pts.find(p=>p.name===nm)).filter(Boolean); if(q.length<2) return;
+    const g=q.map(p=>[+p.lat.toFixed(7),+p.lon.toFixed(7)]), len=(f.closed && q.length>2 ? q.concat([q[0]]) : q).reduce((t,p,k,a)=>k ? t+Math.hypot(p.x-a[k-1].x,p.y-a[k-1].y) : 0,0);
+    poly.push({id:'sp:fence:'+i,name:'fence'+(i+1),label:(f.kind==='stakes' ? 'stakes ' : 'fence ')+len.toFixed(1)+' m',icon:'dot',color:'#ecc43a',track:0,gtype:f.closed && g.length>2 ? 'polygon' : 'line',geom:JSON.stringify(g),lat:g[0][0],lon:g[0][1],length_m:+len.toFixed(2)});
   });
   return {rec,poly};
 }
@@ -48,6 +53,12 @@ function spRun(n,I){
   n.res=R; n.emit=spRecords(R); n.err=R.errors; redraw(n);
 }
 
+function spWriteMap(n){                                                     // точки и фигуры, пришедшие с Map (rec), — в текст плана: они переживают перезагрузку, а записи со входа — нет
+  const L=[...n.fixLines.values()]; if(!L.length){ n.msg='nothing to write: wire Map (pick / edit) to «rec» and add points or shapes on the map'; return; }
+  const cur=String(n.p.plan||'').replace(/\s+$/,''), v=cur+(cur ? '\n' : '')+'# from the map\n'+L.join('\n');
+  if(n.set?.plan) n.set.plan(v); else n.p.plan=v;
+  n.fixLines.clear(); n.key=''; n.msg='written to the plan: '+L.length+' line'+(L.length>1 ? 's' : '');
+}
 function spAddGps(n){
   const lat=n.inLat ?? GeoMe.lat, lon=n.inLon ?? GeoMe.lon;
   if(lat==null || lon==null){ n.msg='no position — wire My Position (lat / lon / acc) or set it there'; return; }
@@ -199,6 +210,7 @@ def({ id:'siteplan', title:'Site Plan', cat:'Geo', touch:true, lazy:true, kw:'pl
           {n:'svg',t:'button',label:'⬇ SVG (dimensioned plan)',fn:n=>spExport(n,'svg')},
           {n:'gj',t:'button',label:'⬇ GeoJSON (georeferenced plans)',fn:n=>spExport(n,'gj')},
           {n:'csv',t:'button',label:'⬇ CSV (points ± error)',fn:n=>spExport(n,'csv')},
+          {n:'mapwrite',t:'button',label:'⬇ Write points and shapes from rec (Map) into the plan text',fn:n=>spWriteMap(n)},
           {n:'clr',t:'button',label:'Forget GPS fixes from rec',fn:n=>{ n.fixLines.clear(); n.key=''; }}],
   init:n=>{ n.res=null; n.emit=null; n.key=''; n.err=[]; n.msg=''; n.fixLines=new Map(); n.extLines=''; n.tblText=''; n.tblKey=''; n.inLat=null; n.inLon=null; n.inAcc=null; n.inAlt=null; n.zoom=1; n.panX=0; n.panY=0; n.fileName=''; n.fileText=undefined; n.fileT=0; n.fileTok=0; n.off=FileStore.onChange(sp=>{ if((!sp || sp==='files') && n.fileName) spFileLoad(n,true); }); },
   dispose:n=>{ if(n.off) n.off(); clearTimeout(n.fileT); },
