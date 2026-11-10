@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', HKEY='dsp-presets-hash', PRESET_VER=157;   // PRESET_VER — полная пересборка всех пресетов (дефолты модулей, формат патча); правки самих пресетов подхватываются по хэшу
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', HKEY='dsp-presets-hash', PRESET_VER=158;   // PRESET_VER — полная пересборка всех пресетов (дефолты модулей, формат патча); правки самих пресетов подхватываются по хэшу
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -396,6 +396,7 @@ const PRESET_CATS={
   'Plan Editor: Wiring Groups — Consumers, Breakers, Cable and Voltage Drop':'Maps & Locating',
   'Site Plan: Plot with a Fence, Road, Bath House and a Cell Tower → Signal Indoors':'Maps & Locating',
   'Site Plan: Plot on a Satellite Map — Stakes and Cord, Buildings Drawn from the Photo':'Maps & Locating',
+  'Site Plan: Pole and Canopy — a Post in a Point, a Sloped Roof on Columns along a Wall':'Maps & Locating',
   'Image on Map: Your Own Aerial Photo of the Plot on the Map and under the Plan':'Maps & Locating',
   'Plan Studio: Plan, Editor, Map and Your Own Photo in One Node':'Maps & Locating',
   'Plan Editor: Yard Cameras — Over the Fence by Height, the View from a Camera':'Maps & Locating',
@@ -8964,6 +8965,17 @@ const sp=addNode('siteplan',40,200,{view:'plan',plan:'# a yard 30 × 20 m, four 
 sp.size.w=520; sp.size.h=520; applySize(sp);
 const sc=peNew(); peAddAnt(sc,15,10,{z:2.4,eirp:20,f:2437,name:'AP'}); peAddRx(sc,15,-4,{name:'S (picket)'}); peAddRx(sc,34,10,{name:'E (euro)'}); peAddRx(sc,15,24,{name:'N (panel)'}); peAddRx(sc,-4,10,{name:'W (brick)'});
 const pe=addNode('planedit',600,200,{view:'plan',layer:'signal',snap:'0.5',refl:'0',scene:JSON.stringify(sc)});
+pe.size.w=760; pe.size.h=620; applySize(pe);
+addEdge(sp.id,'rec',pe.id,'rec');
+markWiresDirty();
+});
+preset('Site Plan: Pole and Canopy — a Post in a Point, a Sloped Roof on Columns along a Wall', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A pole and a canopy. Site Plan: «post P [h 3.2] [d 0.25]» puts a post (a pole, a support) in the point P — the point itself comes from measurements, GPS or «at»; «canopy A B [w 1.53] [h 2.95 2.75] [off 0.4] [from u] [to u] [posts 4.05 5.43 6.56] [d 0.12]» builds a roof along the line A-B on the outside of the building (away from the rooms the corners belong to): w — the depth, h — the height at the wall and at the outer edge (the slope goes down to the second number), off — from the measured line to the outer face of the wall (the thickness of the outer walls by default), from / to — the ends along A→B, posts — columns on the outer edge, the distances from A as one tape (cumulative). Here a house 6 × 4 m with a canopy 1.5 m deep along the long side on three columns, and a pole 8 m from the corner; in Plan Editor (3D) they are columns and a roof slope; a canopy also counts as a roof in the loads (snow).'});
+nt.size.w=1180; nt.size.h=130; applySize(nt);
+const sp=addNode('siteplan',40,190,{view:'plan',plan:'# a house, a canopy along the first side on three columns (the tape from the corner House1: 1.2, 3.0, 4.8 m), a pole\nHouse1 at 0 0\nHouse2 at 6 0\nroom House 6 4 6 4 h 2.7\ncanopy House1 House2 w 1.5 h 2.95 2.75 posts 1.2 3 4.8\n# the pole: 25 cm, 3.2 m high, 9.5 m from the corner House1 and 8.2 m from House2\nHouse1-P 9.5\nHouse2-P 8.2\npost P h 3.2 d 0.25\n'});
+sp.size.w=520; sp.size.h=520; applySize(sp);
+const pe=addNode('planedit',600,190,{view:'plan',snap:'0.5',refl:'0',scene:JSON.stringify(peNew())});
 pe.size.w=760; pe.size.h=620; applySize(pe);
 addEdge(sp.id,'rec',pe.id,'rec');
 markWiresDirty();

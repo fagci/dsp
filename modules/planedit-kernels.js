@@ -447,6 +447,7 @@ function peImportPoints(s,recs){
     for(const w of s.walls.filter(w=>w.src && w.src.startsWith(pre) && !keep.has(w.src))){ s.walls=s.walls.filter(q=>q!==w); s.objs=s.objs.filter(o=>o.wall!==w.id); s.pts=s.pts.filter(p=>p.src!==w.src); }
     const okeep=new Set();
     for(const q of r.stakes||[]){ const src=pre+'stake:'+q.id; okeep.add(src); const h=+q.h>0 ? +q.h : .5, v={x:+q.x,y:+q.y,w:.05,d:.05,h,name:'stake'}; const ob=s.objs.find(o=>o.src===src); if(ob) Object.assign(ob,v); else peAddObj(s,'column',{...v,src}); }      // колышки забора-шнура: тонкие столбики
+    for(const q of r.posts||[]){ const src=pre+'post:'+q.id; okeep.add(src); const d=+q.d>0 ? +q.d : .15, v={x:+q.x,y:+q.y,w:d,d,h:+q.h>0 ? +q.h : 2.7,name:String(q.name||'post')}; const ob=s.objs.find(o=>o.src===src); if(ob) Object.assign(ob,v); else peAddObj(s,'column',{...v,src}); }      // столбы и колонны навеса Site Plan
     (r.opens||[]).forEach((o,i)=>{ const w=s.walls.find(w=>w.src===pre+o.wall); if(!w) return; const src=pre+'o'+i+':'+o.wall, type=o.type==='door' ? 'door' : 'window'; okeep.add(src);
       if(s.objs.some(q=>q.det===src)) return; const v={type,wall:w.id,u:Math.max(0,Math.min(1,+o.u||0)),w:+o.w>0 ? +o.w : 1,...(+o.h>0 ? {h:+o.h} : {}),...(isFinite(+o.sill) && o.sill!=null ? {sill:+o.sill} : {})};
       const ob=s.objs.find(q=>q.src===src); if(ob) Object.assign(ob,v); else peAddObj(s,type,{...v,src}); });
