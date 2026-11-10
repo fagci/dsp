@@ -20,7 +20,7 @@ const PE_TYPES=['box','column','door','window'];               // примити
 const peWrap180=a=>((a+180)%360+360)%360-180;
 const peWrap360=a=>((a%360)+360)%360;
 
-function peNew(){ return {pts:[],walls:[],objs:[],cams:[],ants:[],rooms:[],slabs:[],roofs:[],levels:[],grounds:[],elec:[],wires:[],seq:1}; }
+function peNew(){ return {pts:[],walls:[],objs:[],cams:[],ants:[],rooms:[],slabs:[],roofs:[],levels:[],grounds:[],elec:[],wires:[],hv:[],pp:[],seq:1}; }
 function peId(s,p){ return p+(s.seq++); }
 const pePt=(s,id)=>s.pts.find(p=>p.id===id);
 function peAddPoint(s,x,y){ const p={id:peId(s,'p'),x,y}; s.pts.push(p); return p; }
@@ -42,6 +42,7 @@ function peDel(s,kind,id){
   else if(kind==='obj') s.objs=s.objs.filter(o=>o.id!==id); else if(kind==='cam') s.cams=s.cams.filter(o=>o.id!==id); else if(kind==='ant') s.ants=s.ants.filter(o=>o.id!==id);
   else if(kind==='room') s.rooms=s.rooms.filter(o=>o.id!==id);
   else if(kind==='el') peDelEl(s,id); else if(kind==='wire') s.wires=s.wires.filter(o=>o.id!==id);
+  else if(kind==='hv'){ s.hv=(s.hv||[]).filter(d=>d.id!==id); s.pp=(s.pp||[]).filter(l=>l.a!==id&&l.b!==id); } else if(kind==='pp') s.pp=(s.pp||[]).filter(l=>l.id!==id);
 }
 // проём / примитив
 function peAddObj(s,type,o){
@@ -423,6 +424,7 @@ function peImportPoints(s,recs){
         if(!w){ w=peAddWire(s,A.id,B.id,{}); if(!w) continue; w.src=src; }
         w.cable=peCableOk(q.cable) ? q.cable : w.cable; if(+q.z>0) w.zr=+q.z; if(+q.amp>0) w.amp=+q.amp; else delete w.amp; }
       s.wires=s.wires.filter(w=>(!w.src || !w.src.startsWith(pre) || wkeep.has(w.src)) && peElOf(s,w.a) && peElOf(s,w.b)); }
+    if(typeof hvImport==='function') hvImport(s,r,pre);                                           // отопление и вентиляция (hvac-kernels.js)
     s.objs=s.objs.filter(o=>!(o.src && String(o.src).startsWith('sp:') && !String(o.src).startsWith(pre) && (o.type==='door'||o.type==='window')));   // проёмы старого вида (по углам) — заменены
     n++; }
   // проёмы (kind 'plan opening': type, a, b — имена углов, from — от a до ближнего края, w, h, sill): на стену a-b, повторный импорт обновляет тот же
@@ -461,7 +463,7 @@ function peHistNew(base){ return {base:String(base),u:[],r:[]}; }
 function peHistCommit(h,cur){ if(cur===h.base) return false; h.u.push(h.base); if(h.u.length>100) h.u.shift(); h.r.length=0; h.base=cur; return true; }
 function peHistUndo(h,cur){ peHistCommit(h,cur); if(!h.u.length) return null; h.r.push(h.base); h.base=h.u.pop(); return h.base; }
 function peHistRedo(h,cur){ peHistCommit(h,cur); if(!h.r.length) return null; h.u.push(h.base); h.base=h.r.pop(); return h.base; }
-function peParse(text){ try{ const o=JSON.parse(text); if(o && Array.isArray(o.pts)){ for(const k of ['walls','objs','cams','ants','rooms','slabs','roofs','levels','grounds','elec','wires']) if(!Array.isArray(o[k])) o[k]=[]; if(!(o.seq>0)) o.seq=1000; return o; } }catch(e){} return peNew(); }
+function peParse(text){ try{ const o=JSON.parse(text); if(o && Array.isArray(o.pts)){ for(const k of ['walls','objs','cams','ants','rooms','slabs','roofs','levels','grounds','elec','wires','hv','pp']) if(!Array.isArray(o[k])) o[k]=[]; if(!(o.seq>0)) o.seq=1000; return o; } }catch(e){} return peNew(); }
 
 // ---------- привязка к земле (общее пространство с Video Overlay и Map) ----------
 // o: {lat, lon, north, alt} — где точка (0, 0) плана, азимут оси +y плана от севера (по часовой, °) и высота пола над уровнем моря, м
