@@ -222,4 +222,20 @@ for(const t of ['material Kit2-Kit3 concrete\nroom Hall 4.48 3.74 4.46 3.74\nroo
   { const Q=K.spSolve('room A 5 4 5 4\nlight L1 A1\nlight L2 A2\nwire L1 L2 cable 2x1.5'), W=K.spSolve('room A 5 4 5 4\nlight L1 A1\nlight L2 A2\nwire L1 L2 cable abc');
     ok('any «NxS» cable is accepted: 2x1.5',Q.errors.length===0 && Q.wires[0].cable==='2x1.5',JSON.stringify(Q.errors)); ok('a nonsense cable is an error',W.errors.length===1 && /cross-section/.test(W.errors[0].msg)); }
   const B=K.spSolve('room A 4 3 4 3\nwire L1 L2'); ok('wire to an undeclared device is an error',B.errors.length>0 && /unknown device/.test(B.errors[0].msg)); }
+// электрика на стене комнаты: «socket S1 A1-A2 along 1 off 0.1» — от угла A1 вдоль стены, вглубь комнаты
+{ const R=K.spSolve('room A 4 3 4 3\nsocket S1 A1-A2 along 1 off 0.1 h 0.3\nsocket S2 A2-A1 along 1\nlight L1 A3-A4 along 2 off -0.2'), e=Object.fromEntries(R.elec.map(x=>[x.name,x])), a1=P(R,'A1'), a2=P(R,'A2'), a3=P(R,'A3');
+  const cx=(a1.x+a3.x)/2, cy=(a1.y+a3.y)/2, L=Math.hypot(a2.x-a1.x,a2.y-a1.y), ux=(a2.x-a1.x)/L, uy=(a2.y-a1.y)/L;
+  ok('wall devices: no errors',R.errors.length===0,JSON.stringify(R.errors));
+  near('wall: S1 is 1 m from A1 along the wall',(e.S1.x-a1.x)*ux+(e.S1.y-a1.y)*uy,1,1e-6);
+  near('wall: S1 is 0.1 m from the wall line',Math.abs((e.S1.x-a1.x)*(-uy)+(e.S1.y-a1.y)*ux),.1,1e-6);
+  ok('wall: S1 shifted into the room (toward its centre)',(cx-a1.x)*(e.S1.x-a1.x-ux*1)+(cy-a1.y)*(e.S1.y-a1.y-uy*1)>0);
+  near('wall: S2 along A2→A1, 1 m from A2',Math.hypot(e.S2.x-a2.x,e.S2.y-a2.y),1,1e-6); near('wall: S1 height',e.S1.z,.3,1e-6);
+  { const a4=P(R,'A4'), l=Math.hypot(a4.x-a3.x,a4.y-a3.y), w={x:a3.x+(a4.x-a3.x)/l*2,y:a3.y+(a4.y-a3.y)/l*2};
+    ok('wall: a negative off goes outside the room, 0.2 m from the wall',(cx-w.x)*(e.L1.x-w.x)+(cy-w.y)*(e.L1.y-w.y)<0 && Math.abs(Math.hypot(e.L1.x-w.x,e.L1.y-w.y)-.2)<1e-6); }
+  ok('wall: the same spot after turning the plan (az 30)',(()=>{ const Q=K.spSolve('A at 0 0\nA-B az 30\nroom Q 4 3 4 3\nQ1 at 0 0\nQ1-Q2 az 30\nsocket S1 Q1-Q2 along 1 off 0.1'); return Q.errors.length===0 && Math.abs(Math.hypot(Q.elec[0].x-P(Q,'Q1').x,Q.elec[0].y-P(Q,'Q1').y)-Math.hypot(1,.1))<1e-3; })()); }
+{ let Q=K.spSolve('room A 4 3 4 3\nsocket S1 A1-A3 along 1'); ok('a diagonal is not a wall',Q.errors.some(e=>/not a side/.test(e.msg)),JSON.stringify(Q.errors));
+  Q=K.spSolve('room A 4 3 4 3\nsocket S1 A1-A2 along 9'); ok('along past the wall end is reported',Q.errors.some(e=>/past the end/.test(e.msg)),JSON.stringify(Q.errors));
+  Q=K.spSolve('room A 4 3 4 3\nsocket S1 A1-A2 dx 1'); ok('dx on a wall is an error',Q.errors.length===1 && /for a point/.test(Q.errors[0].msg),JSON.stringify(Q.errors));
+  Q=K.spSolve('room A 4 3 4 3\nsocket S1 A1 along 1'); ok('along at a point is an error',Q.errors.length===1 && /for a wall/.test(Q.errors[0].msg),JSON.stringify(Q.errors));
+  Q=K.spSolve('room A 4 3 4 3\nsocket S1 A1-A1'); ok('a wall of one corner is an error',Q.errors.length===1,JSON.stringify(Q.errors)); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);

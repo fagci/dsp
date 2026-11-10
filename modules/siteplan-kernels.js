@@ -23,7 +23,7 @@
      roof gable|hip|shed|flat [30] [overhang 0.5] [ridge long|short] [level 2]   крыша над этажом (по умолчанию — верхним): угол, свес, конёк вдоль длинной / короткой стороны
      fence A B C … [h 1.8] [sheet|mesh|wood|brick|concrete|block] [closed]   забор по точкам (профлист, рабица, штакетник…; можно по-русски), для сигнала — стена
      road A B … [w 3.5] [asphalt|gravel|tile] · area A B C … [grass|asphalt|gravel|tile|garden|water]   дорога (полоса) и площадка — покрытие земли
-     light|socket|switch|panel|inlet|junction NAME POINT [dx м] [dy м] [h м] [w Вт]   электрика: светильник, розетка, выключатель, щиток, ввод, распредкоробка у точки (смещение на восток / север, высота над точкой)
+     light|socket|switch|panel|inlet|junction NAME POINT|A-B [dx м] [dy м | along м] [off м] [h м] [w Вт]   электрика (A-B — на стене комнаты: along — от угла A вдоль стены, off — вглубь комнаты): светильник, розетка, выключатель, щиток, ввод, распредкоробка у точки (смещение на восток / север, высота над точкой)
      wire A B C [cable 3x1.5 · 2x1.5 · 5x2.5 … — любое «жилыxсечение»] [z 2.5]   провод по цепочке устройств (z — высота трассы); ввод — 5x2.5, розетка — 3x2.5, иначе 3x1.5
      source NAME POINT [h 25] [eirp 43] [f 1800] [az 120] [bw 65]   внешний источник сигнала над точкой (вышка, соседский роутер; точка — по GPS, at или замерам)
      mirror                   отразить план слева направо (по рулетке и углам план не отличить от зеркального; с компасом / GPS не нужно)
@@ -117,10 +117,12 @@ function spParse(text,o={}){
       for(let i=3;i<T.length;i+=2){ const k=T[i].toLowerCase(), v=spNum(T[i+1]); if(!['h','eirp','f','az','bw'].includes(k) || !isFinite(v)) return bad('source: unknown «'+T[i]+'» (h eirp f az bw)'); q[k]=v; }
       if(!(q.f>0) || !(q.bw>0 && q.bw<=360)) return bad('source: f > 0, bw 1…360'); sources.push(q); return; }
     if(/^(light|socket|switch|panel|inlet|junction)$/i.test(T[0])){                                                // электрика: «light L1 A [dx 1] [dy 0.5] [h 2.6] [w 60]» — светильник у точки A (смещение на восток / север, высота над точкой, Вт)
-      const type=T[0].toLowerCase(), nm=T[1], at=T[2]; if(!nm || !at) return bad(type+' NAME POINT [dx m] [dy m] [h height above the point, m] [w watts] — e.g. '+type+' '+(type==='light' ? 'L1 A dx 2 dy 1.5 h 2.6 w 60' : type==='socket' ? 'S1 A dx 0.3 h 0.3 w 200' : type==='panel' ? 'P1 A dx 0.3 dy 0.4 h 1.6' : type==='inlet' ? 'IN1 A dx 0.1 h 3' : type==='junction' ? 'J1 A dx 1 dy 0.5 h 2.4' : 'SW1 B dx 0.2 h 1.1'));
+      const type=T[0].toLowerCase(), nm=T[1], at=T[2]; if(!nm || !at) return bad(type+' NAME POINT|WALL [dx m] [dy m] [along m] [off m] [h height above the point, m] [w watts] — e.g. '+type+' '+(type==='light' ? 'L1 A dx 2 dy 1.5 h 2.6 w 60' : type==='socket' ? 'S1 A dx 0.3 h 0.3 w 200' : type==='panel' ? 'P1 A dx 0.3 dy 0.4 h 1.6' : type==='inlet' ? 'IN1 A dx 0.1 h 3' : type==='junction' ? 'J1 A dx 1 dy 0.5 h 2.4' : 'SW1 B dx 0.2 h 1.1'));
       if(elec.some(e=>e.name===nm)) return bad(type+': the name «'+nm+'» is already used');
-      const q={type,name:nm,a:pt(at),dx:0,dy:0,h:{light:2.6,socket:.3,switch:1.1,panel:1.6,inlet:3,junction:2.4}[type],w:{light:60,socket:200}[type]||0,li};
-      for(let i=3;i<T.length;i+=2){ const k=T[i].toLowerCase(), v=spNum(T[i+1]); if(!['dx','dy','h','w'].includes(k) || !isFinite(v)) return bad(type+': unknown «'+T[i]+'» (dx dy h w)'); q[k]=v; }
+      const wl=at.split('-'); if(wl.length>2 || (wl.length===2 && (!wl[0] || !wl[1] || wl[0]===wl[1]))) return bad(type+': a wall is «A-B» — two different corners of one room');
+      const q={type,name:nm,a:pt(wl[0]),wall:wl.length===2 ? pt(wl[1]) : -1,along:0,off:0,dx:0,dy:0,h:{light:2.6,socket:.3,switch:1.1,panel:1.6,inlet:3,junction:2.4}[type],w:{light:60,socket:200}[type]||0,li};
+      for(let i=3;i<T.length;i+=2){ const k=T[i].toLowerCase(), v=spNum(T[i+1]); if(!['dx','dy','h','w','along','off'].includes(k) || !isFinite(v)) return bad(type+': unknown «'+T[i]+'» (dx dy along off h w)'); if(q.wall>=0 ? (k==='dx'||k==='dy') : (k==='along'||k==='off')) return bad(type+': «'+k+'» '+(q.wall>=0 ? 'is for a point; on a wall use along (from the first corner, m) and off (into the room, m)' : 'is for a wall «A-B»; at a point use dx and dy')); q[k]=v; }
+      if(q.wall>=0 && !(q.along>=0)) return bad(type+': along ≥ 0');
       if(q.h<0 || q.w<0) return bad(type+': h, w ≥ 0'); elec.push(q); return; }
     if(/^wire$/i.test(T[0])){                                                                 // «wire L1 SW1 S1 [cable 3x1.5] [z 2.5]» — провод по цепочке устройств
       const w={names:[],cable:null,z:null,li};
@@ -488,7 +490,17 @@ function spSolve(text,opt={}){
   out.fences=P.fences.map(f=>({...SP_FENCE_SPEC[f.mat],kind:f.mat,h:f.h,closed:f.closed,names:f.ids.map(i=>P.names[i]),pts:f.ids.map(XY)}));
   out.grounds=P.grounds.map(g=>({kind:g.kind,cover:g.cover,w:g.w,names:g.ids.map(i=>P.names[i]),pts:g.ids.map(XY)}));
   // электрика: устройства у точек, провода по именам
-  out.elec=P.elec.map(q=>{ const p=out.pts[q.a]; return {type:q.type,name:q.name,at:p.name,x:p.x+q.dx,y:p.y+q.dy,z:p.z+q.h,watt:q.w}; });
+  out.elec=P.elec.map(q=>{ const p=out.pts[q.a];
+    if(q.wall>=0){                                                                          // на стене комнаты A-B: along — от угла A вдоль стены, off — вглубь комнаты (по внутренней грани; минус — наружу)
+      const B=out.pts[q.wall], L=Math.hypot(B.x-p.x,B.y-p.y), nm=p.name+'-'+B.name;
+      const room=P.polys.find(pl=>{ const k=pl.ids.length, i=pl.ids.indexOf(q.a), j=pl.ids.indexOf(q.wall); return i>=0 && j>=0 && ((i+1)%k===j || (j+1)%k===i); });
+      if(!room){ out.errors.push({line:q.li+1,text:nm,msg:q.type+' '+q.name+': «'+nm+'» is not a side of a room (corners next to each other in a room / poly)'}); return {type:q.type,name:q.name,at:nm,x:p.x,y:p.y,z:p.z+q.h,watt:q.w}; }
+      if(q.along>L+1e-6) out.errors.push({line:q.li+1,text:nm,msg:q.type+' '+q.name+': along '+q.along+' m is past the end of the wall «'+nm+'» ('+L.toFixed(2)+' m)'});
+      const ux=(B.x-p.x)/(L||1), uy=(B.y-p.y)/(L||1); let nx=-uy, ny=ux, cx=0, cy=0; for(const i of room.ids){ cx+=out.pts[i].x; cy+=out.pts[i].y; }
+      if((cx/room.ids.length-p.x)*nx+(cy/room.ids.length-p.y)*ny<0){ nx=-nx; ny=-ny; }
+      const a=Math.min(q.along,L); return {type:q.type,name:q.name,at:nm,x:p.x+ux*a+nx*q.off,y:p.y+uy*a+ny*q.off,z:p.z+q.h,watt:q.w};
+    }
+    return {type:q.type,name:q.name,at:p.name,x:p.x+q.dx,y:p.y+q.dy,z:p.z+q.h,watt:q.w}; });
   out.wires=[]; { const by=new Map(out.elec.map(e=>[e.name,e]));
     for(const w of P.wires){ for(let i=0;i+1<w.names.length;i++){ const A=by.get(w.names[i]), B=by.get(w.names[i+1]);
         if(!A||!B){ out.errors.push({line:w.li+1,text:'wire',msg:'wire: unknown device «'+(A ? w.names[i+1] : w.names[i])+'» (declare it with light / socket / switch)'}); continue; }
