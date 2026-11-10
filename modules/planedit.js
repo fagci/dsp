@@ -220,6 +220,10 @@ function peNextProblem(n){ const L=peCheck(n); if(!L.length){ n.msg='plan check:
   n.pcI=((n.pcI??-1)+1)%L.length; const q=L[n.pcI]; n.pcMark=q; n.msg='problem '+(n.pcI+1)+' of '+L.length+': '+q.msg+' ('+q.x.toFixed(2)+', '+q.y.toFixed(2)+')';
   if(['wall','obj','el','hv','wire','pp'].includes(q.kind) && peItem(n,{k:q.kind==='wire' ? 'wire' : q.kind,id:q.id})) peSelect(n,q.kind,q.id); else redraw(n); }
 
+// ---------- нагрузки: расчёт по сцене и настройкам узла (кэш по правкам) ----------
+function peLdOpt(p){ const fk=Object.keys(LD_FLOORS).find(k=>LD_FLOORS[k].label===p.ldfloor)||'mono'; return {snow:p.ldsnow==='city'||p.ldsnow==null ? (LD_SNOW[p.hvcity] ?? 1.5) : +p.ldsnow,R0:LD_SOIL[p.ldsoil] ?? 300,depth:+p.lddepth||1,floor:fk,roofG:+p.ldroof||.6,pile:+p.ldpile||100}; }
+function peLd(n){ const o=peLdOpt(n.p), key=[n.rev,o.snow,o.R0,o.depth,o.floor,o.roofG,o.pile].join('|'); if(n.ldK!==key){ n.ldK=key; try{ n.ldR=n.sc.walls.length ? ldCalc(n.sc,o) : null; }catch(e){ n.ldR=null; } } return n.ldR; }
+
 // ---------- отопление и вентиляция: расчёт по сцене и настройкам узла (кэш по правкам) ----------
 function peHvOpt(p){ const w=String(p.hvwater||'70/50').split('/'), C=HV_CITIES[p.hvcity]; return {tout:C ? C[0] : +p.hvtout||-25,...(C ? {gd:C[1]} : {}),ts:+w[0]||70,tr:+w[1]||50,ins:+p.hvins||0,uw:parseFloat(p.hvglaz)||1.4}; }
 function peHv(n){ const s=n.sc, o=peHvOpt(n.p), key=[n.rev,o.tout,o.ts,o.tr,o.ins,o.uw,o.gd].join('|'); if(n.hvK!==key){ n.hvK=key; try{ n.hvR=s.rooms.length ? hvCalc(s,o) : null; }catch(e){ n.hvR=null; } } return n.hvR; }
@@ -416,11 +420,11 @@ function pePlanStart(n){
     n.msg=(kind==='cam' ? 'cameras' : 'antennas')+': '+list.length+' placed → '+Math.round(100*res.cover)+'% '+(kind==='cam' ? 'seen' : 'above '+opt.thr+' dBm')+' of '+res.area.toFixed(1)+' m² ('+res.curve.map((v,i)=>(i+1)+': '+Math.round(100*v)+'%').join(', ')+(res.base>0 ? '; already covered before: '+Math.round(100*res.base)+'%' : '')+'; '+res.candidates+' candidates)'; redraw(n); };
   setTimeout(step,0);
 }
-function peSheetOpt(n){ const k=n.p.lv==='all'||n.p.lv==null ? 'all' : +n.p.lv; return {paper:n.p.paper||'A3',level:k,hvopt:peHvOpt(n.p),proj:{name:n.p.pname||'',addr:n.p.paddr||'',by:n.p.pby||'',date:new Date().toISOString().slice(0,10)}}; }
+function peSheetOpt(n){ const k=n.p.lv==='all'||n.p.lv==null ? 'all' : +n.p.lv; return {paper:n.p.paper||'A3',level:k,hvopt:peHvOpt(n.p),ld:n.sc.walls.length ? ldCalc(pcLevelScene(n.sc,k),peLdOpt(n.p)) : null,proj:{name:n.p.pname||'',addr:n.p.paddr||'',by:n.p.pby||'',date:new Date().toISOString().slice(0,10)}}; }
 const peSlug=t=>String(t||'plan').trim().replace(/[^\p{L}\p{N}]+/gu,'-').replace(/^-|-$/g,'').slice(0,40)||'plan';
 function peExportSheet(n){ const s=n.sc; if(!s.pts.length){ n.msg='nothing to export yet'; redraw(n); return; } const svg=pcSheet(s,peSheetOpt(n)); if(!svg){ n.msg='nothing to draw on this floor'; redraw(n); return; }
   sitepDl(peSlug(n.p.pname)+'-sheet.svg',svg,'image/svg+xml'); n.msg='exported the sheet '+(n.p.paper||'A3')+', '+(svg.match(/1:(\d+)/)||[])[0]; redraw(n); }
-function peExportSpec(n){ const s=n.sc; if(!s.pts.length){ n.msg='nothing to export yet'; redraw(n); return; } const o=peSheetOpt(n); sitepDl(peSlug(n.p.pname)+'-spec.csv',pcSpecCsv(pcLevelScene(s,o.level),s.rooms.length ? hvCalc(pcLevelScene(s,o.level),o.hvopt) : null),'text/csv'); n.msg='exported the specification'; redraw(n); }
+function peExportSpec(n){ const s=n.sc; if(!s.pts.length){ n.msg='nothing to export yet'; redraw(n); return; } const o=peSheetOpt(n); { const S=pcLevelScene(s,o.level); sitepDl(peSlug(n.p.pname)+'-spec.csv',pcSpecCsv(S,s.rooms.length ? hvCalc(S,o.hvopt) : null,S.walls.length ? ldCalc(S,peLdOpt(n.p)) : null),'text/csv'); } n.msg='exported the specification'; redraw(n); }
 function peExport(n,kind){
   const s=n.sc; if(!s.pts.length){ n.msg='nothing to export yet'; redraw(n); return; }
   if(kind==='svg') sitepDl('plan.svg',peSVG(s,{scale:+n.p.escale,dims:!!n.p.edims,coverage:!!n.p.ecov,north:n.georef ? +n.p.north : undefined}),'image/svg+xml');
@@ -456,6 +460,7 @@ function peChips(n){
     num('length',()=>peWallLen(s,it),v=>{ const was=it.len>0; peSetLen(s,it.id,v); if(was) it.len=v; },.1,.1,200,' m');
     btn('length lock',()=>it.len>0 ? '🔒 on' : 'off',()=>{ peLock(s,it.id); });
     cyc('material',()=>it.mat,d=>{ const i=PE_MATS.indexOf(it.mat); it.mat=PE_MATS[(i+d+PE_MATS.length)%PE_MATS.length]; delete it.fk; });
+    cyc('bearing',()=>it.bear==='yes' ? 'yes' : it.bear==='no' ? 'no' : 'auto',d=>{ const V=['auto','yes','no'], i=V.indexOf(it.bear||'auto'), v=V[(i+d+V.length)%V.length]; if(v==='auto') delete it.bear; else it.bear=v; });
     cyc('fence type',()=>it.fk||'— (wall)',d=>{ const K=['',...FN_KINDS], i=K.indexOf(it.fk||''), v=K[(i+d+K.length)%K.length]; if(!v){ delete it.fk; return; } const sp=FN_SPEC[v]; it.fk=v; it.mat=sp.mat; it.t=sp.t; it.h=sp.h; });
   } else if(k==='obj'){
     const dw=it.type==='door'||it.type==='window';
@@ -562,7 +567,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
           {n:'camview',t:'check',d:true,label:'the view from the selected camera (3D, a window in the corner; tap it to enlarge)'},
           {n:'ztgt',t:'range',min:.1,max:3,step:.1,d:1,label:'cameras: the target height above the floor, m (a person ≈ 1, a face ≈ 1.6, a car number plate ≈ 0.5) — a wall, a fence or a box hides it only where the line of sight passes within their height',fn:n=>{ n.rev=(n.rev||0)+1; redraw(n); }},
           {n:'refl',t:'select',opts:['0','1','2'],d:'1',label:'reflections: 0 — the direct ray only · 1 — plus one bounce off a wall · 2 — plus two (slower); the powers of the paths add up, each bounce costs by the material (metal 1, concrete 5, glass 6, brick 7, block 8, wood 9, drywall 11 dB); the rays to a receiver are drawn on the «signal» layer',fn:n=>{ n.rev=(n.rev||0)+1; redraw(n); }},
-          {n:'layer',t:'select',opts:['none','cameras','signal','climate'],d:'none',label:'layer: cameras (green — seen, red — blind) · signal (antennas, dBm) · climate (rooms: heat loss, W/m², air flow)'},
+          {n:'layer',t:'select',opts:['none','cameras','signal','climate','loads'],d:'none',label:'layer: cameras (green — seen, red — blind) · signal (antennas, dBm) · climate (rooms: heat loss, W/m², air flow) · loads (bearing walls: kN/m and the share of the capacity; the readout: lintels, slabs, rafters, foundation)'},
           {n:'thr',t:'range',min:-100,max:-30,step:1,d:-70,label:'signal threshold, dBm (below — dim)'},
           {n:'cell',t:'range',min:.1,max:1,step:.05,d:.25,label:'coverage cell, m'},
           {n:'lfreq',t:'num',d:0,label:'signal layer: only the transmitters on this frequency, MHz (0 — all; ±1 %, at least 10 MHz)'},
@@ -639,6 +644,12 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
           {n:'show',t:'select',opts:PC_SHOW,d:'all',label:'show: everything · structure only · electrics · heating · ventilation · cameras · radio (the other systems are hidden and not clickable; walls, rooms and doors always stay)'},
           {n:'chk',t:'check',d:true,label:'plan check: mark geometry problems on the plan (a ! in a ring) and list them in the readout'},
           {n:'nextprob',t:'button',label:'⚠ Next plan problem (selects it)',fn:n=>peNextProblem(n)},
+          {n:'ldsnow',t:'select',opts:['city','0.5','1.0','1.5','2.0','2.5','3.0','3.5','4.0'],d:'city',label:'loads: snow kPa (SP 20 districts I…VIII; «city» — from the city above, 1.5 if custom)'},
+          {n:'ldsoil',t:'select',opts:Object.keys(LD_SOIL),d:'sand, medium dense',label:'loads: soil under the foundation (design resistance R0: gravel 400, sand 300, semi-solid clay 250, loam 200, plastic clay 150, wet silt 100, peat 60 kPa)'},
+          {n:'lddepth',t:'select',opts:['0.6','1.0','1.4','1.8'],d:'1.0',label:'loads: foundation depth, m (below the freezing depth for heaving soils)'},
+          {n:'ldfloor',t:'select',opts:Object.values(LD_FLOORS).map(f=>f.label),d:'monolithic RC slab',label:'loads: the floors — monolithic RC slab (the slab of Site Plan, 0.22 m), hollow-core slab, timber beams'},
+          {n:'ldroof',t:'select',opts:['0.4','0.6','0.8','1.0'],d:'0.6',label:'loads: roof dead load kPa over the slope (rafters, battens, insulation, covering)'},
+          {n:'ldpile',t:'select',opts:['60','100','150','200'],d:'100',label:'loads: bearing capacity of a pile, kN (the piles alternative of the foundation)'},
           {n:'hvtype',t:'select',opts:Object.keys(HV_T),d:'radiator',label:'climate device (the ♨ tool places it): boiler, radiator, floor (underfloor loop), heater (local: convector, stove, fireplace), manifold, tee (a free branch of a pipe); ahu (supply-extract unit with recovery), fan, supply, extract. The ≋ tool joins them: pipes between water devices, ducts between air ones'},
           {n:'hvcity',t:'select',opts:['custom',...Object.keys(HV_CITIES)],d:'custom',label:'city: sets the outdoor design temperature and the degree-days of the season (approximate; «custom» — the temperature below, 5000 degree-days)'},
           {n:'hvtout',t:'select',opts:['-5','-10','-15','-20','-25','-30','-35','-40'],d:'-25',label:'outdoor design °C: the coldest five days of the region (heat loss; ignored when a city is set)'},
@@ -823,6 +834,7 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     if(p.chk!==false){ for(const q of peCheck(n)){ if(!(q.x||q.y)) continue;
         const sys=q.kind==='el'||q.kind==='wire' ? 'electrics' : q.kind==='hv' ? pcHvSys(((s.hv||[]).find(d=>d.id===q.id)||{}).type) : q.kind==='pp' ? 'heating' : null; if(sys && !pcShow(p.show,sys)) continue; const A=P.pt(q.x,q.y,0), hot=n.pcMark && n.pcMark.id===q.id && n.pcMark.msg===q.msg, col=q.sev==='err' ? '#ff1744' : '#ffb300';
         cx.strokeStyle=col; cx.lineWidth=hot ? 3 : 1.6; cx.fillStyle='rgba(16,22,26,.75)'; cx.beginPath(); cx.arc(A[0],A[1],hot ? 11 : 8,0,7); cx.fill(); cx.stroke(); cx.fillStyle=col; cx.font='bold '+(hot ? 13 : 10)+'px sans-serif'; cx.textAlign='center'; cx.textBaseline='middle'; cx.fillText('!',A[0],A[1]+.5); cx.textBaseline='alphabetic'; } }
+    if(p.layer==='loads'){ const C=peLd(n); if(C) for(const w of C.walls){ if(!lvOk(w.lv)) continue; const A=P.pt(w.x,w.y,P.d3 ? w.h : 0), col=w.ratio>1 ? '#ff1744' : w.ratio>.6 ? '#ffb300' : '#69f0ae'; cx.font='bold 10px monospace'; cx.textAlign='center'; const tx=Math.round(w.Nd)+' kN/m · '+Math.round(w.ratio*100)+'%'; cx.fillStyle='rgba(16,22,26,.8)'; cx.fillRect(A[0]-cx.measureText(tx).width/2-3,A[1]-17,cx.measureText(tx).width+6,13); cx.fillStyle=col; cx.fillText(tx,A[0],A[1]-7); } }
     peDrawLvBar(n,cx,W);
     // строка инструментов: подпись, если влезает, иначе только значок
     { cx.fillStyle='rgba(20,26,30,.92)'; cx.fillRect(0,0,W,PE_BAR); const items=PE_TOOLS.map(t=>({id:t[0],ic:t[0],name:t[2]})).concat([{id:'#view',ic:p.view==='3D' ? '#viewPlan' : '#view3D',name:p.view==='3D' ? 'plan' : '3D'},{id:'#fit',ic:'#fit',name:'fit'},{id:'#undo',ic:'#undo',name:'undo'},{id:'#redo',ic:'#redo',name:'redo'}]), bw=W/items.length;
@@ -857,6 +869,14 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
         if(st.duct>0) L.push('ducts '+st.duct.toFixed(0)+' m');
         for(const w of H.warns) L.push('⚠ '+w); } }
     if(p.chk!==false){ const C=peCheck(n); if(C.length){ const e=C.filter(q=>q.sev==='err').length; L.push('plan check: '+e+' error'+(e===1 ? '' : 's')+', '+(C.length-e)+' warning'+(C.length-e===1 ? '' : 's')+' (the button «Next plan problem» selects them one by one)'); for(const q of C.slice(0,6)) L.push('  '+(q.sev==='err' ? '✖ ' : '⚠ ')+q.msg); if(C.length>6) L.push('  … and '+(C.length-6)+' more'); } }
+    if(p.layer==='loads'){ const C=peLd(n); if(C){ const h=C.house, kN=v=>Math.round(v)+' kN';
+        L.push('loads (a preliminary estimate, not a design): snow '+h.snow+' kPa'+(h.roofArea>0 ? ' · roof '+h.roofArea.toFixed(0)+' m²: dead '+kN(h.roofG)+', snow '+kN(h.roofS) : '')+' · the building '+kN(h.weight)+' ('+h.mass.toFixed(0)+' t) on '+h.footprint.toFixed(0)+' m² = '+h.raft.toFixed(0)+' kPa against the soil '+h.R0+' kPa (a raft)');
+        for(const w of C.walls.filter(w=>w.lv===Math.min(...C.walls.map(q=>q.lv))).slice(0,8)){ const f=C.foundation.find(q=>q.id===w.id); L.push('  wall '+w.id+' ['+w.role+', '+w.mat+' '+(w.t*100).toFixed(0)+' cm, '+w.L.toFixed(1)+' m]: '+Math.round(w.Nd)+' kN/m at the base · '+Math.round(w.ratio*100)+'% of the masonry'+(f ? ' · strip '+(isFinite(f.b) ? f.b.toFixed(2)+' m' : '—')+' / piles every '+f.pileStep.toFixed(1)+' m' : '')+(w.warn.length ? ' ⚠ '+w.warn.join('; ') : '')); }
+        if(C.foundation.length) L.push('foundation: strip '+h.strip.toFixed(1)+' m³ of concrete at '+h.depth+' m, or '+h.piles+' piles of '+Math.round(+n.p.ldpile||100)+' kN');
+        for(const l of C.lintels.slice(0,6)) L.push('  lintel over a '+l.kind+' of '+l.w.toFixed(2)+' m in '+l.wall+': M '+l.M.toFixed(1)+' kN·m, V '+l.V.toFixed(0)+' kN → '+(l.ibeam ? l.n+' × I-beam No. '+l.ibeam : '⚠ '+l.warn));
+        for(const f of C.floors.slice(0,4)) L.push('  floor over '+f.room+': span '+f.span.toFixed(1)+' m, q '+f.q.toFixed(1)+' kPa → '+f.note);
+        for(const r of C.rafters) L.push('  rafters of the '+r.kind+' roof ('+r.angle.toFixed(0)+'°, slope '+r.slope.toFixed(1)+' m, snow '+r.snow.toFixed(2)+' kPa): '+(r.sec ? (r.sec[0]*1000)+'×'+(r.sec[1]*1000)+' mm at 0.6 m' : '⚠ a purlin or a truss is needed'));
+        for(const x of C.warns.slice(0,6)) L.push('⚠ '+x); } }
     if(n.under && n.under.err) L.push('⚠ '+n.under.err);
     if(n.overlaps && n.overlaps.length) L.push('⚠ '+n.overlaps.length+' object'+(n.overlaps.length===1 ? '' : 's')+' go through a wall ('+n.overlaps.slice(0,3).map(o=>{ const ob=s.objs.find(q=>q.id===o.obj); return ob ? (ob.name||ob.type) : o.obj; }).join(', ')+'): move them or turn them — the 3D picture and the plan are wrong there (a box’s width runs along the north at rotation 0)');
     for(const a of s.ants) if(peIsRx(a)){ const r=n.links && n.links[a.id]; L.push('receiver '+a.name+' ('+(a.f>=1000 ? a.f/1000+' GHz' : a.f+' MHz')+'): '+(r && r.from ? r.level.toFixed(1)+' dBm from '+r.name+', margin '+(r.margin>=0 ? '+' : '')+r.margin.toFixed(1)+' dB over '+a.sens+' dBm'+(r.paths && r.paths.length>1 ? ' · direct '+r.paths[0].level.toFixed(1)+' dBm + '+(r.paths.length-1)+' reflected (+'+(r.level-r.paths[0].level).toFixed(1)+' dB)' : '') : 'no transmitter on this frequency')); }
