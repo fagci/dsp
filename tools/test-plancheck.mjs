@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float64Array,Float32Array,Set,Map,Number,String,JSON,isFinite,Infinity,Array,Object,RegExp});
 const src=['modules/planedit-kernels.js','modules/hvac-kernels.js','modules/plancheck-kernels.js'].map(f=>fs.readFileSync(path.join(root,f),'utf8')).join('\n');
-vm.runInContext(src+';this.K={peNew,peAddPoint,peAddWall,peAddRoom,peAddObj,peAddEl,peAddWire,hvAdd,hvLink,pcCheck,pcShow,pcHvSys,PC_SHOW,peAddPolyRoom,peAddRectRoom,peSplitWall,peAddObj,peRoomRect,peRoomResize,peNextRoomPos,peRoomArea,peWallLen,peSetLen,peLock};',ctx);
+vm.runInContext(src+';this.K={peNew,peAddPoint,peAddWall,peAddRoom,peAddObj,peAddEl,peAddWire,hvAdd,hvLink,pcCheck,pcShow,pcHvSys,PC_SHOW,peAddPolyRoom,peAddRectRoom,peSplitWall,peAddObj,peEnsureLevel,peCopyLevel,peOnLevel,peLevelRange,peAddWall,hvRoomZ,peRoomRect,peRoomResize,peNextRoomPos,peRoomArea,peWallLen,peSetLen,peLock};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 function box(s,x0,y0,w,h,name,o={}){ const P=[[x0,y0],[x0+w,y0],[x0+w,y0+h],[x0,y0+h]].map(q=>K.peAddPoint(s,q[0],q[1])); const ids=P.map(p=>p.id);
@@ -57,6 +57,20 @@ ok('no rooms at all: devices are not checked',K.pcCheck((()=>{ const q=K.peNew()
   ok('the room A got the new corner on its side',A.room.pts.length===5); }
 { const q=K.peNew(); K.peAddRectRoom(q,0,0,3,4); const A=K.peAddRectRoom(q,0,4,5,4);
   ok('a big room over a small one takes its corner: 5 points, 8 walls, no overlap',A && A.pts.length===5 && q.walls.length===8 && !K.pcCheck(q).some(z=>/top of each other|overlap/.test(z.msg)),q.walls.length+' '+JSON.stringify(K.pcCheck(q))); }
+// этажи
+{ const q=K.peNew(); const A=K.peAddRectRoom(q,0,0,5,4); K.peAddObj(q,'door',{wall:A.walls[1].id,u:.5,w:.9,h:2,sill:0}); A.room.use='bedroom'; A.room.name='Спальня';
+  const L1=K.peEnsureLevel(q,1); ok('a floor above: ground made too, z = 2.7 + 0.25',q.levels.length===2 && q.levels[0].idx===0 && Math.abs(L1.z-2.95)<1e-9 && L1.name==='2',JSON.stringify(q.levels));
+  const Lm=K.peEnsureLevel(q,-1); ok('a cellar below, 2.95 down',Math.abs(Lm.z+2.95)<1e-9 && Lm.name==='B1');
+  const up=K.peAddRectRoom(q,0,0,5,4,{lv:1,z0:2.95}); ok('the same outline on another floor is a new room with its own walls',up && q.walls.length===8 && q.rooms.length===2 && up.room.lv===1 && up.room.z0===2.95 && up.walls.every(w=>w.lv===1&&w.z0===2.95));
+  ok('floors do not trigger the overlap check',!K.pcCheck(q).some(z=>/overlap|top of each other/.test(z.msg)),JSON.stringify(K.pcCheck(q)));
+  const c=K.peCopyLevel(q,0,2); ok('copy of the ground floor to floor 3: walls, door, room with its use',c && c.walls===4 && c.openings===1 && c.rooms===1 && q.rooms.find(r=>r.lv===2).use==='bedroom' && q.rooms.find(r=>r.lv===2).z0===q.levels.find(l=>l.idx===2).z,JSON.stringify(c));
+  ok('an empty floor cannot be copied',K.peCopyLevel(q,3,4)===null);
+  ok('the copy has its own points (moving the lower floor does not drag it)',new Set(q.walls.filter(w=>(w.lv||0)===2).flatMap(w=>[w.a,w.b])).size===4 && !q.walls.filter(w=>(w.lv||0)===2).some(w=>q.walls.some(v=>(v.lv||0)===0 && (v.a===w.a||v.b===w.a))));
+  ok('hvac reads the room height from the floor: room z0 of floor 2',Math.abs(K.hvRoomZ(q,q.rooms.find(r=>r.lv===1))-2.95)<1e-9);
+  ok('device on a floor: plan "all" shows the ground only, 3D all shows everything',K.peOnLevel(q,'all',.3,false) && !K.peOnLevel(q,'all',3.4,false) && K.peOnLevel(q,'all',3.4,true));
+  ok('floor 1 in the plan: ground items hidden, its own shown; in 3D the floors below stay',!K.peOnLevel(q,'1',.3,false) && K.peOnLevel(q,'1',3.4,false) && K.peOnLevel(q,'1',.3,true) && !K.peOnLevel(q,'0',3.4,true));
+  ok('cellar devices belong to the lowest level range',K.peOnLevel(q,'-1',-2.5,false) && !K.peOnLevel(q,'0',-2.5,false)); }
+{ const q=K.peNew(); ok('no floors defined: everything is visible',K.peOnLevel(q,'1',5,false)); }
 // слои
 ok('layers: all shows everything, one shows only itself',K.pcShow('all','electrics') && K.pcShow('electrics','electrics') && !K.pcShow('heating','electrics') && K.pcShow(undefined,'radio'));
 ok('heat devices vs air devices',K.pcHvSys('radiator')==='heating' && K.pcHvSys('heater')==='heating' && K.pcHvSys('ahu')==='ventilation' && K.pcHvSys('extract')==='ventilation');
