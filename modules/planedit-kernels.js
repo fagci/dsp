@@ -63,7 +63,7 @@ function peInRooms(s,x,y){ for(const r of s.rooms) if(peInPoly(peRoomPoly(s,r),x
 // ---------- электрика: розетки, выключатели, светильники и провода между ними ----------
 // Устройство: {id,type,name,x,y,z,watt}; провод: {id,a,b (id устройств),cable,via:[[x,y]…],zr} — идёт от a к b через точки via на высоте трассы zr (не задана — выше из двух устройств),
 // к каждому устройству спускается / поднимается по вертикали. Длина = путь в плане + спуски; запас на подрезку и разделку — PE_RESERVE.
-const PE_EL={socket:{z:.3,watt:200,pre:'S'},switch:{z:1.1,watt:0,pre:'SW'},light:{z:2.6,watt:60,pre:'L'},panel:{z:1.6,watt:0,pre:'P'},inlet:{z:3,watt:0,pre:'IN'},junction:{z:2.4,watt:0,pre:'J'}};   // щиток, ввод в здание, распредкоробка
+const PE_EL={socket:{z:.3,watt:200,pre:'S'},switch:{z:1.1,watt:0,pre:'SW'},light:{z:2.6,watt:60,pre:'L'},panel:{z:1.6,watt:0,pre:'P'},inlet:{z:3,watt:0,pre:'IN'},junction:{z:2.4,watt:0,pre:'J'},load:{z:.3,watt:2000,pre:'LD'}};   // щиток, ввод в здание, распредкоробка, потребитель (бойлер, плита, кондиционер…)
 // сечение по умолчанию: ввод — 5x2.5, розетка — 3x2.5, остальное — 3x1.5
 const peDefCable=(a,b)=>a==='inlet'||b==='inlet' ? '5x2.5' : a==='socket'||b==='socket' ? '3x2.5' : '3x1.5';
 const PE_CABLES=['2x0.75','2x1.5','2x2.5','3x1.5','3x2.5','3x4','3x6','4x2.5','5x1.5','5x2.5','5x4','5x6'];            // ходовые: число жил × сечение, мм²; в тексте Site Plan годится любое «NxS»
@@ -88,10 +88,59 @@ function peWirePath(s,w){ const A=peElOf(s,w.a), B=peElOf(s,w.b); if(!A||!B) ret
   return [[A.x,A.y,A.z||0],[A.x,A.y,zr],...(w.via||[]).map(q=>[q[0],q[1],zr]),[B.x,B.y,zr],[B.x,B.y,B.z||0]]; }
 // сводка: числа устройств, мощность, длины кабеля по сечениям
 function peElecStats(s){
-  const n={socket:0,switch:0,light:0,panel:0,inlet:0,junction:0}, cab={}; let watt=0, len=0, tot=0;
+  const n={socket:0,switch:0,light:0,panel:0,inlet:0,junction:0,load:0}, cab={}; let watt=0, len=0, tot=0;
   for(const e of s.elec||[]){ n[e.type]=(n[e.type]||0)+1; watt+=+e.watt||0; }
   for(const w of s.wires||[]){ const L=peWireLen(s,w); cab[w.cable]=(cab[w.cable]||0)+L.total; len+=L.len; tot+=L.total; }
   return {n,watt,len,total:tot,cables:cab};
+}
+
+// ---------- группы: расчёт линий от щитка ----------
+// Группа — всё, что питается от одного провода, выходящего из щитка (дальше провода разветвляются через коробки, розетки, выключатели).
+// Ток: I = P / (U·cosφ), 230 В, однофазная сеть; светильники cosφ 1, остальное PE_COSF. Автомат — ближайший номинал не ниже тока (или заданный на первом проводе: w.amp).
+// Допустимый ток кабеля — медь, скрытая проводка (таблица PE_AMPACITY, мм² → А). Падение напряжения: ΔU = Σ 2·ρ·L·I/S по участкам пути, I — ток всего, что ниже по линии.
+const PE_U=230, PE_COSF=.95, PE_RHO=.0175, PE_KC=.7, PE_DROP=5;                       // В, cosφ, Ом·мм²/м, коэффициент спроса щитка, допустимое падение, %
+const PE_BREAKERS=[6,10,16,20,25,32,40,50,63,80,100];
+const PE_AMPACITY={.75:11,1:15,1.5:19,2.5:27,4:38,6:46,10:70,16:85,25:115};
+const peCableS=c=>+String(c).split('x')[1]||0;
+const peAmpOf=c=>{ const S=peCableS(c), ks=Object.keys(PE_AMPACITY).map(Number).sort((a,b)=>a-b); let a=0; for(const k of ks) if(k<=S+1e-9) a=PE_AMPACITY[k]; return a; };   // ближайшее сечение не больше заданного
+const peNeedS=I=>{ const ks=Object.keys(PE_AMPACITY).map(Number).sort((a,b)=>a-b); for(const k of ks) if(PE_AMPACITY[k]>=I) return k; return ks[ks.length-1]; };
+const peBrkFor=I=>PE_BREAKERS.find(b=>b>=I-1e-9)||PE_BREAKERS[PE_BREAKERS.length-1];
+const peDevAmp=e=>{ const w=+e.watt||0; return w/(PE_U*(e.type==='light' ? 1 : PE_COSF)); };
+function peGroups(s){
+  const el=s.elec||[], wi=s.wires||[], by=new Map(el.map(e=>[e.id,e])), adj=new Map(el.map(e=>[e.id,[]]));
+  for(const w of wi) if(by.has(w.a)&&by.has(w.b)){ adj.get(w.a).push([w.b,w]); adj.get(w.b).push([w.a,w]); }
+  const stop=e=>e.type==='panel'||e.type==='inlet', seen=new Set(), groups=[], panels=[];
+  for(const P of el.filter(e=>e.type==='panel')){
+    const pg=[]; let k=0;
+    for(const w of wi){ const o=w.a===P.id ? by.get(w.b) : w.b===P.id ? by.get(w.a) : null; if(!o||stop(o)) continue;
+      // обход от первого соседа, не заходя в щитки и вводы; parent — провод, по которому пришли
+      const order=[o.id], par=new Map([[o.id,{wire:w,from:P.id,dist:peWireLen(s,w).len}]]); let fresh=!seen.has(o.id); if(!fresh) continue;
+      seen.add(o.id);
+      for(let i=0;i<order.length;i++){ const id=order[i], d=par.get(id).dist;
+        for(const [nb,ww] of adj.get(id)){ const q=by.get(nb); if(stop(q)||seen.has(nb)||nb===P.id) continue; seen.add(nb); par.set(nb,{wire:ww,from:id,dist:d+peWireLen(s,ww).len}); order.push(nb); } }
+      // ток по участкам: что ниже по линии
+      const cur=new Map(order.map(id=>[id,peDevAmp(by.get(id))]));
+      for(let i=order.length-1;i>0;i--){ const p=par.get(order[i]); cur.set(p.from,(cur.get(p.from)||0)+cur.get(order[i])); }
+      const watt=order.reduce((a,id)=>a+(+by.get(id).watt||0),0), I=cur.get(o.id)||0;
+      const amp=+w.amp>0 ? +w.amp : peBrkFor(I), name=w.gname||(P.name+'/'+(++k));
+      const segs=order.map(id=>{ const p=par.get(id), c=cur.get(id), a=peAmpOf(p.wire.cable); return {wire:p.wire.id,cable:p.wire.cable,I:c,ok:a>=c-1e-9,allowed:a,need:peNeedS(c)}; });
+      // падение напряжения до каждого потребителя; худший — по длине пути
+      let drop=0, far=null; for(const id of order){ if(!(+by.get(id).watt>0)) continue; let du=0, x=id; while(par.has(x)){ const p=par.get(x), S=peCableS(p.wire.cable)||1; du+=2*PE_RHO*peWireLen(s,p.wire).len*cur.get(x)/S; x=p.from; } if(du>drop){ drop=du; far=by.get(id).name; } }
+      const trunk=segs[0], bad=[];
+      if(amp<I-1e-9) bad.push('breaker '+amp+' A is below the current '+I.toFixed(1)+' A');
+      for(const g of segs) if(g.allowed<amp-1e-9){ bad.push('cable '+g.cable+' ('+g.allowed+' A) is weaker than the '+amp+' A breaker'); break; }
+      if(!bad.length) for(const g of segs) if(!g.ok){ bad.push('cable '+g.cable+' cannot carry the '+g.I.toFixed(1)+' A of its section'); break; }
+      if(drop/PE_U*100>PE_DROP) bad.push('voltage drop '+(drop/PE_U*100).toFixed(1)+'% > '+PE_DROP+'%');
+      pg.push({name,panel:P.name,head:w.id,devs:order.map(id=>by.get(id).name),watt,I,amp,cable:trunk.cable,need:peNeedS(Math.max(I,amp)),drop,dropPct:drop/PE_U*100,far,len:Math.max(...order.map(id=>par.get(id).dist)),segs,warn:bad,ok:!bad.length});
+    }
+    groups.push(...pg);
+    const W=pg.reduce((a,g)=>a+g.watt,0), I=pg.reduce((a,g)=>a+g.I,0)*PE_KC;
+    // питающий провод щитка — к вводу
+    let feed=null; for(const w of wi){ const o=w.a===P.id ? by.get(w.b) : w.b===P.id ? by.get(w.a) : null; if(o&&o.type==='inlet'){ feed={wire:w.id,cable:w.cable,allowed:peAmpOf(w.cable)}; break; } }
+    panels.push({name:P.name,groups:pg.length,watt:W,demandW:W*PE_KC,I,main:peBrkFor(I),feed,feedOk:!feed||feed.allowed>=I-1e-9});
+  }
+  const orphans=el.filter(e=>(+e.watt>0)&&!seen.has(e.id)).map(e=>e.name);                                   // потребители без питания от щитка
+  return {groups,panels,orphans};
 }
 
 // ---------- перетаскивание точки с сохранением длин ----------
@@ -364,7 +413,7 @@ function peImportPoints(s,recs){
       const wkeep=new Set(); for(const q of r.wires||[]){ const A=s.elec.find(e=>e.src===pre+'el:'+q.a), B=s.elec.find(e=>e.src===pre+'el:'+q.b); if(!A||!B||A===B) continue;
         const src=pre+'wire:'+q.a+'-'+q.b; wkeep.add(src); let w=s.wires.find(x=>x.src===src);
         if(!w){ w=peAddWire(s,A.id,B.id,{}); if(!w) continue; w.src=src; }
-        w.cable=peCableOk(q.cable) ? q.cable : w.cable; if(+q.z>0) w.zr=+q.z; }
+        w.cable=peCableOk(q.cable) ? q.cable : w.cable; if(+q.z>0) w.zr=+q.z; if(+q.amp>0) w.amp=+q.amp; else delete w.amp; }
       s.wires=s.wires.filter(w=>(!w.src || !w.src.startsWith(pre) || wkeep.has(w.src)) && peElOf(s,w.a) && peElOf(s,w.b)); }
     s.objs=s.objs.filter(o=>!(o.src && String(o.src).startsWith('sp:') && !String(o.src).startsWith(pre) && (o.type==='door'||o.type==='window')));   // проёмы старого вида (по углам) — заменены
     n++; }

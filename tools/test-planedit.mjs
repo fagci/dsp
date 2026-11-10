@@ -3,7 +3,7 @@
 import vm from 'node:vm'; import fs from 'node:fs'; import path from 'node:path'; import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Array,String,Number,Object,JSON,Set,Map,Float32Array,Uint8Array,isFinite,Infinity});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peCableOk,peCableCol,PE_CABLES,peAddEl,peAddWire,peWireLen,peWirePath,peElecStats,peImportPoints,peParse,peHistNew,peHistCommit,peHistUndo,peHistRedo,peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peOverlaps,peAddRx,peRxLevel,peMoveWall,peZRaster,peBoxCorners,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints,peSnapFace,peHiddenPts,peLvShow,pePaths,peFaces,peReflLoss,peCamView};`,ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/planedit-kernels.js'),'utf8')+`;this.K={peCableOk,peCableCol,PE_CABLES,peAddEl,peAddWire,peWireLen,peWirePath,peElecStats,peGroups,peImportPoints,peParse,peHistNew,peHistCommit,peHistUndo,peHistRedo,peNew,peAddPoint,peAddWall,peAddObj,peAddCam,peAddAnt,peAddRoom,peRoomArea,peDel,peDrag,peLock,peSetLen,peWallLen,peWallParts,peBoxes,peOccluders,peBlocked,peSees,peVisPoly,peFspl,peAntLevel,peWallLoss,peMatLoss,peOpenLoss,peGrid,peBounds,peCamCoverage,peAntHeat,peLines,peImportPoints,peParse,peNearestWall,peInRooms,pePt,peOpenPlace,peGeo,peLocal,peAzTrue,peAzPlan,peOverlay,peSVG,peDXF,peSolidRects,peBoxOrder,peBefore,peOverlaps,peAddRx,peRxLevel,peMoveWall,peZRaster,peBoxCorners,peRunGen,peCamPlan,peAntPlan,peApplyPlan,peClearAuto,peRoomCells,peMountPoints,peSnapFace,peHiddenPts,peLvShow,pePaths,peFaces,peReflLoss,peCamView};`,ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const near=(n,a,b,e)=>ok(n,Math.abs(a-b)<=e,a+' ≉ '+b+' (±'+e+')');
@@ -274,3 +274,25 @@ ok('an empty scene has no bounds and no grid',K.peGrid(K.peNew())===null);
   rec.elec=[rec.elec[0]]; rec.wires=[]; K.peImportPoints(t,[rec]); ok('re-import replaces the set: the removed device and its wire go',t.elec.length===1 && t.wires.length===0);
   const own=K.peAddEl(t,'socket',9,9); K.peImportPoints(t,[rec]); ok('a hand-drawn device survives a re-import',t.elec.includes(own)); }
 console.log(bad?('\n'+bad+' FAILED'):'\nall ok'); process.exit(bad?1:0);
+
+// группы: расчёт линий от щитка
+{ const q=K.peNew(); const P1=K.peAddEl(q,'panel',0,0), IN=K.peAddEl(q,'inlet',0,.5), J=K.peAddEl(q,'junction',4,0), L1=K.peAddEl(q,'light',6,0), L2=K.peAddEl(q,'light',8,0), SW=K.peAddEl(q,'switch',6,1), S1=K.peAddEl(q,'socket',0,6), BO=K.peAddEl(q,'load',0,12,{watt:3500}), XX=K.peAddEl(q,'load',20,20);
+  ok('load: default 2000 W, 0.3 m, name LD1',XX.watt===2000 && XX.z===.3 && BO.name==='LD1' && XX.name==='LD2');
+  K.peAddWire(q,IN.id,P1.id); const h1=K.peAddWire(q,P1.id,J.id), h2=K.peAddWire(q,P1.id,S1.id,{cable:'3x2.5'}); K.peAddWire(q,J.id,L1.id); K.peAddWire(q,J.id,SW.id); K.peAddWire(q,L1.id,L2.id); K.peAddWire(q,S1.id,BO.id,{cable:'3x2.5'});
+  const G=K.peGroups(q); ok('two groups from the panel, the inlet is not one',G.groups.length===2 && G.groups[0].name==='P1/1' && G.groups[1].name==='P1/2',JSON.stringify(G.groups.map(g=>g.name)));
+  const g1=G.groups[0], g2=G.groups[1];
+  ok('lights group: J, L1, L2, SW, 120 W, 0.52 A, breaker 6 A',g1.devs.length===4 && g1.watt===120 && Math.abs(g1.I-120/230)<1e-9 && g1.amp===6,JSON.stringify(g1));
+  ok('socket+load group: 3700 W, breaker 20 A (3700/(230·0.95)=16.9 A)',g2.watt===3700 && g2.amp===20 && Math.abs(g2.I-3700/(230*.95))<1e-9,JSON.stringify(g2));
+  ok('3x2.5 (27 A) holds a 20 A breaker; no warnings',g2.ok && g2.warn.length===0,g2.warn.join());
+  h2.amp=32; const g2b=K.peGroups(q).groups[1]; ok('a manual breaker of 32 A on a 2.5 mm² cable is flagged',g2b.amp===32 && !g2b.ok && /weaker/.test(g2b.warn[0]),g2b.warn.join()); h2.amp=10;
+  ok('a breaker below the current is flagged',/below the current/.test(K.peGroups(q).groups[1].warn[0])); delete h2.amp;
+  h2.cable='3x1.5'; ok('1.5 mm² behind a 20 A breaker is flagged',!K.peGroups(q).groups[1].ok); h2.cable='3x2.5';
+  { const w=K.peWireLen(q,q.wires.find(x=>x.id===h2.id)).len; const wb=K.peWireLen(q,q.wires.find(x=>x.a===S1.id&&x.b===BO.id)).len, I=3500/(230*.95), Is=I+200/(230*.95);
+    near('voltage drop to the far load = 2ρL·I/S per section',K.peGroups(q).groups[1].drop,2*.0175*w*(I+200/(230*.95))/2.5+2*.0175*wb*I/2.5,1e-9); }
+  ok('an unwired load is reported as not fed',G.orphans.join()==='LD2',G.orphans.join());
+  ok('panel: demand ×0.7, main breaker, feed cable 5x2.5 (27 A)',(()=>{ const p=G.panels[0], I=(g1.I+g2.I)*.7; return p.groups===2 && Math.abs(p.I-I)<1e-9 && p.main===K.peGroups(q).panels[0].main && p.feed.cable==='5x2.5'; })());
+  { const t=K.peNew(), pn=K.peAddEl(t,'panel',0,0), ld=K.peAddEl(t,'load',60,0,{watt:3000}); K.peAddWire(t,pn.id,ld.id,{cable:'3x1.5'}); const g=K.peGroups(t).groups[0];
+    ok('a 60 m run on 1.5 mm² gives a big drop → warning',g.dropPct>5 && g.warn.some(m=>/voltage drop/.test(m)),g.dropPct+' '+g.warn.join()); }
+  const t2=K.peNew(); const rec={id:'sp:walls',kind:'plan walls',walls:[],opens:[],elec:[{type:'panel',name:'P1',x:0,y:0,z:1.6,watt:0},{type:'load',name:'LD1',x:2,y:0,z:.3,watt:2000}],wires:[{a:'P1',b:'LD1',cable:'3x2.5',amp:16}]};
+  K.peImportPoints(t2,[rec]); ok('import keeps the breaker of the group (amp 16)',t2.wires[0].amp===16 && K.peGroups(t2).groups[0].amp===16); }
+

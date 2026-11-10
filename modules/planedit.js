@@ -7,7 +7,7 @@
    отдаёт стены, камеры и антенны как 3D-каркасы и маркеры; поза телефона с тех же входов lat / lon / alt / az / el / fov рисуется в плане.
    Ядро — planedit-kernels.js (тест tools/test-planedit.mjs). */
 
-const PE_TOOLS=[['select','☝','select'],['wall','▭','wall'],['point','•','point'],['door','🚪','door'],['window','▤','window'],['box','■','box'],['column','●','column'],['camera','🎥','camera'],['antenna','📶','TX'],['receiver','📡','RX'],['socket','⏚','socket'],['switch','⏻','switch'],['light','💡','light'],['panel','▦','panel'],['inlet','⤓','inlet'],['junction','⊡','box'],['wire','〰','wire'],['measure','📏','measure'],['erase','✕','erase']];
+const PE_TOOLS=[['select','☝','select'],['wall','▭','wall'],['point','•','point'],['door','🚪','door'],['window','▤','window'],['box','■','box'],['column','●','column'],['camera','🎥','camera'],['antenna','📶','TX'],['receiver','📡','RX'],['socket','⏚','socket'],['switch','⏻','switch'],['light','💡','light'],['load','⏍','load'],['panel','▦','panel'],['inlet','⤓','inlet'],['junction','⊡','box'],['wire','〰','wire'],['measure','📏','measure'],['erase','✕','erase']];
 const PE_BANDS=[88,144,433,868,915,1575,1800,2100,2437,3500,5200,5800,6000,24000];       // частоты для шагов ± у антенн, МГц
 const PE_MATS=Object.keys(PE_MAT);
 
@@ -146,6 +146,7 @@ function peIcon(cx,id,x,y,r,col){
     case 'socket': cx.beginPath(); cx.arc(0,0,8,0,7); cx.stroke(); cx.beginPath(); cx.arc(-3,0,1.2,0,7); cx.fill(); cx.beginPath(); cx.arc(3,0,1.2,0,7); cx.fill(); break;       // розетка: кружок с двумя гнёздами
     case 'switch': cx.beginPath(); cx.arc(-3,4,2.2,0,7); cx.stroke(); P(-1.5,2.5,6,-6); cx.stroke(); P(-9,4,-5.2,4); cx.stroke(); break;                                       // выключатель: клавиша на ножке
     case 'light': cx.beginPath(); cx.arc(0,-1,6,0,7); cx.stroke(); P(-3,6,3,6); cx.stroke(); P(-2,9,2,9); cx.stroke(); for(const a of [-2.2,-1.57,-.94]){ P(Math.cos(a)*8,-1+Math.sin(a)*8,Math.cos(a)*10.5,-1+Math.sin(a)*10.5); cx.stroke(); } break;   // лампа с лучами
+    case 'load': cx.strokeRect(-8,-6,16,12); P(1,-4,-3,1,2,1,-2,6); cx.stroke(); break;                                                                                   // потребитель: бокс с молнией
     case 'panel': cx.strokeRect(-7,-9,14,18); P(-4,-5,4,-5); cx.stroke(); P(-4,-1,4,-1); cx.stroke(); P(-4,3,4,3); cx.stroke(); break;                                       // щиток: шкаф с рядами автоматов
     case 'inlet': P(0,-9,0,4); cx.stroke(); P(-5,-1,0,5,5,-1); cx.stroke(); P(-8,8,8,8); cx.stroke(); break;                                                                  // ввод: стрелка в здание
     case 'junction': cx.strokeRect(-7,-7,14,14); P(-7,-7,7,7); cx.stroke(); P(7,-7,-7,7); cx.stroke(); break;                                                                 // коробка с крестом
@@ -406,13 +407,14 @@ function peChips(n){
   }
   else if(k==='el'){
     num('height',()=>it.z,v=>{ it.z=v; },.1,0,6,' m');
-    if(it.type==='socket'||it.type==='light') num('power',()=>it.watt||0,v=>{ it.watt=v; },it.type==='light' ? 5 : 100,0,5000,' W');
+    if(it.type==='socket'||it.type==='light'||it.type==='load') num('power',()=>it.watt||0,v=>{ it.watt=v; },it.type==='light' ? 5 : it.type==='load' ? 100 : 100,0,it.type==='load' ? 20000 : 5000,' W');
     btn('name',()=>it.name,()=>{ const t=prompt('name',it.name); if(t!==null) it.name=String(t); });
   } else if(k==='wire'){
     const L=()=>peWireLen(s,it);
     cyc('cable',()=>it.cable,d=>{ const i=PE_CABLES.indexOf(it.cable); it.cable=i<0 ? PE_CABLES[d>0 ? 0 : PE_CABLES.length-1] : PE_CABLES[(i+d+PE_CABLES.length)%PE_CABLES.length]; });
     { const A=peElOf(s,it.a), B=peElOf(s,it.b); if(A&&B){ num('run height',()=>peRunZ(A,B,it),v=>{ it.zr=v; },.1,.3,6,it.zr>0 ? ' m' : ' m (auto)'); if(it.zr>0) btn('run height',()=>'fixed → auto',()=>{ delete it.zr; }); } }
     btn('length',()=>L().len.toFixed(2)+' m (+10%: '+L().total.toFixed(1)+')',()=>{});
+    { const g=peGroups(s).groups.find(q=>q.head===it.id); if(g){ const B=[0,...PE_BREAKERS]; cyc('breaker',()=>(it.amp>0 ? it.amp+' A' : 'auto '+g.amp+' A')+' · '+g.name,d=>{ const i=Math.max(0,B.indexOf(+it.amp||0)); const v=B[(i+d+B.length)%B.length]; if(v>0) it.amp=v; else delete it.amp; }); } }
   }
   btn('delete',()=>'🗑',()=>{ peDeleteSel(n); });
   return C;
@@ -645,13 +647,14 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
         cx.beginPath(); pa.forEach((q,k)=>{ const A=P.pt(q[0],q[1],P.d3 ? q[2] : 0); k ? cx.lineTo(A[0],A[1]) : cx.moveTo(A[0],A[1]); }); cx.stroke(); cx.setLineDash([]);
         if(P.sc>14){ const m=P.pt((pa[1][0]+pa[pa.length-2][0])/2,(pa[1][1]+pa[pa.length-2][1])/2,P.d3 ? pa[1][2] : 0), L=peWireLen(s,w); cx.fillStyle=peCableCol(w.cable); cx.font='10px monospace'; cx.textAlign='center'; cx.fillText(L.len.toFixed(1)+' m',m[0],m[1]-5); } }
       if(n.wfrom && p.tool==='wire'){ const A=peElOf(s,n.wfrom); if(A){ cx.strokeStyle='#fff'; cx.lineWidth=1.5; cx.setLineDash([3,3]); cx.beginPath(); const zr=A.z, pts=[[A.x,A.y,A.z],[A.x,A.y,zr],...(n.wvia||[]).map(q=>[q[0],q[1],zr])]; pts.forEach((q,k)=>{ const B=P.pt(q[0],q[1],P.d3 ? q[2] : 0); k ? cx.lineTo(B[0],B[1]) : cx.moveTo(B[0],B[1]); }); cx.stroke(); cx.setLineDash([]); } }
-      for(const e of s.elec||[]){ const A=P.pt(e.x,e.y,e.z), isSel=sel && sel.k==='el' && sel.id===e.id, from=n.wfrom===e.id, col=isSel||from ? '#fff' : e.type==='light' ? '#ffe082' : e.type==='socket' ? '#ff8a65' : e.type==='panel' ? '#a5d6a7' : e.type==='inlet' ? '#ef9a9a' : e.type==='junction' ? '#b0bec5' : '#80deea';
+      for(const e of s.elec||[]){ const A=P.pt(e.x,e.y,e.z), isSel=sel && sel.k==='el' && sel.id===e.id, from=n.wfrom===e.id, col=isSel||from ? '#fff' : e.type==='light' ? '#ffe082' : e.type==='socket' ? '#ff8a65' : e.type==='panel' ? '#a5d6a7' : e.type==='inlet' ? '#ef9a9a' : e.type==='junction' ? '#b0bec5' : e.type==='load' ? '#ce93d8' : '#80deea';
         if(P.d3){ const F=P.pt(e.x,e.y,0); cx.strokeStyle='rgba(255,255,255,.2)'; cx.beginPath(); cx.moveTo(A[0],A[1]); cx.lineTo(F[0],F[1]); cx.stroke(); }
         cx.fillStyle='#10161a'; cx.strokeStyle=col; cx.lineWidth=1.8; cx.beginPath();
         if(e.type==='socket'){ cx.arc(A[0],A[1],6,0,7); cx.fill(); cx.stroke(); cx.fillStyle=col; for(const d of [-2.3,2.3]){ cx.beginPath(); cx.arc(A[0]+d,A[1],1,0,7); cx.fill(); } }
         else if(e.type==='panel'){ cx.rect(A[0]-6,A[1]-8,12,16); cx.fill(); cx.stroke(); for(const d of [-3,1,5]){ cx.beginPath(); cx.moveTo(A[0]-3,A[1]+d); cx.lineTo(A[0]+3,A[1]+d); cx.stroke(); } }
         else if(e.type==='inlet'){ cx.moveTo(A[0],A[1]-8); cx.lineTo(A[0]+7,A[1]+5); cx.lineTo(A[0]-7,A[1]+5); cx.closePath(); cx.fill(); cx.stroke(); }
         else if(e.type==='junction'){ cx.rect(A[0]-5,A[1]-5,10,10); cx.fill(); cx.stroke(); cx.beginPath(); cx.moveTo(A[0]-5,A[1]-5); cx.lineTo(A[0]+5,A[1]+5); cx.moveTo(A[0]+5,A[1]-5); cx.lineTo(A[0]-5,A[1]+5); cx.stroke(); }
+        else if(e.type==='load'){ cx.rect(A[0]-7,A[1]-5,14,10); cx.fill(); cx.stroke(); cx.beginPath(); cx.moveTo(A[0]+1,A[1]-3.5); cx.lineTo(A[0]-2.5,A[1]+.5); cx.lineTo(A[0]+2,A[1]+.5); cx.lineTo(A[0]-1.5,A[1]+4); cx.stroke(); }
         else if(e.type==='switch'){ cx.rect(A[0]-5.5,A[1]-5.5,11,11); cx.fill(); cx.stroke(); cx.beginPath(); cx.moveTo(A[0]-2.5,A[1]+2.5); cx.lineTo(A[0]+3,A[1]-3); cx.stroke(); }
         else { cx.arc(A[0],A[1],5.5,0,7); cx.fill(); cx.stroke(); for(let k=0;k<8;k++){ const a=k*Math.PI/4; cx.beginPath(); cx.moveTo(A[0]+Math.cos(a)*7,A[1]+Math.sin(a)*7); cx.lineTo(A[0]+Math.cos(a)*10,A[1]+Math.sin(a)*10); cx.stroke(); } }
         if(P.sc>10){ cx.fillStyle=fg; cx.font='10px monospace'; cx.textAlign='left'; cx.fillText(e.name+(e.watt>0 ? ' '+e.watt+' W' : ''),A[0]+10,A[1]-9); } } }
@@ -686,7 +689,10 @@ def({ id:'planedit', title:'Plan Editor', cat:'Geo', touch:true, lazy:true, read
     if(n.msg) L.push(n.msg);
     { const it=peItem(n); if(it){ const k=n.sel.k; L.push('selected: '+(k==='pt' ? 'point '+(it.name||it.id)+' ('+it.x.toFixed(2)+', '+it.y.toFixed(2)+')' : k==='wall' ? 'wall '+peWallLen(s,it).toFixed(2)+' m, '+(it.t*100).toFixed(0)+' cm thick, '+it.h+' m high, '+it.mat+(it.len>0 ? ', length locked' : '')+(s.ants.length ? ' · signal loss '+peMatLoss(it.mat,s.ants[0].f,it.t).toFixed(1)+' dB at '+s.ants[0].f+' MHz' : '') : k==='obj' ? it.type+' '+it.w+(it.type==='box' ? '×'+it.d : '')+' m' : (k==='cam' ? 'camera ' : 'antenna ')+it.name+' at '+it.z+' m, az '+it.az+'°')); } }
     L.push(s.pts.length+' points · '+s.walls.length+' walls · '+s.objs.length+' objects · '+s.cams.length+' camera'+(s.cams.length===1 ? '' : 's')+' · '+s.ants.length+' antenna'+(s.ants.length===1 ? '' : 's')+(s.rooms.length ? ' · rooms '+n.area.toFixed(1)+' m²' : ''));
-    { const E=peElecStats(s); if((s.elec||[]).length||(s.wires||[]).length) L.push('electrics: '+E.n.socket+' socket'+(E.n.socket===1 ? '' : 's')+' · '+E.n.switch+' switch'+(E.n.switch===1 ? '' : 'es')+' · '+E.n.light+' light'+(E.n.light===1 ? '' : 's')+(E.n.panel ? ' · '+E.n.panel+' panel'+(E.n.panel===1 ? '' : 's') : '')+(E.n.inlet ? ' · '+E.n.inlet+' inlet'+(E.n.inlet===1 ? '' : 's') : '')+(E.n.junction ? ' · '+E.n.junction+' junction box'+(E.n.junction===1 ? '' : 'es') : '')+' · '+E.watt+' W · cable '+E.len.toFixed(1)+' m, with the 10% reserve '+E.total.toFixed(1)+' m'+(Object.keys(E.cables).length ? ' ('+Object.entries(E.cables).map(([c,l])=>c+': '+l.toFixed(1)+' m').join(', ')+')' : '')); }
+    { const E=peElecStats(s); if((s.elec||[]).length||(s.wires||[]).length) L.push('electrics: '+E.n.socket+' socket'+(E.n.socket===1 ? '' : 's')+' · '+E.n.switch+' switch'+(E.n.switch===1 ? '' : 'es')+' · '+E.n.light+' light'+(E.n.light===1 ? '' : 's')+(E.n.load ? ' · '+E.n.load+' load'+(E.n.load===1 ? '' : 's') : '')+(E.n.panel ? ' · '+E.n.panel+' panel'+(E.n.panel===1 ? '' : 's') : '')+(E.n.inlet ? ' · '+E.n.inlet+' inlet'+(E.n.inlet===1 ? '' : 's') : '')+(E.n.junction ? ' · '+E.n.junction+' junction box'+(E.n.junction===1 ? '' : 'es') : '')+' · '+E.watt+' W · cable '+E.len.toFixed(1)+' m, with the 10% reserve '+E.total.toFixed(1)+' m'+(Object.keys(E.cables).length ? ' ('+Object.entries(E.cables).map(([c,l])=>c+': '+l.toFixed(1)+' m').join(', ')+')' : '')); }
+    { const G=peGroups(s); if(G.groups.length){ for(const g of G.groups) L.push('group '+g.name+': '+g.devs.length+' device'+(g.devs.length===1 ? '' : 's')+' · '+g.watt+' W · '+g.I.toFixed(1)+' A · breaker '+g.amp+' A'+(s.wires.find(w=>w.id===g.head).amp>0 ? '' : ' (auto)')+' · '+g.cable+' (min '+g.need+' mm²) · '+g.len.toFixed(0)+' m · drop '+g.dropPct.toFixed(1)+'%'+(g.far ? ' at '+g.far : '')+(g.ok ? ' ✓' : ' ⚠ '+g.warn.join('; ')));
+        for(const q of G.panels) L.push('panel '+q.name+': '+q.groups+' group'+(q.groups===1 ? '' : 's')+' · '+q.watt+' W connected, '+Math.round(q.demandW)+' W with the demand factor '+PE_KC+' · '+q.I.toFixed(1)+' A → main breaker '+q.main+' A'+(q.feed ? ' · feed '+q.feed.cable+(q.feedOk ? ' ✓' : ' ⚠ carries only '+q.feed.allowed+' A') : '')); }
+      if(G.orphans.length) L.push('⚠ not fed from a panel: '+G.orphans.join(', ')+' (wire them to a panel, through boxes, switches or other sockets)'); }
     if(n.under && n.under.err) L.push('⚠ '+n.under.err);
     if(n.overlaps && n.overlaps.length) L.push('⚠ '+n.overlaps.length+' object'+(n.overlaps.length===1 ? '' : 's')+' go through a wall ('+n.overlaps.slice(0,3).map(o=>{ const ob=s.objs.find(q=>q.id===o.obj); return ob ? (ob.name||ob.type) : o.obj; }).join(', ')+'): move them or turn them — the 3D picture and the plan are wrong there (a box’s width runs along the north at rotation 0)');
     for(const a of s.ants) if(peIsRx(a)){ const r=n.links && n.links[a.id]; L.push('receiver '+a.name+' ('+(a.f>=1000 ? a.f/1000+' GHz' : a.f+' MHz')+'): '+(r && r.from ? r.level.toFixed(1)+' dBm from '+r.name+', margin '+(r.margin>=0 ? '+' : '')+r.margin.toFixed(1)+' dB over '+a.sens+' dBm'+(r.paths && r.paths.length>1 ? ' · direct '+r.paths[0].level.toFixed(1)+' dBm + '+(r.paths.length-1)+' reflected (+'+(r.level-r.paths[0].level).toFixed(1)+' dB)' : '') : 'no transmitter on this frequency')); }
