@@ -61,8 +61,8 @@ function psUi(n){
   const host=n.cv?.parentElement; if(!host) return;
   const t=psTabOf(n);
   if(!n.psBar){
-    const bar=document.createElement('div'); bar.className='psTabs'; bar.style.cssText='display:flex;gap:2px;margin:2px 0;';
-    for(const q of PS_TABS){ const b=document.createElement('button'); b.textContent=q.label; b.dataset.t=q.label; b.style.cssText='flex:1;padding:3px 6px;cursor:pointer;';
+    const bar=document.createElement('div'); bar.className='psTabs vtabs';                 // вид — styles.css (.vtabs): под палец на телефоне, остаётся в режиме «только холст»
+    for(const q of PS_TABS){ const b=document.createElement('button'); b.textContent=q.label; b.dataset.t=q.label;
       b.addEventListener('pointerdown',ev=>ev.stopPropagation());
       b.addEventListener('click',ev=>{ ev.stopPropagation(); setMod(n,'tab',q.label); redraw(n); });
       bar.append(b); }
@@ -72,13 +72,13 @@ function psUi(n){
   if(key!==n.psKey){
     n.psKey=key;
     for(const sec of secs){ const g=sec.dataset.g||''; sec.style.display=g.startsWith(t.label+' · ') ? '' : 'none'; }
-    for(const b of n.psBar.children){ const on=b.dataset.t===t.label; b.style.fontWeight=on ? '700' : '400'; b.style.opacity=on ? '1' : '.65'; b.style.borderBottom=on ? '2px solid var(--accent,#4fc3f7)' : '2px solid transparent'; }
+    for(const b of n.psBar.children){ const on=b.dataset.t===t.label; b.classList.toggle('on',on); }
     // всплывающие панели карты (инструменты, формы) живут рядом с канвой — прячем, пока вкладка не Map
     const sm=n.ps?.map; if(sm) for(const k of ['_pickEl','_formEl','_linkEl','_toolsEl','_drawEl','_svEl','_vecEl']){ const e=sm[k]; if(e && e.style){ if(t.k==='map'){ if(e.dataset.psd!==undefined){ e.style.display=e.dataset.psd; delete e.dataset.psd; } } else if(e.dataset.psd===undefined){ e.dataset.psd=e.style.display; e.style.display='none'; } } }
   }
 }
 
-def({ id:'planStudio', title:'Plan Studio', cat:'Geo', touch:true, lazy:true, readout:true, view:{h:520}, w:640, resize:true,
+def({ id:'planStudio', title:'Plan Studio', cat:'Geo', touch:true, viewTop:true, lazy:true, readout:true, view:{h:520}, w:640, resize:true,
   kw:'plan studio site plan editor map photo image layer house floor plot satellite drone ortho underlay trace one place tabs',
   // rec — внешние записи: GPS-замеры (name, lat, lon, acc), точки, слои; lat / lon / acc / alt — позиция (My Position); lines, file — как у Site Plan; az / el / fov — камера (Editor);
   // rows / links / meas — как у Map. Выходы: Site Plan (area, perim, slope, rms, n, rec, poly), Editor (lines, loss, vent, cover, sig, ncam, nant, margin, room_area), Map (pick, sel, edit, link, pick_lat, pick_lon, count), Photo (mpp)
@@ -88,7 +88,7 @@ def({ id:'planStudio', title:'Plan Studio', cat:'Geo', touch:true, lazy:true, re
         {n:'lines',t:'txt'},{n:'loss',t:'num'},{n:'vent',t:'num'},{n:'room_area',t:'num'},{n:'cover',t:'num'},{n:'sig',t:'num'},{n:'ncam',t:'num'},{n:'nant',t:'num'},{n:'margin',t:'num'},
         {n:'pick',t:'rec'},{n:'sel',t:'rec'},{n:'edit',t:'rec'},{n:'link',t:'rec'},{n:'pick_lat',t:'num'},{n:'pick_lon',t:'num'},{n:'count',t:'num'},{n:'mpp',t:'num'}],
   w:640, view:{h:520}, resize:true,
-  params:[{n:'tab',t:'select',opts:PS_TABS.map(t=>t.label),d:'Plan',label:'tab: Plan (measurements, 3D) · Editor (walls, rooms, devices) · Map (tiles, your shapes) · Photo (your own aerial image as a layer)',fn:n=>{ n.psKey=''; redraw(n); }},
+  params:[{n:'tab',t:'select',hidden:true,opts:PS_TABS.map(t=>t.label),d:'Plan',label:'tab: Plan (measurements, 3D) · Editor (walls, rooms, devices) · Map (tiles, your shapes) · Photo (your own aerial image as a layer)',fn:n=>{ n.psKey=''; redraw(n); }},
           ...psParams().params],
   init:n=>{ for(const t of PS_TABS){ const s=psSub(n,t); MOD[t.type].init?.(s); } n.psKey=''; n.fbEdit=null; },
   dispose:n=>{ for(const t of PS_TABS){ try{ MOD[t.type].dispose?.(psSub(n,t)); }catch(e){ console.error('planStudio dispose '+t.type+':',e); } } n.psBar?.remove(); },

@@ -389,6 +389,7 @@ const d=MOD[n.type];
 const el=document.createElement('div'); el.className='node panzoom-exclude'+(n.type==='note'?' note':''); el.dataset.type=n.type; el.dataset.id=n.id;
 const title=nodeTitle(n);
 el.style.setProperty('--cat',catColor(d.cat)); el.dataset.title=title;
+if(d.viewTop) el.classList.add('vtop');                 // холст над параметрами (Plan Studio)
 el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span>${d.view||d.bare||d.vidEl?'<span class="xpd" title="Expand canvas (hide parameters)">'+ico('expand')+'</span>':''}${d.fs||d.vidEl?'<span class="fsb" title="Fullscreen (double-click the picture)">'+ico('full')+'</span>':''}${(d.view||d.fs||d.vidEl)&&pipSupported()?'<span class="pipb" title="Picture in picture (floating window)">'+ico('pip')+'</span>':''}${(d.view||d.fs)&&wallpaperSupported()?'<span class="wpb" title="Set as live wallpaper (phone app)">'+ico('wall')+'</span>':''}${(d.view||d.fs||d.vidEl)&&floatSupported()?'<span class="flb" title="Float over other apps (phone app)">'+ico('float')+'</span>':''}<span class="hlp" title="Help for this module (F1)">${ico('help')}</span><span class="rst" title="Reset all parameters">${ico('reset')}</span><span class="ren" title="Rename">${ico('edit')}</span><span class="x">${ico('close')}</span></div> <div class="nbody"></div>`;
 el.querySelector('.ttl').textContent=title;
 el.querySelector('.ren').addEventListener('click',e=>{ e.stopPropagation(); renameNode(n); });
@@ -1738,6 +1739,7 @@ function dashRenderRoot(){
     dashGridEl.append(hint); dashSyncGhosts(); dashPagesRender(); return;
   }
   dashGridEl.append(maxLeaf? dashRenderLeaf(maxLeaf) : dashRenderNode(Graph.dashTree));
+  dashNarSync();
   dashSyncGhosts();
   dashPagesRender();
   dashFitSoon();
@@ -1745,13 +1747,26 @@ function dashRenderRoot(){
 // основная канва (или список bandplan/bookmarks) узла в панели — до низа панели: контролы над ней
 // переносятся по ширине, поэтому её верх плавает и чистым CSS высоту не задать
 const DASH_FILL='canvas.view.main, .bp-ui, .bm-ui, .tbl-ui, .trk-tile, .stu-tile, .chat, .wa, .pl, .ml, .eq10, .rds-ui, .ng, .graphview, .readout.tall, .vp';
+// узкая панель на тач-экране (телефон): картинка узла — сверху, параметры — под ней (styles.css: .dash-pane.nar)
+function dashNarSync(){ for(const pane of dashGridEl.querySelectorAll('.dash-pane')) pane.classList.toggle('nar',TOUCH && pane.clientWidth>0 && pane.clientWidth<=520); }
 function dashFit(){
   if(!dashMode) return;
+  dashNarSync();
   for(const body of dashGridEl.querySelectorAll('.dash-body')){
     const el=body.querySelector(DASH_FILL); if(!el) continue;
     const mid=el.closest('.mid'), padB=mid?parseFloat(getComputedStyle(mid).paddingBottom)||0:12;
     let after=0; for(let q=el.nextElementSibling;q;q=q.nextElementSibling) if(q.offsetHeight && getComputedStyle(q).position!=='absolute') after+=q.offsetHeight+4;   // кнопка Copy под readout; слои поверх канвы (водопад sa) места не занимают
-    const h=Math.max(110, Math.floor(body.getBoundingClientRect().bottom-el.getBoundingClientRect().top-padB-after));
+    let h=Math.max(110, Math.floor(body.getBoundingClientRect().bottom-el.getBoundingClientRect().top-padB-after));
+    // картинка первой (узкая панель телефона, узел с viewTop), параметры под ней: картинке — всё, что не нужно параметрам,
+    // но не меньше, чем до 60 % высоты панели; остальное прокручивается. Списки (Table…) по-прежнему на всю панель.
+    if(mid && (body.parentElement.classList.contains('nar') || el.closest('.node')?.classList.contains('vtop')) && !el.matches('.tbl-ui,.bm-ui,.bp-ui')){
+      const er=el.getBoundingClientRect(), br=body.getBoundingClientRect();
+      let pBot=-1, cap=er.bottom;                          // низ параметров и низ подписей под картинкой
+      for(const q of mid.children){ if(q===el || !q.offsetHeight) continue; const r=q.getBoundingClientRect(); if(r.top<er.bottom-1) continue;
+        if(q.matches('.prm,.advWrap')) pBot=Math.max(pBot,r.bottom); else if(getComputedStyle(q).position!=='absolute') cap=Math.max(cap,r.bottom); }
+      if(pBot>0){ const top=er.top-br.top+body.scrollTop, H=body.clientHeight;
+        h=Math.max(110, Math.floor(Math.max(H-top-padB-(Math.max(pBot,cap)-er.bottom), H*.6-top))); }
+    }
     if(Math.abs((parseFloat(el.style.height)||0)-h)>1) el.style.height=h+'px';
   }
   for(const body of dashGridEl.querySelectorAll('.dash-body')) dashRailSync(body);
@@ -2134,8 +2149,15 @@ function setDash(on){
   dashPagesEl?.classList.toggle('on',on);
   document.getElementById('fit').disabled=on; document.getElementById('lod').disabled=on; syncSel();
   if(on){
+    const fresh=!Graph.dashTree;
     dashEnsureTree();
     for(const n of Graph.nodes) if(n.dash && !dashLeafOf(n.id)) dashAutoPlace(n);
+    // раскладки ещё нет: выбранный узел (или единственный с картинкой) сразу в панели — не искать его в списке, особенно с телефона
+    if(fresh && !Graph.nodes.some(n=>dashLeafOf(n.id))){
+      const sel=Sel.size===1 ? Graph.map[[...Sel][0]] : null, withCv=Graph.nodes.filter(n=>n.cv);
+      const pickN=sel || (withCv.length===1 ? withCv[0] : null);
+      if(pickN) dashAutoPlace(pickN);
+    }
     dashRenderRoot();
     if(dashGraphLeaf()) dashGraphFit();
   } else {
