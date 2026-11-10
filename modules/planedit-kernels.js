@@ -56,6 +56,33 @@ function peAddRx(s,x,y,o={}){ const a={id:peId(s,'a'),role:'rx',name:'RX'+(s.ant
 const peIsRx=a=>a.role==='rx';
 // комната по замкнутой цепочке точек (id); площадь — по формуле шнурования
 function peAddRoom(s,ids,name){ const r={id:peId(s,'r'),pts:ids.slice(),name:name||'Room'+(s.rooms.length+1)}; s.rooms.push(r); return r; }
+// быстрые комнаты: контур по точкам (существующие точки в пределах 5 см берутся, а не дублируются — общие стены у соседних комнат), стены по сторонам, комната
+const peFindPt=(s,x,y,tol=.05)=>s.pts.find(p=>Math.hypot(p.x-x,p.y-y)<=tol);
+// разрезать стену точкой p на ней: вторая половина — новая стена с теми же свойствами; проёмы и комнаты, у которых это сторона, переносятся (в комнату добавляется p)
+function peSplitWall(s,w,p){ if(w.src) return null; const [a,b]=peWallEnds(s,w); if(!a||!b||p.id===w.a||p.id===w.b) return null; const L=Math.hypot(b.x-a.x,b.y-a.y), d=Math.hypot(p.x-a.x,p.y-a.y); if(d<.05||L-d<.05) return null;
+  const w2={...w,id:peId(s,'w'),a:p.id,b:w.b,len:0}; w.b=p.id; w.len=0;
+  for(const o of s.objs) if(o.wall===w.id){ const pos=o.u*L; if(pos<d) o.u=pos/d; else { o.wall=w2.id; o.u=(pos-d)/(L-d); } }
+  s.walls.push(w2);
+  for(const r of s.rooms){ const n=r.pts.length; for(let i=0;i<n;i++){ const x=r.pts[i], y=r.pts[(i+1)%n]; if((x===w.a&&y===w2.b)||(x===w2.b&&y===w.a)){ r.pts.splice(i+1,0,p.id); break; } } }
+  return w2; }
+const peOnSeg=(p,a,b,tol=.05)=>{ const dx=b.x-a.x, dy=b.y-a.y, L2=dx*dx+dy*dy; if(L2<1e-12) return false; const u=((p.x-a.x)*dx+(p.y-a.y)*dy)/L2; if(u<=0||u>=1) return false; return Math.hypot(p.x-(a.x+dx*u),p.y-(a.y+dy*u))<=tol && Math.hypot(p.x-a.x,p.y-a.y)>tol && Math.hypot(p.x-b.x,p.y-b.y)>tol; };
+function peAddPolyRoom(s,P,o={}){ if(!Array.isArray(P)||P.length<3) return null; let ids=[]; for(const q of P){ const p=peFindPt(s,+q[0],+q[1])||peAddPoint(s,+q[0],+q[1]); if(ids[ids.length-1]!==p.id) ids.push(p.id); }
+  if(ids.length>1 && ids[0]===ids[ids.length-1]) ids.pop(); if(ids.length<3 || new Set(ids).size!==ids.length) return null;
+  // существующие точки на сторонах нового контура становятся его углами (сторона не накладывается на чужую стену); новые углы на чужих стенах режут их
+  { const ext=[]; for(let i=0;i<ids.length;i++){ const A=pePt(s,ids[i]), B=pePt(s,ids[(i+1)%ids.length]); ext.push(ids[i]);
+      const mid=s.pts.filter(p=>!ids.includes(p.id) && peOnSeg(p,A,B)).sort((u,v)=>Math.hypot(u.x-A.x,u.y-A.y)-Math.hypot(v.x-A.x,v.y-A.y)); for(const p of mid) ext.push(p.id); } ids=ext; }
+  for(const id of ids){ const p=pePt(s,id); for(const w of s.walls.slice()){ if(w.a===id||w.b===id) continue; const [a,b]=peWallEnds(s,w); if(a&&b&&peOnSeg(p,a,b)) peSplitWall(s,w,p); } }
+  if(s.rooms.some(r=>r.pts.length===ids.length && ids.every(i=>r.pts.includes(i)))) return null;
+  const ws=ids.map((a,i)=>peAddWall(s,a,ids[(i+1)%ids.length],{t:o.t>0 ? o.t : undefined,h:o.h>0 ? o.h : undefined,mat:o.mat})); const r=peAddRoom(s,ids,o.name); if(o.lv) r.lv=o.lv; return {room:r,walls:ws,pts:ids}; }
+const peAddRectRoom=(s,x0,y0,w,h,o={})=>w>0&&h>0 ? peAddPolyRoom(s,[[x0,y0],[x0+w,y0],[x0+w,y0+h],[x0,y0+h]],o) : null;
+// прямоугольная ли комната (4 точки, стороны по осям): {x0,y0,x1,y1,w,h}
+function peRoomRect(s,r){ if(!r||r.pts.length!==4) return null; const P=r.pts.map(id=>pePt(s,id)); if(P.some(p=>!p)) return null; const xs=[...new Set(P.map(p=>+p.x.toFixed(3)))], ys=[...new Set(P.map(p=>+p.y.toFixed(3)))];
+  if(xs.length!==2||ys.length!==2) return null; const x0=Math.min(...xs), x1=Math.max(...xs), y0=Math.min(...ys), y1=Math.max(...ys); return {x0,y0,x1,y1,w:x1-x0,h:y1-y0}; }
+// размеры прямоугольной комнаты: правая и верхняя стороны сдвигаются (левый нижний угол на месте); зафиксированные длины соседей подтягиваются (peDrag)
+function peRoomResize(s,r,w,h){ const R=peRoomRect(s,r); if(!R||!(w>0)||!(h>0)) return false;
+  for(const id of r.pts){ const p=pePt(s,id), mx=Math.abs(p.x-R.x1)<1e-3, my=Math.abs(p.y-R.y1)<1e-3; if(mx||my) peDrag(s,id,mx ? R.x0+w : p.x,my ? R.y0+h : p.y); } return true; }
+// куда ставить новую комнату: справа от выбранной (общая стена), иначе правее всего плана; пустой план — в нуле
+function peNextRoomPos(s,r){ const P=r ? r.pts.map(id=>pePt(s,id)).filter(Boolean) : s.pts; if(!P.length) return {x:0,y:0}; return {x:Math.max(...P.map(p=>p.x)),y:Math.min(...P.map(p=>p.y))}; }
 function peRoomArea(s,r){ let a=0; for(let i=0;i<r.pts.length;i++){ const p=pePt(s,r.pts[i]), q=pePt(s,r.pts[(i+1)%r.pts.length]); a+=p.x*q.y-q.x*p.y; } return Math.abs(a)/2; }
 function peRoomPoly(s,r){ return r.pts.map(id=>{ const p=pePt(s,id); return [p.x,p.y]; }); }
 function peInPoly(P,x,y){ let c=false; for(let i=0,j=P.length-1;i<P.length;j=i++) if((P[i][1]>y)!==(P[j][1]>y) && x<(P[j][0]-P[i][0])*(y-P[i][1])/(P[j][1]-P[i][1])+P[i][0]) c=!c; return c; }
