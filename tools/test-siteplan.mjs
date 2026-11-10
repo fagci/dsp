@@ -289,6 +289,9 @@ ok('canopy: A = B → error',K.spSolve('P at 0 0\ncanopy P P').errors.length===1
   ok('outer B 0.04 wood: outer sides of B are 4 cm wood',b.length>0 && b.every(w=>w.t===.04 && w.mat==='wood'),JSON.stringify(b.map(w=>[w.id,w.t,w.mat])));
   ok('outer A1-A2 0.1: one side of A',a1 && a1.t===.1,a1 && a1.t); ok('other sides of A stay at the general outer 0.4 (brick)',a3 && a3.t===.4 && a3.mat==='brick',JSON.stringify(a3));
   ok('the wall between A and B stays inner',H.walls.some(w=>w.kind==='inner' && Math.abs(w.t-.2)<.02)); }
+{ const H=K.spHouse(K.spSolve('material block\nroom A 6 4 6 4\nroom B 3 4 3 4\nroom C 2 4 2 4\nwall A2-A3 B1-B4 0.2\nwall B2-B3 C1-C4 0.1\nA1 at 0 0\nA2 at 6 0\nouter B C 0.04 дерево'),{});
+  const m=id=>H.walls.filter(w=>w.id.includes(id)).map(w=>w.kind+':'+w.mat).join(',');
+  ok('outer wood for B, C: the wall B–C is wood, the wall A–B (shared with the block house) stays block',H.walls.some(w=>w.kind==='inner' && Math.abs(w.t-.1)<.02 && w.mat==='wood') && H.walls.some(w=>w.kind==='inner' && Math.abs(w.t-.2)<.02 && w.mat==='block'),H.walls.map(w=>w.id+' '+w.kind+' '+w.t+' '+w.mat).join(' | ')); }
 ok('outer: unknown room → error',K.spSolve('A1 at 0 0\nroom A 3 3 3 3\nouter Zed 0.04').errors.length===1 && K.spSolve('room A 3 3 3 3\nouter A').errors.length===1);
 { const H=K.spHouse(K.spSolve('H1 at 0 0\nH2 at 10 0\nroom H 10 4 10 4\ncanopy H1 H2 w 1.5 h 3 2.8 off 0.04 posts 5 ends d 0.1'),{}), cp=H.posts.filter(q=>q.name==='canopy post');
   ok('canopy ends: a column at each end (inset by d/2) + the given one → 3',cp.length===3,cp.length);
