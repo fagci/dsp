@@ -326,9 +326,9 @@ body.noedit #bar .ed{display:none}
   #bar .sp,#bar .sep{display:none}
   /* панель прокручивается: на первом экране — то, что нужно с телефона (меню, пуск, тайлы, вписать, отмена, цепочка), файлы и очистка — в конце */
   #menu{order:-20} #run{order:-19} #errBadge,#net{order:-18;align-self:center;margin:0 4px} #dash,#dashPages{order:-17} #fit{order:-16}
-  #undo,#redo{order:-15} #chain{order:-14} #dup,#align,#arrange{order:-13} #lod,#bundle{order:-12} #power{order:-11}
+  #undo,#redo{order:-15} #chain{order:-14} #cmdBtn{order:-14} #dup,#align,#arrange{order:-13} #lod,#bundle{order:-12} #power{order:-11}
   #helpBtn,#settings{order:-10} #load,#save{order:-9} #clear{order:-8} #wipe{order:-7}
-  #bar :is(#run,#dash,#fit,#undo,#chain,#dup,#lod,#power,#helpBtn,#load,#clear,#wipe){margin-left:5px}
+  #bar :is(#run,#dash,#fit,#undo,#chain,#cmdBtn,#dup,#lod,#power,#helpBtn,#load,#clear,#wipe){margin-left:5px}
   /* справа — затухание, пока есть что прокручивать: липкая полоска в конце ряда, под пальцем прозрачна */
   #bar::after{content:'';order:99;flex:0 0 22px;align-self:stretch;position:sticky;right:0;pointer-events:none;
     background:linear-gradient(to right,transparent,var(--panel) 85%)}
