@@ -89,6 +89,7 @@ function wsJunk(text){
   if(!t) return true;
   if(/^[\s.,!?…\-–—♪♫*\[\]()]*$/.test(t)) return true;                         // только знаки
   if(/^[\[(][^\])]*(blank|silence|music|noise|applause|тишин|музык|шум|аплодис)[^\])]*[\])]$/.test(t)) return true;   // [BLANK_AUDIO], (music)
+  if(t.length<=80 && /субтитр|dimatorzok|корректор\s+[а-яa-z]\.|продолжение следует/.test(t)) return true;                  // короткая «подпись» с субтитрами на шуме — не речь
   if(/^(с вами был|с вами (были|была)|субтитры (сделал|создавал|подготовил|предоставил)|редактор субтитров|корректор\b|перевод(чик)? субтитров|подписывайтесь на (канал|наш)|ставьте лайк)/.test(t)) return true;   // подписи роликов, которые Whisper дописывает на шуме
   return WS_JUNK.includes(t.replace(/[.!]+$/,'')) || WS_JUNK.includes(t);
 }
