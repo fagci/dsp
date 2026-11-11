@@ -17,6 +17,16 @@ val vlcJar = tasks.register<Copy>("vlcJar") {
     into(layout.buildDirectory.dir("vlc"))
 }
 tasks.matching { it.name == "compileKotlin" }.configureEach { dependsOn(vlcJar) }
+// TFLite для TfliteEngine.kt: из AAR берутся classes.jar — код компилируется здесь, не только в сборке приложения (запускать их на JVM нечем, да и незачем)
+val tfliteAar by configurations.creating
+dependencies { for (a in listOf("tensorflow-lite", "tensorflow-lite-api", "tensorflow-lite-gpu", "tensorflow-lite-gpu-api")) tfliteAar("org.tensorflow:$a:2.16.1@aar") }
+val tfliteJars = tasks.register("tfliteJars") {
+    val out = layout.buildDirectory.dir("tflite")
+    inputs.files(tfliteAar); outputs.dir(out)
+    doLast { out.get().asFile.mkdirs(); tfliteAar.files.forEach { f -> copy { from(zipTree(f)) { include("classes.jar"); rename { f.name.removeSuffix(".aar") + ".jar" } }; into(out) } } }
+}
+dependencies { compileOnly(fileTree(layout.buildDirectory.dir("tflite")) { include("*.jar") }) }
+tasks.matching { it.name == "compileKotlin" }.configureEach { dependsOn(tfliteJars) }
 sourceSets { main { kotlin.srcDir("src"); kotlin.srcDir("../app/src/main/java") } }
 application { mainClass.set("app.dsp.phone.ServerTestKt") }
 tasks.register<JavaExec>("runServerTest") {

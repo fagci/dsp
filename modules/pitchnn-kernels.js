@@ -26,6 +26,16 @@ function bpActive(frames,thr,from,to){
   }
   return res;
 }
+// выходы TFLite-версии сети [{name, shape, data}] → кадры «note» (плоский Float32Array 172×88): по имени «…:1», иначе из двух [172, 88] та, что плотнее
+// (note держится на всей длине звука, onset — всплеск в начале; проверено на настоящей модели)
+function bpPickNote(outs){
+  const c=(outs||[]).filter(o=>o.data && o.data.length===BP_FRAMES*BP_BINS);
+  if(!c.length) return null;
+  const named=c.find(o=>/:1$/.test(o.name||'')); if(named) return named.data;
+  let best=null, bm=-1;
+  for(const o of c){ let s=0; for(let i=0;i<o.data.length;i++) s+=o.data[i]; if(s>bm){ bm=s; best=o.data; } }
+  return best;
+}
 // появившиеся относительно прошлого набора: [{midi,name,p}]
 function bpNew(prev,cur){
   const had=new Set((prev||[]).map(n=>n.midi));

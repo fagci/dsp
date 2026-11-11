@@ -12,15 +12,18 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Модели на телефоне: whisper.cpp (речь → текст) с GPU через OpenCL там, где он есть, иначе CPU с dotprod.
  * Команды: ai.caps (что умеет телефон), model.list / model.get / model.cancel / model.delete (файлы моделей в каталоге приложения, докачка),
- * asr.load / asr.run / asr.stop / asr.unload; языковые модели GGUF (llama.cpp): llm.load / llm.chat (ответ по токенам записями ev:'tok') / llm.stop / llm.unload. Записи {src:'ai', ev:'progress'|'seg', …} — подписка sub:['ai'].
+ * asr.load / asr.run / asr.stop / asr.unload; нейросети TFLite (float32) на GPU или CPU: nn.load / nn.run (тензоры base64) / nn.unload (Basic Pitch, YAMNet…); языковые модели GGUF (llama.cpp): llm.load / llm.chat (ответ по токенам записями ev:'tok') / llm.stop / llm.unload. Записи {src:'ai', ev:'progress'|'seg', …} — подписка sub:['ai'].
  * Звук идёт в asr.run строкой base64: 16 кГц, 16 бит, little-endian (до 10 минут); сегменты текста приходят записями по мере готовности, итог — в ответе.
  */
 class AiHub(private val ctx: Context, private val emit: Emit,
             private val store: ModelStore = ModelStore(File(ctx.filesDir, "models")),
             make: () -> AsrEngine = { WhisperEngine() },
-            makeLlm: () -> LlmEngine = { LlamaEngine() }) {
+            makeLlm: () -> LlmEngine = { LlamaEngine() },
+            makeNn: () -> NnEngine = { TfliteEngine() }) {
     private val core = AsrCore(store, make)
     private val llm = LlmCore(store, makeLlm)
+    private val nn = NnCore(store, makeNn)
+    private val nnPool = Executors.newCachedThreadPool()
     private val llmPool = Executors.newSingleThreadExecutor()
     private val asr = Executors.newSingleThreadExecutor()
     private val dl = Executors.newFixedThreadPool(2)
@@ -48,7 +51,7 @@ class AiHub(private val ctx: Context, private val emit: Emit,
                         "ramMb" to (m.totalMem shr 20).toString(), "availMb" to (m.availMem shr 20).toString(), "opencl" to b(openCl), "soc" to Json.str(soc),
                         "cpuLib" to Json.str(AiArgs.lib(cpu, arm64, openCl, false) ?: ""), "gpuLib" to Json.str(AiArgs.lib(cpu, arm64, openCl, true) ?: ""),
                         "loadedLib" to Json.str(WhisperNative.lib ?: ""), "model" to Json.str(core.model), "gpu" to b(core.gpu),
-                        "llmLib" to Json.str(LlamaNative.lib ?: ""), "llmModel" to Json.str(llm.model), "llmGpu" to b(llm.gpu), "llmCtx" to llm.ctx.toString(),
+                        "nnModels" to Json.arr(nn.names()), "llmLib" to Json.str(LlamaNative.lib ?: ""), "llmModel" to Json.str(llm.model), "llmGpu" to b(llm.gpu), "llmCtx" to llm.ctx.toString(),
                         "freeMb" to (store.dir.usableSpace shr 20).toString(), "dir" to Json.str(store.dir.absolutePath))
                 }
                 "model.list" -> Reply.done(c, id, cmd, null, "error",
@@ -56,6 +59,11 @@ class AiHub(private val ctx: Context, private val emit: Emit,
                     "freeMb" to (store.dir.usableSpace shr 20).toString())
                 "model.get" -> {
                     val name = AiArgs.modelName(j.optString("name")) ?: return Reply.done(c, id, cmd, "name: letters, digits and «._-», extension .bin / .gguf / .tflite / .onnx")
+                    if (j.has("asset")) {                                              // модель из самого приложения (vendor/…): без сети
+                        val a = AiArgs.asset(j.optString("asset")) ?: return Reply.done(c, id, cmd, "asset: a path under vendor/")
+                        val err = try { store.put(name, ctx.assets.open("www/$a")) } catch (e: java.io.IOException) { "no such file in the app: $a" }
+                        return Reply.done(c, id, cmd, err, "error", "name" to Json.str(name), "size" to (store.file(name)?.length() ?: 0L).toString())
+                    }
                     val url = AiArgs.url(j.optString("url")) ?: return Reply.done(c, id, cmd, "url: http:// or https:// address expected")
                     val flag = AtomicBoolean(false)
                     if (downloads.putIfAbsent(name, flag) != null) return Reply.done(c, id, cmd, "$name is already downloading")
@@ -118,6 +126,27 @@ class AiHub(private val ctx: Context, private val emit: Emit,
                 }
                 "llm.stop" -> { llm.cancel(); Reply.done(c, id, cmd, null) }
                 "llm.unload" -> llmPool.execute { llm.unload(); Reply.done(c, id, cmd, null) }
+                "nn.load" -> nnPool.execute {
+                    val name = j.optString("model")
+                    val r = nn.load(name, j.optBoolean("gpu", true), j.optInt("threads", 0).takeIf { it > 0 } ?: cpu.cores.coerceIn(2, 4))
+                    val ti = r.info
+                    Reply.done(c, id, cmd, r.err, "error", "model" to Json.str(name), "delegate" to Json.str(ti?.delegate ?: ""), "note" to Json.str(ti?.note ?: ""), "ms" to r.ms.toString(),
+                        "inputs" to Json.rows((ti?.inputs ?: emptyList()).map { t -> Json.obj("name" to Json.str(t.name), "shape" to Json.rows(t.shape.map { it.toString() }), "type" to Json.str(t.type)) }),
+                        "outputs" to Json.rows((ti?.outputs ?: emptyList()).map { t -> Json.obj("name" to Json.str(t.name), "shape" to Json.rows(t.shape.map { it.toString() }), "type" to Json.str(t.type)) }))
+                }
+                "nn.run" -> {
+                    val name = j.optString("model")
+                    val info = nn.info(name) ?: return Reply.done(c, id, cmd, "model «$name» is not loaded (nn.load)")
+                    val arr = j.optJSONArray("inputs") ?: return Reply.done(c, id, cmd, "inputs: [base64 of float32 little-endian, …]")
+                    if (arr.length() != info.inputs.size) return Reply.done(c, id, cmd, "the model takes ${info.inputs.size} input(s), ${arr.length()} given")
+                    val ins = info.inputs.mapIndexed { i, t -> NnArgs.floats(arr.optString(i), t.count) ?: return Reply.done(c, id, cmd, "input ${i + 1} (${t.name}): base64 of exactly ${t.count} float32 values (${t.shape.joinToString("×")})") }
+                    nnPool.execute {
+                        val r = nn.run(name, ins)
+                        Reply.done(c, id, cmd, r.err, "error", "ms" to r.ms.toString(),
+                            "outputs" to Json.rows(r.outputs.mapIndexed { i, a -> val t = info.outputs[i]; Json.obj("name" to Json.str(t.name), "shape" to Json.rows(t.shape.map { it.toString() }), "data" to Json.str(NnArgs.b64(a))) }))
+                    }
+                }
+                "nn.unload" -> { nn.unload(j.optString("model")); Reply.done(c, id, cmd, null) }
                 "asr.stop" -> { core.abort(); Reply.done(c, id, cmd, null) }
                 "asr.unload" -> asr.execute { core.unload(); Reply.done(c, id, cmd, null) }
                 else -> Reply.done(c, id, cmd, "unknown command")
@@ -127,5 +156,5 @@ class AiHub(private val ctx: Context, private val emit: Emit,
         }
     }
 
-    fun stop() { core.abort(); llm.cancel(); downloads.values.forEach { it.set(true) }; asr.shutdown(); llmPool.shutdown(); dl.shutdown() }
+    fun stop() { core.abort(); llm.cancel(); downloads.values.forEach { it.set(true) }; asr.shutdown(); llmPool.shutdown(); nn.unloadAll(); nnPool.shutdown(); dl.shutdown() }
 }

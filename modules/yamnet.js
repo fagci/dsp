@@ -13,6 +13,8 @@ const YN_FILES=[['MediaPipe audio 1.1.1 (audio_bundle.mjs)','vendor/mediapipe/au
 OfflineData.fileItem({id:'yamnet',label:'Sound Classifier: YAMNet and MediaPipe',mb:11,files:YN_FILES.map(f=>[f[0],[f[1],f[2]]])});
 
 const YN={p:null, cls:null, err:''};
+// движок: «phone» — TFLite в приложении Android (GPU-делегат), «browser» — MediaPipe в странице; auto — на телефоне, пока он тянет
+function ynEngine(n){ const e=n.p.engine; return e==='phone' || (e!=='browser' && typeof AppLink!=='undefined' && AppLink.ok && !NN.unsupported) ? 'phone' : 'browser'; }
 function ynLoad(){
   if(YN.p) return YN.p;
   return YN.p=(async()=>{
@@ -29,35 +31,46 @@ def({ id:'yamnet', title:'Sound Classifier (YAMNet, neural)', cat:'Analysis', re
   // in — звук; text — список классов, label — главный класс, score — его доля; hit — 1, пока слышен класс из watch; rec — событие при появлении
   ins:[{n:'in',t:'sig'}],
   outs:[{n:'text',t:'txt'},{n:'label',t:'txt'},{n:'score',t:'num'},{n:'hit',t:'num'},{n:'rec',t:'rec'}],
-  params:[{n:'period',t:'range',min:.25,max:5,step:.05,d:1,label:'classify every, s'},
+  params:[{n:'engine',t:'select',opts:['auto','phone','browser'],d:'auto',label:'engine: phone — TFLite in the DSP app (on the GPU where the phone allows; the model, 4 MB, is downloaded once into the app), browser — MediaPipe; auto — the phone in the app, else the browser'},
+          {n:'gpu',t:'check',d:true,label:'phone: GPU delegate (OpenGL ES / OpenCL); off — CPU only. If the GPU refuses the model, the node falls back to the CPU by itself'},
+          {n:'period',t:'range',min:.25,max:5,step:.05,d:1,label:'classify every, s'},
           {n:'top',t:'range',min:1,max:10,step:1,d:5,label:'classes to show'},
           {n:'min',t:'range',min:.05,max:.9,step:.01,d:.15,label:'min share'},
           {n:'watch',t:'text',d:'',label:'watch for (e.g. speech, siren, dog; empty — off)'},
           {n:'wthr',t:'range',min:.1,max:.95,step:.01,d:.4,label:'watch threshold'}],
-  init(n){ n.ring=null; n.rsr=0; n.t=0; n.list=[]; n.text=''; n.label=''; n.hit=0; n.q=[]; n.seen=''; n.status='loading YAMNet…'; n.ms=0; },
+  init(n){ n.ring=null; n.rsr=0; n.t=0; n.list=[]; n.text=''; n.label=''; n.hit=0; n.q=[]; n.seen=''; n.status='loading YAMNet…'; n.ms=0; n.busy=false; n.retryAt=0; n.nnErr=''; n.gen=0; },
   process(n,I){
-    const sr=Eng.sr;
+    const sr=Eng.sr, ph=ynEngine(n)==='phone';
     if(!n.ring || n.rsr!==sr){ n.ring=ynRing(Math.round(sr*0.975)); n.rsr=sr; }     // окно модели — 0.975 с
     n.ring.push(I.in||buf(n,'z'));
-    if(!YN.cls){ ynLoad(); n.status=YN.err ? 'error: '+YN.err : 'loading YAMNet (about 11 MB, once — then kept in Files → Offline data)…'; }
+    const ready=ph ? nnReady(NN_YN,n.p.gpu) : !!YN.cls;
+    if(!ready){
+      if(ph){
+        if(performance.now()>=n.retryAt && !NN.loading[NN_YN.name]) nnEnsure(NN_YN,n.p.gpu).catch(e=>{ n.nnErr=String(e.message||e); n.retryAt=performance.now()+8000; });
+        n.status=n.nnErr && performance.now()<n.retryAt ? 'error: '+n.nnErr : (NN.prog[NN_YN.name]||'loading the model on the phone (about 4 MB, once)…');
+      }else{ ynLoad(); n.status=YN.err ? 'error: '+YN.err : 'loading YAMNet (about 11 MB, once — then kept in Files → Offline data)…'; }
+    }
     else{
+      n.nnErr='';
       n.t+=BLOCK/sr;
-      if(n.t>=n.p.period && n.ring.filled>=n.ring.N){
-        n.t=0;
-        try{
-          const t0=performance.now();
-          n.list=ynTop(YN.cls.classify(ynTo16k(n.ring.get()),16000),n.p.top,n.p.min); n.ms=performance.now()-t0;
+      if(n.t>=n.p.period && n.ring.filled>=n.ring.N && !n.busy){
+        n.t=0; n.busy=true;
+        const x=ynTo16k(n.ring.get()), gen=n.gen, t0=performance.now();
+        let run; try{ run=ph ? nnRun(NN_YN.name,[x]).then(o=>ynTopScores(o[0].data,YN_LABELS,n.p.top,n.p.min)) : Promise.resolve(ynTop(YN.cls.classify(x,16000),n.p.top,n.p.min)); }catch(e){ run=Promise.reject(e); }
+        run.then(list=>{
+          if(gen!==n.gen) return;
+          n.list=list; n.ms=performance.now()-t0;
           n.text=ynText(n.list); n.label=n.list[0]?.label||'';
           const w=ynWatch(n.list,ynClasses(n.p.watch),n.p.wthr);
           n.hit=w ? 1 : 0;
           if(w && w.label!==n.seen) n.q.push({t:Date.now(),src:'yamnet',label:w.label,score:+w.score.toFixed(3)});
           n.seen=w ? w.label : '';
-          n.status=n.text+'\n· '+n.ms.toFixed(0)+' ms'; n.rev=(n.rev|0)+1;
-        }catch(e){ n.status='error: '+(e.message||e); }
+          n.status=n.text+'\n· '+n.ms.toFixed(0)+' ms'+(ph ? ' · '+nnWhere(NN_YN) : ''); n.rev=(n.rev|0)+1;
+        }).catch(e=>{ n.status='error: '+(e.message||e); }).finally(()=>{ n.busy=false; });
       }
     }
     const rec=n.q.length ? n.q.splice(0) : null;
     return {text:n.text, label:n.label, score:n.list[0]?.score||0, hit:n.hit, rec}; },
-  dispose(n){ n.ring=null; },
+  dispose(n){ n.gen++; n.ring=null; },
   drawKey:n=>n.status,
   draw(n){ const r=n.el.querySelector('.readout'); if(r) r.textContent=n.status; }});

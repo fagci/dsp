@@ -603,6 +603,7 @@ const PRESET_CATS={
   'Speech to Text (Whisper): Microphone or File → Text':'Digital Voice & Trunking',
   'Speech to Text (Whisper): Russian on the Phone (whisper.cpp, GPU)':'Digital Voice & Trunking',
   'Notes (Basic Pitch): Chord and Microphone':'Digital Voice & Trunking',
+  'Neural Audio on the Phone (TFLite, GPU): Notes + Sound Classifier':'Digital Voice & Trunking',
   'Echo Canceller (AEC): Speaker + Microphone, or One Microphone':'Digital Voice & Trunking',
   'Voice Restore: Muffled Mumbling Speech → Clear':'Digital Voice & Trunking',
   'Pulse: Fingertip on the Phone Camera (torch)':'Images & TV',
@@ -10003,6 +10004,21 @@ const w =addNode('whisper',320,200,{engine:'auto',appModel:'large-v3-turbo-q5_0'
 const tk=addNode('ticker',720,200,{time:true}); tk.size.w=340; tk.size.h=300; applySize(tk);
 addEdge(m.id,'a',w.id,'in');
 addEdge(w.id,'rec',tk.id,'rec');
+markWiresDirty();
+});
+preset('Neural Audio on the Phone (TFLite, GPU): Notes + Sound Classifier', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'The same two networks, but computed by the DSP app for Android: Notes (Basic Pitch) and Sound Classifier (YAMNet) in «engine: auto» send the sound window to TFLite inside the app (command nn.run) — on the GPU delegate (OpenGL ES / OpenCL, it works on most phones, not only Adreno), and on the CPU with XNNPACK if the GPU refuses. The status line of each node shows where it runs.\n'+
+  'Basic Pitch is a part of the app (204 KB, nothing to download); YAMNet (4 MB) is downloaded once into the app. Outside the app «auto» is the browser engine: TF.js and MediaPipe on the CPU. «phone: GPU delegate» off forces the CPU.\n'+
+  'Play a chord or sing into the microphone: the left ticker logs every new note, the right one every sound class you «watch for».'});
+nt.size.w=1000; nt.size.h=130; applySize(nt);
+const m =addNode('mic',40,200,{gainA:1,echo:false,ns:false,agc:false});
+const pn=addNode('pitchnn',320,200,{engine:'auto',gpu:true,period:.4}); pn.size.w=280; pn.size.h=220; applySize(pn);
+const yn=addNode('yamnet',320,450,{engine:'auto',gpu:true,period:.8,watch:'speech, music, siren'}); yn.size.w=280; yn.size.h=240; applySize(yn);
+const t1=addNode('ticker',660,200,{time:true}); t1.size.w=300; t1.size.h=220; applySize(t1);
+const t2=addNode('ticker',660,450,{time:true}); t2.size.w=300; t2.size.h=240; applySize(t2);
+addEdge(m.id,'a',pn.id,'in'); addEdge(m.id,'a',yn.id,'in');
+addEdge(pn.id,'rec',t1.id,'rec'); addEdge(yn.id,'rec',t2.id,'rec');
 markWiresDirty();
 });
 preset('Notes (Basic Pitch): Chord and Microphone', function(){

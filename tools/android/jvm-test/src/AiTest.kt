@@ -13,6 +13,11 @@ import app.dsp.phone.LlmEngine
 import app.dsp.phone.LlmOpts
 import org.json.JSONArray
 import app.dsp.phone.ModelStore
+import app.dsp.phone.NnArgs
+import app.dsp.phone.NnCore
+import app.dsp.phone.NnEngine
+import app.dsp.phone.NnInfo
+import app.dsp.phone.NnTensor
 import com.sun.net.httpserver.HttpServer
 import java.io.File
 import java.net.InetSocketAddress
@@ -66,6 +71,18 @@ class FakeLlm : LlmEngine {
     override fun perf() = doubleArrayOf(100.0, 20.0, 500.0, 5.0)
     override fun cancel() { stop = true }
     override fun free() { freed++; path = null }
+}
+
+/** Подставная нейросеть: один вход 4 значения, два выхода (сумма и вход, умноженный на 2). */
+class FakeNn(val tag: String = "m") : NnEngine {
+    var gpu = false; var freed = false; var runs = 0; var failRun: String? = null
+    override fun load(path: String, gpu: Boolean, threads: Int): NnInfo {
+        if (path.endsWith("bad.tflite")) throw IllegalArgumentException("input «x» is INT8 — only float32 models are supported")
+        this.gpu = gpu
+        return NnInfo(listOf(NnTensor("in", intArrayOf(1, 4, 1), "float32")), listOf(NnTensor("sum", intArrayOf(1), "float32"), NnTensor("dbl", intArrayOf(1, 4), "float32")), if (gpu) "gpu" else "cpu", if (gpu) "" else "cpu")
+    }
+    override fun run(inputs: List<FloatArray>): List<FloatArray> { runs++; failRun?.let { throw IllegalStateException(it) }; return listOf(floatArrayOf(inputs[0].sum()), FloatArray(4) { inputs[0][it] * 2 }) }
+    override fun free() { freed = true }
 }
 
 fun pcmB64(samples: Int, f: (Int) -> Int = { 0 }): String {
@@ -219,6 +236,38 @@ fun main() {
     fl.failLoad = null; lc.load("q.gguf", true, 4096, 4, false, true); lc.unload()
     ok("llm unload frees the model", !lc.loaded && lc.model == "")
     ok("llm commands need the app page", BridgeServer.powerCmd("llm.chat") && BridgeServer.powerCmd("llm.load"))
+
+
+    // --- нейросети TFLite
+    val fv = floatArrayOf(0.5f, -1.25f, 3.0e8f, Float.MIN_VALUE)
+    ok("nn tensors: float32 little-endian round trip", NnArgs.floats(NnArgs.b64(fv), 4)!!.contentEquals(fv))
+    ok("nn tensors: a known byte pattern (1.0f = 00 00 80 3f)", NnArgs.b64(floatArrayOf(1f)) == Base64.getEncoder().encodeToString(byteArrayOf(0, 0, -128, 63)))
+    ok("nn tensors: wrong size, junk, empty, absurd count refused", NnArgs.floats(NnArgs.b64(fv), 3) == null && NnArgs.floats("!!!", 4) == null && NnArgs.floats("", 4) == null && NnArgs.floats(null, 4) == null && NnArgs.floats(NnArgs.b64(fv), NnArgs.MAX_FLOATS + 1) == null && NnArgs.floats(NnArgs.b64(fv), 0) == null)
+    ok("nn commands need the app page", BridgeServer.powerCmd("nn.load") && BridgeServer.powerCmd("nn.run") && BridgeServer.powerCmd("nn.unload"))
+    ok("asset: only vendor/ paths without traversal", AiArgs.asset("vendor/basicpitch/nmp.tflite") == "vendor/basicpitch/nmp.tflite" && AiArgs.asset("../x") == null && AiArgs.asset("vendor/../x.tflite") == null && AiArgs.asset("data/x.tflite") == null && AiArgs.asset("vendor//x") == null && AiArgs.asset("vendor/a b") == null && AiArgs.asset(null) == null && AiArgs.asset("/etc/passwd") == null)
+    val st2 = ModelStore(File(dir, "m2"))
+    ok("store.put: a model from a stream (the app assets)", st2.put("nmp.tflite", java.io.ByteArrayInputStream(ByteArray(2000) { 7 })) == null && File(dir, "m2/nmp.tflite").length() == 2000L && !File(dir, "m2/nmp.tflite.part").exists())
+    ok("store.put: a file already there is kept, bad name and size limit refused", st2.put("nmp.tflite", java.io.ByteArrayInputStream(ByteArray(5))) == null && File(dir, "m2/nmp.tflite").length() == 2000L && st2.put("../x.tflite", java.io.ByteArrayInputStream(ByteArray(5))) != null && st2.put("big.tflite", java.io.ByteArrayInputStream(ByteArray(3000)), 1000)?.contains("larger") == true && !File(dir, "m2/big.tflite").exists() && !File(dir, "m2/big.tflite.part").exists())
+    File(dir, "m2/bad.tflite").writeBytes(ByteArray(10)); File(dir, "m2/b.tflite").writeBytes(ByteArray(10)); File(dir, "m2/c.tflite").writeBytes(ByteArray(10)); File(dir, "m2/d.tflite").writeBytes(ByteArray(10)); File(dir, "m2/e.tflite").writeBytes(ByteArray(10)); File(dir, "m2/x.gguf").writeBytes(ByteArray(10))
+    val engines = ArrayList<FakeNn>(); val nc = NnCore(st2) { FakeNn().also { engines.add(it) } }
+    ok("nn: unknown model and a non-tflite file refused", !nc.load("nope.tflite", true, 2).ok && !nc.load("x.gguf", true, 2).ok)
+    val n1 = nc.load("nmp.tflite", true, 2)
+    ok("nn load: tensor info and the delegate come from the engine", n1.ok && n1.info!!.delegate == "gpu" && n1.info!!.inputs[0].count == 4 && n1.info!!.outputs.size == 2 && nc.names() == listOf("nmp.tflite"))
+    ok("nn load: the same settings again are free", nc.load("nmp.tflite", true, 2).ms == 0L && engines.size == 1)
+    val rn = nc.run("nmp.tflite", listOf(floatArrayOf(1f, 2f, 3f, 4f)))
+    ok("nn run: one array per output, in the model order", rn.err == null && rn.outputs.size == 2 && rn.outputs[0][0] == 10f && rn.outputs[1].contentEquals(floatArrayOf(2f, 4f, 6f, 8f)))
+    ok("nn run: wrong count / wrong size / not loaded → clear errors", nc.run("nmp.tflite", emptyList()).err!!.contains("1 input") && nc.run("nmp.tflite", listOf(FloatArray(3))).err!!.contains("4 values") && nc.run("zzz.tflite", listOf(FloatArray(4))).err!!.contains("nn.load"))
+    engines[0].failRun = "delegate crashed"
+    ok("nn run: an engine error is passed on", nc.run("nmp.tflite", listOf(FloatArray(4))).err == "delegate crashed")
+    engines[0].failRun = null
+    val n2 = nc.load("nmp.tflite", false, 2)
+    ok("nn load: another delegate request reloads the model", n2.ok && n2.info!!.delegate == "cpu" && engines.size == 2 && engines[0].freed)
+    val n3 = nc.load("bad.tflite", true, 2)
+    ok("nn load: an unsupported model — the engine's reason, nothing stays loaded", !n3.ok && n3.err!!.contains("float32") && !nc.names().contains("bad.tflite") && engines.last().freed)
+    for (m in listOf("b.tflite", "c.tflite", "d.tflite", "e.tflite")) nc.load(m, true, 2)
+    ok("nn: at most " + NnCore.MAX + " models, the oldest is unloaded", nc.names().size == NnCore.MAX && !nc.names().contains("nmp.tflite") && nc.names().contains("e.tflite"))
+    nc.unload("e.tflite"); ok("nn unload", !nc.names().contains("e.tflite"))
+    nc.unloadAll(); ok("nn unload all", nc.names().isEmpty())
 
     println(if (bad == 0) "all ok" else "$bad FAILED")
     dir.deleteRecursively()

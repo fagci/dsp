@@ -47,6 +47,9 @@ object AiArgs {
         else -> base
     }
 
+    /** Файл приложения для model.get {asset}: только из vendor/ (там лежат модели в репозитории), без «..» и странных символов. */
+    fun asset(s: String?): String? = s?.trim()?.takeIf { Regex("vendor/[A-Za-z0-9._/\\-]{1,180}").matches(it) && !it.contains("..") && !it.contains("//") }
+
     val OPENCL_PATHS = listOf("/vendor/lib64/libOpenCL.so", "/system/vendor/lib64/libOpenCL.so", "/system/lib64/libOpenCL.so", "/vendor/lib64/egl/libOpenCL.so")
 }
 
@@ -69,6 +72,18 @@ class ModelStore(val dir: File) {
         val a = File(dir, n).let { !it.exists() || it.delete() }
         val b = File(dir, "$n.part").let { !it.exists() || it.delete() }
         return a && b
+    }
+
+    /** Файл из потока (например из assets приложения): null — готово, иначе ошибка. Уже лежащий не трогается. */
+    fun put(name: String, input: java.io.InputStream, maxBytes: Long = 64L shl 20): String? {
+        val n = AiArgs.modelName(name) ?: return "name: letters, digits and «._-», extension .bin / .gguf / .tflite / .onnx"
+        val dst = File(dir, n); if (dst.isFile) return null
+        val tmp = File(dir, "$n.part")
+        return try {
+            var total = 0L
+            input.use { i -> FileOutputStream(tmp).use { o -> val b = ByteArray(1 shl 16); while (true) { val r = i.read(b); if (r < 0) break; total += r; if (total > maxBytes) { tmp.delete(); return "file is larger than ${maxBytes shr 20} MB" }; o.write(b, 0, r) } } }
+            if (tmp.renameTo(dst)) null else "cannot save the file"
+        } catch (e: Exception) { tmp.delete(); "${e.javaClass.simpleName}: ${e.message}" }
     }
 
     /** null — готово (файл лежит целиком), иначе текст ошибки. Прерванная загрузка продолжается с того же места. */
@@ -265,4 +280,77 @@ class LlmCore(private val store: ModelStore, private val make: () -> LlmEngine) 
     fun cancel() { synchronized(lock) { eng }?.cancel() }
     fun unload() { synchronized(lock) { eng?.free(); eng = null; model = "" } }
     val loaded get() = synchronized(lock) { eng != null }
+}
+
+/* ---------- нейросети TFLite (GPU-делегат): Basic Pitch, YAMNet и другие модели float32 ---------- */
+
+class NnTensor(val name: String, val shape: IntArray, val type: String) {
+    val count: Int get() = shape.fold(1) { a, b -> a * b }
+}
+class NnInfo(val inputs: List<NnTensor>, val outputs: List<NnTensor>, val delegate: String, val note: String = "")
+
+/** Разбор тензоров команд nn.* (чистая логика): float32, little-endian, base64. */
+object NnArgs {
+    const val MAX_FLOATS = 16_000_000                                   // 64 МБ на тензор
+
+    /** null — не base64 или не ровно expect значений. */
+    fun floats(b64: String?, expect: Int): FloatArray? {
+        if (b64.isNullOrEmpty() || expect <= 0 || expect > MAX_FLOATS) return null
+        val b = try { Base64.getDecoder().decode(b64) } catch (e: IllegalArgumentException) { return null }
+        if (b.size != expect * 4) return null
+        return FloatArray(expect) { java.lang.Float.intBitsToFloat((b[4 * it].toInt() and 255) or ((b[4 * it + 1].toInt() and 255) shl 8) or ((b[4 * it + 2].toInt() and 255) shl 16) or ((b[4 * it + 3].toInt() and 255) shl 24)) }
+    }
+
+    fun b64(a: FloatArray): String {
+        val b = ByteArray(a.size * 4)
+        for (i in a.indices) { val v = java.lang.Float.floatToRawIntBits(a[i]); b[4 * i] = v.toByte(); b[4 * i + 1] = (v shr 8).toByte(); b[4 * i + 2] = (v shr 16).toByte(); b[4 * i + 3] = (v shr 24).toByte() }
+        return Base64.getEncoder().encodeToString(b)
+    }
+}
+
+/** Движок одной модели. load бросает исключение с понятным текстом; run — по тензору на вход и на выход (float32). */
+interface NnEngine {
+    fun load(path: String, gpu: Boolean, threads: Int): NnInfo
+    fun run(inputs: List<FloatArray>): List<FloatArray>
+    fun free()
+}
+
+/** Несколько загруженных моделей (до MAX), запуск по имени. Чистая обвязка — проверяется на JVM с подставным движком. */
+class NnCore(private val store: ModelStore, private val make: () -> NnEngine) {
+    private class Model(val eng: NnEngine, val info: NnInfo, val gpu: Boolean)
+    private val models = LinkedHashMap<String, Model>()
+    private val lock = Any()
+
+    class Loaded(val ok: Boolean, val err: String?, val info: NnInfo?, val ms: Long)
+    class Ran(val err: String?, val outputs: List<FloatArray>, val info: NnInfo?, val ms: Long)
+
+    fun load(name: String, gpu: Boolean, threads: Int): Loaded {
+        synchronized(lock) {
+            val f = store.file(name)?.takeIf { it.name.endsWith(".tflite", true) } ?: return Loaded(false, "no model «$name» (.tflite) — put it on the phone first (model.get)", null, 0)
+            models[name]?.let { if (it.gpu == gpu) return Loaded(true, null, it.info, 0) else { it.eng.free(); models.remove(name) } }
+            while (models.size >= MAX) { val k = models.keys.first(); models.remove(k)?.eng?.free() }          // самую давнюю выгружаем
+            val t = System.currentTimeMillis()
+            val e = make()
+            return try {
+                val info = e.load(f.absolutePath, gpu, threads)
+                models[name] = Model(e, info, gpu)
+                Loaded(true, null, info, System.currentTimeMillis() - t)
+            } catch (x: Throwable) { try { e.free() } catch (y: Throwable) {}; Loaded(false, x.message ?: x.javaClass.simpleName, null, 0) }
+        }
+    }
+
+    fun run(name: String, inputs: List<FloatArray>): Ran {
+        val m = synchronized(lock) { models[name] } ?: return Ran("model «$name» is not loaded (nn.load)", emptyList(), null, 0)
+        if (inputs.size != m.info.inputs.size) return Ran("the model takes ${m.info.inputs.size} input(s), ${inputs.size} given", emptyList(), m.info, 0)
+        for ((i, t) in m.info.inputs.withIndex()) if (inputs[i].size != t.count) return Ran("input ${i + 1} (${t.name}) must have ${t.count} values (${t.shape.joinToString("×")}), ${inputs[i].size} given", emptyList(), m.info, 0)
+        val t = System.currentTimeMillis()
+        return try { Ran(null, m.eng.run(inputs), m.info, System.currentTimeMillis() - t) } catch (x: Throwable) { Ran(x.message ?: x.javaClass.simpleName, emptyList(), m.info, 0) }
+    }
+
+    fun info(name: String): NnInfo? = synchronized(lock) { models[name]?.info }
+    fun names(): List<String> = synchronized(lock) { models.keys.toList() }
+    fun unload(name: String) { synchronized(lock) { models.remove(name)?.eng?.free() } }
+    fun unloadAll() { synchronized(lock) { models.values.forEach { it.eng.free() }; models.clear() } }
+
+    companion object { const val MAX = 4 }
 }
