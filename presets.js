@@ -10035,12 +10035,12 @@ markWiresDirty();
 });
 preset('Speech to Text (Whisper): Russian on the Phone (whisper.cpp, GPU)', function(){
 clearAll();
-const nt=addNode('note',40,20,{text:'Whisper on the phone (DSP app for Android): the same node, the engine «app» — whisper.cpp inside the app. It runs on the CPU with dotprod, and where the phone has OpenCL (Adreno 7xx / 8xx) on the GPU. The browser tiny / base models hardly know Russian; large-v3-turbo-q5_0 (≈574 MB, downloaded once into the app) does.\n'+
-  'The status line shows the phone, the backend (GPU / CPU) and the speed: «×0.8 real time» means a phrase is recognised faster than it is spoken. If it is slower than 1.0, take medium-q5_0 or small-q5_1, or tick «shorten the encoder window». The language is fixed to Russian (more reliable than auto); «hint text» takes names and terms. While you speak, a grey draft (the «partial» pin) is updated every second or two; the final text replaces it at the pause.\n'+
+const nt=addNode('note',40,20,{text:'Whisper on the phone (DSP app for Android): the same node, the engine «app» — whisper.cpp inside the app. It runs on the CPU with dotprod, and where the phone has OpenCL (Adreno 7xx / 8xx) on the GPU. The browser tiny / base models hardly know Russian; medium-q5_0 (≈539 MB, downloaded once into the app) does and keeps up on most phones; large-v3-turbo-q5_0 is the best, but needs the GPU or a fast phone.\n'+
+  'The status line shows the phone, the backend (GPU / CPU) and the speed: «×0.8 real time» means a phrase is recognised faster than it is spoken. If it is slower than 1.0, take a lighter model (small-q5_1). Without a GPU the node shortens the encoder window by itself (the status says «short window»). The language is fixed to Russian (more reliable than auto); «hint text» takes names and terms. While you speak, a grey draft (the «partial» pin) is updated every second or two; the final text replaces it at the pause.\n'+
   'Outside the app (a computer, the browser) «engine: auto» falls back to the browser Whisper by itself — there set the language and the browser model (base, small) by hand. Switching CPU → GPU needs an app restart.'});
 nt.size.w=1000; nt.size.h=130; applySize(nt);
 const m =addNode('mic',40,200,{gainA:1,echo:false,ns:true,agc:true});
-const w =addNode('whisper',320,200,{engine:'auto',appModel:'large-v3-turbo-q5_0',appGpu:true,lang:'ru',pause:.7,norep:true,beam:1}); w.size.w=360; w.size.h=300; applySize(w);
+const w =addNode('whisper',320,200,{engine:'auto',appModel:'medium-q5_0',appGpu:true,lang:'ru',pause:.7,norep:true,beam:1}); w.size.w=360; w.size.h=300; applySize(w);
 const tk=addNode('ticker',720,200,{time:true}); tk.size.w=340; tk.size.h=300; applySize(tk);
 addEdge(m.id,'a',w.id,'in');
 addEdge(w.id,'rec',tk.id,'rec');

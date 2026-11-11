@@ -52,14 +52,18 @@ function wsWorker(){
 function wsLoad(repo){
   if(WS.ready===repo) return Promise.resolve();
   if(WS.loading && WS.repo===repo) return WS.loading;
-  WS.repo=repo; WS.files=[];
-  return WS.loading=(async()=>{
+  const prev=WS.loading; WS.repo=repo;
+  const p=WS.loading=(async()=>{
+    if(prev) await prev.catch(()=>{});                       // другая модель ещё грузится — ждём её: в воркере один ответ «load» за раз
+    if(WS.ready===repo) return;
+    WS.files=[];
     const w=wsWorker(), u=await wsRuntimeUrls();
     const m=await new Promise((res,rej)=>{ WS.pend.set('load',{res,rej}); w.postMessage({t:'load',model:repo,threads:Math.min(4,(navigator.hardwareConcurrency||4)>>1),...u}); });
     WS.ready=repo; WS.prog='';
     try{ LS.set(wsKey(repo),JSON.stringify(WS.files)); }catch(e){}
     return m;
-  })().catch(e=>{ WS.ready=''; throw e; }).finally(()=>{ WS.loading=null; });
+  })().catch(e=>{ if(WS.repo===repo) WS.ready=''; throw e; }).finally(()=>{ if(WS.loading===p) WS.loading=null; });
+  return p;
 }
 // распознать одну фразу (Float32Array 16 кГц); запуски идут по очереди — в воркере одна сеть
 function wsRun(audio,o){
@@ -81,11 +85,12 @@ function wsDownload(text,name){
 function wsEngine(n){ const e=n.p.engine; return e==='app' || (e!=='browser' && typeof AppLink!=='undefined' && AppLink.ok && !WAP.unsupported) ? 'app' : 'browser'; }
 function wsAppCfg(n){
   const p=n.p, c=wapCustom(p.appUrl);
-  return c ? {name:c.name,url:c.url,gpu:!!p.appGpu,beam:+p.beam,fast:!!p.appFast,prompt:p.prompt}
-           : {name:wapFile(p.appModel),url:wapUrl(p.appModel),gpu:!!p.appGpu,beam:+p.beam,fast:!!p.appFast,prompt:p.prompt};
+  return c ? {name:c.name,url:c.url,gpu:!!p.appGpu,beam:+p.beam,fastMode:p.appFastMode,prompt:p.prompt}
+           : {name:wapFile(p.appModel),url:wapUrl(p.appModel),gpu:!!p.appGpu,beam:+p.beam,fastMode:p.appFastMode,prompt:p.prompt};
 }
 function wsCfg(n){ const p=n.p, app=wsEngine(n)==='app' ? wsAppCfg(n) : null; return {repo:app ? app.name : wsRepo(p.model,p.custom), language:p.lang, task:p.task, norep:!!p.norep, app}; }
 // модель — заранее, пока идёт звук (первая загрузка долгая)
+const wsPreKey=n=>{ const c=wsCfg(n); return c.app ? 'a:'+c.app.name+'|'+(c.app.gpu ? 'gpu' : 'cpu') : 'b:'+c.repo; };
 function wsPreload(n){ const c=wsCfg(n); return c.app ? wapLoad(c.app) : wsLoad(c.repo); }
 function wsSegCfg(n){ const p=n.p; return {thr:Math.pow(10,p.thr/20), pre:.35, hang:+p.pause, max:+p.maxlen, min:.4}; }
 
@@ -100,7 +105,7 @@ function wsEnqueue(n,audio,sec){
 function wsPump(n){
   if(n.busy || !n.jobs.length) return;
   let j; if(n.jobs.length>=2){ const m=wsMergeJobs(n.jobs,28,.3); n.jobs.splice(0,m.taken); j=m.job; if(j.merged) n.mergedN=(n.mergedN||0)+j.merged; } else j=n.jobs.shift();     // очередь копится — склеиваем фразы в одно окно
-  const cfg=wsCfg(n), gen=n.gen; n.busy=true;
+  const cfg=wsCfg(n), gen=n.gen; n.busy=true; n.busyAt=performance.now();
   wsRun(j.audio,cfg).then(r=>{
     if(gen!==n.gen) return;
     const text=n.p.norep ? wsDeloop(r.text) : r.text; n.ms=r.ms; n.rtf=j.audio.length>0 ? r.ms/(j.audio.length/16) : 0;
@@ -136,9 +141,11 @@ function wsStatus(n){
     if(n.fileInfo) bits.push(n.fileInfo); else bits.push(n.seg?.speaking ? 'hearing speech' : 'listening');
     if(n.busy || n.jobs.length) bits.push('recognising · queue '+(n.jobs.length+(n.busy ? 1 : 0)));
     else if(n.ms) bits.push(Math.round(n.ms)+' ms per phrase'+(n.rtf ? ' · ×'+n.rtf.toFixed(2)+' real time' : ''));
+    if(wapFastOn(cfg.app)) bits.push('short window');
     if(n.mergedN) bits.push('merged '+n.mergedN+' phrases when behind');
     if(n.dropped) bits.push('dropped '+n.dropped);
-    if(n.rtf>1.05) bits.push('slower than speech — a lighter phone model or «shorten the encoder window» keeps up');
+    if(n.busy && n.busyAt && performance.now()-n.busyAt>20000) bits.push('this phrase has been running for '+Math.round((performance.now()-n.busyAt)/1000)+' s — the model is too heavy for this phone: pick medium-q5_0 or small-q5_1');
+    else if(n.rtf>1.05) bits.push(wapFastOn(cfg.app) ? 'slower than speech even with the short window — pick a lighter model (medium-q5_0, small-q5_1)' : 'slower than speech — set the short window to auto / on, or pick a lighter model');
     return bits.join(' · ');
   }
   if(n.err) return 'error: '+n.err+' (no network? Files → Offline data → «by hand» lets you open the links in a new tab and load the files)';
@@ -192,12 +199,12 @@ def({ id:'whisper', lazy:'manual', title:'Speech to Text (Whisper, neural)', cat
   ins:[{n:'in',t:'sig'}],
   outs:[{n:'text',t:'txt'},{n:'partial',t:'txt'},{n:'full',t:'txt'},{n:'go',t:'num'},{n:'rec',t:'rec'},{n:'count',t:'num'},{n:'busy',t:'num'}],
   params:[{n:'engine',t:'select',opts:['auto','app','browser'],d:'auto',label:'engine: app — whisper.cpp on the phone (DSP app: dotprod CPU, GPU via OpenCL where there is one; knows Russian far better), browser — ONNX in the page; auto — the phone engine in the app, else the browser'},
-          {n:'appModel',t:'select',opts:Object.keys(WAP_MODELS),d:'large-v3-turbo-q5_0',label:'phone model (large-v3-turbo-q5_0 ≈574 MB best Russian, medium-q5_0 ≈539, small-q5_1 ≈181 faster, weaker; downloaded once into the app)'},
+          {n:'appModel',t:'select',opts:Object.keys(WAP_MODELS),d:'medium-q5_0',label:'phone model (medium-q5_0 ≈539 MB good Russian and keeps up on most phones, large-v3-turbo-q5_0 ≈574 best Russian but needs the GPU or a fast phone, small-q5_1 ≈181 faster, weaker; downloaded once into the app)'},
           {n:'appGpu',t:'check',d:true,label:'phone: use the GPU (OpenCL, Adreno 7xx / 8xx); off — CPU only. Switching CPU → GPU needs an app restart'},
           {n:'beam',t:'range',min:1,max:5,step:1,d:1,label:'phone: beam search width (1 — greedy, fastest; 3–5 more exact, slower)'},
           {n:'partial',t:'check',d:true,label:'phone: live draft — while a phrase is still being spoken its tail is recognised again every few seconds and shown on the «partial» pin (grey in the node); the final text replaces it at the pause. Runs only when no final phrase waits and slows down by itself on a slow phone'},
           {n:'partialEvery',t:'range',min:.5,max:5,step:.1,d:1.5,label:'phone: draft at most every, s (it also waits 1.3× the time the last draft took)',adv:true},
-          {n:'appFast',t:'check',d:false,label:'phone: shorten the encoder window to the phrase (faster on short phrases, a bit less exact)'},
+          {n:'appFastMode',t:'select',opts:['auto','on','off'],d:'auto',label:'phone: short encoder window (the cost follows the length of the phrase, not the 30 s window — several times faster on short phrases, a bit less exact): auto — on when the GPU is not used (on the CPU big models are too slow without it), on / off'},
           {n:'prompt',t:'text',d:'',label:'phone: hint text for the decoder (names, terms, punctuation style: «Здравствуйте. Приём, как слышно?»)'},
           {n:'appUrl',t:'text',d:'',label:'phone: own ggml model by address (.bin from whisper.cpp); empty — by «phone model»',adv:true},
           {n:'model',t:'select',opts:['tiny','base','small','large-v3-turbo','tiny.en','base.en','small.en'],d:'base',label:'browser engine, model (tiny ≈45 MB fast, base ≈85, small ≈270 more exact, large-v3-turbo ≈800 MB — the most accurate, heavy: needs a fast PC; .en — English only)'},
@@ -215,7 +222,7 @@ def({ id:'whisper', lazy:'manual', title:'Speech to Text (Whisper, neural)', cat
           {n:'save',t:'button',label:'Save text',fn:n=>{ if(n.full) wsDownload(n.full,'whisper-'+Date.now()+'.txt'); }},
           {n:'custom',t:'text',d:'',label:'own model repo on huggingface.co (ONNX for Transformers.js), e.g. onnx-community/whisper-large-v3-turbo; empty — by «model»',adv:true}],
   init(n){ n.seg=null; n.segKey=''; n.sr=0; n.clock=0; n.jobs=[]; n.busy=false; n.gen=0; n.q=[]; n.text=''; n.full=''; n.count=0; n.go=false;
-           n.err=''; n.ms=0; n.skipped=0; n.dropped=0; n.mergedN=0; n.rev=0; n.retryAt=0; n.fileRun=false; n.fileStop=false; n.fileInfo=''; n.pre=false; n.stat=''; n.rtf=0; n.partial=''; n.draftBusy=false; n.draftGen=0; n.draftAt=0; },
+           n.err=''; n.ms=0; n.skipped=0; n.dropped=0; n.mergedN=0; n.rev=0; n.retryAt=0; n.fileRun=false; n.fileStop=false; n.fileInfo=''; n.preKey=''; n.stat=''; n.rtf=0; n.busyAt=0; n.partial=''; n.draftBusy=false; n.draftGen=0; n.draftAt=0; },
   dispose(n){ n.gen++; n.jobs=[]; n.seg=null; },
   process(n,I){
     const x=I.in, sr=Eng.sr;
@@ -223,11 +230,12 @@ def({ id:'whisper', lazy:'manual', title:'Speech to Text (Whisper, neural)', cat
       const key=[sr,n.p.thr,n.p.pause,n.p.maxlen].join('|');
       if(!n.seg || n.segKey!==key){ n.seg=wsSegmenter(sr,wsSegCfg(n)); n.segKey=key; }
       n.clock+=x.length/sr;
-      if(!n.pre && performance.now()>=n.retryAt){ n.pre=true; wsPreload(n).catch(e=>{ n.pre=false; n.err=String(e.message||e); n.retryAt=performance.now()+8000; n.rev++; redraw(n); }); }
+      const pk=wsPreKey(n);                                     // движок + модель + GPU: сменились — грузим заново (раньше предзагрузка шла один раз за жизнь узла)
+      if(n.preKey!==pk && performance.now()>=n.retryAt){ n.preKey=pk; wsPreload(n).catch(e=>{ if(n.preKey===pk) n.preKey=''; n.err=String(e.message||e); n.retryAt=performance.now()+8000; n.rev++; redraw(n); }); }
       for(const s of n.seg.push(x)) wsEnqueue(n,wsTo16k(s,sr),n.clock);
       wsDraft(n);
     }
-    if(n.err && performance.now()>=n.retryAt && n.retryAt){ n.err=''; n.retryAt=0; n.pre=false; }
+    if(n.err && performance.now()>=n.retryAt && n.retryAt){ n.err=''; n.retryAt=0; n.preKey=''; }
     const st=wsStatus(n); if(st!==n.stat){ n.stat=st; redraw(n); }
     const rec=n.q.length ? n.q.splice(0) : null, go=n.go ? 1 : 0; n.go=false;
     return {text:n.text, partial:n.partial||'', full:n.full, go, rec, count:n.count, busy:n.jobs.length+(n.busy ? 1 : 0)}; },
