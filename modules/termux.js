@@ -145,7 +145,7 @@ def({ id:'termux', title:'Phone sensors (Termux / DSP app)', cat:'Sources', kw:'
     {n:'stationary',g:'Orientation & activity',t:'check',d:false,label:'stationary detect → still=1 (DSP app)'},
     {n:'motion',g:'Orientation & activity',t:'check',d:false,label:'motion detect → still=0 (DSP app)'},
     {n:'hz',g:'Motion (accel · gyro · mag)',t:'select',opts:['0','10','50','100','200','500','1000'],d:'0',label:'sensor rate, Hz (DSP app; 0 — default; the phone gives what the sensor can)'},
-    {n:'direct',g:'Motion (accel · gyro · mag)',t:'check',d:false,label:'direct sensor channel (DSP app, Android 8.1+): the sensor writes into shared memory — steady 50 / 200 / 800 Hz without jitter, for vibration analysis (rate above → level; a sensor without it keeps the normal way)'},
+    {n:'direct',g:'Motion (accel · gyro · mag)',t:'check',d:false,label:'direct sensor channel (DSP app, Android 8+): the sensor writes into shared memory — steady 50 / 200 / 800 Hz without jitter, for vibration analysis (rate above → level; a sensor without it keeps the normal way)'},
     {n:'reconnect',t:'check',d:true,label:'reconnect'},
     {n:'connect',t:'button',label:'Connect',fn:n=>termuxStart(n)},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>{ n.resume=false; termuxStop(n); }},

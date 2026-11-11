@@ -20,7 +20,7 @@ import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
-import android.os.SharedMemory
+import android.os.MemoryFile
 import android.os.HandlerThread
 import android.os.SystemClock
 
@@ -35,14 +35,14 @@ class SensorHub(ctx: Context, private val emit: Emit) : SensorEventListener {
     private val thread = HandlerThread("dsp-sensors").also { it.start() }
     private val handler = Handler(thread.looper)
     private val active = HashMap<String, Int>()      // вид → Гц
-    /** Прямые каналы (SensorDirectChannel, Android 8.1+): вид → канал. Датчик пишет в общую память, ЦП только читает. */
-    private class Direct(val kind: String, val mem: SharedMemory, val ch: SensorDirectChannel, val ring: DirectRing, val token: Int, val level: Int)
+    /** Прямые каналы Прямые каналы (SensorDirectChannel, Android 8+): вид → канал. Датчик пишет в общую память, ЦП только читает. */
+    private class Direct(val kind: String, val mem: MemoryFile, val buf: ByteArray, val ch: SensorDirectChannel, val ring: DirectRing, val token: Int, val level: Int)
     private val direct = HashMap<String, Direct>()
     private var polling = false
     private val poll = object : Runnable {
         override fun run() {
             synchronized(this@SensorHub) {
-                for (d in direct.values) d.ring.drain { _, t, v -> record(d.kind, v, v.size, t) }
+                for (d in direct.values) { d.mem.readBytes(d.buf, 0, 0, d.buf.size); d.ring.drain { _, t, v -> record(d.kind, v, v.size, t) } }
                 polling = direct.isNotEmpty()
                 if (polling) handler.postDelayed(this, 4)
             }
@@ -175,20 +175,25 @@ class SensorHub(ctx: Context, private val emit: Emit) : SensorEventListener {
 
     /** Включает прямой канал вида; false — датчик его не умеет (или Android старше 8.1), тогда вызывающий берёт обычный. */
     private fun openDirect(kind: String, sensor: Sensor, hz: Int): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) return false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
         if (!sensor.isDirectChannelTypeSupported(SensorDirectChannel.TYPE_MEMORY_FILE)) return false
         val level = DirectRing.level(hz, sensor.highestDirectReportRateLevel)
         if (level == 0) return false
         direct[kind]?.let { if (it.level == level) return true else closeDirect(kind) }
-        var mem: SharedMemory? = null
+        var mem: MemoryFile? = null
         var ch: SensorDirectChannel? = null
         try {
-            mem = SharedMemory.create("dsp-$kind", DirectRing.MEM_BYTES)
-            val map = mem.mapReadWrite()                            // память должна быть обнулена — SharedMemory.create так и делает
-            ch = sm.createDirectChannel(mem)
-            val token = ch.configure(sensor, level)
-            if (token <= 0) { ch.close(); mem.close(); return false }
-            direct[kind] = Direct(kind, mem, ch, DirectRing(map), token, level)
+            @Suppress("DEPRECATION")
+            val m = MemoryFile("dsp-$kind", DirectRing.MEM_BYTES)   // обнулена при создании; createDirectChannel(MemoryFile) — единственный вариант с API 26
+            mem = m
+            @Suppress("DEPRECATION")
+            val c = sm.createDirectChannel(m)
+            if (c == null) { m.close(); return false }
+            ch = c
+            val token = c.configure(sensor, level)
+            if (token <= 0) { c.close(); m.close(); return false }
+            val buf = ByteArray(DirectRing.MEM_BYTES)
+            direct[kind] = Direct(kind, m, buf, c, DirectRing(java.nio.ByteBuffer.wrap(buf)), token, level)
         } catch (e: Exception) {
             try { ch?.close() } catch (_: Exception) {}
             try { mem?.close() } catch (_: Exception) {}
