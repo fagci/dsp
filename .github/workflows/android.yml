@@ -20,6 +20,11 @@ jobs:
   # Проверки и сборка независимы — идут параллельно (общее время = дольше из двух), и при падении можно
   # перезапустить только упавший джоб («Re-run failed jobs»), а не всё заново.
   test:
+    # Fast — быстрые проверки, Slow — TorrentTest / NetTxTest (почти всё время ждут: паузы по смыслу теста); параллельно, каждая со своим кэшем Gradle
+    name: test (${{ matrix.part }})
+    strategy:
+      fail-fast: false
+      matrix: { part: [Fast, Slow] }
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,7 +33,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.10.2' }
       - name: Проверки моста на JVM (сервер, поворот кадра, разбор BLE / Wi-Fi / ГНСС)
-        run: gradle -p tools/android/jvm-test runTests
+        run: gradle -p tools/android/jvm-test runTests${{ matrix.part }}
 
   build:
     runs-on: ubuntu-latest
