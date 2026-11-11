@@ -1,7 +1,7 @@
 /* ---- пресеты ---- */
 // Загружается раньше core-graph.js, поэтому serialize/deserialize/autoLayout/stat
 // используются только внутри обработчиков и вызываются уже после их определения.
-const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', HKEY='dsp-presets-hash', PRESET_VER=158;   // PRESET_VER — полная пересборка всех пресетов (дефолты модулей, формат патча); правки самих пресетов подхватываются по хэшу
+const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', HKEY='dsp-presets-hash', LKEY='dsp-presets-layered';   // в PKEY — только патчи пользователя; встроенные пресеты — код (PRESETS), собираются при открытии
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
 // общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
@@ -43,8 +43,35 @@ const Net={ get app(){ return typeof DspApp!=='undefined'; },
 const playRows=(tb,x,y,p)=>{ const pl=addNode('rowplayer',x,y,p); addEdge(tb.id,'rows',pl.id,'rows'); return pl; };
 const patchListEl=document.getElementById('patchList');
 const patchSearchEl=document.getElementById('patchSearch');
+// Два слоя: readP() — патчи пользователя и temp (то, что в хранилище); встроенные пресеты — PRESETS (код), граф собирается при открытии.
 const readP=()=>{ try{ return JSON.parse(LS.get(PKEY))||{}; }catch(e){ return {}; } };
 const writeP=o=>LS.set(PKEY,JSON.stringify(o));
+const hasPatch=(name,p)=>(name in PRESETS) || name in (p||readP());
+const builtinCache=new Map();                           // имя → собранный патч (на время сессии)
+// Собрать встроенный пресет: строитель рисует в живой граф, поэтому текущий граф затирается — вызывать там, где он и так заменяется
+function buildPreset(name){
+  let d=builtinCache.get(name); if(d) return d;
+  const was=Undo.busy; Undo.busy=true;
+  try{ PRESETS[name](); autoLayout(); d=serialize(); }finally{ Undo.busy=was; }
+  builtinCache.set(name,d); return d;
+}
+// Патч по имени: перекрывающий пользовательский → встроенный (из кэша или собирается). keepGraph — сохранить и вернуть текущий граф (вставка)
+function getPatch(name,p,keepGraph){
+  p=p||readP(); if(p[name]) return p[name];
+  if(!(name in PRESETS)) return null;
+  if(builtinCache.has(name) || !keepGraph) return buildPreset(name);
+  const keep=serialize(), dirty=graphDirty, was=Undo.busy; Undo.busy=true;
+  try{ return buildPreset(name); }
+  finally{ deserialize(keep); Undo.busy=was; graphDirty=dirty; }
+}
+// Спрятан ли пресет на этом устройстве (нужен модуль без API): граф не собираем, смотрим слова в кавычках исходника строителя
+const hiddenMemo=new Map();
+function presetHidden(name,p){
+  if(p&&p[name]) return hostcapsPatchHidden(p[name]);
+  let h=hiddenMemo.get(name);
+  if(h===undefined){ h=!!PRESETS[name] && [...presetSrcIds(PRESETS[name],HOSTCAPS_NEEDS)].some(id=>hostcapsHidden(id)); hiddenMemo.set(name,h); }
+  return h;
+}
 // Страница без окна (приложение Android, автозапуск патчей: #…&hl=1): автосохранение и temp-копии не пишет — ими владеет окно приложения
 const HEADLESS=/[#&]hl=1(&|$)/.test(location.hash);
 // Избранное (звезда ★ в строке патча): список имён, новое — первым. В приложении Android первые становятся ярлыками при долгом нажатии на иконку (DspApp.setShortcuts).
@@ -54,7 +81,7 @@ function favRaw(){ try{ const l=JSON.parse(LS.get(FAVKEY)||'[]'); return Array.i
 function favSave(l){ LS.set(FAVKEY,JSON.stringify(l)); syncShortcuts(); }
 function syncShortcuts(){
   try{ if(typeof DspApp!=='undefined' && typeof DspApp.setShortcuts==='function'){
-    const p=readP(); DspApp.setShortcuts(JSON.stringify(favClean(favRaw(),n=>n in p).slice(0,SHORTCUTS_MAX))); } }catch(e){}
+    const p=readP(); DspApp.setShortcuts(JSON.stringify(favClean(favRaw(),n=>hasPatch(n,p)).slice(0,SHORTCUTS_MAX))); } }catch(e){}
 }
 let currentPatchName='', patchQuery='';
 const openPatchCats=new Set(['fav','own','temp']);          // свои патчи и temp раскрыты сразу, встроенные — свёрнуты
@@ -96,7 +123,7 @@ try{ stashIfDirty(); deserialize(await unpackPatch(d)); currentPatchName=''; gra
 catch(e){ stat.textContent='bad link: '+e.message; }
 syncHash(); buildPatchList();
 if(run && ok) setTimeout(autoRun,500);
-} else if(n && readP()[n]){ if(n!==currentPatchName) openPatch(n); if(run) setTimeout(autoRun,500); }
+} else if(n && hasPatch(n)){ if(n!==currentPatchName) openPatch(n); if(run) setTimeout(autoRun,500); }
 }
 window.addEventListener('hashchange',loadFromHash);
 document.getElementById('plink').onclick=async()=>{
@@ -108,7 +135,7 @@ catch(e){ prompt('Copy link',url); }
 };
 function makePatchItem(name,count,label){
 const b=document.createElement('button'); b.className='pitem'+(name===currentPatchName?' on':'');
-b.title=name+' · '+count+' nodes';
+b.title=count<0 ? name : name+' · '+count+' nodes';
 b.innerHTML= `<span class="ptxt"><b>${(label||name).replace(/[&<>"]/g,c=>'&#'+c.charCodeAt(0)+';')}</b></span><span class="pstar${favNow.has(name) ? ' on' : ''}" title="${favNow.has(name) ? 'Favorite — click to remove' : 'Add to favorites'}${favNow.has(name) ? '' : ' (in the Android app the first ones appear on a long press of the app icon)'}">${favNow.has(name) ? '★' : '☆'}</span><span class="pins" title="Insert into the current graph">＋</span><span class="pdel" title="Delete patch">✕</span>` ;
 b.draggable=true;
 b.addEventListener('dragstart',e=>{ e.dataTransfer.setData('text/x-dsp-patch',name); e.dataTransfer.effectAllowed='copy'; });
@@ -131,16 +158,17 @@ return det;
 function buildPatchList(){
 patchListEl.innerHTML='';
 const p=readP();
-const favList=favClean(favRaw(),n=>n in p); favNow=new Set(favList);
+const favList=favClean(favRaw(),n=>hasPatch(n,p)); favNow=new Set(favList);
 const q=patchQuery.trim().toLocaleLowerCase('ru');
 const words=fzTokens(q), score=name=>{ let t=presetSub(name)+' '+name; if(/[-_]/.test(t)) t+=' '+t.replace(/[-_]/g,''); return fzScoreWords(words,fzTokens(t),t.toLocaleLowerCase('ru')); };   // нечётко: опечатки и сокращения
 const th=2*words.length; let strongAny=false;            // есть точные совпадения (слово — в начале слова / внутри имени) — нечёткие не показываем
-if(q) for(const k of Object.keys(p)) if(score(k)>=th){ strongAny=true; break; }
+const names=patchNames(PRESETS,p);
+if(q) for(const k of names) if(score(k)>=th){ strongAny=true; break; }
 const match=name=>{ if(!q) return true; const sc=score(name); return strongAny ? sc>=th : sc>0; };
-const custom=Object.keys(p).filter(k=>!(k in PRESETS) &&match(k));
+const custom=Object.keys(p).filter(k=>!(k in PRESETS) &&match(k));      // свои патчи; перекрывающий встроенное имя показываем среди встроенных
 const temp=custom.filter(k=>k.startsWith(TEMP_PREFIX)).sort().reverse();     // новые сверху
 const own=custom.filter(k=>!k.startsWith(TEMP_PREFIX)).sort();
-const builtin=Object.keys(p).filter(k=>(k in PRESETS) &&match(k) &&!hostcapsPatchHidden(p[k]));
+const builtin=Object.keys(PRESETS).filter(k=>match(k) &&!presetHidden(k,p));
 if(q) builtin.sort((a,b)=>score(b)-score(a));            // лучшие совпадения выше      // пресеты на модулях без нужного API не показываем
 let matches=0;
 const addGroup=(key,label,keys,subs)=>{
@@ -150,7 +178,7 @@ det.querySelector('summary').insertAdjacentHTML('beforeend', `<span class="cnt">
 const bySub=new Map();                                // подгруппа из одного пресета — без заголовка, под полным именем
 if(subs) for(const name of keys){ const k=presetSub(name); (bySub.get(k)||bySub.set(k,[]).get(k)).push(name); }
 const flat=subs ? keys.filter(n=>bySub.get(presetSub(n)).length<2) : keys;
-const add=(name,sub)=>{ matches++; const it=makePatchItem(name,p[name].nodes.length,sub&&name.startsWith(sub+': ')?name.slice(sub.length+2):name); if(sub) it.classList.add('insub'); det.append(it); };
+const add=(name,sub)=>{ matches++; const it=makePatchItem(name,p[name]?p[name].nodes.length:-1,sub&&name.startsWith(sub+': ')?name.slice(sub.length+2):name); if(sub) it.classList.add('insub'); det.append(it); };
 for(const name of flat) add(name);
 if(subs) for(const [sub,list] of [...bySub].sort((a,b)=>a[0].localeCompare(b[0]))) if(list.length>1){
 const h=document.createElement('div'); h.className='psub'; h.textContent=sub; det.append(h);
@@ -158,7 +186,7 @@ for(const name of list) add(name,sub);
 }
 patchListEl.append(det);
 };
-if(!q) addGroup('fav','★ FAVORITES',favList.filter(n=>!hostcapsPatchHidden(p[n])));
+if(!q) addGroup('fav','★ FAVORITES',favList.filter(n=>!presetHidden(n,p)));
 if(q){                                                 // поиск — один список по релевантности, а не по категориям
 addGroup('search','SEARCH',[...own,...temp,...builtin].sort((a,b)=>score(b)-score(a)||a.localeCompare(b)));
 patchListEl.classList.toggle('empty',matches===0);
@@ -175,8 +203,8 @@ patchListEl.classList.toggle('empty',matches===0);
 }
 function openPatch(name){
 stashIfDirty();
-const p=readP(); if(!p[name]) return;
-try{ deserialize(p[name]); }
+const p=readP(); if(!hasPatch(name,p)) return;
+try{ deserialize(getPatch(name,p)); }
 catch(e){ console.error('open "'+name+'" failed:',e); stat.textContent='could not open «'+name+'»: '+(e&&e.message||e); buildPatchList(); return; }
 currentPatchName=name; graphDirty=false; syncHash();
 stat.textContent='opened: '+name;
@@ -186,7 +214,7 @@ if(narrowUI.matches && !dashMode) fitViewWhenReady();
 }
 // вставка патча в текущий граф (не заменяя его); левый верхний угол — в (x,y) или в центр видимой области
 function insertPatch(name,x,y){
-const p=readP(), d=p[name]; if(!d || !d.nodes?.length) return;
+const d=getPatch(name,null,true); if(!d || !d.nodes?.length) return;
 const data=migrate(JSON.parse(JSON.stringify(d)));
 const x0=Math.min(...data.nodes.map(n=>n.x)), y0=Math.min(...data.nodes.map(n=>n.y));
 if(x==null){ const r=cv.getBoundingClientRect(); x=(r.width/2)/view.k-view.x-60; y=(r.height/3)/view.k-view.y; }
@@ -203,22 +231,17 @@ stat.textContent='patch saved: '+name;
 buildPatchList();
 };
 patchSearchEl.addEventListener('input',e=>{ patchQuery=e.target.value; buildPatchList(); });
-// Строит недостающие/устаревшие встроенные пресеты и обновляет версию хранилища.
-// Сами пресеты регистрируются ниже через preset(имя, функция-строитель), см. PRESETS.
-// встроенные пресеты, снятые с поставки: при смене версии стираются из сохранённых
+// Встроенные пресеты, снятые с поставки (имя начинается с…): стираются из старого хранилища при миграции
 const PRESETS_GONE=['Aether Pet:','Studio: DAW','Studio (tiles)','Studio: Graph Synth'];
-function buildBuiltinPresets(){
-const p=readP(), ver=+(LS.get(VKEY)||0);
-let old={}; try{ old=JSON.parse(LS.get(HKEY)||'{}')||{}; }catch(e){}
-const plan=presetPlan(PRESETS,p,old,ver,PRESET_VER);            // только изменившиеся / отсутствующие; всё — по PRESET_VER (modules/presetplan-kernels.js)
-if(plan.full) for(const k of Object.keys(p)) if(PRESETS_GONE.some(g=>k.startsWith(g))) delete p[k];
-const hashes=plan.hashes;
-for(const name of plan.todo){
-try{ PRESETS[name](); autoLayout(); p[name]=serialize(); hashes[name]=presetHash(PRESETS[name]); }
-catch(err){ console.error('preset  "'+name+' " failed to build:',err); }               // хэш не запоминаем — при следующем запуске попробуем снова
+// Старое хранилище держало готовые копии всех встроенных пресетов (и пересобирало их при каждой смене PRESET_VER): один раз убираем их,
+// остаются патчи пользователя. Дальше встроенные собираются при открытии из актуального кода.
+function migratePresetStore(){
+  if(LS.get(LKEY)==='1') return;
+  const {user,dropped}=patchMigrate(readP(),PRESETS,PRESETS_GONE);
+  writeP(user); LS.set(LKEY,'1'); try{ localStorage.removeItem(VKEY); localStorage.removeItem(HKEY); }catch(e){}
+  if(dropped) console.info('presets: removed '+dropped+' stored copies of built-in presets (now built on open)');
 }
-writeP(p); LS.set(VKEY,String(PRESET_VER)); LS.set(HKEY,JSON.stringify(hashes)); buildPatchList(); syncShortcuts();
-}
+function buildBuiltinPresets(){ migratePresetStore(); buildPatchList(); syncShortcuts(); }
 /* ---- реестр встроенных пресетов ---- */
 // preset(имя, функция) — по аналогии с def(...) у модулей: функция просто строит граф
 // узлов (addNode/addEdge), как будто пользователь собрал его вручную.

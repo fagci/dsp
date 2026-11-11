@@ -40,7 +40,7 @@ async function hpEntries(){                            // всё, по чему 
   for(const t of hp.toc){ const txt=t.file==='modules.md' ? '' : await hpDoc('help/'+t.file); E.push({kind:'topic',key:'help/'+t.file,title:t.title,text:(t.desc||'')+' '+(txt||'')}); }
   for(const m of hpModules()) E.push({kind:'module',key:m.id,title:m.title,text:m.id+' '+m.cat+' '+(m.kw||'')+' '+(hp.bullets.get(hlpNorm(m.title))||[]).join(' ')});
   for(const s of hp.sections) if(s.body) E.push({kind:'manual',key:s.id,title:s.title,text:s.body});
-  const names=(typeof readP==='function' ? Object.keys(readP()) : Object.keys(PRESETS));
+  const names=(typeof readP==='function' ? patchNames(PRESETS,readP()) : Object.keys(PRESETS));
   for(const n of names) E.push({kind:'preset',key:n,title:n,text:''});
   return hp.entries=E;
 }

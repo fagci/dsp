@@ -2495,7 +2495,7 @@ cmdkRows=[];
 cmdkSel=0;                                                   // каждый ввод — выделение снова на первом пункте
 for(const m of modRank(Object.values(MOD),words).slice(0,8)) cmdkRows.push({kind:'mod',m});
 try{
-  const p=readP(), names=Object.keys(p);
+  const names=patchNames(PRESETS,readP());
   const sc=n=>{ let s=(typeof presetSub==='function'?presetSub(n)+' ':'')+n; if(/[-_]/.test(s)) s+=' '+s.replace(/[-_]/g,''); return fzScoreWords(words,fzTokens(s),s.toLocaleLowerCase('ru')); };
   const th=2*words.length; let strong=false;
   if(words.length) for(const n of names) if(sc(n)>=th){ strong=true; break; }
@@ -3165,10 +3165,10 @@ applyView();
 buildBuiltinPresets();
 // приоритет: правки этой вкладки (перезагрузка) → патч из адреса (#p=) → последнее состояние любой вкладки
 const hp=hashParam('p'), tg=SS.get('dsp-tab-graph'), tn=SS.get('dsp-tab-name')||'', hrun=hashParam('run')==='1', hdat=hashParam('d');
-const hpd=hp&&readP()[hp];
+const hpd=!!hp&&hasPatch(hp);                      // пресет собирается, только если он действительно открывается ниже
 let a=null, nm='';
 if(tg && (!hp || hp===tn)){ a=tg; nm=tn; }
-else if(hpd){ a=JSON.stringify(hpd); nm=hp; }
+else if(hpd){ a=JSON.stringify(getPatch(hp)); nm=hp; }
 else a=LS.get(AKEY)||LS.get('dsp-patch');
 if(a){ try{ deserialize(JSON.parse(a)); }catch(e){ nm=''; buildDemo(); } } else buildDemo();
 if(ROTILES || LS.get('dsp-dash')==='1') setDash(true);
