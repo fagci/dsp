@@ -26,8 +26,9 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Телефон как VPN-монитор своего собственного трафика: что куда ходит, каким приложением, на какой адрес и под каким именем
- * (из DNS / SNI / HTTP Host, без расшифровки — TLS-перехват с подменой сертификата не делается). Стек — VpnEngine.kt (без
- * android.*, проверен в tools/android/jvm-test против настоящего ядра Linux); здесь — только то, что требует Android:
+ * (из DNS / SNI / HTTP Host; расшифровка TLS — только для приложений из явного списка tlsApps, никогда по умолчанию и никогда
+ * «всё подряд» — см. vpn.tls). Стек — VpnEngine.kt (без android.*, проверен в tools/android/jvm-test против настоящего ядра
+ * Linux, включая полный круг расшифровки TlsMitmEngineTest); здесь — только то, что требует Android:
  * сам интерфейс (TUN), protect() настоящих сокетов (чтобы они не зациклились обратно в тот же туннель) и uid → приложение.
  * Только IPv4: добавлять IPv6 в маршруты туннеля, не умея его разобрать, значит просто рвать связь — он идёт в обход, как
  * без VPN. Разрешение на сам VPN спрашивает система (её диалог, не наш) — см. VpnConsentActivity.
@@ -116,6 +117,36 @@ class DspVpnService : VpnService() {
                 emit(Json.obj("src" to Json.str("vpn"), "ev" to Json.str("dns"), "t" to System.currentTimeMillis().toString(),
                     "name" to Json.str(q.name), "ips" to Json.arr(q.ips), "ms" to Json.num(ms.toDouble(), 10.0)))
             }
+            // Явный список (vpn.tls), только порт 443 — ни «всё», ни эвристика по содержимому; без списка decrypt() не вызывается вовсе.
+            override fun decryptCandidate(f: FlowInfo): Boolean {
+                if (f.dport != 443 || tlsApps.isEmpty()) return false
+                val pkgs = f.owner?.pkgs ?: return false
+                return pkgs.any { it in tlsApps }
+            }
+            override fun decrypt(f: FlowInfo, host: String): TlsMitm? {
+                val dir = filesDir
+                return object : TlsMitm {
+                    override fun deviceSide() = MitmCa.serverEngine(dir, host)
+                    override fun upstreamSide(): javax.net.ssl.SSLEngine {
+                        // системное доверие, честная проверка имени — поддельный сертификат это не обходит, только нашу собственную сторону
+                        val c = javax.net.ssl.SSLContext.getInstance("TLS"); c.init(null, null, null)
+                        val e = c.createSSLEngine(host, f.dport); e.useClientMode = true
+                        e.sslParameters = e.sslParameters.also { it.endpointIdentificationAlgorithm = "HTTPS" }
+                        return e
+                    }
+                    override fun onPlain(up: Boolean, data: ByteArray) {
+                        if (data.isEmpty()) return
+                        val d = data.copyOf(minOf(data.size, PLAIN_CAP))
+                        emit(Json.obj("src" to Json.str("vpn"), "ev" to Json.str("plain"), "t" to System.currentTimeMillis().toString(),
+                            "id" to f.id.toString(), "dir" to Json.str(if (up) "up" else "down"), "n" to data.size.toString(),
+                            "hex" to Json.str(Hex.of(d)), "text" to Json.str(String(d, Charsets.UTF_8))))
+                    }
+                    override fun onError(msg: String) {
+                        emit(Json.obj("src" to Json.str("vpn"), "ev" to Json.str("tlserror"), "t" to System.currentTimeMillis().toString(),
+                            "id" to f.id.toString(), "host" to Json.str(host), "msg" to Json.str(msg)))
+                    }
+                }
+            }
         }
         val eng = VpnEngine({ p -> writePacket(p) }, sockets, events, MTU)
         engine = eng
@@ -197,10 +228,11 @@ class DspVpnService : VpnService() {
 
     companion object {
         const val CH = "dsp-vpn"; const val ID = 5102; const val ACTION_STOP = "app.dsp.phone.VPN_STOP"
-        const val TUN_ADDR = "10.8.0.2"; const val MTU = 1500; const val SNAP_MS = 2000L; const val PKT_CAP = 1500
+        const val TUN_ADDR = "10.8.0.2"; const val MTU = 1500; const val SNAP_MS = 2000L; const val PKT_CAP = 1500; const val PLAIN_CAP = 8192
         private const val FIRST_APP_UID = 10000
         @Volatile var inst: DspVpnService? = null
         @Volatile var sel: AppSel = AppSel.ALL                    // какие приложения идут через туннель; применяется при установке туннеля
+        @Volatile var tlsApps: Set<String> = emptySet()            // явный список пакетов для расшифровки TLS (vpn.tls) — никогда «все», даже случайно
 
         /** true — туннель установлен, запрос на запуск не нужен. */
         fun running() = inst != null
@@ -282,6 +314,34 @@ object VpnCmds {
                 Reply.done(c, id, cmd, null)
             }
             "vpn.packets" -> { DspVpnService.setPackets(j.optBoolean("on", false)); Reply.done(c, id, cmd, null) }
+            "vpn.tls" -> {
+                // Явный список приложений для расшифровки TLS (на порту 443) — ни «все», ни по умолчанию: без apps/uids список пуст (выключено).
+                val pm = ctx.packageManager
+                val pkg = Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+")
+                fun items(v: Any?): List<String> = when (v) {
+                    null, JSONObject.NULL -> emptyList()
+                    is org.json.JSONArray -> (0 until v.length()).map { v.opt(it).toString().trim() }.filter { it.isNotEmpty() }
+                    else -> v.toString().split(Regex("[,;\\s]+")).map { it.trim() }.filter { it.isNotEmpty() }
+                }
+                val names = LinkedHashSet<String>()
+                for (s in items(j.opt("apps"))) {
+                    if (!pkg.matches(s)) { Reply.done(c, id, cmd, "apps: «$s» is not a package name (com.example.app)", "args"); return }
+                    names.add(s)
+                }
+                for (s in items(j.opt("uids"))) {
+                    val u = s.toIntOrNull()?.takeIf { it >= 0 } ?: run { Reply.done(c, id, cmd, "uids: «$s» is not a number", "args"); return }
+                    names.addAll(try { pm.getPackagesForUid(u)?.toList() ?: emptyList() } catch (e: Exception) { emptyList() })
+                }
+                if (names.size > 100) { Reply.done(c, id, cmd, "at most 100 apps for TLS decryption", "args"); return }
+                DspVpnService.tlsApps = names
+                Reply.done(c, id, cmd, null, extra = arrayOf("apps" to Json.arr(names.toList())))
+            }
+            "vpn.tls.ca" -> {
+                if (j.optBoolean("reset")) MitmCa.reset(ctx.filesDir)
+                Reply.done(c, id, cmd, null, extra = arrayOf(
+                    "pem" to Json.str(MitmCa.rootPem(ctx.filesDir)), "fingerprint" to Json.str(MitmCa.fingerprint(ctx.filesDir)),
+                    "status" to MitmCa.status(ctx.filesDir).toString(), "apps" to Json.arr(DspVpnService.tlsApps.toList())))
+            }
             else -> Reply.done(c, id, cmd, "unknown command", "unknown")
         }
     }

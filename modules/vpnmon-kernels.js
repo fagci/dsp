@@ -32,6 +32,12 @@ function vpnCmd(action,p,rows){
   if(action==='stop') return {cmd:'vpn.stop'};
   if(action==='packets') return {cmd:'vpn.packets',on:!!p.packets};
   if(action==='apps') return {cmd:'vpn.apps',system:!!p.system};
+  if(action==='tls'){
+    const pick=vpnPicks(rows,p.tlsApps);
+    return {cmd:'vpn.tls',apps:pick.apps,uids:pick.uids};
+  }
+  if(action==='ca') return {cmd:'vpn.tls.ca'};
+  if(action==='caReset') return {cmd:'vpn.tls.ca',reset:true};
   return null;
 }
 
@@ -48,6 +54,8 @@ function vpnLine(r){
     case 'dns': return 'dns '+r.name+' → '+(r.ips||[]).join(', ');
     case 'summary': return r.open+' open · '+r.flows+' total · '+vpnFmtBytes(r.bytesUp)+' up, '+vpnFmtBytes(r.bytesDown)+' down';
     case 'pkt': return (r.dir==='out' ? '→ ' : '← ')+r.n+' B';
+    case 'plain': return (r.dir==='up' ? '→ ' : '← ')+'#'+r.id+' '+vpnPlainPreview(r.text)+' ('+r.n+' B)';
+    case 'tlserror': return 'TLS #'+r.id+' '+r.host+': '+r.msg;
     default: return r.ev||'';
   }
 }
@@ -78,3 +86,20 @@ function vpnAppAgg(st,r){
   return a;
 }
 function vpnAppRow(a){ return {id:a.id,app:a.app,uid:a.uid,pkgs:a.pkgs,flows:a.flows,open:a.open,up:a.up,down:a.down,hosts:a.hosts,last:a.last}; }
+
+// расшифрованный текст — одной строкой для лога/тикера: управляющие символы убраны, длина ограничена
+function vpnPlainPreview(t,max){
+  max=max||80;
+  const s=String(t||'').replace(/[\x00-\x1f]+/g,' ').trim();
+  return s.length>max ? s.slice(0,max)+'…' : s;
+}
+// запись ev:'plain' (открытый текст из TlsSplice) → строка для таблицы
+function vpnPlainRow(r){
+  if(r.ev!=='plain') return null;
+  return {id:r.id,dir:r.dir,n:+r.n||0,hex:r.hex||'',text:r.text||'',preview:vpnPlainPreview(r.text),t:r.t};
+}
+// запись ev:'tlserror' → строка (поток сброшен: не удалось расшифровать — испорченный/неожиданный TLS, недоверие вверх по потоку и т.п.)
+function vpnTlsErrRow(r){
+  if(r.ev!=='tlserror') return null;
+  return {id:r.id,host:r.host||'',msg:r.msg||'',t:r.t};
+}

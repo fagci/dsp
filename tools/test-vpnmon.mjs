@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 const ctx = vm.createContext({});
-vm.runInContext(fs.readFileSync(new URL('../modules/vpnmon-kernels.js', import.meta.url), 'utf8') + ';this.K={vpnCmd,vpnPicks,VPN_MODES,vpnLine,vpnFlowRow,vpnAppAgg,vpnAppRow,vpnFmtBytes};', ctx);
+vm.runInContext(fs.readFileSync(new URL('../modules/vpnmon-kernels.js', import.meta.url), 'utf8') + ';this.K={vpnCmd,vpnPicks,VPN_MODES,vpnLine,vpnFlowRow,vpnAppAgg,vpnAppRow,vpnFmtBytes,vpnPlainRow,vpnTlsErrRow,vpnPlainPreview};', ctx);
 const K = ctx.K;
 let bad = 0; const ok = (n, c, x = '') => { if (!c) { bad++; console.log('FAIL', n, x); } else console.log('ok  ', n); };
 
@@ -62,6 +62,26 @@ ok('aggregate: unlabeled uid groups by uid, not merged with named apps', (() => 
   ok('vpnCmd start only without a list is an error', /pick the apps/.test(K.vpnCmd('start', { mode: 'only these', apps: '' }, []).error));
   ok('vpnCmd apps', JSON.stringify(K.vpnCmd('apps', { system: true })) === '{"cmd":"vpn.apps","system":true}');
   ok('modes', K.VPN_MODES.length === 3 && K.VPN_MODES[0] === 'all apps');
+}
+
+// TLS: команды списка расшифровки и центра, разбор записей plain/tlserror
+{
+  ok('vpnCmd tls from text', JSON.stringify(K.vpnCmd('tls', { tlsApps: 'com.a.one 10234' }, null)) === '{"cmd":"vpn.tls","apps":["com.a.one"],"uids":[10234]}');
+  ok('vpnCmd tls from rows (installed apps table)', JSON.stringify(K.vpnCmd('tls', {}, [{ uid: 10300, pkg: 'org.telegram.messenger', pkgs: ['org.telegram.messenger'] }])) === '{"cmd":"vpn.tls","apps":["org.telegram.messenger"],"uids":[]}');
+  ok('vpnCmd tls empty clears it', JSON.stringify(K.vpnCmd('tls', {}, null)) === '{"cmd":"vpn.tls","apps":[],"uids":[]}');
+  ok('vpnCmd ca / caReset', JSON.stringify(K.vpnCmd('ca', {})) === '{"cmd":"vpn.tls.ca"}' && JSON.stringify(K.vpnCmd('caReset', {})) === '{"cmd":"vpn.tls.ca","reset":true}');
+
+  ok('vpnPlainRow', JSON.stringify(K.vpnPlainRow({ ev: 'plain', id: 7, dir: 'up', n: 12, hex: '68656c6c6f', text: 'hello\nworld', t: 1 }))
+    === '{"id":7,"dir":"up","n":12,"hex":"68656c6c6f","text":"hello\\nworld","preview":"hello world","t":1}');
+  ok('vpnPlainRow ignores other events', K.vpnPlainRow({ ev: 'open' }) === null);
+  ok('vpnPlainPreview strips control chars and truncates', K.vpnPlainPreview('a\x01\x02b' + 'x'.repeat(100), 10) === 'a bxxxxxxx…');
+
+  ok('vpnTlsErrRow', JSON.stringify(K.vpnTlsErrRow({ ev: 'tlserror', id: 3, host: 'example.com', msg: 'bad cert', t: 2 }))
+    === '{"id":3,"host":"example.com","msg":"bad cert","t":2}');
+  ok('vpnTlsErrRow ignores other events', K.vpnTlsErrRow({ ev: 'dns' }) === null);
+
+  ok('vpnLine: plain / tlserror', K.vpnLine({ ev: 'plain', dir: 'down', id: 5, n: 20, text: 'HTTP/1.1 200 OK' }) === '← #5 HTTP/1.1 200 OK (20 B)'
+    && K.vpnLine({ ev: 'tlserror', id: 9, host: 'bad.example', msg: 'untrusted' }) === 'TLS #9 bad.example: untrusted');
 }
 
 console.log(bad ? 'FAILED ' + bad : 'all ok');
