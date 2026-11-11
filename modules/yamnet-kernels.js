@@ -21,6 +21,12 @@ function ynTop(results,n,min){
   }
   return [...m].map(([label,score])=>({label,score})).filter(d=>d.score>=min).sort((a,b)=>b.score-a.score).slice(0,Math.max(1,n|0));
 }
+// баллы 521 класса (выход YAMNet, TFLite на телефоне) → [{label, score}] по убыванию, как ynTop
+function ynTopScores(scores,labels,n,min){
+  const o=[];
+  for(let i=0;i<scores.length;i++) if(scores[i]>=min) o.push({label:(labels&&labels[i])||('class '+i),score:scores[i]});
+  return o.sort((a,b)=>b.score-a.score).slice(0,Math.max(1,n|0));
+}
 const ynClasses=s=>{ const a=String(s||'').split(/[,;\n]/).map(x=>x.trim().toLowerCase()).filter(Boolean); return a.length ? new Set(a) : null; };
 // первый найденный из списка слежения (подстрока без учёта регистра: «speech» ловит «Speech» и «Male speech, man speaking»)
 function ynWatch(list,watch,thr){

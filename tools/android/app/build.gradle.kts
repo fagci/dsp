@@ -31,7 +31,7 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     lint { checkReleaseBuilds = false }                                    // lintVital в assembleRelease съедает ~30 с на каждой сборке; ловит только фатальное (манифест), компиляция и проверки моста это и так покрывают
-    androidResources { noCompress += listOf("wasm", "onnx", "bin", "img") }
+    androidResources { noCompress += listOf("wasm", "onnx", "bin", "img", "tflite") }
     packaging { jniLibs { useLegacyPackaging = true } }                    // библиотеки libVLC / libtorrent сжимаются в APK (иначе ~+80 МБ к загрузке)
     sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/web"))
 }
@@ -60,6 +60,10 @@ android.sourceSets["main"].jniLibs.srcDir(nativeOut)
 tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(buildNative) }
 
 dependencies {
+    // Нейросети TFLite (команды nn.*, AiHub.kt / TfliteEngine.kt): GPU-делегат (OpenGL ES / OpenCL) и CPU с XNNPACK; модели float32 — Basic Pitch, YAMNet
+    implementation("org.tensorflow:tensorflow-lite:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-gpu-api:2.16.1")
     // Торренты (команды torrent.* моста, TorrentHub.kt): libtorrent; ARM — телефоны и приставки
     val lt = "2.1.0-39"
     implementation("org.libtorrent4j:libtorrent4j:$lt")
