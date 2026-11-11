@@ -21,16 +21,16 @@ const mkFetch=()=>async(u,o)=>{
     body:{getReader:()=>({read:async()=>i<chunks.length ? {done:false,value:enc(chunks[i++])} : {done:true}})}};
 };
 const store={};
-const NET={proxy:'P/{url}',mode:'always',need:new Set(),needs(u){ try{ return this.need.has(new URL(u).host); }catch(e){ return false; } },url(u){ return 'PROXY/'+encodeURIComponent(u); }};
+const NET={app:false,proxy:'P/{url}',mode:'always',need:new Set(),needs(u){ try{ return this.need.has(new URL(u).host); }catch(e){ return false; } },url(u){ return 'PROXY/'+encodeURIComponent(u); }};
 const ctx=vm.createContext({URL,URLSearchParams,String,Number,Math,Array,Object,Set,Map,Promise,JSON,Uint8Array,TextEncoder,TextDecoder,
   AbortController,TypeError,Error,Date,parseInt,parseFloat,isFinite,encodeURIComponent,performance,setTimeout,clearTimeout,
   fetch:(...a)=>ctx.__fetch(...a), __fetch:mkFetch(),
   localStorage:{getItem:k=>k in store ? store[k] : null,setItem:(k,v)=>{ store[k]=String(v); }},
   Net:NET, def:d=>{ defs[d.id]=d; },
   setMod:(n,k,v)=>{ n.p[k]=v; }, recNum:v=>typeof v==='number'&&isFinite(v)?v:null, recList:v=>Array.isArray(v)?v:v?[v]:[],
-  GeoMe:{lat:null,lon:null}});
+  GeoMe:{lat:null,lon:null}, phoneUrl:u=>u, NetSock:class{}, httpStream:(...a)=>ctx.__hs(...a), __hs:null});
 const src=['netdata-kernels','netdata'].map(f=>fs.readFileSync(path.join(root,'modules/'+f+'.js'),'utf8')).join('\n');
-vm.runInContext(src+';this.K={ndDist,ndBearing,ndAgo,ndHash,ndMeteoUrl,ndElevUrl,ndElev,ndMeteo,ndDew,ndCompass,ndMeteoLines,ndAcUrl,ndAdsbLol,ndOpenSky,ndOsmPair,ndOsmQuery,ndOsmRows,ndOllamaBase,ndNdjson,ndOllamaTags,ndOllamaMessages,ndOllamaBody,ndOllamaChunk};',ctx);
+vm.runInContext(src+';this.K={ndDist,ndBearing,ndAgo,ndHash,ndMeteoUrl,ndElevUrl,ndElev,ndMeteo,ndDew,ndCompass,ndMeteoLines,ndAcUrl,ndAdsbLol,ndOpenSky,ndOsmPair,ndOsmQuery,ndOsmRows,ndOllamaBase,ndNdjson,ndOllamaTags,ndOllamaMessages,ndOllamaBody,ndOllamaChunk,ND_APP};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n); };
 const node=(id,p={})=>{ const d=defs[id]; const n={p:{...Object.fromEntries(d.params.filter(q=>q.d!==undefined).map(q=>[q.n,q.d])),...p},el:null}; d.init(n); return n; };
@@ -207,6 +207,26 @@ ok('chunk: error',K.ndOllamaChunk({error:'model not found'}).err==='model not fo
   ox=node('ollama',{host:'http://lan-pc:11434',proxy:true}); await defs.ollama.params.find(p=>p.n==='list').fn(ox);
   ok('proxy off: directly even when ticked',calls.length===1 && !calls[0].url.startsWith('PROXY/'));
   NET.mode='always'; NET.proxy='P/{url}'; NET.need.clear();
+
+  // Приложение Android: POST идёт по сокету моста (httpStream), GET и HEAD — как обычно; без моста — сами
+  const fakeStream=chunks=>({ok:true,status:200,statusText:'OK',headers:{},body:{getReader:()=>{ let i=0; return {read:async()=>i<chunks.length ? {done:false,value:enc(chunks[i++])} : {done:true},cancel(){},releaseLock(){}}; }},
+    json:async()=>JSON.parse(chunks.join('')),text:async()=>chunks.join('')});
+  NET.app=true; NET.proxy=''; NET.mode='always';
+  let hs=[]; ctx.__hs=async(ns,url,o)=>{ hs.push({ns,url,o}); if(o.timeout<0) throw new Error('x'); return fakeStream(url.endsWith('/api/chat') ? [chatOk2] : [JSON.stringify({models:[{name:'viaapp'}]})]); };
+  const chatOk2=[{message:{content:'Hel'},done:false},{message:{content:'lo'},done:false},{done:true,eval_count:1,eval_duration:1e9}].map(x=>JSON.stringify(x)+'\n').join('');
+  const FAKE_NS={fake:1}; K.ND_APP.link=async()=>FAKE_NS; routes={}; calls.length=0;
+  let oa=node('ollama',{host:'http://lan-pc:11434',model:'m',prompt:'hi'}); await defs.ollama.params.find(p=>p.n==='ask').fn(oa);
+  ok('app: a POST chat goes through the bridge socket, the page fetch is not used',hs.length===1 && hs[0].ns===FAKE_NS && hs[0].url==='http://lan-pc:11434/api/chat' && hs[0].o.method==='POST' && calls.length===0 && oa.last==='Hello',oa.msg);
+  ok('app: the body and headers go on, with a long wait for the first byte (model loading)',JSON.parse(hs[0].o.body).stream===true && hs[0].o.headers['Content-Type']==='application/json' && hs[0].o.timeout>=300000 && hs[0].o.signal);
+  hs=[]; routes={'11434/api/tags':{body:{models:[{name:'direct'}]}}}; oa=node('ollama',{host:'http://lan-pc:11434'}); await defs.ollama.params.find(p=>p.n==='list').fn(oa);
+  ok('app: GET goes directly (the app answers it with CORS headers itself)',hs.length===0 && oa.models[0].name==='direct');
+  K.ND_APP.link=async()=>{ throw new Error('no bridge'); }; routes={'/api/chat':{body:'',chunks:[chatOk2]}}; hs=[]; calls.length=0;
+  oa=node('ollama',{host:'http://lan-pc:11434',model:'m',prompt:'hi'}); await defs.ollama.params.find(p=>p.n==='ask').fn(oa);
+  ok('app: no bridge → the page tries itself',hs.length===0 && calls.length===1 && oa.last==='Hello',oa.msg);
+  K.ND_APP.link=async()=>FAKE_NS; ctx.__hs=async()=>{ throw Object.assign(new Error('ConnectException: failed to connect to /192.168.1.9:11434'),{connect:true}); };
+  oa=node('ollama',{host:'http://192.168.1.9:11434',model:'m',prompt:'hi'}); await defs.ollama.params.find(p=>p.n==='ask').fn(oa);
+  ok('app: the reason from the bridge is in the status, no CORS advice',/ConnectException/.test(oa.msg) && !/OLLAMA_ORIGINS/.test(oa.msg),oa.msg);
+  NET.app=false; NET.proxy='P/{url}';
 
   // Ollama
   routes={'/api/tags':{body:{models:[{name:'llama3.2:3b'},{name:'qwen2.5:7b'}]}}};
