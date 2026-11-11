@@ -346,7 +346,7 @@ def({ id:'ollama', title:'Ollama (local LLM)', cat:'Tools', readout:true, tall:t
           {n:'model',t:'text',d:'',label:'model (name from «⟳ Models», e.g. llama3.2). Host «app»: a list key (qwen2.5-3b-instruct-q4_0), a .gguf file on the phone or an address of a .gguf — downloaded once'},
           {n:'appGpu',t:'check',d:true,label:'host «app»: use the GPU (OpenCL, Adreno 7xx / 8xx; fastest with Q4_0 models); off — CPU only. Switching CPU → GPU needs an app restart'},
           {n:'maxTok',t:'range',min:32,max:4096,step:32,d:512,label:'host «app»: longest answer, tokens'},
-          {n:'threads',t:'num',d:0,min:0,max:16,step:1,label:'host «app»: threads (0 — the fast cores of the phone, found by the app; «⏱ Benchmark» picks the best on this phone)'},
+          {n:'threads',t:'num',d:0,min:0,max:16,step:1,label:'host «app»: threads (0 — automatic: up to 4 fast cores (generation is memory-bound, more threads slow it down); «⏱ Benchmark» picks the best on this phone)'},
           {n:'bench',t:'button',label:'⏱ Benchmark (host «app»)',fn:n=>olmBench(n)},
           {n:'list',t:'button',label:'⟳ Models',fn:n=>olmModels(n)},
           {n:'prompt',t:'text',d:'',label:'question (the wire «prompt» overrides it)'},
