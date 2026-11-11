@@ -5,7 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float32Array,Float64Array,Array,Set,String,RegExp});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/whisper-kernels.js'),'utf8')+';this.T={wsTo16k,wsSegmenter,wsDraftDue,wsDraftNext,wsJunk,wsLoop,wsDeloop,wsAppend,wsFileName,wsStamp,wsManualName,wsFileUrl,WS_FILES};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/whisper-kernels.js'),'utf8')+';this.T={wsTo16k,wsSegmenter,wsDraftDue,wsDraftNext,wsMergeJobs,wsQueueSec,wsJunk,wsLoop,wsDeloop,wsAppend,wsFileName,wsStamp,wsManualName,wsFileUrl,WS_FILES};',ctx);
 const T=ctx.T;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 
@@ -76,5 +76,22 @@ ok('draft not due: a final phrase is being recognised or waits',!T.wsDraftDue({.
 ok('draft not due: nobody speaks, phrase too short, pause about to end it',!T.wsDraftDue({...due,speaking:false}) && !T.wsDraftDue({...due,seconds:.8}) && !T.wsDraftDue({...due,quiet:.5}) && T.wsDraftDue({...due,quiet:.3}));
 ok('draft not due: too early',!T.wsDraftDue({...due,now:4.9}) && T.wsDraftDue({...due,now:5}));
 ok('draft next: at least «every» s, and 1.3× what the last one took',T.wsDraftNext(1000,200,1.5)===2500 && T.wsDraftNext(1000,4000,1.5)===1000+5200);
+
+// --- очередь отстаёт: склейка фраз (wsMergeJobs), отброс только за две минуты звука
+{ const job=(sec,v)=>({audio:new Float32Array(sec*16000).fill(v),sec:0});
+  ok('merge: nothing queued → null',T.wsMergeJobs([],28,.3)===null);
+  const one=T.wsMergeJobs([job(3,1)],28,.3); ok('merge: one job stays as it is',one.taken===1 && one.job.audio.length===48000 && !one.job.merged);
+  const m3=T.wsMergeJobs([job(3,1),job(2,2),job(4,3)],28,.3);
+  ok('merge: phrases one after another with a 0.3 s gap of silence, in order',m3.taken===3 && m3.job.merged===3 && m3.job.audio.length===(3+2+4)*16000+2*4800 && m3.job.audio[0]===1 && m3.job.audio[3*16000+100]===0 && m3.job.audio[3*16000+4800+10]===2 && m3.job.audio.at(-1)===3);
+  const lim=T.wsMergeJobs([job(10,1),job(10,2),job(10,3),job(2,4)],28,.3);
+  ok('merge: not longer than the window (28 s): two phrases fit, the rest wait for the next round',lim.taken===2 && lim.job.audio.length===20*16000+4800);
+  const big=T.wsMergeJobs([job(20,1),job(20,2)],28,.3); ok('merge: a phrase that does not fit is left alone',big.taken===1 && big.job.audio.length===20*16000);
+  const fst=T.wsMergeJobs([job(3,1),job(2,2)],28,.3); ok('merge: the time of the first phrase is kept (for the stamps)',fst.job.sec===0);
+  ok('queue length in seconds',Math.abs(T.wsQueueSec([job(3,0),job(2.5,0)])-5.5)<1e-9 && T.wsQueueSec([])===0);
+  // как узел: 7 фраз по 3 с ждут — две склейки вместо семи распознаваний
+  const q=Array.from({length:7},(_,i)=>job(3,i+1)); let runs=0, merged=0, left=0;
+  while(q.length){ const mm=q.length>=2 ? T.wsMergeJobs(q,28,.3) : {job:q[0],taken:1}; q.splice(0,mm.taken); runs++; merged+=mm.job.merged||0; left+=mm.job.audio.length; }
+  ok('merge: seven 3 s phrases in the queue are recognised in 1 round (they fit in 28 s) — none is lost',runs===1 && merged===7 && left===7*3*16000+6*4800);
+}
 
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad?1:0);

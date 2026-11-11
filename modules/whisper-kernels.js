@@ -59,6 +59,20 @@ function wsSegmenter(sr,o){
   };
 }
 
+// Очередь отстаёт — фразы ждут. Распознавание стоит почти как целое окно в 30 с, поэтому подряд идущие фразы склеиваем в одно окно (до maxSec, между ними gapSec тишины):
+// одно окно из семи фраз дешевле семи отдельных, и ничего не теряется. Возвращает {job, taken} — склеенную работу и сколько штук взято из начала очереди.
+function wsMergeJobs(jobs,maxSec,gapSec){
+  if(!jobs.length) return null;
+  const first=jobs[0], max=Math.round(maxSec*16000), gap=Math.round(gapSec*16000);
+  let take=1, len=first.audio.length;
+  while(take<jobs.length && len+gap+jobs[take].audio.length<=max){ len+=gap+jobs[take].audio.length; take++; }
+  if(take===1) return {job:first,taken:1};
+  const audio=new Float32Array(len); let o=0;
+  for(let i=0;i<take;i++){ if(i) o+=gap; audio.set(jobs[i].audio,o); o+=jobs[i].audio.length; }
+  return {job:{audio,sec:first.sec,merged:take},taken:take};
+}
+const wsQueueSec=jobs=>jobs.reduce((s,j)=>s+j.audio.length,0)/16000;
+
 // Пора ли считать черновик идущей фразы: модель уже в памяти, итоговые фразы не ждут своей очереди, фраза идёт и не короче minSec,
 // пауза ещё не закончила её, и прошло не меньше времени, чем нужно (at — момент, раньше которого не начинать)
 function wsDraftDue(s){
