@@ -14,18 +14,19 @@ const mkFetch=()=>async(u,o)=>{
   const k=Object.keys(routes).find(k=>String(u).includes(k));
   if(!k) throw new TypeError('Failed to fetch');
   const v=routes[k];
-  if(v.status && v.status>=400) return {ok:false,status:v.status,json:async()=>v.body||{}};
+  if(v.status && v.status>=400) return {ok:false,status:v.status,json:async()=>v.body||{},text:async()=>typeof v.body==='string' ? v.body : JSON.stringify(v.body||{})};
   const text=typeof v.body==='string' ? v.body : JSON.stringify(v.body);
   const chunks=v.chunks||[text]; let i=0;
   return {ok:true,status:200,json:async()=>JSON.parse(text),text:async()=>text,
     body:{getReader:()=>({read:async()=>i<chunks.length ? {done:false,value:enc(chunks[i++])} : {done:true}})}};
 };
 const store={};
+const NET={proxy:'P/{url}',mode:'always',need:new Set(),needs(u){ try{ return this.need.has(new URL(u).host); }catch(e){ return false; } },url(u){ return 'PROXY/'+encodeURIComponent(u); }};
 const ctx=vm.createContext({URL,URLSearchParams,String,Number,Math,Array,Object,Set,Map,Promise,JSON,Uint8Array,TextEncoder,TextDecoder,
   AbortController,TypeError,Error,Date,parseInt,parseFloat,isFinite,encodeURIComponent,performance,setTimeout,clearTimeout,
   fetch:(...a)=>ctx.__fetch(...a), __fetch:mkFetch(),
   localStorage:{getItem:k=>k in store ? store[k] : null,setItem:(k,v)=>{ store[k]=String(v); }},
-  Net:{url:u=>'PROXY/'+encodeURIComponent(u)}, def:d=>{ defs[d.id]=d; },
+  Net:NET, def:d=>{ defs[d.id]=d; },
   setMod:(n,k,v)=>{ n.p[k]=v; }, recNum:v=>typeof v==='number'&&isFinite(v)?v:null, recList:v=>Array.isArray(v)?v:v?[v]:[],
   GeoMe:{lat:null,lon:null}});
 const src=['netdata-kernels','netdata'].map(f=>fs.readFileSync(path.join(root,'modules/'+f+'.js'),'utf8')).join('\n');
@@ -165,7 +166,7 @@ ok('chunk: error',K.ndOllamaChunk({error:'model not found'}).err==='model not fo
   let os=node('osmobj',{lat:52.52,lon:13.4,kind:'radio masts',radius:30});
   defs.osmobj.process(os,{}); ok('osm node: nothing until search',os.rowsOut===null && calls.length>=0);
   calls.length=0; defs.osmobj.process(os,{search:1}); await wait(30); r=defs.osmobj.process(os,{search:0});
-  ok('osm node: rows within the radius, nearest',r.count===2 && r.nearest.startsWith('Telekom') && calls.length===1 && decodeURIComponent(calls[0].body).includes('"man_made"="mast"'));
+  ok('osm node: rows within the radius, nearest',r.count===2 && r.nearest.startsWith('Telekom') && calls.length===1 && decodeURIComponent(calls[0].url).includes('["man_made"="mast"]') && calls[0].body===undefined);
   os=node('osmobj',{lat:52.52,lon:13.4,kind:'custom',key:'a"];out',value:''}); defs.osmobj.process(os,{}); calls.length=0;
   defs.osmobj.process(os,{search:1}); await wait(10);
   ok('osm node: bad tag — no request',calls.length===0 && /not valid/.test(os.msg));
@@ -173,8 +174,39 @@ ok('chunk: error',K.ndOllamaChunk({error:'model not found'}).err==='model not fo
   os=node('osmobj',{lat:52.52,lon:13.4}); defs.osmobj.process(os,{}); calls.length=0; defs.osmobj.process(os,{search:1}); await wait(40);
   ok('osm node: next mirror after an error',calls.length===2 && os.rowsOut.length===2);
   routes={'overpass-api.de':{body:{elements:[],remark:'runtime error: out of memory'}},'overpass.kumi.systems':{status:500},'overpass.private.coffee':{status:500}};
-  os=node('osmobj',{lat:52.52,lon:13.4,radius:3}); os.go=true; defs.osmobj.process(os,{}); defs.osmobj.process(os,{search:1}); await wait(40);
-  ok('osm node: all mirrors failed → status',/search failed/.test(os.msg),os.msg);
+  os=node('osmobj',{lat:52.52,lon:13.4}); os.go=true; defs.osmobj.process(os,{}); defs.osmobj.process(os,{search:1}); await wait(40);
+  ok('osm node: all mirrors failed → the last answer, marked stale',/^stale/.test(os.msg) && os.rowsOut.length===2,os.msg);
+  os=node('osmobj',{lat:11,lon:22,radius:3}); defs.osmobj.process(os,{}); defs.osmobj.process(os,{search:1}); await wait(40);
+  ok('osm node: all mirrors failed, no cache → status',/search failed/.test(os.msg),os.msg);
+
+  // Прокси: «always» — только через него; «on error» — сначала напрямую, при отказе браузера через прокси и запоминание хоста; без прокси — напрямую
+  routes={'PROXY/':{body:{models:[{name:'x'}]}},'11434/api/tags':{body:{models:[{name:'x'}]}}}; 
+  let ox=node('ollama',{host:'http://lan-pc:11434',proxy:true}); calls.length=0; await defs.ollama.params.find(p=>p.n==='list').fn(ox);
+  ok('proxy always + node ticked: the request goes through the proxy',calls.length===1 && calls[0].url.startsWith('PROXY/') && ox.models.length===1);
+  ox=node('ollama',{host:'http://lan-pc:11434',proxy:false}); calls.length=0; await defs.ollama.params.find(p=>p.n==='list').fn(ox);
+  ok('proxy always, node not ticked: directly',calls.length===1 && !calls[0].url.startsWith('PROXY/'));
+  NET.mode='auto'; NET.need.clear();
+  routes={'PROXY/':{body:{models:[{name:'viaproxy'}]}}};                              // напрямую — отказ браузера (нет маршрута), через прокси — ответ
+  ox=node('ollama',{host:'http://lan-pc:11434'}); calls.length=0; await defs.ollama.params.find(p=>p.n==='list').fn(ox);
+  ok('on error: direct first, then the proxy once',calls.length===2 && !calls[0].url.startsWith('PROXY/') && calls[1].url.startsWith('PROXY/') && ox.models[0].name==='viaproxy',JSON.stringify(calls.map(c=>c.url)));
+  ok('on error: the host that needed the proxy is remembered',NET.need.has('lan-pc:11434'));
+  calls.length=0; await defs.ollama.params.find(p=>p.n==='list').fn(ox);
+  ok('on error: the next request goes straight through the proxy',calls.length===1 && calls[0].url.startsWith('PROXY/'));
+  const chatOk=[{message:{content:'Hel'},done:false},{message:{content:'lo'},done:false},{done:true,eval_count:1,eval_duration:1e9}].map(x=>JSON.stringify(x)+'\n').join('');
+  routes={'PROXY/':{body:'',chunks:[chatOk]}}; NET.need.clear(); calls.length=0;
+  ox=node('ollama',{host:'http://lan-pc:11434',model:'m',prompt:'hi'}); await defs.ollama.params.find(p=>p.n==='ask').fn(ox);
+  ok('on error: a POST chat is repeated through the proxy with the same body',calls.length===2 && calls[1].url.startsWith('PROXY/') && calls[1].body===calls[0].body && ox.last==='Hello',ox.msg);
+  routes={}; NET.need.clear(); calls.length=0;
+  ox=node('ollama',{host:'http://nowhere:11434'}); await defs.ollama.params.find(p=>p.n==='list').fn(ox);
+  ok('on error: both ways fail → the original error',calls.length===2 && /models:/.test(ox.msg) && /Failed to fetch/.test(ox.msg),ox.msg);
+  routes={'PROXY/':{status:405,body:'GET and HEAD only'}}; NET.need.clear();
+  ox=node('ollama',{host:'http://lan-pc:11434',model:'m',prompt:'x'}); await defs.ollama.params.find(p=>p.n==='ask').fn(ox);
+  ok('proxy refusal is readable in the status',/405/.test(ox.msg) && /GET and HEAD/.test(ox.msg),ox.msg);
+  NET.mode='off'; NET.proxy='';
+  routes={'11434/api/tags':{body:{models:[{name:'x'}]}}}; calls.length=0;
+  ox=node('ollama',{host:'http://lan-pc:11434',proxy:true}); await defs.ollama.params.find(p=>p.n==='list').fn(ox);
+  ok('proxy off: directly even when ticked',calls.length===1 && !calls[0].url.startsWith('PROXY/'));
+  NET.mode='always'; NET.proxy='P/{url}'; NET.need.clear();
 
   // Ollama
   routes={'/api/tags':{body:{models:[{name:'llama3.2:3b'},{name:'qwen2.5:7b'}]}}};

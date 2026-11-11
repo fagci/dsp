@@ -6,7 +6,25 @@
    и показывается с пометкой «stale», если сети нет. Разбор ответов — netdata-kernels.js. */
 
 const ND_OVERPASS=['https://overpass-api.de/api/interpreter','https://overpass.kumi.systems/api/interpreter','https://overpass.private.coffee/api/interpreter'];
-const ndNet=(n,u)=>n.p.proxy ? Net.url(u) : u;
+// fetch с учётом Settings → CORS proxy (и режима прокси): прокси задан и узел его просит — через него (режим «always»); режим «on error» —
+// сначала напрямую, при отказе браузера (CORS, mixed content: TypeError) один раз через прокси, и хост запоминается; нет прокси / «off» — напрямую.
+// Повтор безопасен и для POST: TypeError значит, что ответа не было вовсе, а наши запросы (чат, поиск) ничего не меняют на сервере.
+async function ndFetch(n,url,init){
+  const px=Net.proxy;
+  if(!px) return fetch(url,init);
+  const via=()=>fetch(Net.url(url,true),init);
+  if(Net.needs(url)){ try{ return await via(); }catch(e){ if(e.name==='AbortError') throw e; } return fetch(url,init); }
+  if(n.p.proxy && Net.mode==='always') return via();
+  try{ return await fetch(url,init); }
+  catch(e){
+    if(!(e instanceof TypeError) || init?.signal?.aborted) throw e;
+    let r; try{ r=await via(); }catch(x){ throw e; }                       // не вышло и через прокси — вернётся исходная ошибка
+    if(r.ok){ try{ Net.need.add(new URL(url).host); }catch(x){} }
+    return r;
+  }
+}
+// почему сервер отказал: JSON {error} (Ollama), иначе первая строка текста (прокси моста отвечает text/plain)
+async function ndWhy(r){ try{ const t=(await r.text()).trim(); try{ const j=JSON.parse(t); return j.error||j.message||t.slice(0,120); }catch(e){ return t.split('\n')[0].slice(0,120); } }catch(e){ return ''; } }
 const ndAbort=n=>{ for(const k in n.acs||{}) try{ n.acs[k].abort(); }catch(e){} };
 const ndPulse=(n,key,v)=>{ const on=(v||0)>.5, was=n[key]; n[key]=on; return on && !was; };
 const ndErr=e=>e.name==='AbortError' ? '' : e.message+(e instanceof TypeError ? ' (no CORS headers on the server, blocked, or no network — try «through the CORS proxy»)' : '');
@@ -23,8 +41,8 @@ async function ndGet(n,key,url,kind,opt){
   const ac=n.acs[key]=new AbortController();
   const tm=setTimeout(()=>{ ac.timedOut=true; ac.abort(); },timeout*1000);
   try{
-    const r=await fetch(url,{signal:ac.signal,...fo});
-    if(!r.ok) throw new Error(r.status===429 ? 'HTTP 429 (rate limit — try later)' : 'HTTP '+r.status);
+    const r=await ndFetch(n,url,{signal:ac.signal,...fo});
+    if(!r.ok){ const w=r.status===429 ? '' : await ndWhy(r); throw new Error(r.status===429 ? 'HTTP 429 (rate limit — try later)' : 'HTTP '+r.status+(w ? ': '+w : '')); }
     const j=await (kind==='json' ? r.json() : r.text());
     if(cache) ndSave(cache,j);
     return {j,stale:0,at:Date.now()};
@@ -53,10 +71,10 @@ async function mtLoad(n){
   n.busy=true; n.lastAt=performance.now(); n.lastLat=n.lat; n.lastLon=n.lon;
   try{
     const u=ndMeteoUrl(n.lat,n.lon);
-    const r=await ndGet(n,'m',ndNet(n,u),'json',{cache:'m'+ndHash(u)});
+    const r=await ndGet(n,'m',u,'json',{cache:'m'+ndHash(u)});
     const m=ndMeteo(r.j); if(!m) throw new Error('unexpected answer');
     if(n.p.elev){
-      try{ const eu=ndElevUrl(n.lat,n.lon), er=await ndGet(n,'e',ndNet(n,eu),'json',{cache:'e'+ndHash(eu)}); m.elev=ndElev(er.j) ?? m.elev; }catch(e){ if(e.name==='AbortError') throw e; }
+      try{ const eu=ndElevUrl(n.lat,n.lon), er=await ndGet(n,'e',eu,'json',{cache:'e'+ndHash(eu)}); m.elev=ndElev(er.j) ?? m.elev; }catch(e){ if(e.name==='AbortError') throw e; }
     }
     n.m=m; n.msg=ndStatus(n,r); n.at=r.at; n.stale=r.stale;
   }catch(e){ const t=ndErr(e); if(t) n.msg='failed: '+t; }
@@ -74,7 +92,7 @@ def({ id:'meteo', title:'Weather & Elevation (Open-Meteo)', cat:'Sources', reado
           {n:'auto',t:'check',d:true,label:'update by itself'},
           {n:'elev',t:'check',d:true,label:'also ask the elevation of the point'},
           {n:'go',t:'button',label:'⟳ Update now',fn:n=>{ n.want=true; }},
-          {n:'proxy',t:'check',d:false,label:'through the CORS proxy from Settings'}],
+          {n:'proxy',t:'check',d:false,label:'always through the CORS proxy from Settings (without it — directly, the proxy only after a refusal in «on error» mode)'}],
   init:n=>{ n.m=null; n.msg=''; n.busy=false; n.lastAt=-1e9; n.want=false; n.lat=null; n.lon=null; n.lastLat=null; n.lastLon=null; n.up=false; n.at=0; n.stale=0; n.rev=0; },
   dispose:n=>ndAbort(n),
   drawKey:n=>n.msg+'|'+n.rev+'|'+n.busy,
@@ -105,7 +123,7 @@ async function acLoad(n){
   n.busy=true; n.lastAt=performance.now();
   try{
     const u=ndAcUrl(n.p.source,n.lat,n.lon,+n.p.radius);
-    const r=await ndGet(n,'a',ndNet(n,u),'json',{cache:'a'+ndHash(u),timeout:25});
+    const r=await ndGet(n,'a',u,'json',{cache:'a'+ndHash(u),timeout:25});
     let rows=ndAircraft(n.p.source,r.j,n.lat,n.lon); if(!rows) throw new Error('unexpected answer');
     if(!n.p.ground) rows=rows.filter(x=>!x.ground);
     rows=rows.filter(x=>x.dist==null || x.dist<=+n.p.radius).slice(0,+n.p.limit);
@@ -125,7 +143,7 @@ def({ id:'airnet', title:'Aircraft Nearby (adsb.lol · OpenSky)', cat:'Sources',
           {n:'refresh',t:'range',min:5,max:300,step:5,d:15,label:'refresh, s (0 — by hand)'},
           {n:'ground',t:'check',d:false,label:'show aircraft on the ground'},
           {n:'go',t:'button',label:'⟳ Update now',fn:n=>{ n.want=true; }},
-          {n:'proxy',t:'check',d:false,label:'through the CORS proxy from Settings'},
+          {n:'proxy',t:'check',d:false,label:'always through the CORS proxy from Settings (without it — directly, the proxy only after a refusal in «on error» mode)'},
           {n:'limit',t:'range',min:20,max:1000,step:20,d:300,label:'max aircraft',adv:true}],
   init:n=>{ n.rowsOut=null; n.sel=null; n.msg=''; n.busy=false; n.lastAt=-1e9; n.want=false; n.lat=null; n.lon=null; n.up=false; n.at=0; n.stale=0; n.rev=0; n.lastSrc=n.p.source; },
   dispose:n=>ndAbort(n),
@@ -160,20 +178,24 @@ async function osSearch(n){
   const pair=ndOsmPair(n.p.kind,n.p.key,n.p.value);
   if(!pair){ n.msg='the tag is not valid: key — letters, digits, «_ : . -»; value — no quotes or backslashes'; return; }
   n.msg='searching OpenStreetMap…'; n.busy=true;
-  const body='data='+encodeURIComponent(ndOsmQuery(n.lat,n.lon,+n.p.radius,pair,+n.p.limit));
-  let err='';
+  const data=encodeURIComponent(ndOsmQuery(n.lat,n.lon,+n.p.radius,pair,+n.p.limit));
+  let err=''; const ck='o'+ndHash(data);
+  const done=(r,j)=>{
+    const rows=ndOsmRows(j,pair,n.lat,n.lon); if(!rows) throw new Error('unexpected answer');
+    n.rowsOut=rows.filter(x=>x.dist==null || x.dist<=+n.p.radius); n.sel=null;
+    n.msg=ndStatus(n,r) || (n.rowsOut.length ? '' : 'nothing with '+pair.key+(pair.value ? '='+pair.value : '')+' within '+n.p.radius+' km — raise the radius');
+  };
   try{
-    for(const base of ND_OVERPASS){
+    for(const base of ND_OVERPASS){                                                  // кэш — только когда не ответило ни одно зеркало
       n.msg='searching OpenStreetMap… ('+base.split('/')[2]+')';
       try{
-        const r=await ndGet(n,'s',ndNet(n,base),'json',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body,timeout:35,cache:'o'+ndHash(base.length+body)});
-        if(r.j.remark && !(r.j.elements||[]).length && !r.stale) throw new Error('server busy: '+r.j.remark);
-        const rows=ndOsmRows(r.j,pair,n.lat,n.lon); if(!rows) throw new Error('unexpected answer');
-        n.rowsOut=rows.filter(x=>x.dist==null || x.dist<=+n.p.radius); n.sel=null;
-        n.msg=ndStatus(n,r) || (n.rowsOut.length ? '' : 'nothing with '+pair.key+(pair.value ? '='+pair.value : '')+' within '+n.p.radius+' km — raise the radius');
-        return;
+        const r=await ndGet(n,'s',base+'?data='+data,'json',{timeout:35});            // GET ?data= — его пропускает и прокси моста
+        if(r.j.remark && !(r.j.elements||[]).length) throw new Error('server busy: '+r.j.remark);
+        ndSave(ck,r.j); done(r,r.j); return;
       }catch(e){ err=ndErr(e); if(!err) return; }
     }
+    const c=ndLoad(ck);
+    if(c){ try{ done({stale:1,at:c.t,err:err},c.v); return; }catch(e){} }
     n.msg='search failed: '+err;
   }finally{ n.busy=false; n.rev=(n.rev||0)+1; }
 }
@@ -189,7 +211,7 @@ def({ id:'osmobj', title:'OSM Objects (Overpass)', cat:'Sources', readout:true, 
           {n:'lon',t:'num',d:0,label:'centre longitude'},
           {n:'radius',t:'range',min:1,max:100,step:1,d:15,label:'radius, km'},
           {n:'go',t:'button',label:'🔍 Search',fn:n=>osSearch(n)},
-          {n:'proxy',t:'check',d:false,label:'through the CORS proxy from Settings'},
+          {n:'proxy',t:'check',d:false,label:'always through the CORS proxy from Settings (without it — directly, the proxy only after a refusal in «on error» mode)'},
           {n:'limit',t:'range',min:20,max:1000,step:20,d:300,label:'max objects',adv:true}],
   init:n=>{ n.rowsOut=null; n.sel=null; n.msg=''; n.busy=false; n.lat=null; n.lon=null; n.go=false; n.rev=0; },
   dispose:n=>ndAbort(n),
@@ -220,7 +242,7 @@ async function olmModels(n){
   const base=ndOllamaBase(n.p.host);
   n.msg='asking '+base+'…';
   try{
-    const r=await ndGet(n,'t',ndNet(n,base+'/api/tags'),'json',{timeout:10,cache:'t'+ndHash(base)});
+    const r=await ndGet(n,'t',base+'/api/tags','json',{timeout:10,cache:'t'+ndHash(base)});
     const list=ndOllamaTags(r.j); if(!list) throw new Error('this is not an Ollama server');
     n.models=list; n.msg=ndStatus(n,r) || (list.length ? '' : 'no models on the server — «ollama pull <name>»');
     if(!n.p.model && list.length) setMod(n,'model',list[0].name);
@@ -243,8 +265,8 @@ async function olmSend(n,prompt,ctx){
   n.busy=true; n.text=''; n.stats=null; n.msg='waiting for the model…'; n.t0=performance.now();
   let acc='';
   try{
-    const r=await fetch(ndNet(n,base+'/api/chat'),{method:'POST',signal:ac.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    if(!r.ok){ let t=''; try{ t=(await r.json()).error||''; }catch(e){} throw new Error('HTTP '+r.status+(t ? ': '+t : '')); }
+    const r=await ndFetch(n,base+'/api/chat',{method:'POST',signal:ac.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    if(!r.ok){ const t=await ndWhy(r); throw new Error('HTTP '+r.status+(t ? ': '+t : '')); }
     const rd=r.body.getReader(), dec=new TextDecoder(); let buf='', fin=false;
     n.msg='';
     while(!fin){
@@ -285,7 +307,7 @@ def({ id:'ollama', title:'Ollama (local LLM)', cat:'Tools', readout:true, tall:t
           {n:'numCtx',t:'range',min:0,max:131072,step:1024,d:0,label:'context size, tokens (0 — the model default)',adv:true},
           {n:'seed',t:'num',d:0,min:0,step:1,label:'seed (0 — random)',adv:true},
           {n:'keepAlive',t:'text',d:'',label:'keep the model loaded (5m, 1h, 0 — unload at once)',adv:true},
-          {n:'proxy',t:'check',d:false,label:'through the CORS proxy from Settings',adv:true}],
+          {n:'proxy',t:'check',d:false,label:'always through the CORS proxy from Settings (without it — directly, the proxy only after a refusal in «on error» mode)',adv:true}],
   init:n=>{ n.hist=[]; n.text=''; n.last=''; n.msg=''; n.busy=false; n.models=[]; n.stats=null; n.fresh=0; n.rev=0; n.sys='';
     n.inPrompt=''; n.inCtx=''; n.prevPrompt=null; n.s=false; n.st=false; n.cl=false; n.t0=0; },
   dispose:n=>{ ndAbort(n); },
