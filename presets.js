@@ -689,6 +689,7 @@ const PRESET_CATS={
   'Network: HTTP Server — Share Files with Any Browser (Phone App)':'Network & IoT',
   'Network: Which App Talks to Where (Phone VPN Monitor)':'Network & IoT',
   'Network: Pick the Apps for the VPN Monitor (Installed Apps → Table → Monitor)':'Network & IoT',
+  'Network: Decrypt TLS for One App (Install the CA, Read Its Plaintext)':'Network & IoT',
   'Network: DNS Benchmark — Which Resolver Is Fastest From Here (Phone App)':'Network & IoT',
   'Network: Cast Receiver — the Phone as a DLNA Screen and Speaker (Phone App)':'Network & IoT',
   'Network: Cast to a TV or Speaker — Find the Player, Send a File or a Stream (Phone App)':'Network & IoT',
@@ -2321,6 +2322,25 @@ inst.size.w=620; inst.size.h=420; applySize(inst);
 const flows=addNode('table',1120,260,{list:'@patch',key:'id',initial:false,follow:true,cols:['app','proto','dst','dport','host','up','down']});
 flows.size.w=620; flows.size.h=420; applySize(flows);
 addEdge(vm.id,'installed',inst.id,'rec'); addEdge(inst.id,'rows',vm.id,'rows'); addEdge(vm.id,'flows',flows.id,'rec');
+markWiresDirty();
+});
+preset('Network: Decrypt TLS for One App (Install the CA, Read Its Plaintext)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'For debugging your own apps, not for watching someone else\'s: the phone becomes its own TLS man-in-the-middle, strictly for a short, explicit list of apps, never for everything. 1) Press «Get CA certificate» in Network Monitor — it only hands you the certificate and its SHA-256 fingerprint, it never installs anything itself. 2) Check the fingerprint, then install it by hand: Android Settings → Security → Encryption & credentials → Install a certificate → CA certificate (exact wording varies by phone). 3) Fill «decrypt TLS only for these apps» with the package (e.g. com.example.app) or pick it from the Table below (List apps → filter → wire rows), and press «Set TLS decrypt list». 4) That SAME app must also be allowed through the tunnel itself (the mode / apps fields above «Get CA certificate» — «only these» with the same package, or «all apps»). Press Start.\n'+
+  'A pinned app (most banks, many messengers) will simply fail to connect — the phone\'s own certificate is not its real one and pinning exists precisely to catch that; this cannot be worked around from here, nor should it be. The plaintext comes out on «plain» (direction, bytes, a text preview — HTTP headers and bodies read as text; other binary protocols will look like noise) and «tlsErr» (a TLS failure on that connection: untrusted upstream, a reset, anything else). Remove the CA from the device\'s settings yourself when you are done — the app cannot do that for you either. «Issue a new CA» throws the current one away (do that if its key might have leaked) — every device that trusted the old one needs the new one installed in its place.'});
+nt.size.w=1040; nt.size.h=230; applySize(nt);
+const vm=addNode('vpnmon',40,310,{mode:'only these',apps:'com.example.app',tlsApps:'com.example.app'});
+vm.size.w=420; vm.size.h=460; applySize(vm);
+const inst=addNode('table',500,310,{list:'@patch',key:'uid',initial:false,cols:['label','uid','pkg']});
+inst.size.w=560; inst.size.h=230; applySize(inst);
+const plain=addNode('table',500,560,{list:'@patch',key:'',initial:false,follow:true,cols:['dir','n','preview']});
+plain.size.w=560; plain.size.h=230; applySize(plain);
+const err=addNode('table',1100,310,{list:'@patch',key:'id',initial:false,follow:true,cols:['host','msg']});
+err.size.w=460; err.size.h=230; applySize(err);
+const tp=addNode('textpanel',1100,560,{lines:'CA certificate (install by hand, never auto-installed):\n{s1}'});
+tp.size.w=460; tp.size.h=230; applySize(tp);
+addEdge(vm.id,'installed',inst.id,'rec'); addEdge(inst.id,'rows',vm.id,'tlsRows');
+addEdge(vm.id,'plain',plain.id,'rec'); addEdge(vm.id,'tlsErr',err.id,'rec'); addEdge(vm.id,'caPem',tp.id,'s1');
 markWiresDirty();
 });
 preset('Bridge: Serial Port ↔ BLE UART (USB Radio to a BLE Device)', function(){

@@ -169,6 +169,26 @@ interface VpnEvents {
     /** Каждый пакет целиком: out — от приложения в сеть; f — поток (null, если ещё не заведён). */
     fun packet(out: Boolean, p: ByteArray, len: Int, f: FlowInfo?) {}
     fun dns(f: FlowInfo?, q: DnsSniff.Msg, ms: Long) {}
+    /** Дешёвая проверка до того, как известен SNI (сразу после syn, по владельцу/порту) — кандидат ли поток на расшифровку.
+     *  false по умолчанию: обычный проход, без неё TLS-перехват нигде не включается. */
+    fun decryptCandidate(f: FlowInfo): Boolean = false
+    /** SNI настоящего сервера известен — последнее слово: расшифровывать ли именно этот поток. null — обычный проход (например,
+     *  порт похож на TLS, а это не он, или host не входит в список расшифровки). Вызывается не больше раза на поток. */
+    fun decrypt(f: FlowInfo, host: String): TlsMitm? = null
+}
+
+/**
+ * Контракт одного расшифровываемого TCP-потока: deviceSide — роль «сервер» для приложения на телефоне (сертификат подписан
+ * своим центром под SNI настоящего сервера), upstreamSide — роль «клиент» к настоящему серверу (честная проверка имени
+ * и цепочки, обычный trust manager системы — поддельный сертификат это не обходит). onPlain — открытый текст в обе стороны
+ * (up=true — от приложения к серверу), onError — расшифровать не вышло (поток закрывается этой причиной, без тихого
+ * падения назад на обычный проход: к этому моменту устройство уже получило наш сертификат вместо настоящего).
+ */
+interface TlsMitm {
+    fun deviceSide(): javax.net.ssl.SSLEngine
+    fun upstreamSide(): javax.net.ssl.SSLEngine
+    fun onPlain(up: Boolean, data: ByteArray) {}
+    fun onError(msg: String) {}
 }
 
 class VpnEngine(private val out: (ByteArray) -> Unit, private val socks: VpnSockets, private val ev: VpnEvents, val mtu: Int = 1500) {
@@ -347,6 +367,8 @@ class VpnEngine(private val out: (ByteArray) -> Unit, private val socks: VpnSock
         val writeQ = LinkedBlockingQueue<ByteArray>(); val queued = AtomicInteger(0)
         var sniffed = false; var synAckAt = 0L; var synAckTries = 0
         var lastWndSent = 65535
+        @Volatile var mitmCandidate = false; @Volatile var mitmDecided = false; @Volatile var splice: TlsSplice? = null
+        @Volatile private var pumpsStarted = false; @Volatile private var establishedAt = 0L
 
         val ourWnd: Int get() = (65535 - queued.get()).coerceIn(0, 65535)
 
@@ -367,6 +389,7 @@ class VpnEngine(private val out: (ByteArray) -> Unit, private val socks: VpnSock
             while (p < oEnd) { val k = Ip.u8(b, p); if (k == 0) break; if (k == 1) { p++; continue }; val l = Ip.u8(b, p + 1); if (l < 2) break; if (k == 2 && l == 4) peerMss = Ip.u16(b, p + 2); p += l }
             info.owner = ev.owner(6, InetSocketAddress(InetAddress.getByAddress(csrc), cport), InetSocketAddress(InetAddress.getByAddress(sdst), sport))
             info.host = nameOf(info.dst); info.state = "connecting"; ev.flow(info, "open")
+            mitmCandidate = try { ev.decryptCandidate(info) } catch (e: Exception) { false }
             pool.execute {
                 try {
                     val s = socks.tcp(InetAddress.getByAddress(sdst), sport, 8000)
@@ -399,7 +422,7 @@ class VpnEngine(private val out: (ByteArray) -> Unit, private val socks: VpnSock
                     return
                 }
                 if (flags and 0x10 != 0) {
-                    if (state == 1 && ackNo == isn + 1) { state = 2; info.state = "established"; startPumps() }
+                    if (state == 1 && ackNo == isn + 1) { state = 2; info.state = "established"; establishedAt = System.currentTimeMillis(); startPumpsIfReady() }
                     if (state == 2 && seqLe(sndUna, ackNo) && seqLe(ackNo, sndNxt)) {
                         while (unacked.isNotEmpty() && seqLe(unacked.first().end, ackNo)) unacked.removeFirst()
                         sndUna = ackNo; peerWnd = Ip.u16(b, ihl + 14); lock.notifyAll()
@@ -415,7 +438,19 @@ class VpnEngine(private val out: (ByteArray) -> Unit, private val socks: VpnSock
                     }
                     if (s != rcvNxt) { ack(); return }                                   // пропуск впереди: повторный ACK
                     if (n > 0) {
-                        if (!sniffed) { sniffed = true; val h = NameSniff.host(b, start, n); if (h != null) { info.host = h; info.l7 = if (NameSniff.tls(b, start, n) != null) "tls" else "http"; ev.flow(info, "host") } }
+                        if (!sniffed) {
+                            sniffed = true
+                            val h = NameSniff.host(b, start, n)
+                            if (h != null) { info.host = h; info.l7 = if (NameSniff.tls(b, start, n) != null) "tls" else "http"; ev.flow(info, "host") }
+                            // SNI известен (или не нашёлся) — последнее слово по расшифровке этого потока, если он кандидат; раньше решить нельзя
+                            if (mitmCandidate) {
+                                if (h != null && info.l7 == "tls") {
+                                    val m = try { ev.decrypt(info, h) } catch (e: Exception) { null }
+                                    if (m != null) splice = try { TlsSplice(m, ::sendAppData, ::sendFinToDevice) { close(true) } } catch (e: Exception) { null }
+                                }
+                                mitmDecided = true; startPumpsIfReady()
+                            }
+                        }
                         val chunk = b.copyOfRange(start, start + n); rcvNxt += n; info.up += n; info.last = System.currentTimeMillis()
                         queued.addAndGet(n); writeQ.add(chunk)
                     }
@@ -425,46 +460,89 @@ class VpnEngine(private val out: (ByteArray) -> Unit, private val socks: VpnSock
             }
         }
 
+        /** Поток-кандидат на расшифровку ждёт первых байт от устройства, чтобы узнать SNI, прежде чем запустить насосы (иначе
+         *  сырые байты настоящего сервера и устройства смешались бы с TLS-перехватом в непонятном порядке). Обычный поток
+         *  запускается сразу же, как раньше. mitmTimeout() снимает это ожидание, если устройство так и не заговорило. */
+        private fun startPumpsIfReady() {
+            if (mitmCandidate && !mitmDecided) return
+            synchronized(lock) { if (pumpsStarted || state != 2) return; pumpsStarted = true }
+            startPumps()
+        }
+
+        /** Поток-кандидат, который так и не решился (устройство молчит — не TLS на этом порту, или SNI не распознался быстро):
+         *  не ждём вечно, идём обычным проходом. Вызывается из общего tick(). */
+        fun mitmTimeout(now: Long) {
+            if (!mitmCandidate || mitmDecided || pumpsStarted) return
+            if (establishedAt == 0L || now - establishedAt < 5000) return
+            mitmDecided = true; startPumpsIfReady()
+        }
+
+        /** Открытый текст серверу → устройству (обычный проход) или шифротекст от сплайсера — общая отправка с учётом окна
+         *  устройства: режется на куски под peerMss/peerWnd, блокируется, пока окно не откроется. */
+        private fun sendAppData(data: ByteArray) {
+            var off = 0
+            while (off < data.size) {
+                var took = 0
+                synchronized(lock) {
+                    while (state == 2) {
+                        val allow = minOf(minOf(mss, peerMss), minOf(peerWnd, 262144) - (sndNxt - sndUna))
+                        if (allow > 0) { took = minOf(allow, data.size - off); break }
+                        lock.wait(500)
+                    }
+                    if (state != 2) return
+                    val d = data.copyOfRange(off, off + took)
+                    unacked.addLast(Seg(sndNxt, d, false))
+                    send(0x18, d, 0, took, sndNxt); sndNxt += took; info.down += took; info.last = System.currentTimeMillis()
+                }
+                off += took
+            }
+        }
+
+        /** Настоящий сервер закрылся штатно (EOF) — FIN устройству, тот же путь что и в обычном проходе. */
+        private fun sendFinToDevice() {
+            synchronized(lock) {
+                if (state != 2 || finSent) return
+                finSent = true; unacked.addLast(Seg(sndNxt, EOF, true)); send(0x11, null, 0, 0, sndNxt); sndNxt += 1; info.state = "closing"
+            }
+        }
+
         private fun startPumps() {
             val s = sock ?: return
-            pool.execute {                                                               // приложение → сервер
+            val sp = splice
+            pool.execute {                                                               // приложение → сервер (через сплайсер — если расшифровка)
                 try {
-                    val os = s.getOutputStream()
-                    while (true) {
-                        val c = writeQ.take()
-                        if (c === EOF) { try { s.shutdownOutput() } catch (e: Exception) { }; break }
-                        os.write(c); os.flush()
-                        val before = queued.getAndAdd(-c.size)
-                        if (before >= 32768 && before - c.size < 32768) synchronized(lock) { if (state == 2) ack() }     // окно снова открыто
+                    if (sp != null) {
+                        while (true) {
+                            val c = writeQ.take()
+                            if (c === EOF) { sp.deviceClosed(); break }
+                            sp.feedFromDevice(c)
+                            val before = queued.getAndAdd(-c.size)
+                            if (before >= 32768 && before - c.size < 32768) synchronized(lock) { if (state == 2) ack() }
+                        }
+                    } else {
+                        val os = s.getOutputStream()
+                        while (true) {
+                            val c = writeQ.take()
+                            if (c === EOF) { try { s.shutdownOutput() } catch (e: Exception) { }; break }
+                            os.write(c); os.flush()
+                            val before = queued.getAndAdd(-c.size)
+                            if (before >= 32768 && before - c.size < 32768) synchronized(lock) { if (state == 2) ack() }     // окно снова открыто
+                        }
                     }
                 } catch (e: Exception) { close(true) }
             }
-            pool.execute {                                                               // сервер → приложение
+            if (sp != null) {
+                // отдельным заданием пула: startUpstreamPump шлёт ClientHello настоящему серверу синхронно (блокирующий сокет),
+                // а startPumps() вызывается из потока чтения TUN (общего для всех потоков) — держать его занятым нельзя
+                pool.execute { try { sp.startUpstreamPump(s, pool) } catch (e: Exception) { sp.fail("upstream: ${e.message}") } }
+            } else pool.execute {                                                         // сервер → приложение (обычный проход)
                 val buf = ByteArray(mss)
                 try {
                     val ins = s.getInputStream()
                     while (true) {
-                        var allow: Int
-                        synchronized(lock) {
-                            while (state == 2) {
-                                allow = minOf(minOf(mss, peerMss), minOf(peerWnd, 262144) - (sndNxt - sndUna))
-                                if (allow > 0) break
-                                lock.wait(500)
-                            }
-                            if (state != 2) return@execute
-                        }
-                        allow = minOf(minOf(mss, peerMss), buf.size)
-                        val n = ins.read(buf, 0, allow)
-                        synchronized(lock) {
-                            if (state != 2) return@execute
-                            if (n < 0) {
-                                if (!finSent) { finSent = true; unacked.addLast(Seg(sndNxt, EOF, true)); send(0x11, null, 0, 0, sndNxt); sndNxt += 1; info.state = "closing" }
-                                return@execute
-                            }
-                            val d = buf.copyOf(n)
-                            unacked.addLast(Seg(sndNxt, d, false))
-                            send(0x18, d, 0, n, sndNxt); sndNxt += n; info.down += n; info.last = System.currentTimeMillis()
-                        }
+                        val n = ins.read(buf)
+                        if (n < 0) { sendFinToDevice(); return@execute }
+                        if (n > 0) sendAppData(buf.copyOf(n))
                     }
                 } catch (e: Exception) { close(true) }
             }
@@ -503,7 +581,7 @@ class VpnEngine(private val out: (ByteArray) -> Unit, private val socks: VpnSock
     private fun tick() {
         val now = System.currentTimeMillis()
         for (f in flows.values.toList()) {
-            if (f is TcpFlow) { f.retransmit(now); if (f.idleFor(now) > 900_000) f.close(true) }
+            if (f is TcpFlow) { f.retransmit(now); f.mitmTimeout(now); if (f.idleFor(now) > 900_000) f.close(true) }
             else if (f is UdpFlow && now - f.info.last > f.idle) f.close()
         }
         val old = now - 600_000; names.entries.removeIf { it.value.second < old }

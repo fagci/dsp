@@ -57,6 +57,11 @@ function vpnStart(n){
 }
 function vpnListApps(n){ n.status='asking for the installed apps…'; vpnSend(n,vpnCmd('apps',n.p)); }
 function vpnStopMon(n){ n.wantOn=false; vpnSend(n,vpnCmd('stop',n.p)); }
+// расшифровка TLS — отдельный, более узкий список: эти приложения тоже должны идти через сам туннель (mode/apps выше), иначе их
+// трафик сюда вообще не попадёт. tlsRows — Table с установленными или увиденными приложениями, как rows у выбора туннеля.
+function vpnSetTls(n){ n.status='setting the TLS decrypt list…'; vpnSend(n,vpnCmd('tls',n.p,n.tlsRows)); }
+function vpnGetCa(n){ n.status='asking for the CA certificate…'; vpnSend(n,vpnCmd('ca',n.p)); }
+function vpnResetCa(n){ n.status='issuing a new CA (old one must be removed from the device by hand)…'; vpnSend(n,vpnCmd('caReset',n.p)); }
 
 function vpnFeed(n,r){
   if(!r || typeof r!=='object') return;
@@ -64,6 +69,12 @@ function vpnFeed(n,r){
   if(r.src==='bridge'){ if(r.level==='error' || r.level==='warn') n.bridgeMsg=r.msg; return; }
   if(r.src==='cmd'){
     if(r.ok && r.cmd==='vpn.apps' && Array.isArray(r.apps)){ for(const a of r.apps) n.instQ.push({...a,t:Date.now()}); n.status='installed apps: '+r.apps.length; return; }
+    if(r.ok && r.cmd==='vpn.tls'){ n.tlsCount=(r.apps||[]).length; n.status=n.tlsCount ? 'TLS decrypt: '+n.tlsCount+' app(s)' : 'TLS decrypt: off (no apps chosen)'; return; }
+    if(r.ok && r.cmd==='vpn.tls.ca'){
+      n.caPem=r.pem||''; n.caFingerprint=r.fingerprint||''; n.tlsCount=(r.apps||[]).length;
+      n.status='CA fingerprint '+n.caFingerprint+' — verify, then install via system Settings (never auto-installed)';
+      return;
+    }
     if(!r.ok && r.msg){
       n.last=(r.cmd||'')+': '+r.msg;
       if(r.cmd==='vpn.start'){ n.on=false; n.status=r.err==='permission' ? 'waiting for the system VPN window…' : 'stopped ('+r.msg+')'; }
@@ -77,6 +88,8 @@ function vpnFeed(n,r){
   else { if(!n.on){ n.on=true; n.status='monitoring'; } if(r.ev==='summary'){ n.open=r.open|0; n.flows=r.flows|0; n.bytesUp=+r.bytesUp||0; n.bytesDown=+r.bytesDown||0; } }
   const fr=vpnFlowRow(r); if(fr) n.flowQ.push(fr);
   const ar=vpnAppAgg(n.apps,r); if(ar) n.appQ.push(vpnAppRow(ar));
+  const pr=vpnPlainRow(r); if(pr) n.plainQ.push(pr);
+  const er=vpnTlsErrRow(r); if(er) n.errQ.push(er);
   n.recQ.push({t:r.t||Date.now(),...r});
   if(n.recQ.length>5000) n.recQ.splice(0,n.recQ.length-5000);
   if(n.flowQ.length>5000) n.flowQ.splice(0,n.flowQ.length-5000);
@@ -85,8 +98,8 @@ function vpnFeed(n,r){
 
 def({ id:'vpnmon', title:'Network Monitor (DSP app, VPN)', cat:'Sources', always:true,
   kw:'vpn monitor firewall netguard glasswire traffic per app which app connects where network spy inspector dns sni host owner uid packet capture android',
-  ins:[{n:'go',t:'num'},{n:'rows',t:'bands'}],
-  outs:[{n:'rec',t:'rec'},{n:'flows',t:'rec'},{n:'apps',t:'rec'},{n:'installed',t:'rec'},{n:'count',t:'num'},{n:'bytesUp',t:'num'},{n:'bytesDown',t:'num'},{n:'on',t:'num'}],
+  ins:[{n:'go',t:'num'},{n:'rows',t:'bands'},{n:'tlsRows',t:'bands'}],
+  outs:[{n:'rec',t:'rec'},{n:'flows',t:'rec'},{n:'apps',t:'rec'},{n:'installed',t:'rec'},{n:'plain',t:'rec'},{n:'tlsErr',t:'rec'},{n:'caPem',t:'txt'},{n:'count',t:'num'},{n:'bytesUp',t:'num'},{n:'bytesDown',t:'num'},{n:'on',t:'num'}],
   readout:true, tall:true,
   params:[
     {n:'url',t:'text',d:'ws://127.0.0.1:8765',dev:true,label:'bridge of the DSP app — an address, or @name from Settings → Devices'},
@@ -95,29 +108,38 @@ def({ id:'vpnmon', title:'Network Monitor (DSP app, VPN)', cat:'Sources', always
     {n:'apps',t:'text',d:'',label:'chosen apps: packages (com.example.app) or uids, comma-separated; rows from a Table on «rows» are added'},
     {n:'system',t:'check',d:false,label:'«List apps» also shows system apps',adv:true},
     {n:'listBtn',t:'button',label:'List apps',fn:n=>vpnListApps(n)},
+    {n:'tlsApps',t:'text',d:'',label:'decrypt TLS (port 443) only for these apps — packages or uids; empty = never, no matter what. They must ALSO be let through the tunnel above (mode/apps), or their traffic never reaches here'},
+    {n:'tlsBtn',t:'button',label:'Set TLS decrypt list',fn:n=>vpnSetTls(n)},
+    {n:'caBtn',t:'button',label:'Get CA certificate',fn:n=>vpnGetCa(n)},
+    {n:'caResetBtn',t:'button',label:'Issue a new CA (old one stops working — remove it from the device by hand)',fn:n=>vpnResetCa(n),adv:true},
     {n:'reconnect',t:'check',d:true,label:'reconnect'},
     {n:'startBtn',t:'button',label:'Start',fn:n=>vpnStart(n)},
     {n:'stopBtn',t:'button',label:'Stop',fn:n=>vpnStopMon(n)},
     {n:'connect',t:'button',label:'Connect',fn:n=>vpnConnect(n)},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>vpnStop(n)}],
   init:n=>{ n.ws=null; n.want=false; n.wantOn=false; n.timer=null; n.seq=0; n.pend=[]; n.sentSub=null;
-            n.recQ=[]; n.flowQ=[]; n.appQ=[]; n.instQ=[]; n.selRows=null; n.selSig=''; n.selAt=0; n.apps=new Map(); n.count=0; n.open=0; n.flows=0; n.bytesUp=0; n.bytesDown=0;
+            n.recQ=[]; n.flowQ=[]; n.appQ=[]; n.instQ=[]; n.plainQ=[]; n.errQ=[]; n.selRows=null; n.tlsRows=null; n.selSig=''; n.selAt=0; n.apps=new Map(); n.count=0; n.open=0; n.flows=0; n.bytesUp=0; n.bytesDown=0;
+            n.caPem=''; n.caFingerprint=''; n.tlsCount=0;
             n.on=false; n.status='not connected'; n.warn=''; n.bridgeMsg=''; n.last=''; n.prevGo=0; },
   dispose:n=>vpnStop(n),
   process(n,I){
     vpnSub(n);
     const go=(I.go||0)>.5; if(go && !n.prevGo){ if(n.on) vpnStopMon(n); else vpnStart(n); } n.prevGo=go;
     n.selRows=Array.isArray(I.rows) ? I.rows : null;
+    n.tlsRows=Array.isArray(I.tlsRows) ? I.tlsRows : null;
     // выбор изменился при работающем мониторе (другая таблица, другой текст, режим) — туннель пересоздаётся; не чаще раза в 1.5 с
     if(n.on && n.wantOn && Date.now()-n.selAt>1500){
       const c=vpnCmd('start',n.p,n.selRows);
       if(c && !c.error && JSON.stringify([c.mode,c.apps,c.uids])!==n.selSig){ const cc=vpnStartCmd(n); if(cc) vpnSend(n,cc); }
     }
     const rec=n.recQ.length ? n.recQ.splice(0) : null, flows=n.flowQ.length ? n.flowQ.splice(0) : null, apps=n.appQ.length ? n.appQ.splice(0) : null, installed=n.instQ.length ? n.instQ.splice(0) : null;
-    return {rec, flows, apps, installed, count:n.open, bytesUp:n.bytesUp, bytesDown:n.bytesDown, on:n.on ? 1 : 0}; },
+    const plain=n.plainQ.length ? n.plainQ.splice(0) : null, tlsErr=n.errQ.length ? n.errQ.splice(0) : null;
+    return {rec, flows, apps, installed, plain, tlsErr, caPem:n.caPem||null, count:n.open, bytesUp:n.bytesUp, bytesDown:n.bytesDown, on:n.on ? 1 : 0}; },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     let t=(n.warn&&!n.ws ? '⚠ '+n.warn+'\n' : '')+n.status+' · open '+n.open+' · total '+n.flows+(n.p.mode!==VPN_MODES[0] ? ' · '+n.p.mode+': '+(vpnPicks(n.selRows,n.p.apps).apps.length+vpnPicks(n.selRows,n.p.apps).uids.length) : '');
     t+='\n'+vpnFmtBytes(n.bytesUp)+' up · '+vpnFmtBytes(n.bytesDown)+' down';
+    if(n.tlsCount) t+=' · TLS decrypt: '+n.tlsCount+' app(s)';
+    if(n.caFingerprint) t+='\nCA '+n.caFingerprint;
     if(n.bridgeMsg) t+='\n⚠ '+n.bridgeMsg;
     if(n.last) t+='\n'+n.last;
     if(r.textContent!==t) r.textContent=t; }
