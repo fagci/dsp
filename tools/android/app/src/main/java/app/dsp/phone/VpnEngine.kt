@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicLong
  * Без android.* — проверяется на JVM против настоящего TCP ядра Linux (tools/android/jvm-test, tools/vpn-e2e).
  *
  * TCP: TUN без потерь и перестановок, поэтому стек простой — принимает сегменты по порядку (чужой порядок — повторный ACK), окно
- * 65535 без масштабирования, MSS по MTU, повтор неподтверждённого по таймеру. IPv6, фрагменты IP и ICMP не разбираются (считаются).
+ * 65535 без масштабирования, MSS по MTU, повтор неподтверждённого по таймеру. IPv6 и ICMP не разбираются (считаются); фрагменты IPv4 собирает IpDefrag.
  */
 object Ip {
     fun u8(b: ByteArray, o: Int) = b[o].toInt() and 255
@@ -193,14 +193,31 @@ class VpnEngine(private val out: (ByteArray) -> Unit, private val socks: VpnSock
         if (ver != 4) { count(if (ver == 6) "ipv6 dropped" else "bad version"); return }
         val ihl = (Ip.u8(b, 0) and 15) * 4; val total = Ip.u16(b, 2)
         if (ihl < 20 || total > len || total < ihl) { count("bad length"); return }
-        if (Ip.u16(b, 6) and 0x3FFF != 0) { count("fragment dropped"); return }
-        val proto = Ip.u8(b, 9)
-        when (proto) {
+        if (Ip.u16(b, 6) and 0x3FFF != 0) {                    // фрагмент: сам кусок виден в записи пакетов, поток разбирается по собранной датаграмме
+            count("fragment"); ev.packet(true, b, total, null)
+            val whole = defrag.add(b, total) ?: return
+            count("reassembled")
+            quiet.set(true)
+            try { route(whole, whole.size) } finally { quiet.set(false) }
+            return
+        }
+        route(b, total)
+    }
+
+    private fun route(b: ByteArray, total: Int) {
+        val ihl = (Ip.u8(b, 0) and 15) * 4
+        when (val proto = Ip.u8(b, 9)) {
             6 -> tcpIn(b, ihl, total)
             17 -> udpIn(b, ihl, total)
-            else -> { count("proto $proto dropped"); ev.packet(true, b, total, null) }
+            else -> { count("proto $proto dropped"); emitPkt(true, b, total, null) }
         }
     }
+
+    // собранная из фрагментов датаграмма: куски уже записаны как есть, второй раз целиком в запись пакетов она не идёт
+    private val quiet = ThreadLocal.withInitial { false }            // только поток, который собрал датаграмму: потоки соединений пишут свои пакеты как обычно
+    private fun emitPkt(out: Boolean, p: ByteArray, len: Int, f: FlowInfo?) { if (!quiet.get()) ev.packet(out, p, len, f) }
+    private val defrag = IpDefrag()
+    fun defragStats() = "reassembled ${defrag.done}, dropped ${defrag.dropped}, waiting ${defrag.pending()}"
 
     fun snapshot(): List<FlowInfo> = flows.values.map { if (it is TcpFlow) it.info else (it as UdpFlow).info }
 
@@ -227,7 +244,7 @@ class VpnEngine(private val out: (ByteArray) -> Unit, private val socks: VpnSock
             flows[key] = f
             f.start()
         }
-        ev.packet(true, b, total, f.info)
+        emitPkt(true, b, total, f.info)
         f.send(b, ihl + 8, ulen - 8)
     }
 
@@ -264,7 +281,7 @@ class VpnEngine(private val out: (ByteArray) -> Unit, private val socks: VpnSock
                     }
                     // ответ приходит с адреса, куда слали; если сервер ответил с другого (многоадресные), подмены не делаем — только вернём как есть
                     val pkt = Ip.udp(sdst, csrc, sport, cport, buf, 0, p.length)
-                    ev.packet(false, pkt, pkt.size, info)
+                    emitPkt(false, pkt, pkt.size, info)
                     out(pkt)
                 }
             } catch (e: Exception) { }
@@ -290,7 +307,7 @@ class VpnEngine(private val out: (ByteArray) -> Unit, private val socks: VpnSock
         if (f == null) {
             if (flags and 0x04 != 0) return                                            // RST по неизвестному потоку
             if (flags and 0x12 != 0x02) {                                              // не SYN — стёртый поток: сообщаем отказом
-                ev.packet(true, b, total, null)
+                emitPkt(true, b, total, null)
                 val seq = Ip.u32(b, ihl + 4); val ack = Ip.u32(b, ihl + 8)
                 val dlen = total - ihl - ((Ip.u8(b, ihl + 12) shr 4) * 4)
                 val r = if (flags and 0x10 != 0) Ip.tcp(dst, src, dport, sport, ack, 0, 0x04, 0, null, 0, 0)
@@ -300,11 +317,11 @@ class VpnEngine(private val out: (ByteArray) -> Unit, private val socks: VpnSock
             if (flows.size >= maxFlows) { count("flow limit"); out(Ip.tcp(dst, src, dport, sport, 0, Ip.u32(b, ihl + 4) + 1, 0x14, 0, null, 0, 0)); return }
             f = TcpFlow(key, src, sport, dst, dport)
             flows[key] = f
-            ev.packet(true, b, total, f.info)
+            emitPkt(true, b, total, f.info)
             f.syn(b, ihl, total)
             return
         }
-        ev.packet(true, b, total, f.info)
+        emitPkt(true, b, total, f.info)
         f.segment(b, ihl, total)
     }
 
@@ -336,7 +353,7 @@ class VpnEngine(private val out: (ByteArray) -> Unit, private val socks: VpnSock
         fun send(flags: Int, data: ByteArray?, off: Int, len: Int, seq: Int, mssOpt: Int = 0) {
             val w = ourWnd; lastWndSent = w
             val p = Ip.tcp(sdst, csrc, sport, cport, seq, rcvNxt, flags, w, data, off, len, mssOpt)
-            ev.packet(false, p, p.size, info); info.pktDown++
+            emitPkt(false, p, p.size, info); info.pktDown++
             out(p)
         }
 
@@ -364,7 +381,7 @@ class VpnEngine(private val out: (ByteArray) -> Unit, private val socks: VpnSock
                     info.state = "failed: ${e.javaClass.simpleName}"
                     synchronized(lock) { state = 3 }
                     flows.remove(key)
-                    val p = Ip.tcp(sdst, csrc, sport, cport, 0, rcvNxt, 0x14, 0, null, 0, 0); ev.packet(false, p, p.size, info); out(p)
+                    val p = Ip.tcp(sdst, csrc, sport, cport, 0, rcvNxt, 0x14, 0, null, 0, 0); emitPkt(false, p, p.size, info); out(p)
                     ev.flow(info, "close")
                 }
             }
@@ -475,7 +492,7 @@ class VpnEngine(private val out: (ByteArray) -> Unit, private val socks: VpnSock
             synchronized(lock) {
                 if (state == 3) return
                 val was = state; state = 3
-                if (rst && was >= 1) { val p = Ip.tcp(sdst, csrc, sport, cport, sndNxt, rcvNxt, 0x14, 0, null, 0, 0); ev.packet(false, p, p.size, info); out(p) }
+                if (rst && was >= 1) { val p = Ip.tcp(sdst, csrc, sport, cport, sndNxt, rcvNxt, 0x14, 0, null, 0, 0); emitPkt(false, p, p.size, info); out(p) }
                 try { sock?.close() } catch (e: Exception) { }
                 writeQ.add(EOF); lock.notifyAll()
             }

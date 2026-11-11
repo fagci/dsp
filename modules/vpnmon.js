@@ -22,7 +22,7 @@ function vpnConnect(n){
   n.want=true; n.warn=netInsecure(url) ? NET_INSECURE_MSG : '';
   let ws; try{ ws=new WebSocket(url); }catch(e){ n.status='error: '+e.message; return; }
   n.ws=ws; n.status='connecting…'; n.sentSub=null;
-  ws.onopen=()=>{ n.status='connected · press Start'; vpnSub(n); for(const c of n.pend.splice(0)) vpnSend(n,c); if(n.wantOn) vpnSend(n,vpnCmd('start',n.p)); };
+  ws.onopen=()=>{ n.status='connected · press Start'; vpnSub(n); for(const c of n.pend.splice(0)) vpnSend(n,c); if(n.wantOn){ const c=vpnStartCmd(n); if(c) vpnSend(n,c); } };
   ws.onerror=()=>{ n.status='connection error — is the DSP app running?'; };
   ws.onclose=e=>{
     if(n.ws!==ws) return;
@@ -45,7 +45,17 @@ function vpnSend(n,cmd){
   n.ws.send(JSON.stringify({...cmd,id:++n.seq}));
 }
 // подключены — шлём сразу; иначе только просим соединение, «on open» отправит start сама (через wantOn) — без двойной отправки
-function vpnStart(n){ n.wantOn=true; if(!n.on) n.status='starting…'; if(n.ws && n.ws.readyState===1) vpnSend(n,vpnCmd('start',n.p)); else if(!n.ws) vpnConnect(n); }
+function vpnStartCmd(n){                            // команда запуска с выбором приложений; null — выбор не готов (статус скажет почему)
+  const c=vpnCmd('start',n.p,n.selRows);
+  if(c && c.error){ n.status=c.error; return null; }
+  n.selSig=JSON.stringify([c.mode,c.apps,c.uids]); n.selAt=Date.now();
+  return c;
+}
+function vpnStart(n){
+  n.wantOn=true; if(!n.on) n.status='starting…';
+  if(n.ws && n.ws.readyState===1){ const c=vpnStartCmd(n); if(c) vpnSend(n,c); else n.wantOn=false; } else if(!n.ws) vpnConnect(n);
+}
+function vpnListApps(n){ n.status='asking for the installed apps…'; vpnSend(n,vpnCmd('apps',n.p)); }
 function vpnStopMon(n){ n.wantOn=false; vpnSend(n,vpnCmd('stop',n.p)); }
 
 function vpnFeed(n,r){
@@ -53,6 +63,7 @@ function vpnFeed(n,r){
   n.count++; n.last=vpnLine(r);
   if(r.src==='bridge'){ if(r.level==='error' || r.level==='warn') n.bridgeMsg=r.msg; return; }
   if(r.src==='cmd'){
+    if(r.ok && r.cmd==='vpn.apps' && Array.isArray(r.apps)){ for(const a of r.apps) n.instQ.push({...a,t:Date.now()}); n.status='installed apps: '+r.apps.length; return; }
     if(!r.ok && r.msg){
       n.last=(r.cmd||'')+': '+r.msg;
       if(r.cmd==='vpn.start'){ n.on=false; n.status=r.err==='permission' ? 'waiting for the system VPN window…' : 'stopped ('+r.msg+')'; }
@@ -74,28 +85,38 @@ function vpnFeed(n,r){
 
 def({ id:'vpnmon', title:'Network Monitor (DSP app, VPN)', cat:'Sources', always:true,
   kw:'vpn monitor firewall netguard glasswire traffic per app which app connects where network spy inspector dns sni host owner uid packet capture android',
-  ins:[{n:'go',t:'num'}],
-  outs:[{n:'rec',t:'rec'},{n:'flows',t:'rec'},{n:'apps',t:'rec'},{n:'count',t:'num'},{n:'bytesUp',t:'num'},{n:'bytesDown',t:'num'},{n:'on',t:'num'}],
+  ins:[{n:'go',t:'num'},{n:'rows',t:'bands'}],
+  outs:[{n:'rec',t:'rec'},{n:'flows',t:'rec'},{n:'apps',t:'rec'},{n:'installed',t:'rec'},{n:'count',t:'num'},{n:'bytesUp',t:'num'},{n:'bytesDown',t:'num'},{n:'on',t:'num'}],
   readout:true, tall:true,
   params:[
     {n:'url',t:'text',d:'ws://127.0.0.1:8765',dev:true,label:'bridge of the DSP app — an address, or @name from Settings → Devices'},
     {n:'packets',t:'check',d:false,label:'also stream full packets (hex, outs → rec, ev «pkt») — heavy, for a short capture only'},
+    {n:'mode',t:'select',opts:VPN_MODES,d:VPN_MODES[0],label:'which apps go through the monitor: only chosen ones are seen and the rest bypass the tunnel (nothing slows them down), or all except chosen'},
+    {n:'apps',t:'text',d:'',label:'chosen apps: packages (com.example.app) or uids, comma-separated; rows from a Table on «rows» are added'},
+    {n:'system',t:'check',d:false,label:'«List apps» also shows system apps',adv:true},
+    {n:'listBtn',t:'button',label:'List apps',fn:n=>vpnListApps(n)},
     {n:'reconnect',t:'check',d:true,label:'reconnect'},
     {n:'startBtn',t:'button',label:'Start',fn:n=>vpnStart(n)},
     {n:'stopBtn',t:'button',label:'Stop',fn:n=>vpnStopMon(n)},
     {n:'connect',t:'button',label:'Connect',fn:n=>vpnConnect(n)},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>vpnStop(n)}],
   init:n=>{ n.ws=null; n.want=false; n.wantOn=false; n.timer=null; n.seq=0; n.pend=[]; n.sentSub=null;
-            n.recQ=[]; n.flowQ=[]; n.appQ=[]; n.apps=new Map(); n.count=0; n.open=0; n.flows=0; n.bytesUp=0; n.bytesDown=0;
+            n.recQ=[]; n.flowQ=[]; n.appQ=[]; n.instQ=[]; n.selRows=null; n.selSig=''; n.selAt=0; n.apps=new Map(); n.count=0; n.open=0; n.flows=0; n.bytesUp=0; n.bytesDown=0;
             n.on=false; n.status='not connected'; n.warn=''; n.bridgeMsg=''; n.last=''; n.prevGo=0; },
   dispose:n=>vpnStop(n),
   process(n,I){
     vpnSub(n);
     const go=(I.go||0)>.5; if(go && !n.prevGo){ if(n.on) vpnStopMon(n); else vpnStart(n); } n.prevGo=go;
-    const rec=n.recQ.length ? n.recQ.splice(0) : null, flows=n.flowQ.length ? n.flowQ.splice(0) : null, apps=n.appQ.length ? n.appQ.splice(0) : null;
-    return {rec, flows, apps, count:n.open, bytesUp:n.bytesUp, bytesDown:n.bytesDown, on:n.on ? 1 : 0}; },
+    n.selRows=Array.isArray(I.rows) ? I.rows : null;
+    // выбор изменился при работающем мониторе (другая таблица, другой текст, режим) — туннель пересоздаётся; не чаще раза в 1.5 с
+    if(n.on && n.wantOn && Date.now()-n.selAt>1500){
+      const c=vpnCmd('start',n.p,n.selRows);
+      if(c && !c.error && JSON.stringify([c.mode,c.apps,c.uids])!==n.selSig){ const cc=vpnStartCmd(n); if(cc) vpnSend(n,cc); }
+    }
+    const rec=n.recQ.length ? n.recQ.splice(0) : null, flows=n.flowQ.length ? n.flowQ.splice(0) : null, apps=n.appQ.length ? n.appQ.splice(0) : null, installed=n.instQ.length ? n.instQ.splice(0) : null;
+    return {rec, flows, apps, installed, count:n.open, bytesUp:n.bytesUp, bytesDown:n.bytesDown, on:n.on ? 1 : 0}; },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
-    let t=(n.warn&&!n.ws ? '⚠ '+n.warn+'\n' : '')+n.status+' · open '+n.open+' · total '+n.flows;
+    let t=(n.warn&&!n.ws ? '⚠ '+n.warn+'\n' : '')+n.status+' · open '+n.open+' · total '+n.flows+(n.p.mode!==VPN_MODES[0] ? ' · '+n.p.mode+': '+(vpnPicks(n.selRows,n.p.apps).apps.length+vpnPicks(n.selRows,n.p.apps).uids.length) : '');
     t+='\n'+vpnFmtBytes(n.bytesUp)+' up · '+vpnFmtBytes(n.bytesDown)+' down';
     if(n.bridgeMsg) t+='\n⚠ '+n.bridgeMsg;
     if(n.last) t+='\n'+n.last;

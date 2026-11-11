@@ -2,11 +2,11 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 const ctx = vm.createContext({});
-vm.runInContext(fs.readFileSync(new URL('../modules/vpnmon-kernels.js', import.meta.url), 'utf8') + ';this.K={vpnCmd,vpnLine,vpnFlowRow,vpnAppAgg,vpnAppRow,vpnFmtBytes};', ctx);
+vm.runInContext(fs.readFileSync(new URL('../modules/vpnmon-kernels.js', import.meta.url), 'utf8') + ';this.K={vpnCmd,vpnPicks,VPN_MODES,vpnLine,vpnFlowRow,vpnAppAgg,vpnAppRow,vpnFmtBytes};', ctx);
 const K = ctx.K;
 let bad = 0; const ok = (n, c, x = '') => { if (!c) { bad++; console.log('FAIL', n, x); } else console.log('ok  ', n); };
 
-ok('vpnCmd start/stop/packets', JSON.stringify(K.vpnCmd('start', { packets: true })) === '{"cmd":"vpn.start","packets":true}'
+ok('vpnCmd start/stop/packets', JSON.stringify(K.vpnCmd('start', { packets: true })) === '{"cmd":"vpn.start","packets":true,"mode":"all"}'
   && JSON.stringify(K.vpnCmd('stop', {})) === '{"cmd":"vpn.stop"}' && JSON.stringify(K.vpnCmd('packets', { packets: false })) === '{"cmd":"vpn.packets","on":false}'
   && K.vpnCmd('nope', {}) === null);
 
@@ -48,6 +48,21 @@ ok('aggregate: unlabeled uid groups by uid, not merged with named apps', (() => 
   K.vpnAppAgg(s2, { ev: 'open', id: 9, uid: 10099, up: 0, down: 0, t: 1 });
   return s2.get('uid 10099').flows === 1;
 })());
+
+// выбор приложений: из таблиц (установленные — pkg/pkgs, из трафика — pkgs/uid) и из текста
+{
+  const rows = [{ uid: 10234, pkg: 'com.a.one', pkgs: ['com.a.one', 'com.a.two'] }, { uid: 10300, pkg: 'com.b.x' }, { uid: 10400, pkgs: null }, { uid: 1000, pkgs: [] }, null, { foo: 1 }];
+  const p = K.vpnPicks(rows, 'com.c.y, 10500;com.a.one');
+  ok('vpnPicks: packages of a shared uid, single pkg, uid when no package', JSON.stringify(p) === '{"apps":["com.a.one","com.a.two","com.b.x","com.c.y"],"uids":[10400,1000,10500]}', JSON.stringify(p));
+  ok('vpnPicks: nothing', JSON.stringify(K.vpnPicks(null, '')) === '{"apps":[],"uids":[]}');
+  const only = K.vpnCmd('start', { packets: false, mode: 'only these', apps: 'com.a.one' }, null);
+  ok('vpnCmd start only', JSON.stringify(only) === '{"cmd":"vpn.start","packets":false,"mode":"only","apps":["com.a.one"]}', JSON.stringify(only));
+  const ex = K.vpnCmd('start', { mode: 'all except these', apps: '' }, [{ uid: 10300 }]);
+  ok('vpnCmd start except, uid from a row', ex.mode === 'except' && ex.uids[0] === 10300 && !ex.apps, JSON.stringify(ex));
+  ok('vpnCmd start only without a list is an error', /pick the apps/.test(K.vpnCmd('start', { mode: 'only these', apps: '' }, []).error));
+  ok('vpnCmd apps', JSON.stringify(K.vpnCmd('apps', { system: true })) === '{"cmd":"vpn.apps","system":true}');
+  ok('modes', K.VPN_MODES.length === 3 && K.VPN_MODES[0] === 'all apps');
+}
 
 console.log(bad ? 'FAILED ' + bad : 'all ok');
 process.exit(bad ? 1 : 0);
