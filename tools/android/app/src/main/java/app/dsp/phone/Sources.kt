@@ -185,10 +185,12 @@ class SensorHub(ctx: Context, private val emit: Emit) : SensorEventListener {
         try {
             mem = SharedMemory.create("dsp-$kind", DirectRing.MEM_BYTES)
             val map = mem.mapReadWrite()                            // память должна быть обнулена — SharedMemory.create так и делает
-            ch = sm.createDirectChannel(mem)
-            val token = ch.configure(sensor, level)
-            if (token <= 0) { ch.close(); mem.close(); return false }
-            direct[kind] = Direct(kind, mem, ch, DirectRing(map), token, level)
+            val c = sm.createDirectChannel(mem)
+            if (c == null) { mem.close(); return false }
+            ch = c
+            val token = c.configure(sensor, level)
+            if (token <= 0) { c.close(); mem.close(); return false }
+            direct[kind] = Direct(kind, mem, c, DirectRing(map), token, level)
         } catch (e: Exception) {
             try { ch?.close() } catch (_: Exception) {}
             try { mem?.close() } catch (_: Exception) {}
