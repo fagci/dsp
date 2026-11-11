@@ -1,0 +1,37 @@
+# llama.cpp (языковые модели GGUF) в виде JNI-библиотеки: dsp_llama — CPU (arm64, dotprod + fp16), dsp_llama_cl — то же + GPU через OpenCL (Adreno).
+# Устроено как соседний проект whisper (../CMakeLists.txt): у каждой библиотеки свой статический ggml со скрытыми символами, поэтому в одном процессе они не мешают друг другу.
+cmake_minimum_required(VERSION 3.22)
+project(dsp_llama C CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+option(DSP_OPENCL "GPU через OpenCL (OpenCL_INCLUDE_DIR, OpenCL_LIBRARY)" OFF)
+set(DSP_LIB "dsp_llama" CACHE STRING "имя библиотеки")
+set(DSP_LLAMA_TAG "b9000" CACHE STRING "тег llama.cpp")
+set(DSP_CPU_ARCH "armv8.2-a+dotprod+fp16" CACHE STRING "-march для ядер ggml")
+
+include(FetchContent)
+FetchContent_Declare(llama_src GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git GIT_TAG ${DSP_LLAMA_TAG} GIT_SHALLOW TRUE)
+
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_COMMON OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_WEBUI OFF CACHE BOOL "" FORCE)
+set(LLAMA_OPENSSL OFF CACHE BOOL "" FORCE)
+set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+set(GGML_CPU_ARM_ARCH "${DSP_CPU_ARCH}" CACHE STRING "" FORCE)
+if(DSP_OPENCL)
+  set(GGML_OPENCL ON CACHE BOOL "" FORCE)
+  set(GGML_OPENCL_EMBED_KERNELS ON CACHE BOOL "" FORCE)
+  set(GGML_OPENCL_USE_ADRENO_KERNELS ON CACHE BOOL "" FORCE)
+endif()
+FetchContent_MakeAvailable(llama_src)
+
+add_library(${DSP_LIB} SHARED llama_jni.cpp)
+target_link_libraries(${DSP_LIB} PRIVATE llama ggml log android)
+target_compile_options(${DSP_LIB} PRIVATE -O3 -fvisibility=hidden -fvisibility-inlines-hidden -ffunction-sections -fdata-sections)
+target_link_options(${DSP_LIB} PRIVATE -Wl,--gc-sections -Wl,--exclude-libs,ALL -Wl,-z,max-page-size=16384)

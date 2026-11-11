@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Сборка нативных библиотек приложения под arm64-v8a: build.sh <каталог NDK> <куда положить lib*.so>
 # Вызывается из Gradle (задача buildNative). Нужны git, cmake, make и сеть (исходники whisper.cpp и заголовки OpenCL тянутся по тегам).
-# Результат: libdsp_whisper.so (CPU: dotprod + fp16) и libdsp_whisper_cl.so (то же + GPU через OpenCL).
+# Результат: libdsp_whisper.so и libdsp_llama.so (CPU: dotprod + fp16), libdsp_whisper_cl.so и libdsp_llama_cl.so (то же + GPU через OpenCL).
 set -euo pipefail
 NDK="${1:?NDK}"; OUT="${2:?out}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -23,11 +23,11 @@ if [ ! -f "$CL/build/libOpenCL.so" ]; then
   cmake --build "$CL/build" -j "$JOBS"
 fi
 
-build() {  # имя библиотеки, OpenCL on/off
-  local lib="$1" cl="$2" dir="$WORK/$1"
+build() {  # имя библиотеки, OpenCL on/off, каталог проекта
+  local lib="$1" cl="$2" src="${3:-$HERE}" dir="$WORK/$1"
   local extra=()
   if [ "$cl" = ON ]; then extra=(-DDSP_OPENCL=ON -DOpenCL_INCLUDE_DIR="$CL/headers" -DOpenCL_LIBRARY="$CL/build/libOpenCL.so"); fi
-  cmake -S "$HERE" -B "$dir" "${COMMON[@]}" -DDSP_LIB="$lib" "${extra[@]}"
+  cmake -S "$src" -B "$dir" "${COMMON[@]}" -DDSP_LIB="$lib" "${extra[@]}"
   cmake --build "$dir" -j "$JOBS" --target "$lib"
   cp "$dir/lib$lib.so" "$OUT/arm64-v8a/"
   "$STRIP" --strip-unneeded "$OUT/arm64-v8a/lib$lib.so"
@@ -35,3 +35,5 @@ build() {  # имя библиотеки, OpenCL on/off
 }
 build dsp_whisper OFF
 build dsp_whisper_cl ON
+build dsp_llama OFF "$HERE/llama"
+build dsp_llama_cl ON "$HERE/llama"

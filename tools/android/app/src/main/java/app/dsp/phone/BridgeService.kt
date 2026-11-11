@@ -234,7 +234,7 @@ class BridgeService : Service() {
             n.startsWith("bt.") -> btlink.exec(c, j)
             n.startsWith("ble.adv.") -> adv.exec(c, j)
             n.startsWith("speech.") -> speech.exec(c, j)
-            n.startsWith("ai.") || n.startsWith("model.") || n.startsWith("asr.") -> ai.exec(c, j)
+            n.startsWith("ai.") || n.startsWith("model.") || n.startsWith("asr.") || n.startsWith("llm.") -> ai.exec(c, j)
             n.startsWith("tcp.") || n.startsWith("udp.") || n.startsWith("net.") || n.startsWith("raw.") || n == "ping" -> net.exec(c, j)
             n.startsWith("alarm.") -> alarms.exec(c, j)
             n.startsWith("boot.") -> headless.exec(c, j)
