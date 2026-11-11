@@ -6,6 +6,12 @@ import app.dsp.phone.AsrEngine
 import app.dsp.phone.AsrOpts
 import app.dsp.phone.AsrSeg
 import app.dsp.phone.BridgeServer
+import app.dsp.phone.ChatMsg
+import app.dsp.phone.LlmArgs
+import app.dsp.phone.LlmCore
+import app.dsp.phone.LlmEngine
+import app.dsp.phone.LlmOpts
+import org.json.JSONArray
 import app.dsp.phone.ModelStore
 import com.sun.net.httpserver.HttpServer
 import java.io.File
@@ -35,6 +41,31 @@ class FakeEngine : AsrEngine {
     }
     override fun abort() { stop = true }
     override fun free() { freed++; loaded = null }
+}
+
+/** Подставная языковая модель: «токены» — слова запроса, отвечает фиксированной фразой по кускам (в том числе режущим символ — это дело нативного слоя, здесь только проверка потока). */
+class FakeLlm : LlmEngine {
+    var path: String? = null; var gpuLayers = 99; var freed = 0; var gens = 0; var lastPrompt = ""; var lastOpts: LlmOpts? = null; var failLoad: String? = null
+    var template: Boolean = true; var failGen: String? = null; @Volatile var stop = false; var slowMs = 0L; var ctxSeen = 0
+    override fun load(path: String, ctx: Int, gpuLayers: Int, threads: Int, flash: Boolean, mmap: Boolean): String? { if (failLoad != null) return failLoad; this.path = path; this.gpuLayers = gpuLayers; ctxSeen = ctx; return null }
+    override fun info() = "fake 1B Q4_0|600000000|8192|$ctxSeen"
+    override fun backends() = "CPU:CPU|cpu" + (if (gpuLayers != 0) ";GPU:OpenCL|Adreno" else "")
+    override fun format(m: List<ChatMsg>): ByteArray? = if (template) m.joinToString("") { "[${it.role}]${it.content}\n" }.plus("[assistant]").toByteArray() else null
+    override fun countTokens(prompt: ByteArray) = String(prompt).split(Regex("\\s+")).size
+    override fun generate(prompt: ByteArray, o: LlmOpts, onToken: (String) -> Boolean): String? {
+        gens++; lastPrompt = String(prompt); lastOpts = o; stop = false
+        if (failGen != null) return failGen
+        var waited = 0L
+        for (piece in listOf("При", "вет", ", ", "мир", "!")) {
+            while (waited < slowMs) { if (stop) return "stopped"; Thread.sleep(10); waited += 10 }
+            if (stop) return "stopped"
+            if (!onToken(piece)) break
+        }
+        return null
+    }
+    override fun perf() = doubleArrayOf(100.0, 20.0, 500.0, 5.0)
+    override fun cancel() { stop = true }
+    override fun free() { freed++; path = null }
 }
 
 fun pcmB64(samples: Int, f: (Int) -> Int = { 0 }): String {
@@ -134,6 +165,60 @@ fun main() {
     ok("load: an engine error is passed on and nothing stays loaded", !l3.ok && l3.err == "broken file" && !core.loaded && core.model == "")
     eng.failLoad = null; core.load("m.bin", true, false); core.unload()
     ok("unload frees the model", !core.loaded && core.model == "")
+
+
+    // --- языковые модели
+    fun arr(vararg p: Pair<String, String>) = JSONArray(p.map { org.json.JSONObject().put("role", it.first).put("content", it.second) })
+    ok("llm messages: ordinary chat", LlmArgs.messages(arr("system" to "be brief", "user" to "hi", "assistant" to "hello", "user" to "and?"))?.size == 4)
+    ok("llm messages: unknown role, no user message, empty and null refused", LlmArgs.messages(arr("tool" to "x", "user" to "y")) == null && LlmArgs.messages(arr("system" to "only")) == null && LlmArgs.messages(JSONArray()) == null && LlmArgs.messages(null) == null)
+    ok("llm messages: size limits", LlmArgs.messages(arr("user" to "x".repeat(LlmArgs.MAX_CHARS + 1))) == null && LlmArgs.messages(JSONArray((0..LlmArgs.MAX_MSGS).map { org.json.JSONObject().put("role", "user").put("content", "a") })) == null)
+    ok("llm: ChatML when the model has no template", String(LlmArgs.chatMl(listOf(ChatMsg("system", "S"), ChatMsg("user", "Привет")))) == "<|im_start|>system\nS<|im_end|>\n<|im_start|>user\nПривет<|im_end|>\n<|im_start|>assistant\n")
+    val hist = listOf(ChatMsg("system", "sys"), ChatMsg("user", "a a a a"), ChatMsg("assistant", "b b b b"), ChatMsg("user", "c c"))
+    val count = { m: List<ChatMsg> -> m.sumOf { it.content.split(" ").size } }
+    val (f1, d1) = LlmArgs.fit(hist, count, 100); ok("llm fit: everything fits — nothing dropped", f1.size == 4 && d1 == 0)
+    val (f2, d2) = LlmArgs.fit(hist, count, 7); ok("llm fit: the oldest non-system messages go first, the system one stays", d2 == 1 && f2.map { it.role } == listOf("system", "assistant", "user") && count(f2) <= 7)
+    val (f3, d3) = LlmArgs.fit(hist, count, 1); ok("llm fit: the last message is never dropped", f3.last().content == "c c" && f3.first().role == "system" && f3.size == 2 && d3 == 2)
+    val oc = LlmArgs.opts(99999, 9.0, 999, 9.0, 9.0, 9.0, -5)
+    ok("llm opts are clamped", oc.max == 8192 && oc.temp == 2f && oc.topK == 200 && oc.topP == 1f && oc.minP == 1f && oc.repeat == 2f && oc.seed == 0)
+
+    File(dir, "m/q.gguf").writeBytes(ByteArray(1000)); File(dir, "m/w.bin").writeBytes(ByteArray(10))
+    val fl = FakeLlm(); val lc = LlmCore(store) { fl }
+    ok("llm: chat without a model → clear error", lc.chat(listOf(ChatMsg("user", "hi")), LlmOpts()) { true }.err?.contains("llm.load") == true)
+    ok("llm: only .gguf files load, unknown names refused", !lc.load("w.bin", true, 4096, 4, false, true).ok && !lc.load("nope.gguf", true, 4096, 4, false, true).ok)
+    val ll = lc.load("q.gguf", true, 4096, 4, false, true)
+    ok("llm load: GPU asks all layers, info and backends come from the engine", ll.ok && fl.gpuLayers == -1 && ll.info.startsWith("fake 1B") && ll.backends.contains("GPU:OpenCL") && lc.gpu && lc.ctx == 4096)
+    ok("llm load: the same settings again are free", lc.load("q.gguf", true, 4096, 4, false, true).ms == 0L && fl.freed == 0)
+    val pieces = ArrayList<String>()
+    val dn = lc.chat(listOf(ChatMsg("system", "S"), ChatMsg("user", "Привет")), LlmOpts(max = 64, temp = 0.3f)) { pieces.add(it); true }
+    ok("llm chat: tokens stream one by one and add up to the answer", dn.err == null && pieces.size == 5 && dn.text == "Привет, мир!" && pieces.joinToString("") == dn.text)
+    ok("llm chat: the model template is used, options reach the engine", fl.lastPrompt == "[system]S\n[user]Привет\n[assistant]" && fl.lastOpts!!.max == 64 && fl.lastOpts!!.temp == 0.3f)
+    ok("llm chat: speeds from the engine timings", dn.tokens == 5 && dn.promptTokens == 20 && Math.abs(dn.tps - 10.0) < 1e-9 && Math.abs(dn.ptps - 200.0) < 1e-9 && dn.trimmed == 0)
+    fl.template = false
+    lc.chat(listOf(ChatMsg("user", "hi")), LlmOpts()) { true }
+    ok("llm chat: no template in the model → ChatML", fl.lastPrompt.startsWith("<|im_start|>user\nhi<|im_end|>"))
+    fl.template = true
+    val long = (1..40).flatMap { listOf(ChatMsg("user", "word ".repeat(100)), ChatMsg("assistant", "answer ".repeat(100))) } + ChatMsg("user", "last question")
+    val dt = lc.chat(long, LlmOpts(max = 256)) { true }
+    ok("llm chat: a dialogue longer than the context loses its oldest messages, the last question stays", dt.trimmed > 0 && fl.lastPrompt.contains("last question") && fl.countTokens(fl.lastPrompt.toByteArray()) <= 4096)
+    val st = ArrayList<String>(); var cnt = 0
+    val ds = lc.chat(listOf(ChatMsg("user", "hi")), LlmOpts()) { st.add(it); cnt++; cnt < 2 }
+    ok("llm chat: the callback can stop the answer", st.size == 2 && ds.text == "Привет")
+    fl.slowMs = 5000
+    var rr: LlmCore.Done? = null
+    val th2 = Thread { rr = lc.chat(listOf(ChatMsg("user", "hi")), LlmOpts()) { true } }; th2.start(); Thread.sleep(150)
+    val t1 = System.currentTimeMillis(); lc.cancel(); th2.join(3000)
+    ok("llm cancel: a running answer stops quickly", rr?.err == "stopped" && System.currentTimeMillis() - t1 < 2000, rr?.err ?: "still running")
+    fl.slowMs = 0; fl.failGen = "the request does not fit"
+    ok("llm chat: an engine error is passed on", lc.chat(listOf(ChatMsg("user", "hi")), LlmOpts()) { true }.err == "the request does not fit")
+    fl.failGen = null
+    val lcpu = lc.load("q.gguf", false, 2048, 4, false, true)
+    ok("llm load: another backend or context reloads the model", lcpu.ok && fl.freed == 1 && fl.gpuLayers == 0 && !lcpu.backends.contains("GPU") && lc.ctx == 2048)
+    fl.failLoad = "broken file"; fl.freed = 0
+    val lb = lc.load("q.gguf", true, 4096, 4, false, true)
+    ok("llm load: an engine error is passed on and nothing stays loaded", !lb.ok && lb.err == "broken file" && !lc.loaded && lc.model == "")
+    fl.failLoad = null; lc.load("q.gguf", true, 4096, 4, false, true); lc.unload()
+    ok("llm unload frees the model", !lc.loaded && lc.model == "")
+    ok("llm commands need the app page", BridgeServer.powerCmd("llm.chat") && BridgeServer.powerCmd("llm.load"))
 
     println(if (bad == 0) "all ok" else "$bad FAILED")
     dir.deleteRecursively()

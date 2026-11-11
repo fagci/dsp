@@ -12,13 +12,16 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Модели на телефоне: whisper.cpp (речь → текст) с GPU через OpenCL там, где он есть, иначе CPU с dotprod.
  * Команды: ai.caps (что умеет телефон), model.list / model.get / model.cancel / model.delete (файлы моделей в каталоге приложения, докачка),
- * asr.load / asr.run / asr.stop / asr.unload. Записи {src:'ai', ev:'progress'|'seg', …} — подписка sub:['ai'].
+ * asr.load / asr.run / asr.stop / asr.unload; языковые модели GGUF (llama.cpp): llm.load / llm.chat (ответ по токенам записями ev:'tok') / llm.stop / llm.unload. Записи {src:'ai', ev:'progress'|'seg', …} — подписка sub:['ai'].
  * Звук идёт в asr.run строкой base64: 16 кГц, 16 бит, little-endian (до 10 минут); сегменты текста приходят записями по мере готовности, итог — в ответе.
  */
 class AiHub(private val ctx: Context, private val emit: Emit,
             private val store: ModelStore = ModelStore(File(ctx.filesDir, "models")),
-            make: () -> AsrEngine = { WhisperEngine() }) {
+            make: () -> AsrEngine = { WhisperEngine() },
+            makeLlm: () -> LlmEngine = { LlamaEngine() }) {
     private val core = AsrCore(store, make)
+    private val llm = LlmCore(store, makeLlm)
+    private val llmPool = Executors.newSingleThreadExecutor()
     private val asr = Executors.newSingleThreadExecutor()
     private val dl = Executors.newFixedThreadPool(2)
     private val downloads = ConcurrentHashMap<String, AtomicBoolean>()
@@ -45,6 +48,7 @@ class AiHub(private val ctx: Context, private val emit: Emit,
                         "ramMb" to (m.totalMem shr 20).toString(), "availMb" to (m.availMem shr 20).toString(), "opencl" to b(openCl), "soc" to Json.str(soc),
                         "cpuLib" to Json.str(AiArgs.lib(cpu, arm64, openCl, false) ?: ""), "gpuLib" to Json.str(AiArgs.lib(cpu, arm64, openCl, true) ?: ""),
                         "loadedLib" to Json.str(WhisperNative.lib ?: ""), "model" to Json.str(core.model), "gpu" to b(core.gpu),
+                        "llmLib" to Json.str(LlamaNative.lib ?: ""), "llmModel" to Json.str(llm.model), "llmGpu" to b(llm.gpu), "llmCtx" to llm.ctx.toString(),
                         "freeMb" to (store.dir.usableSpace shr 20).toString(), "dir" to Json.str(store.dir.absolutePath))
                 }
                 "model.list" -> Reply.done(c, id, cmd, null, "error",
@@ -92,6 +96,28 @@ class AiHub(private val ctx: Context, private val emit: Emit,
                         Reply.done(c, id, cmd, r.err, "error", "text" to Json.str(r.text), "segs" to r.segs.toString(), "ms" to r.ms.toString(), "audioMs" to r.audioMs.toString())
                     }
                 }
+                "llm.load" -> llmPool.execute {
+                    val name = j.optString("model"); val want = j.optBoolean("gpu", true)
+                    val size = store.file(name)?.length() ?: 0L
+                    val m = mem()
+                    if (size > 0 && !llm.loaded && m.availMem < size * 11 / 10) return@execute Reply.done(c, id, cmd, "not enough memory: the model needs about ${size * 11 / 10 shr 20} MB free, ${m.availMem shr 20} MB available — close other apps or take a smaller / more compressed model")
+                    val threads = j.optInt("threads", 0).takeIf { it > 0 } ?: (cpu.cores / 2).coerceIn(2, 6)
+                    val r = llm.load(name, want, j.optInt("ctx", 4096).coerceIn(512, 32768), threads, j.optBoolean("flash", false), j.optBoolean("mmap", true))
+                    Reply.done(c, id, cmd, r.err, "error", "info" to Json.str(r.info), "backends" to Json.str(r.backends), "ms" to r.ms.toString(), "model" to Json.str(llm.model),
+                        "gpu" to b(llm.gpu && r.backends.contains("GPU:")), "ctx" to llm.ctx.toString())
+                }
+                "llm.chat" -> {
+                    val msgs = LlmArgs.messages(j.optJSONArray("messages")) ?: return Reply.done(c, id, cmd, "messages: [{role: system|user|assistant, content}], at least one user message")
+                    val o = LlmArgs.opts(j.optInt("max", 512), j.optDouble("temp", 0.7), j.optInt("top_k", 40), j.optDouble("top_p", 0.95), j.optDouble("min_p", 0.05), j.optDouble("repeat", 1.1), j.optInt("seed", 0))
+                    val rid = if (id is Number) id.toString() else Json.str(id?.toString())
+                    llmPool.execute {
+                        val r = llm.chat(msgs, o) { piece -> rec("ev" to "\"tok\"", "rid" to rid, "text" to Json.str(piece)); true }
+                        Reply.done(c, id, cmd, r.err, "error", "text" to Json.str(r.text), "tokens" to r.tokens.toString(), "promptTokens" to r.promptTokens.toString(), "ms" to r.ms.toString(),
+                            "tps" to Json.num(r.tps, 10.0), "ptps" to Json.num(r.ptps, 10.0), "trimmed" to r.trimmed.toString())
+                    }
+                }
+                "llm.stop" -> { llm.cancel(); Reply.done(c, id, cmd, null) }
+                "llm.unload" -> llmPool.execute { llm.unload(); Reply.done(c, id, cmd, null) }
                 "asr.stop" -> { core.abort(); Reply.done(c, id, cmd, null) }
                 "asr.unload" -> asr.execute { core.unload(); Reply.done(c, id, cmd, null) }
                 else -> Reply.done(c, id, cmd, "unknown command")
@@ -101,5 +127,5 @@ class AiHub(private val ctx: Context, private val emit: Emit,
         }
     }
 
-    fun stop() { core.abort(); downloads.values.forEach { it.set(true) }; asr.shutdown(); dl.shutdown() }
+    fun stop() { core.abort(); llm.cancel(); downloads.values.forEach { it.set(true) }; asr.shutdown(); llmPool.shutdown(); dl.shutdown() }
 }

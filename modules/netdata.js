@@ -248,7 +248,23 @@ def({ id:'osmobj', title:'OSM Objects (Overpass)', cat:'Sources', readout:true, 
 });
 
 /* ---------- Ollama ---------- */
+// хост «app» — не сервер: llama.cpp внутри приложения Android (llm-app.js)
+const olmApp=n=>/^(app|phone|dsp)(:\/\/)?$/i.test(String(n.p.host||'').trim());
+async function olmModelsApp(n){
+  n.msg='asking the phone…';
+  try{
+    if(typeof AppLink==='undefined' || !AppLink.ok) throw new Error('host «app» works only in the DSP app for Android');
+    const loc=await llmAppModels();
+    n.models=loc.map(m=>({name:m.name,size:m.size,params:Math.round(m.size/1048576)+' MB',quant:''}));
+    const have=new Set(loc.map(m=>m.name));
+    n.cat=Object.keys(LLM_CATALOG).filter(k=>!have.has(k+'.gguf')).map(k=>k+' (≈'+LLM_CATALOG[k].mb+' MB, '+LLM_CATALOG[k].note+')');
+    n.msg='';
+    if(!n.p.model) setMod(n,'model',loc.length ? loc[0].name : Object.keys(LLM_CATALOG)[0]);
+  }catch(e){ n.msg='models: '+e.message; }
+  n.rev=(n.rev||0)+1;
+}
 async function olmModels(n){
+  if(olmApp(n)) return olmModelsApp(n);
   const base=ndOllamaBase(n.p.host);
   n.msg='asking '+base+'…';
   try{
@@ -275,6 +291,13 @@ async function olmSend(n,prompt,ctx){
   n.busy=true; n.text=''; n.stats=null; n.msg='waiting for the model…'; n.t0=performance.now();
   let acc='';
   try{
+    if(olmApp(n)){                                                       // llama.cpp в приложении: ответ по токенам через мост
+      const spec=llmSpec(model); if(!spec) throw new Error('the model name is not valid: a key from the list, a .gguf file name or an address of a .gguf');
+      if(typeof AppLink==='undefined' || !AppLink.ok) throw new Error('host «app» works only in the DSP app for Android');
+      n.msg='';
+      const r=await llmAppRun(spec,{gpu:!!n.p.appGpu,ctx:+n.p.numCtx||4096,messages:msgs,max:+n.p.maxTok||512,temp:+n.p.temp,seed:+n.p.seed,signal:ac.signal},t=>{ acc+=t; n.text=acc; n.rev++; });
+      n.stats={tokens:r.tokens,promptTokens:r.promptTokens,tps:r.tps,total:+((r.ms||0)/1000).toFixed(1)};
+    }else{
     const r=await ndFetch(n,base+'/api/chat',{method:'POST',signal:ac.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(!r.ok){ const t=await ndWhy(r); throw new Error('HTTP '+r.status+(t ? ': '+t : '')); }
     const rd=r.body.getReader(), dec=new TextDecoder(); let buf='', fin=false;
@@ -290,12 +313,13 @@ async function olmSend(n,prompt,ctx){
         if(c.done){ n.stats=c.stats; fin=true; }
       }
     }
+    }
     n.hist.push({role:'user',content:prompt},{role:'assistant',content:acc});
     n.hist=n.hist.slice(-Math.max(2,(+n.p.keep|0)*2));
     n.last=acc; n.fresh=1; n.recOut={from:model,text:acc,role:'assistant',model,t:Date.now()};
   }catch(e){
     if(e.name==='AbortError'){ n.msg='stopped'; n.queue.length=0; if(acc){ n.last=acc; n.fresh=1; n.recOut={from:model,text:acc,role:'assistant',model,t:Date.now(),partial:1}; } }
-    else n.msg='failed: '+ndErr(e)+(e instanceof TypeError ? olmHint(base) : '');
+    else n.msg='failed: '+ndErr(e)+(e instanceof TypeError && !olmApp(n) ? olmHint(base) : '');
   }finally{
     n.busy=false; n.rev=(n.rev||0)+1;
     const nx=n.queue.shift(); if(nx) olmSend(n,nx[0],nx[1]);
@@ -306,8 +330,10 @@ def({ id:'ollama', title:'Ollama (local LLM)', cat:'Tools', readout:true, tall:t
   // чат с моделью на своём сервере Ollama (/api/chat, потоком); context — любой текст с проводов (запись, журнал, декодер)
   ins:[{n:'prompt',t:'txt'},{n:'system',t:'txt'},{n:'context',t:'txt'},{n:'send',t:'num'},{n:'stop',t:'num'},{n:'clear',t:'num'}],
   outs:[{n:'text',t:'txt'},{n:'last',t:'txt'},{n:'new',t:'num'},{n:'rec',t:'rec'},{n:'busy',t:'num'},{n:'tps',t:'num'},{n:'tokens',t:'num'},{n:'models',t:'txt'}],
-  params:[{n:'host',t:'text',d:'http://127.0.0.1:11434',label:'Ollama server (host, host:port or URL)'},
-          {n:'model',t:'text',d:'',label:'model (name from «⟳ Models», e.g. llama3.2)'},
+  params:[{n:'host',t:'text',d:'http://127.0.0.1:11434',label:'Ollama server (host, host:port or URL) — or «app»: llama.cpp inside the DSP app for Android (GGUF models, GPU via OpenCL)'},
+          {n:'model',t:'text',d:'',label:'model (name from «⟳ Models», e.g. llama3.2). Host «app»: a list key (qwen2.5-3b-instruct-q4_0), a .gguf file on the phone or an address of a .gguf — downloaded once'},
+          {n:'appGpu',t:'check',d:true,label:'host «app»: use the GPU (OpenCL, Adreno 7xx / 8xx; fastest with Q4_0 models); off — CPU only. Switching CPU → GPU needs an app restart'},
+          {n:'maxTok',t:'range',min:32,max:4096,step:32,d:512,label:'host «app»: longest answer, tokens'},
           {n:'list',t:'button',label:'⟳ Models',fn:n=>olmModels(n)},
           {n:'prompt',t:'text',d:'',label:'question (the wire «prompt» overrides it)'},
           {n:'sys',t:'text',d:'',label:'system prompt (the wire «system» overrides it)'},
@@ -317,12 +343,12 @@ def({ id:'ollama', title:'Ollama (local LLM)', cat:'Tools', readout:true, tall:t
           {n:'auto',t:'check',d:false,label:'ask by itself when the «prompt» wire changes'},
           {n:'keep',t:'range',min:0,max:20,step:1,d:4,label:'exchanges kept in the dialogue (0 — every question alone)'},
           {n:'temp',t:'range',min:0,max:2,step:.1,d:.7,label:'temperature',adv:true},
-          {n:'numCtx',t:'range',min:0,max:131072,step:1024,d:0,label:'context size, tokens (0 — the model default)',adv:true},
+          {n:'numCtx',t:'range',min:0,max:131072,step:1024,d:0,label:'context size, tokens (0 — the model default; host «app»: 4096). On the phone a longer dialogue loses its oldest messages',adv:true},
           {n:'seed',t:'num',d:0,min:0,step:1,label:'seed (0 — random)',adv:true},
           {n:'keepAlive',t:'text',d:'',label:'keep the model loaded (5m, 1h, 0 — unload at once)',adv:true},
           {n:'proxy',t:'check',d:false,label:'always through the CORS proxy from Settings (without it — directly, the proxy only after a refusal in «on error» mode)',adv:true}],
   init:n=>{ n.hist=[]; n.text=''; n.last=''; n.msg=''; n.busy=false; n.models=[]; n.stats=null; n.fresh=0; n.rev=0; n.sys='';
-    n.queue=[]; n.recOut=null; n.inPrompt=''; n.inCtx=''; n.prevPrompt=null; n.s=false; n.st=false; n.cl=false; n.t0=0; },
+    n.queue=[]; n.cat=[]; n.recOut=null; n.inPrompt=''; n.inCtx=''; n.prevPrompt=null; n.s=false; n.st=false; n.cl=false; n.t0=0; },
   dispose:n=>{ ndAbort(n); },
   drawKey:n=>n.rev+'|'+n.msg+'|'+n.busy,
   process(n,I){
@@ -345,7 +371,9 @@ def({ id:'ollama', title:'Ollama (local LLM)', cat:'Tools', readout:true, tall:t
     if(n.msg) L.push(n.msg);
     if(n.busy && !n.text && !n.msg) L.push('…');
     if(n.stats) L.push(n.stats.tokens+' tokens · '+(n.stats.tps ?? '?')+' tok/s · '+n.stats.total+' s');
+    if(olmApp(n) && n.busy && !n.text && typeof LLMAP!=='undefined' && LLMAP.prog) L.push(LLMAP.prog+' (once — the model stays on the phone)');
     if(!n.text && !n.msg && n.models.length) L.push(n.models.length+' models: '+n.models.map(m=>m.name+(m.params ? ' ('+m.params+')' : '')).join(', '));
+    if(!n.text && !n.msg && n.cat && n.cat.length) L.push('to download (type the key in «model»): '+n.cat.join('; '));
     else if(!n.text && !n.msg && !n.busy) L.push('type the model name (or press «⟳ Models»), write a question and press «▶ Ask»');
     if(n.text) L.push(n.text.length>3000 ? '…'+n.text.slice(-3000) : n.text);
     ndShow(n,L.join('\n'));

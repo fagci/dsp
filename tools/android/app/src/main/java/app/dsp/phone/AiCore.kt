@@ -41,10 +41,10 @@ object AiArgs {
     }
 
     /** Какую библиотеку грузить: null — арм64 без dotprod (или не ARM), нативный слой не включается. */
-    fun lib(cpu: Cpu, arm64: Boolean, openclPresent: Boolean, gpu: Boolean): String? = when {
+    fun lib(cpu: Cpu, arm64: Boolean, openclPresent: Boolean, gpu: Boolean, base: String = "dsp_whisper"): String? = when {
         !arm64 || !cpu.dotprod || !cpu.fp16 -> null
-        gpu && openclPresent -> "dsp_whisper_cl"
-        else -> "dsp_whisper"
+        gpu && openclPresent -> base + "_cl"
+        else -> base
     }
 
     val OPENCL_PATHS = listOf("/vendor/lib64/libOpenCL.so", "/system/vendor/lib64/libOpenCL.so", "/system/lib64/libOpenCL.so", "/vendor/lib64/egl/libOpenCL.so")
@@ -157,6 +157,112 @@ class AsrCore(private val store: ModelStore, private val make: () -> AsrEngine) 
     }
 
     fun abort() { synchronized(lock) { eng }?.abort() }
+    fun unload() { synchronized(lock) { eng?.free(); eng = null; model = "" } }
+    val loaded get() = synchronized(lock) { eng != null }
+}
+
+/* ---------- языковые модели (llama.cpp) ---------- */
+
+class ChatMsg(val role: String, val content: String)
+class LlmOpts(val max: Int = 512, val temp: Float = 0.7f, val topK: Int = 40, val topP: Float = 0.95f, val minP: Float = 0.05f, val repeat: Float = 1.1f, val seed: Int = 0)
+
+/** Разбор сообщений чата (чистая логика). */
+object LlmArgs {
+    private val ROLES = setOf("system", "user", "assistant")
+    const val MAX_MSGS = 200
+    const val MAX_CHARS = 400_000
+
+    /** [{role, content}] → список; null — не тот формат, чужая роль, пусто, слишком много. */
+    fun messages(a: org.json.JSONArray?): List<ChatMsg>? {
+        if (a == null || a.length() == 0 || a.length() > MAX_MSGS) return null
+        val out = ArrayList<ChatMsg>(); var chars = 0
+        for (i in 0 until a.length()) {
+            val o = a.optJSONObject(i) ?: return null
+            val role = o.optString("role"); val c = o.optString("content")
+            if (role !in ROLES) return null
+            chars += c.length; if (chars > MAX_CHARS) return null
+            out.add(ChatMsg(role, c))
+        }
+        if (out.none { it.role == "user" }) return null
+        return out
+    }
+
+    /** Если у модели нет своего шаблона — ChatML (Qwen, многие дообученные модели его понимают). */
+    fun chatMl(m: List<ChatMsg>): ByteArray {
+        val sb = StringBuilder()
+        for (x in m) sb.append("<|im_start|>").append(x.role).append('\n').append(x.content).append("<|im_end|>\n")
+        sb.append("<|im_start|>assistant\n")
+        return sb.toString().toByteArray(Charsets.UTF_8)
+    }
+
+    /** Лишнее из истории: пока запрос не влезает (tokens(запрос) > limit), выбрасываем самое старое не-системное сообщение; всегда остаётся последнее. Возвращает (сообщения, сколько выброшено). */
+    fun fit(msgs: List<ChatMsg>, count: (List<ChatMsg>) -> Int, limit: Int): Pair<List<ChatMsg>, Int> {
+        var cur = msgs; var dropped = 0
+        while (count(cur) > limit) {
+            val i = cur.indexOfFirst { it.role != "system" }
+            if (i < 0 || i >= cur.size - 1) break                       // осталось одно сообщение — резать нечего
+            cur = cur.filterIndexed { k, _ -> k != i }; dropped++
+        }
+        return cur to dropped
+    }
+
+    fun opts(max: Int, temp: Double, topK: Int, topP: Double, minP: Double, repeat: Double, seed: Int) =
+        LlmOpts(max.coerceIn(1, 8192), temp.toFloat().coerceIn(0f, 2f), topK.coerceIn(0, 200), topP.toFloat().coerceIn(0.05f, 1f), minP.toFloat().coerceIn(0f, 1f), repeat.toFloat().coerceIn(1f, 2f), seed.coerceAtLeast(0))
+}
+
+interface LlmEngine {
+    fun load(path: String, ctx: Int, gpuLayers: Int, threads: Int, flash: Boolean, mmap: Boolean): String?     // null — готово
+    fun info(): String                                                  // «описание|байты|обучающий контекст|контекст»
+    fun backends(): String
+    fun format(m: List<ChatMsg>): ByteArray?                            // шаблон модели; null — у модели его нет
+    fun countTokens(prompt: ByteArray): Int
+    fun generate(prompt: ByteArray, o: LlmOpts, onToken: (String) -> Boolean): String?                         // null — готово, иначе ошибка
+    fun perf(): DoubleArray                                             // {мс запроса, токенов запроса, мс генерации, токенов}
+    fun cancel()
+    fun free()
+}
+
+/** Одна загруженная языковая модель; запросы по одному. Чистая обвязка — проверяется на JVM с подставным движком. */
+class LlmCore(private val store: ModelStore, private val make: () -> LlmEngine) {
+    private var eng: LlmEngine? = null
+    var model = ""; private set
+    var gpu = false; private set
+    var ctx = 0; private set
+    private val lock = Any()
+
+    class Loaded(val ok: Boolean, val err: String?, val info: String, val backends: String, val ms: Long)
+    class Done(val err: String?, val text: String, val tokens: Int, val promptTokens: Int, val ms: Long, val tps: Double, val ptps: Double, val trimmed: Int)
+
+    fun load(name: String, wantGpu: Boolean, nCtx: Int, threads: Int, flash: Boolean, mmap: Boolean): Loaded = synchronized(lock) {
+        val f = store.file(name)?.takeIf { it.name.endsWith(".gguf", true) } ?: return Loaded(false, "no model «$name» (.gguf) — download it first (model.get)", "", "", 0)
+        if (eng != null && model == name && gpu == wantGpu && ctx == nCtx) return Loaded(true, null, eng!!.info(), eng!!.backends(), 0)
+        eng?.free(); eng = null; model = ""
+        val t = System.currentTimeMillis()
+        val e = make()
+        val err = e.load(f.absolutePath, nCtx, if (wantGpu) -1 else 0, threads, flash, mmap)
+        if (err != null) { e.free(); return Loaded(false, err, "", "", 0) }
+        eng = e; model = name; gpu = wantGpu; ctx = nCtx
+        Loaded(true, null, e.info(), e.backends(), System.currentTimeMillis() - t)
+    }
+
+    fun chat(msgs: List<ChatMsg>, o: LlmOpts, onToken: (String) -> Boolean): Done {
+        val e = synchronized(lock) { eng } ?: return Done("no model loaded (llm.load)", "", 0, 0, 0, 0.0, 0.0, 0)
+        return synchronized(e) {
+            val t = System.currentTimeMillis()
+            val fmt = { m: List<ChatMsg> -> e.format(m) ?: LlmArgs.chatMl(m) }
+            val room = (ctx - o.max.coerceAtMost(ctx / 2) - 8).coerceAtLeast(64)
+            val (fit, dropped) = LlmArgs.fit(msgs, { e.countTokens(fmt(it)) }, room)
+            val prompt = fmt(fit)
+            val sb = StringBuilder()
+            val err = e.generate(prompt, o) { s -> sb.append(s); onToken(s) }
+            val p = e.perf()
+            val tps = if (p[2] > 0) p[3] * 1000.0 / p[2] else 0.0
+            val ptps = if (p[0] > 0) p[1] * 1000.0 / p[0] else 0.0
+            Done(err, sb.toString(), p[3].toInt(), p[1].toInt(), System.currentTimeMillis() - t, tps, ptps, dropped)
+        }
+    }
+
+    fun cancel() { synchronized(lock) { eng }?.cancel() }
     fun unload() { synchronized(lock) { eng?.free(); eng = null; model = "" } }
     val loaded get() = synchronized(lock) { eng != null }
 }

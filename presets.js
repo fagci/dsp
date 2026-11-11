@@ -527,6 +527,7 @@ const PRESET_CATS={
   'Map: OSM Radio Masts, Towers and Peaks (Overpass)':'Maps & Locating',
   'Ollama: Ask a Local LLM':'Tools',
   'Ollama: Chat with a Local LLM (Chat node)':'Tools',
+  'Ollama: Local LLM on the Phone (llama.cpp, GPU) — Chat':'Tools',
   'Ollama: Explain the Weather for Radio (Open-Meteo → LLM)':'Tools',
   'Cameras: Table of links → IP Camera → Frames + Archive':'Images & TV',
   'Video: Table of Sources → Player with Seek and Saved Position':'Images & TV',
@@ -7867,6 +7868,17 @@ const nt=addNode('note',40,40,{text:'A chat window for a local model: what you t
 nt.size.w=900; nt.size.h=120; applySize(nt);
 const ch=addNode('chat',40,190,{me:'me'}); ch.size.w=380; ch.size.h=380; applySize(ch);
 const ol=addNode('ollama',480,190,{host:'http://127.0.0.1:11434',sys:'Answer briefly. You are a helper in a radio workbench.',keep:6}); ol.size.w=420; ol.size.h=380; applySize(ol);
+addEdge(ch.id,'text',ol.id,'prompt'); addEdge(ch.id,'go',ol.id,'send'); addEdge(ol.id,'rec',ch.id,'rec');
+markWiresDirty();
+});
+preset('Ollama: Local LLM on the Phone (llama.cpp, GPU) — Chat', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A language model inside the DSP app for Android, no server and no network after the first download: the Ollama node with the host «app» runs llama.cpp on the phone — on the CPU with dotprod, and where there is OpenCL (Adreno 7xx / 8xx) on the GPU. Q4_0 models are the fast ones on the GPU.\n'+
+  'Press «⟳ Models»: it lists the .gguf files on the phone and the models offered for download (qwen2.5-1.5b-instruct-q4_0 ≈1 GB is quick and knows some Russian; qwen2.5-3b-instruct-q4_0 ≈1.9 GB is better, wants 8 GB of RAM). Type the key (or an address of any .gguf) into «model» and ask: the first question downloads and loads the model, the answer comes token by token over the bridge.\n'+
+  'The status line of the node shows the backend and the speed (tokens/s). A long dialogue loses its oldest messages when it no longer fits the context. Switching CPU → GPU needs an app restart.'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const ch=addNode('chat',40,210,{me:'me'}); ch.size.w=380; ch.size.h=380; applySize(ch);
+const ol=addNode('ollama',480,210,{host:'app',model:'qwen2.5-1.5b-instruct-q4_0',appGpu:true,sys:'Отвечай кратко и по делу, на языке вопроса.',keep:6}); ol.size.w=420; ol.size.h=380; applySize(ol);
 addEdge(ch.id,'text',ol.id,'prompt'); addEdge(ch.id,'go',ol.id,'send'); addEdge(ol.id,'rec',ch.id,'rec');
 markWiresDirty();
 });
