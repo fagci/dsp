@@ -12,7 +12,7 @@
 //
 // Он же — CORS-прокси для всех модулей страницы: в Settings → CORS proxy впиши
 //   http://127.0.0.1:8777/proxy?token=ТОКЕН&url={url}
-// GET / HEAD (с Range) на любой http(s)-адрес, потоком — годятся MJPEG, HLS, радио. Защита: Origin и токен, --hosts, а мост не ходит на
+// GET / HEAD (с Range) и POST (JSON-тело до 8 МБ: Ollama, API) на любой http(s)-адрес, потоком в обе стороны — годятся MJPEG, HLS, радио, ответ модели по строкам. Защита: Origin и токен, --hosts, а мост не ходит на
 // loopback / link-local / служебные адреса (--proxy-loopback разрешает loopback, --proxy-no-private запрещает и локальную сеть, --no-proxy выключает).
 //
 // Протокол (JSON-тексты): страница → {op:'open',proto,cfg} | {op:'send',text,to} | {op:'close'};
@@ -102,9 +102,11 @@ export function ipClass(ip) {                                // public | private
   if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127)) return 'private';
   return 'public';
 }
-const PROXY_CORS = {'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, HEAD, OPTIONS', 'access-control-allow-headers': '*',
+const PROXY_CORS = {'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, HEAD, POST, OPTIONS', 'access-control-allow-headers': '*',
   'access-control-allow-private-network': 'true', 'access-control-expose-headers': '*', 'access-control-max-age': '600', vary: 'Origin'};
 const PROXY_PASS_REQ = ['range', 'accept', 'accept-language', 'if-none-match', 'if-modified-since', 'if-range'];
+// POST (Ollama /api/chat, Overpass, любой JSON-API): тело идёт потоком, но не больше этого; ответ тоже потоком. Ждать первого байта можно долго — модель грузится минутами
+const PROXY_MAX_BODY = 8 << 20, PROXY_POST_WAIT = 10 * 60000;
 const PROXY_PASS_RES = ['content-type', 'content-length', 'content-range', 'accept-ranges', 'etag', 'last-modified', 'cache-control', 'content-encoding', 'expires'];
 const sameToken = (a, b) => { const x = Buffer.from(String(a)), y = Buffer.from(String(b)); return x.length === y.length && crypto.timingSafeEqual(x, y); };
 
@@ -128,13 +130,16 @@ function makeProxy(o) {
     if (req.method === 'OPTIONS') { res.writeHead(204, PROXY_CORS); return res.end(); }
     if (!originOk(req.headers.origin, o.origins)) { o.log('proxy: origin refused: ' + req.headers.origin); return fail(res, 403, 'origin not allowed (--origin)'); }
     if (o.token && !sameToken(u.searchParams.get('token') || '', o.token)) return fail(res, 401, 'token');
-    if (req.method !== 'GET' && req.method !== 'HEAD') return fail(res, 405, 'GET and HEAD only');
+    if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'POST') return fail(res, 405, 'GET, HEAD and POST only');
+    const post = req.method === 'POST';
+    if (post && +req.headers['content-length'] > PROXY_MAX_BODY) return fail(res, 413, 'request body is larger than ' + (PROXY_MAX_BODY >> 20) + ' MB');
     if (busy >= 32) return fail(res, 429, 'too many proxied requests');
     // url — последний параметр: и закодированный (…&url=https%3A%2F%2F…), и «как есть» (…&url=https://x/y?a=1&b=2, когда в шаблоне нет {url})
     const um = /[?&]url=(.*)$/.exec(req.url);
     let target = ''; if (um) { try { target = /^https?:\/\//i.test(um[1]) ? um[1] : decodeURIComponent(um[1]); } catch (e) { return fail(res, 400, 'bad url'); } }
     const hdrs = {'user-agent': 'DSP-workbench proxy'};
     for (const k of PROXY_PASS_REQ) if (req.headers[k]) hdrs[k] = req.headers[k];
+    if (post) for (const k of ['content-type', 'content-length']) if (req.headers[k]) hdrs[k] = req.headers[k];
     busy++; let done = false; const release = () => { if (!done) { done = true; busy--; } };
     res.on('close', release);
     const go = (urlStr, depth) => {
@@ -146,13 +151,14 @@ function makeProxy(o) {
       const lib = t.protocol === 'https:' ? https : http;
       const tport = +t.port || (t.protocol === 'https:' ? 443 : 80);
       const via = o.outProxy ? {createConnection: (opt, cb) => { proxyStream(o.outProxy, host, tport, t.protocol === 'https:').then(s => cb(null, s), cb); }} : {lookup};     // с прокси имя хоста резолвит он
-      const ureq = lib.request({host, port: tport, path: t.pathname + t.search, method: req.method, headers: {...hdrs, host: t.host}, ...via, timeout: 30000});
+      const ureq = lib.request({host, port: tport, path: t.pathname + t.search, method: req.method, headers: {...hdrs, host: t.host}, ...via, timeout: post ? PROXY_POST_WAIT : 30000});
       res.on('close', () => ureq.destroy());
       ureq.on('timeout', () => ureq.destroy(new Error('the server does not answer')));
       ureq.on('error', e => fail(res, 502, 'proxy: ' + (e.message || e.code)));
       ureq.on('response', ur => {
         if ([301, 302, 303, 307, 308].includes(ur.statusCode) && ur.headers.location) {
           ur.resume();
+          if (post) return fail(res, 502, 'the server answers a POST with a redirect to ' + ur.headers.location + ' — use that address in the node');     // тело уже ушло: повторить его нельзя
           if (depth >= 5) return fail(res, 502, 'too many redirects');
           return go(new URL(ur.headers.location, t).toString(), depth + 1);
         }
@@ -162,7 +168,12 @@ function makeProxy(o) {
         ur.on('error', () => res.destroy());
         ur.pipe(res);
       });
-      ureq.end();
+      if (post) {                                                                     // тело страницы — потоком в цель, с потолком размера
+        let got = 0;
+        req.on('data', c => { if ((got += c.length) > PROXY_MAX_BODY) { ureq.destroy(); fail(res, 413, 'request body is larger than ' + (PROXY_MAX_BODY >> 20) + ' MB'); req.destroy(); } });
+        req.on('error', () => ureq.destroy());
+        req.pipe(ureq);
+      } else ureq.end();
     };
     go(target, 0);
   };

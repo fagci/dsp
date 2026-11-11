@@ -23,6 +23,18 @@ const target = http.createServer((req, res) => {
     res.writeHead(206, {'content-range': `bytes ${m[1]}-${m[2] ?? 9}/10`, 'accept-ranges': 'bytes'}); return res.end(full.subarray(+m[1], (m[2] ? +m[2] : 9) + 1)); }
   if (req.url === '/redir') { res.writeHead(302, {location: '/text'}); return res.end(); }
   if (req.url === '/redir-meta') { res.writeHead(302, {location: 'http://169.254.169.254/latest/meta-data/'}); return res.end(); }
+  if (req.method === 'POST') {
+    const chunks = []; req.on('data', c => chunks.push(c));
+    return req.on('end', () => {
+      const body = Buffer.concat(chunks); seen.at(-1).body = body.toString(); seen.at(-1).ct = req.headers['content-type']; seen.at(-1).method = 'POST';
+      if (req.url === '/post-redir') { res.writeHead(307, {location: '/post-echo'}); return res.end(); }
+      if (req.url === '/post-ndjson') {                      // как Ollama: строки приходят по одной, не дожидаясь конца
+        res.writeHead(200, {'content-type': 'application/x-ndjson'}); let n = 0;
+        const t = setInterval(() => { res.write(JSON.stringify({n: n++}) + '\n'); if (n >= 3) { clearInterval(t); res.end(JSON.stringify({done: true}) + '\n'); } }, 60); return;
+      }
+      res.writeHead(200, {'content-type': 'application/json'}); res.end(JSON.stringify({echo: body.toString(), len: body.length}));
+    });
+  }
   if (req.url === '/q?a=1&b=2') { res.writeHead(200); return res.end('query kept'); }
   if (req.url === '/stream') {                              // бесконечный поток, как MJPEG: кадр раз в 40 мс
     res.writeHead(200, {'content-type': 'multipart/x-mixed-replace; boundary=f'}); let n = 0;
@@ -63,8 +75,28 @@ const {port} = await mk({proxyLoopback: true});
   const raw = await get(port, '/proxy?url=' + T + '/q?a=1&b=2'); ok('a raw address without {url} encoding keeps its own query', raw.status === 200 && raw.body === 'query kept', raw.status + raw.body);
   ok('the page\'s cookies and auth are not sent to the target', (await get(port, px(port, T + '/text'), {cookie: 'sid=1', authorization: 'Bearer x'})) && seen.at(-1).cookie === undefined && seen.at(-1).auth === undefined);
   ok('the target sees a polite user agent', /DSP-workbench/.test(seen.at(-1).ua));
-  const p = await get(port, px(port, T + '/text'), {}, 'POST'); ok('POST is refused', p.status === 405);
+  const p = await get(port, px(port, T + '/text'), {}, 'PUT'); ok('methods other than GET / HEAD / POST are refused', p.status === 405);
+  const pre2 = await get(port, '/proxy?url=x', {origin: 'http://localhost:8080', 'access-control-request-method': 'POST', 'access-control-request-headers': 'content-type'}, 'OPTIONS');
+  ok('preflight of a JSON POST: allowed', pre2.status === 204 && /POST/.test(pre2.headers['access-control-allow-methods']) && pre2.headers['access-control-allow-headers'] === '*');
   const nf = await get(port, px(port, T + '/missing')); ok('the real status of the target is kept (404)', nf.status === 404);
+}
+// POST: тело и Content-Type доходят до цели, ответ потоком, защита та же
+const post = (port, path, body, headers = {}) => new Promise(res => { const q = http.request({port, path, method: 'POST', headers: {'content-type': 'application/json', ...headers}}, r => { let d = ''; r.on('data', c => d += c); r.on('end', () => res({status: r.statusCode, body: d, headers: r.headers})); }); q.on('error', e => res({status: 0, body: String(e)})); q.end(body); });
+{ const payload = JSON.stringify({model: 'm', messages: [{role: 'user', content: 'Привет'}]});
+  const r = await post(port, px(port, T + '/post-echo'), payload, {origin: 'http://localhost:8080'});
+  const j = (() => { try { return JSON.parse(r.body); } catch (e) { return {}; } })();
+  ok('POST: the JSON body reaches the target intact (UTF-8)', r.status === 200 && j.echo === payload, r.status + r.body);
+  ok('POST: Content-Type is passed, the answer has CORS headers', seen.at(-1).ct === 'application/json' && seen.at(-1).method === 'POST' && r.headers['access-control-allow-origin'] === '*');
+  ok('POST: the page cookies are still not sent', (await post(port, px(port, T + '/post-echo'), '{}', {cookie: 'sid=1'})) && seen.at(-1).cookie === undefined);
+  const t0 = Date.now(); const times = [];
+  const lines = await new Promise(res => { let d = ''; const q = http.request({port, path: px(port, T + '/post-ndjson'), method: 'POST', headers: {'content-type': 'application/json'}}, r => { r.on('data', c => { times.push(Date.now() - t0); d += c; }); r.on('end', () => res(d.trim().split('\n'))); }); q.end('{}'); });
+  ok('POST: the answer is streamed line by line (not buffered)', lines.length === 4 && JSON.parse(lines[3]).done === true && times.length >= 3 && times[0] < times.at(-1) - 80, JSON.stringify(times));
+  const rr = await post(port, px(port, T + '/post-redir'), '{"a":1}'); ok('POST: a redirect is not followed (the body cannot be repeated), the reason is readable', rr.status === 502 && /redirect/.test(rr.body), rr.status + rr.body);
+  const big = await post(port, px(port, T + '/post-echo'), 'x'.repeat(9 << 20)); ok('POST: a body over 8 MB is refused', big.status === 413 || big.status === 0, String(big.status));
+  const {port: p6} = await mk({proxyLoopback: true, token: 'tk'});
+  ok('POST: the token is required', (await post(p6, px(p6, T + '/post-echo'), '{}')).status === 401 && (await post(p6, px(p6, T + '/post-echo', 'token=tk&'), '{}')).status === 200);
+  ok('POST: a foreign Origin is refused', (await post(p6, px(p6, T + '/post-echo', 'token=tk&'), '{}', {origin: 'https://evil.example'})).status === 403);
+  const {port: p7} = await mk({}); ok('POST: loopback target refused by default (SSRF guard)', (await post(p7, px(p7, T + '/post-echo'), '{}')).status === 403);
 }
 // поток: кадры доходят не дожидаясь конца, а закрытие клиента закрывает цель
 { const t0 = Date.now(); const chunks = [];
