@@ -17,18 +17,28 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  # Проверки и сборка независимы — идут параллельно (общее время = дольше из двух), и при падении можно
+  # перезапустить только упавший джоб («Re-run failed jobs»), а не всё заново.
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }      # вся история и теги — для заметок релиза
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.10.2' }
+      - name: Проверки моста на JVM (сервер, поворот кадра, разбор BLE / Wi-Fi / ГНСС)
+        run: gradle -p tools/android/jvm-test runTests
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4            # история сборке не нужна (версия = номер запуска)
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: '17' }
       # Android SDK и лицензии уже есть на раннере ubuntu-latest (ANDROID_HOME)
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.10.2' }
-      - name: Проверки моста на JVM (сервер, поворот кадра, разбор BLE / Wi-Fi / ГНСС)
-        run: gradle -p tools/android/jvm-test runTests
       - name: Сборка подписанного APK
         run: gradle -p tools/android :app:assembleRelease -PversionCode=${{ github.run_number }}
       - name: Имя файла с версией
@@ -37,6 +47,17 @@ jobs:
         with:
           name: dsp-android
           path: dsp-android-1.${{ github.run_number }}.apk
+
+  # Релиз — только со слияния в main и только когда прошли и проверки, и сборка
+  release:
+    needs: [test, build]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }      # вся история и теги — для заметок релиза
+      - uses: actions/download-artifact@v4
+        with: { name: dsp-android }
       - name: Заметки релиза — коммиты после прошлого релиза (приложение и веб-часть)
         run: |
           prev=$(git tag --list 'android-v*' --sort=-version:refname | head -1)
@@ -49,7 +70,6 @@ jobs:
           } > notes.md
           cat notes.md
       - name: Релиз
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: android-v1.${{ github.run_number }}
