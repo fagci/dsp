@@ -31,6 +31,9 @@ function wsSegmenter(sr,o){
   }
   return {
     get speaking(){ return speech; },
+    get seconds(){ return speech ? len/sr : 0; },                    // длина идущей фразы
+    get quiet(){ return speech ? quiet : 0; },                       // сколько уже молчат
+    peek(){ return speech && parts.length ? cat(parts) : null; },    // звук идущей фразы (копия) — для черновика, пока она не закончилась
     get floor(){ return floor; },
     push(x){
       out.length=0;
@@ -55,6 +58,14 @@ function wsSegmenter(sr,o){
     reset(){ speech=false; quiet=0; len=0; parts=[]; ring=[]; ringN=0; }
   };
 }
+
+// Пора ли считать черновик идущей фразы: модель уже в памяти, итоговые фразы не ждут своей очереди, фраза идёт и не короче minSec,
+// пауза ещё не закончила её, и прошло не меньше времени, чем нужно (at — момент, раньше которого не начинать)
+function wsDraftDue(s){
+  return !!(s.on && s.ready && !s.draftBusy && !s.busy && !(s.jobs>0) && s.speaking && s.seconds>=s.minSec && s.quiet<s.hang*.6 && s.now>=s.at);
+}
+// когда считать следующий черновик: не чаще every секунд и не раньше, чем в 1,3 раза дольше прошлого (медленный телефон не захлёбывается)
+const wsDraftNext=(now,took,every)=>now+Math.max(every*1000,took*1.3);
 
 // Whisper на тишине и шуме «сочиняет» привычные концовки роликов и пустые теги — их выбрасываем
 const WS_JUNK=['thank you','thank you.','thanks for watching','thanks for watching!','thank you for watching','thank you for watching.','subtitles by','bye','bye.','you',
