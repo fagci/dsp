@@ -87,6 +87,10 @@
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
         android:usesCleartextTraffic="true">
 
+        <!-- GPU для моделей (whisper.cpp, OpenCL): системная библиотека видна приложению только так (Android 12+); нет её — работает CPU -->
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
+        <uses-native-library android:name="libOpenCL-pixel.so" android:required="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

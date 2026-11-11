@@ -63,6 +63,7 @@ function wsLoad(repo){
 }
 // распознать одну фразу (Float32Array 16 кГц); запуски идут по очереди — в воркере одна сеть
 function wsRun(audio,o){
+  if(o.app) return wapRun(audio,o);                       // приложение Android: whisper.cpp на телефоне (whisper-app.js)
   const job=WS.chain.then(async()=>{
     await wsLoad(o.repo);
     const jid=++WS.jid, w=wsWorker();
@@ -76,7 +77,16 @@ function wsDownload(text,name){
   const a=document.createElement('a'), u=URL.createObjectURL(new Blob([text],{type:'text/plain'}));
   a.href=u; a.download=name; document.body.append(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u),10000);
 }
-function wsCfg(n){ const p=n.p; return {repo:wsRepo(p.model,p.custom), language:p.lang, task:p.task, norep:!!p.norep}; }
+// движок: «app» — whisper.cpp на телефоне (приложение Android), «browser» — ONNX в браузере; auto — на телефоне, пока он тянет (arm64 с dotprod)
+function wsEngine(n){ const e=n.p.engine; return e==='app' || (e!=='browser' && typeof AppLink!=='undefined' && AppLink.ok && !WAP.unsupported) ? 'app' : 'browser'; }
+function wsAppCfg(n){
+  const p=n.p, c=wapCustom(p.appUrl);
+  return c ? {name:c.name,url:c.url,gpu:!!p.appGpu,beam:+p.beam,fast:!!p.appFast,prompt:p.prompt}
+           : {name:wapFile(p.appModel),url:wapUrl(p.appModel),gpu:!!p.appGpu,beam:+p.beam,fast:!!p.appFast,prompt:p.prompt};
+}
+function wsCfg(n){ const p=n.p, app=wsEngine(n)==='app' ? wsAppCfg(n) : null; return {repo:app ? app.name : wsRepo(p.model,p.custom), language:p.lang, task:p.task, norep:!!p.norep, app}; }
+// модель — заранее, пока идёт звук (первая загрузка долгая)
+function wsPreload(n){ const c=wsCfg(n); return c.app ? wapLoad(c.app) : wsLoad(c.repo); }
 function wsSegCfg(n){ const p=n.p; return {thr:Math.pow(10,p.thr/20), pre:.35, hang:+p.pause, max:+p.maxlen, min:.4}; }
 
 // фраза в очередь распознавания; sec — время её конца от начала потока или файла
@@ -90,7 +100,7 @@ function wsPump(n){
   const j=n.jobs.shift(), cfg=wsCfg(n), gen=n.gen; n.busy=true;
   wsRun(j.audio,cfg).then(r=>{
     if(gen!==n.gen) return;
-    const text=n.p.norep ? wsDeloop(r.text) : r.text; n.ms=r.ms;
+    const text=n.p.norep ? wsDeloop(r.text) : r.text; n.ms=r.ms; n.rtf=r.audioMs>0 ? r.ms/r.audioMs : 0;
     if(!text || (n.p.junk && (wsJunk(text) || wsLoop(text)))){ n.skipped++; return; }
     const line=n.p.stamps ? wsStamp(j.sec)+' '+text : text;
     n.text=text; n.full=wsAppend(n.full,line,20000,'\n'); n.count++; n.go=true;
@@ -101,6 +111,17 @@ function wsPump(n){
 }
 function wsStatus(n){
   const cfg=wsCfg(n);
+  if(cfg.app){
+    if(n.err) return 'error: '+n.err;
+    if(WAP.loading || WAP.prog) return (WAP.prog||'loading…')+' (once — the model stays on the phone)';
+    if(WAP.ready!==cfg.app.name+'|'+(cfg.app.gpu ? 'gpu' : 'cpu')) return 'phone engine: model is not loaded yet'+(n.p.listen ? ' — loads when sound arrives' : '');
+    const bits=[cfg.app.name.replace(/^ggml-|\.bin$/g,''),WAP.info];
+    if(n.fileInfo) bits.push(n.fileInfo); else bits.push(n.seg?.speaking ? 'hearing speech' : 'listening');
+    if(n.busy || n.jobs.length) bits.push('recognising · queue '+(n.jobs.length+(n.busy ? 1 : 0)));
+    else if(n.ms) bits.push(Math.round(n.ms)+' ms per phrase'+(n.rtf ? ' · ×'+n.rtf.toFixed(2)+' real time' : ''));
+    if(n.dropped) bits.push('dropped '+n.dropped);
+    return bits.join(' · ');
+  }
   if(n.err) return 'error: '+n.err+' (no network? Files → Offline data → «by hand» lets you open the links in a new tab and load the files)';
   if(WS.ready!==cfg.repo){
     if(WS.loading) return 'loading Whisper '+cfg.repo.replace(/^.*\//,'')+(WS.prog ? ' · '+WS.prog : '')+' (once — then kept in Files → Offline data)…';
@@ -123,7 +144,7 @@ async function wsFile(n,file){
     n.err=''; n.fileInfo='decoding…'; n.rev++; redraw(n);
     const d=await decodeAudioFile(file), x=wsTo16k(d.samples,d.sr), seg=wsSegmenter(16000,{...wsSegCfg(n),max:Math.min(+n.p.maxlen,28)}), B=1600;
     const total=x.length/16000;
-    wsLoad(wsCfg(n).repo).catch(()=>{});
+    wsPreload(n).catch(()=>{});
     for(let i=0;i<x.length;i+=B){
       if(gen!==n.gen || n.fileStop) break;
       for(const s of seg.push(x.subarray(i,i+B))) wsEnqueue(n,s,(i+B)/16000);
@@ -149,7 +170,14 @@ def({ id:'whisper', lazy:'manual', title:'Speech to Text (Whisper, neural)', cat
   // in — звук; text — последняя фраза, full — вся стенограмма, go — импульс на новую фразу, rec — событие, busy — фраз в работе
   ins:[{n:'in',t:'sig'}],
   outs:[{n:'text',t:'txt'},{n:'full',t:'txt'},{n:'go',t:'num'},{n:'rec',t:'rec'},{n:'count',t:'num'},{n:'busy',t:'num'}],
-  params:[{n:'model',t:'select',opts:['tiny','base','small','large-v3-turbo','tiny.en','base.en','small.en'],d:'base',label:'model (tiny ≈45 MB fast, base ≈85, small ≈270 more exact, large-v3-turbo ≈800 MB — the most accurate, heavy: needs a fast PC; .en — English only)'},
+  params:[{n:'engine',t:'select',opts:['auto','app','browser'],d:'auto',label:'engine: app — whisper.cpp on the phone (DSP app: dotprod CPU, GPU via OpenCL where there is one; knows Russian far better), browser — ONNX in the page; auto — the phone engine in the app, else the browser'},
+          {n:'appModel',t:'select',opts:Object.keys(WAP_MODELS),d:'large-v3-turbo-q5_0',label:'phone model (large-v3-turbo-q5_0 ≈574 MB best Russian, medium-q5_0 ≈539, small-q5_1 ≈181 faster, weaker; downloaded once into the app)'},
+          {n:'appGpu',t:'check',d:true,label:'phone: use the GPU (OpenCL, Adreno 7xx / 8xx); off — CPU only. Switching CPU → GPU needs an app restart'},
+          {n:'beam',t:'range',min:1,max:5,step:1,d:1,label:'phone: beam search width (1 — greedy, fastest; 3–5 more exact, slower)'},
+          {n:'appFast',t:'check',d:false,label:'phone: shorten the encoder window to the phrase (faster on short phrases, a bit less exact)'},
+          {n:'prompt',t:'text',d:'',label:'phone: hint text for the decoder (names, terms, punctuation style: «Здравствуйте. Приём, как слышно?»)'},
+          {n:'appUrl',t:'text',d:'',label:'phone: own ggml model by address (.bin from whisper.cpp); empty — by «phone model»',adv:true},
+          {n:'model',t:'select',opts:['tiny','base','small','large-v3-turbo','tiny.en','base.en','small.en'],d:'base',label:'browser engine, model (tiny ≈45 MB fast, base ≈85, small ≈270 more exact, large-v3-turbo ≈800 MB — the most accurate, heavy: needs a fast PC; .en — English only)'},
           {n:'lang',t:'select',opts:['auto','en','ru','uk','de','fr','es','it','pt','nl','pl','cs','tr','ar','zh','ja','ko'],d:'auto',label:'language (auto — detect each phrase; a fixed one is more reliable on radio)'},
           {n:'task',t:'select',opts:['transcribe','translate'],d:'transcribe',label:'transcribe, or translate to English'},
           {n:'listen',t:'check',d:true,label:'listen to the input'},
@@ -164,7 +192,7 @@ def({ id:'whisper', lazy:'manual', title:'Speech to Text (Whisper, neural)', cat
           {n:'save',t:'button',label:'Save text',fn:n=>{ if(n.full) wsDownload(n.full,'whisper-'+Date.now()+'.txt'); }},
           {n:'custom',t:'text',d:'',label:'own model repo on huggingface.co (ONNX for Transformers.js), e.g. onnx-community/whisper-large-v3-turbo; empty — by «model»',adv:true}],
   init(n){ n.seg=null; n.segKey=''; n.sr=0; n.clock=0; n.jobs=[]; n.busy=false; n.gen=0; n.q=[]; n.text=''; n.full=''; n.count=0; n.go=false;
-           n.err=''; n.ms=0; n.skipped=0; n.dropped=0; n.rev=0; n.retryAt=0; n.fileRun=false; n.fileStop=false; n.fileInfo=''; n.pre=false; n.stat=''; },
+           n.err=''; n.ms=0; n.skipped=0; n.dropped=0; n.rev=0; n.retryAt=0; n.fileRun=false; n.fileStop=false; n.fileInfo=''; n.pre=false; n.stat=''; n.rtf=0; },
   dispose(n){ n.gen++; n.jobs=[]; n.seg=null; },
   process(n,I){
     const x=I.in, sr=Eng.sr;
@@ -172,7 +200,7 @@ def({ id:'whisper', lazy:'manual', title:'Speech to Text (Whisper, neural)', cat
       const key=[sr,n.p.thr,n.p.pause,n.p.maxlen].join('|');
       if(!n.seg || n.segKey!==key){ n.seg=wsSegmenter(sr,wsSegCfg(n)); n.segKey=key; }
       n.clock+=x.length/sr;
-      if(!n.pre && performance.now()>=n.retryAt){ n.pre=true; wsLoad(wsCfg(n).repo).catch(e=>{ n.pre=false; n.err=String(e.message||e); n.retryAt=performance.now()+8000; n.rev++; redraw(n); }); }
+      if(!n.pre && performance.now()>=n.retryAt){ n.pre=true; wsPreload(n).catch(e=>{ n.pre=false; n.err=String(e.message||e); n.retryAt=performance.now()+8000; n.rev++; redraw(n); }); }
       for(const s of n.seg.push(x)) wsEnqueue(n,wsTo16k(s,sr),n.clock);
     }
     if(n.err && performance.now()>=n.retryAt && n.retryAt){ n.err=''; n.retryAt=0; n.pre=false; }

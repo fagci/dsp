@@ -44,6 +44,7 @@ class BridgeService : Service() {
     private lateinit var monitor: MonitorHub
     private lateinit var wnet: WifiNetHub
     private lateinit var net: NetHub
+    private lateinit var ai: AiHub
     private lateinit var tlsCmds: TlsCmds
     private lateinit var sys: SysHub
     private lateinit var alarms: AlarmCmds
@@ -96,6 +97,7 @@ class BridgeService : Service() {
         files = FileHub(this, needs)
         dial = DialHub(this, needs)
         screenrec = ScreenRecHub(this) { recorder.dir }; ScreenEvents.sink = emit; ScreenEvents.backlog = { server.backlog() }
+        ai = AiHub(this, emit)
         net = NetHub(this, cfg, emit); sys = SysHub(this, cfg, emit, needs); sys.note = server::note; MockGps.clearStale(this); tlsCmds = TlsCmds(this, server)
         server.onCommand = { c, j -> route(c, j) }
         server.onBinary = { c, b -> if (c.power) net.sendBin(b) }                // действие, как tcp.send: страницам с другого устройства — по настройке
@@ -232,6 +234,7 @@ class BridgeService : Service() {
             n.startsWith("bt.") -> btlink.exec(c, j)
             n.startsWith("ble.adv.") -> adv.exec(c, j)
             n.startsWith("speech.") -> speech.exec(c, j)
+            n.startsWith("ai.") || n.startsWith("model.") || n.startsWith("asr.") -> ai.exec(c, j)
             n.startsWith("tcp.") || n.startsWith("udp.") || n.startsWith("net.") || n.startsWith("raw.") || n == "ping" -> net.exec(c, j)
             n.startsWith("alarm.") -> alarms.exec(c, j)
             n.startsWith("boot.") -> headless.exec(c, j)
@@ -266,7 +269,7 @@ class BridgeService : Service() {
         inst = null; up = false
         power.close(); activity.close(); try { torrents.close() } catch (e: Exception) { }; try { vlc.close() } catch (e: Throwable) { }; try { sys.stopMock() } catch (e: Exception) { }; FloatWin.closeAll(); headless.shutdown(); callrec.close(); recorder.close()
         server.stop()
-        sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close(); usb.close(); actions.close(); speech.close(); gatt.close(); gattsrv.close(); l2cap.close(); wlink.close(); monitor.close(); wnet.close(); btlink.close(); adv.close(); net.close(); sys.close(); stats.close()
+        sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close(); usb.close(); actions.close(); speech.close(); gatt.close(); gattsrv.close(); l2cap.close(); wlink.close(); monitor.close(); wnet.close(); btlink.close(); adv.close(); ai.stop(); net.close(); sys.close(); stats.close()
         wake?.takeIf { it.isHeld }?.release()
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(ID)
         super.onDestroy()
