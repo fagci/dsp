@@ -5,7 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float32Array,Float64Array,Array,Set,String,RegExp});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/whisper-kernels.js'),'utf8')+';this.T={wsTo16k,wsSegmenter,wsJunk,wsLoop,wsDeloop,wsAppend,wsFileName,wsStamp,wsManualName,wsFileUrl,WS_FILES};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/whisper-kernels.js'),'utf8')+';this.T={wsTo16k,wsSegmenter,wsDraftDue,wsDraftNext,wsJunk,wsLoop,wsDeloop,wsAppend,wsFileName,wsStamp,wsManualName,wsFileUrl,WS_FILES};',ctx);
 const T=ctx.T;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 
@@ -57,4 +57,24 @@ ok('stamp',T.wsStamp(65)==='[1:05]' && T.wsStamp(-3)==='[0:00]');
 ok('manual name: onnx goes to onnx/',T.wsManualName('a/b','encoder_model_quantized (1).onnx')==='Whisper · a/b · onnx/encoder_model_quantized.onnx'
   && T.wsManualName('a/b','C:\\x\\tokenizer.json')==='Whisper · a/b · tokenizer.json');
 ok('manual names match the automatic ones',T.WS_FILES.every(f=>T.wsFileName(T.wsFileUrl('a/b',f))===T.wsManualName('a/b',f.split('/').pop())));
+// --- черновик идущей фразы (peek, wsDraftDue, wsDraftNext)
+{ const sr=16000, sg=T.wsSegmenter(sr,{thr:.02,pre:.2,hang:.7,max:25,min:.3});
+  const tone=n=>{ const a=new Float32Array(n); for(let i=0;i<n;i++) a[i]=.3*Math.sin(i*.2); return a; };
+  ok('draft: no phrase → nothing to peek',sg.peek()===null && !sg.speaking && sg.seconds===0 && sg.quiet===0);
+  for(let i=0;i<5;i++) sg.push(tone(3200));                                   // 1 с речи
+  const pk=sg.peek();
+  ok('draft: the running phrase is available as a copy, with its length',sg.speaking && pk && pk.length>=16000 && Math.abs(sg.seconds-pk.length/sr)<1e-6);
+  pk[0]=99; ok('draft: peek is a copy (the phrase is not changed)',sg.peek()[0]!==99);
+  sg.push(new Float32Array(3200)); ok('draft: the pause so far is counted',Math.abs(sg.quiet-.2)<1e-6);
+  const done=[]; for(let i=0;i<5;i++) done.push(...sg.push(new Float32Array(3200)));
+  ok('draft: after the phrase ends nothing is left to peek, the phrase came out whole',sg.peek()===null && done.length===1 && done[0].length>=16000);
+}
+const due={on:true,ready:true,draftBusy:false,busy:false,jobs:0,speaking:true,seconds:2,minSec:1.2,quiet:0,hang:.7,now:10,at:5};
+ok('draft due: all conditions met',T.wsDraftDue(due)===true);
+ok('draft not due: off / model not loaded / a draft already runs',!T.wsDraftDue({...due,on:false}) && !T.wsDraftDue({...due,ready:false}) && !T.wsDraftDue({...due,draftBusy:true}));
+ok('draft not due: a final phrase is being recognised or waits',!T.wsDraftDue({...due,busy:true}) && !T.wsDraftDue({...due,jobs:2}));
+ok('draft not due: nobody speaks, phrase too short, pause about to end it',!T.wsDraftDue({...due,speaking:false}) && !T.wsDraftDue({...due,seconds:.8}) && !T.wsDraftDue({...due,quiet:.5}) && T.wsDraftDue({...due,quiet:.3}));
+ok('draft not due: too early',!T.wsDraftDue({...due,now:4.9}) && T.wsDraftDue({...due,now:5}));
+ok('draft next: at least «every» s, and 1.3× what the last one took',T.wsDraftNext(1000,200,1.5)===2500 && T.wsDraftNext(1000,4000,1.5)===1000+5200);
+
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad?1:0);

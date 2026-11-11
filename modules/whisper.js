@@ -91,6 +91,8 @@ function wsSegCfg(n){ const p=n.p; return {thr:Math.pow(10,p.thr/20), pre:.35, h
 
 // фраза в очередь распознавания; sec — время её конца от начала потока или файла
 function wsEnqueue(n,audio,sec){
+  if(n.draftBusy){ n.draftGen++; wapAbort(); }       // черновик этой фразы уже не нужен — итог считается сейчас
+  if(n.partial){ n.partial=''; n.rev++; }
   if(n.jobs.length>=6){ n.jobs.shift(); n.dropped++; }
   n.jobs.push({audio,sec:Math.max(0,sec-audio.length/16000)});
   wsPump(n);
@@ -103,11 +105,25 @@ function wsPump(n){
     const text=n.p.norep ? wsDeloop(r.text) : r.text; n.ms=r.ms; n.rtf=r.audioMs>0 ? r.ms/r.audioMs : 0;
     if(!text || (n.p.junk && (wsJunk(text) || wsLoop(text)))){ n.skipped++; return; }
     const line=n.p.stamps ? wsStamp(j.sec)+' '+text : text;
-    n.text=text; n.full=wsAppend(n.full,line,20000,'\n'); n.count++; n.go=true;
+    n.text=text; n.partial=''; n.full=wsAppend(n.full,line,20000,'\n'); n.count++; n.go=true;
     n.q.push({t:Date.now(),src:'whisper',text,sec:+j.sec.toFixed(1),model:cfg.repo});
     n.rev++; redraw(n);
   }).catch(e=>{ if(gen!==n.gen) return; n.err=String(e.message||e); n.retryAt=performance.now()+8000; n.rev++; redraw(n); })
     .finally(()=>{ if(gen===n.gen){ n.busy=false; wsPump(n); } });
+}
+// черновик идущей фразы (приложение): пока говорят, раз в несколько секунд считаем хвост звука заново — текст появляется до паузы
+function wsDraft(n){
+  const cfg=wsCfg(n); if(!cfg.app) return;
+  const seg=n.seg, now=performance.now();
+  if(!seg || !wsDraftDue({on:!!n.p.partial,ready:WAP.ready===cfg.app.name+'|'+(cfg.app.gpu ? 'gpu' : 'cpu'),draftBusy:n.draftBusy,busy:n.busy,jobs:n.jobs.length,
+      speaking:seg.speaking,seconds:seg.seconds,minSec:1.2,quiet:seg.quiet,hang:+n.p.pause,now,at:n.draftAt})) return;
+  const a=seg.peek(); if(!a) return;
+  const gen=n.gen, dg=++n.draftGen; n.draftBusy=true;
+  wapRun(wsTo16k(a,Eng.sr),{...cfg,app:{...cfg.app,fast:true,beam:1}}).then(r=>{
+    if(gen!==n.gen || dg!==n.draftGen) return;
+    const t=n.p.norep ? wsDeloop(r.text) : r.text;
+    n.partial=(!t || wsJunk(t) || wsLoop(t)) ? '' : t; n.rev++; redraw(n);
+  }).catch(()=>{}).finally(()=>{ if(gen===n.gen){ n.draftBusy=false; n.draftAt=wsDraftNext(performance.now(),performance.now()-now,+n.p.partialEvery||1.5); } });
 }
 function wsStatus(n){
   const cfg=wsCfg(n);
@@ -169,11 +185,13 @@ def({ id:'whisper', lazy:'manual', title:'Speech to Text (Whisper, neural)', cat
   kw:'whisper speech to text recognition stt transcribe transcription subtitles voice neural network ai openai russian english translate offline radio',
   // in — звук; text — последняя фраза, full — вся стенограмма, go — импульс на новую фразу, rec — событие, busy — фраз в работе
   ins:[{n:'in',t:'sig'}],
-  outs:[{n:'text',t:'txt'},{n:'full',t:'txt'},{n:'go',t:'num'},{n:'rec',t:'rec'},{n:'count',t:'num'},{n:'busy',t:'num'}],
+  outs:[{n:'text',t:'txt'},{n:'partial',t:'txt'},{n:'full',t:'txt'},{n:'go',t:'num'},{n:'rec',t:'rec'},{n:'count',t:'num'},{n:'busy',t:'num'}],
   params:[{n:'engine',t:'select',opts:['auto','app','browser'],d:'auto',label:'engine: app — whisper.cpp on the phone (DSP app: dotprod CPU, GPU via OpenCL where there is one; knows Russian far better), browser — ONNX in the page; auto — the phone engine in the app, else the browser'},
           {n:'appModel',t:'select',opts:Object.keys(WAP_MODELS),d:'large-v3-turbo-q5_0',label:'phone model (large-v3-turbo-q5_0 ≈574 MB best Russian, medium-q5_0 ≈539, small-q5_1 ≈181 faster, weaker; downloaded once into the app)'},
           {n:'appGpu',t:'check',d:true,label:'phone: use the GPU (OpenCL, Adreno 7xx / 8xx); off — CPU only. Switching CPU → GPU needs an app restart'},
           {n:'beam',t:'range',min:1,max:5,step:1,d:1,label:'phone: beam search width (1 — greedy, fastest; 3–5 more exact, slower)'},
+          {n:'partial',t:'check',d:true,label:'phone: live draft — while a phrase is still being spoken its tail is recognised again every few seconds and shown on the «partial» pin (grey in the node); the final text replaces it at the pause. Runs only when no final phrase waits and slows down by itself on a slow phone'},
+          {n:'partialEvery',t:'range',min:.5,max:5,step:.1,d:1.5,label:'phone: draft at most every, s (it also waits 1.3× the time the last draft took)',adv:true},
           {n:'appFast',t:'check',d:false,label:'phone: shorten the encoder window to the phrase (faster on short phrases, a bit less exact)'},
           {n:'prompt',t:'text',d:'',label:'phone: hint text for the decoder (names, terms, punctuation style: «Здравствуйте. Приём, как слышно?»)'},
           {n:'appUrl',t:'text',d:'',label:'phone: own ggml model by address (.bin from whisper.cpp); empty — by «phone model»',adv:true},
@@ -192,7 +210,7 @@ def({ id:'whisper', lazy:'manual', title:'Speech to Text (Whisper, neural)', cat
           {n:'save',t:'button',label:'Save text',fn:n=>{ if(n.full) wsDownload(n.full,'whisper-'+Date.now()+'.txt'); }},
           {n:'custom',t:'text',d:'',label:'own model repo on huggingface.co (ONNX for Transformers.js), e.g. onnx-community/whisper-large-v3-turbo; empty — by «model»',adv:true}],
   init(n){ n.seg=null; n.segKey=''; n.sr=0; n.clock=0; n.jobs=[]; n.busy=false; n.gen=0; n.q=[]; n.text=''; n.full=''; n.count=0; n.go=false;
-           n.err=''; n.ms=0; n.skipped=0; n.dropped=0; n.rev=0; n.retryAt=0; n.fileRun=false; n.fileStop=false; n.fileInfo=''; n.pre=false; n.stat=''; n.rtf=0; },
+           n.err=''; n.ms=0; n.skipped=0; n.dropped=0; n.rev=0; n.retryAt=0; n.fileRun=false; n.fileStop=false; n.fileInfo=''; n.pre=false; n.stat=''; n.rtf=0; n.partial=''; n.draftBusy=false; n.draftGen=0; n.draftAt=0; },
   dispose(n){ n.gen++; n.jobs=[]; n.seg=null; },
   process(n,I){
     const x=I.in, sr=Eng.sr;
@@ -202,11 +220,12 @@ def({ id:'whisper', lazy:'manual', title:'Speech to Text (Whisper, neural)', cat
       n.clock+=x.length/sr;
       if(!n.pre && performance.now()>=n.retryAt){ n.pre=true; wsPreload(n).catch(e=>{ n.pre=false; n.err=String(e.message||e); n.retryAt=performance.now()+8000; n.rev++; redraw(n); }); }
       for(const s of n.seg.push(x)) wsEnqueue(n,wsTo16k(s,sr),n.clock);
+      wsDraft(n);
     }
     if(n.err && performance.now()>=n.retryAt && n.retryAt){ n.err=''; n.retryAt=0; n.pre=false; }
     const st=wsStatus(n); if(st!==n.stat){ n.stat=st; redraw(n); }
     const rec=n.q.length ? n.q.splice(0) : null, go=n.go ? 1 : 0; n.go=false;
-    return {text:n.text, full:n.full, go, rec, count:n.count, busy:n.jobs.length+(n.busy ? 1 : 0)}; },
+    return {text:n.text, partial:n.partial||'', full:n.full, go, rec, count:n.count, busy:n.jobs.length+(n.busy ? 1 : 0)}; },
   drawKey:n=>n.stat+'|'+n.rev,
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
-    r.textContent=n.stat+(n.skipped ? ' · skipped '+n.skipped : '')+(n.full ? '\n\n'+n.full.slice(-1200) : ''); }});
+    r.textContent=n.stat+(n.skipped ? ' · skipped '+n.skipped : '')+(n.full ? '\n\n'+n.full.slice(-1200) : '')+(n.partial ? '\n▸ '+n.partial : ''); }});

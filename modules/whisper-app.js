@@ -94,6 +94,8 @@ function wapRun(audio,o){
   WAP.chain=job.catch(()=>{});
   return job;
 }
+// прервать идущее распознавание (устаревший черновик): ответ придёт ошибкой «stopped», которую вызывающий отбрасывает
+function wapAbort(){ return AppLink.call('asr.stop',{},5000).catch(()=>{}); }
 // пункты «⇩ offline» в Files: модели на телефоне (внутри приложения; в браузерное хранилище не попадают)
 if(typeof OfflineData!=='undefined' && typeof AppLink!=='undefined' && AppLink.ok){
   for(const m of ['large-v3-turbo-q5_0','medium-q5_0','small-q5_1'])
