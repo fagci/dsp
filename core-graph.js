@@ -1190,7 +1190,8 @@ return `M${p1.x+O},${p1.y+O} `+(s?seg(p1,s)+' ':'')+seg(a,b)+(e?' '+seg(e,p2):''
 });
 }
 /* ---- история, выделение, буфер обмена ---- */
-let graphDirty=false;                                // есть ли несохранённые изменения с последней загрузки/сохранения патча
+let graphDirty=false, lastEditAt=0;                  // есть ли несохранённые изменения с последней загрузки/сохранения патча; когда была последняя правка
+function setDirty(v){ if(v) lastEditAt=Date.now(); if(graphDirty!==v){ graphDirty=v; if(typeof updPatchBadge==='function') updPatchBadge(); } }
 const Undo={
 stack:[], idx:-1, busy:false,
 push(){
@@ -1198,7 +1199,7 @@ if(this.busy) return;
 flush();                                          // ← синхронизируем граф перед сериализацией
 const s=JSON.stringify(serialize());
 if(this.stack[this.idx]===s) return;
-graphDirty=true;
+setDirty(true);
 this.stack=this.stack.slice(0,this.idx+1);
 this.stack.push(s);
 if(this.stack.length>60) this.stack.shift();
@@ -1211,7 +1212,7 @@ if(i<0||i>=this.stack.length) return;
 this.busy=true;
 deserialize(JSON.parse(this.stack[i]));
 this.idx=i; this.busy=false; updUndo();
-graphDirty=true;                                  // откат/повтор тоже уводит от сохранённого состояния
+setDirty(true);                                  // откат/повтор тоже уводит от сохранённого состояния
 },
 undo(){ this.go(this.idx-1); },
 redo(){ this.go(this.idx+1); }
@@ -2894,11 +2895,11 @@ dl(new Blob([JSON.stringify(serialize(),null,1)],{type:'application/json'}),'pat
   if(sp) sp.onclick=()=>shareFile(new Blob([JSON.stringify(serialize(),null,1)],{type:'application/json'}),'patch.json'); }
 document.getElementById('load').onclick=()=>document.getElementById('fpick').click();
 document.getElementById('fpick').onchange=e=>{ const f=e.target.files[0]; if(!f) return;
-const r=new FileReader(); r.onload=()=>{ try{ stashIfDirty(); deserialize(JSON.parse(r.result)); fitViewWhenReady(); graphDirty=false; }catch(err){ alert('Could not read file: '+err.message); } };
+const r=new FileReader(); r.onload=()=>{ try{ stashIfDirty(); deserialize(JSON.parse(r.result)); fitViewWhenReady(); setDirty(false); }catch(err){ alert('Could not read file: '+err.message); } };
 r.readAsText(f); e.target.value=''; };
 document.getElementById('clear').onclick=()=>{
 stashIfDirty();
-clearAll(); markWiresDirty(); currentPatchName=''; syncHash(); buildPatchList(); graphDirty=false;
+clearAll(); markWiresDirty(); currentPatchName=''; syncHash(); buildPatchList(); setDirty(false);
 };
 // Корзина: только обновляет файлы приложения (кэш и сервис-воркер). Данные — патчи, списки Table (в том числе точки geo/…), кэш рельефа,
 // образцы, настройки — не стираются ни здесь, ни по какому-либо второму вопросу: для переноса и копии есть полный экспорт / импорт (Settings).
@@ -3175,7 +3176,7 @@ if(ROTILES || LS.get('dsp-dash')==='1') setDash(true);
 mobileBoot();
 fitViewWhenReady();                                 // сразу видно весь патч, а не дефолтный центр холста
 Undo.stack=[]; Undo.idx=-1; Undo.push();
-graphDirty=false;                                   // старт приложения — не пользовательское изменение
+setDirty(false);                                   // старт приложения — не пользовательское изменение
 currentPatchName=nm; syncHash(); buildPatchList();
 if(hdat){ try{ history.replaceState(null,'',location.pathname+location.search+'#d='+hdat+(hrun?'&run=1':'')); }catch(e){} loadFromHash(); }   // syncHash выше стёр #d
 else if(hrun && hpd) setTimeout(autoRun,500);       // патч найден — запускаем; нет такого — не запускаем то, что осталось от прошлого раза

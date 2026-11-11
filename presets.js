@@ -60,9 +60,9 @@ function getPatch(name,p,keepGraph){
   p=p||readP(); if(p[name]) return p[name];
   if(!(name in PRESETS)) return null;
   if(builtinCache.has(name) || !keepGraph) return buildPreset(name);
-  const keep=serialize(), dirty=graphDirty, was=Undo.busy; Undo.busy=true;
+  const keep=serialize(), dirty=graphDirty, edited=lastEditAt, was=Undo.busy; Undo.busy=true;
   try{ return buildPreset(name); }
-  finally{ deserialize(keep); Undo.busy=was; graphDirty=dirty; }
+  finally{ deserialize(keep); Undo.busy=was; setDirty(dirty); lastEditAt=edited; }
 }
 // Спрятан ли пресет на этом устройстве (нужен модуль без API): граф не собираем, смотрим слова в кавычках исходника строителя
 const hiddenMemo=new Map();
@@ -85,19 +85,27 @@ function syncShortcuts(){
 }
 let currentPatchName='', patchQuery='';
 const openPatchCats=new Set(['fav','own','temp']);          // свои патчи и temp раскрыты сразу, встроенные — свёрнуты
-const TEMP_PREFIX='temp:', TEMP_MAX=5;
 // Вместо "несохранённое пропадёт" — тихо откладываем текущий граф в раздел temp и едем дальше.
+// Имя: temp:<патч, с которого начали> · <дата и время последней правки>; прежняя копия того же патча заменяется (tempKey / tempPrune).
 function stashIfDirty(){
 if(HEADLESS || !graphDirty || !Graph.nodes.length) return;
 try{
 const p=readP();
-const ts=new Date().toISOString().slice(0,19).replace('T',' ');
-const key=TEMP_PREFIX+ts+' — '+(currentPatchName||'untitled');
+const key=tempKey(tempParse(currentPatchName)?.base||currentPatchName,lastEditAt||Date.now());
 p[key]=serialize();
-const temps=Object.keys(p).filter(k=>k.startsWith(TEMP_PREFIX)).sort();
-while(temps.length>TEMP_MAX) delete p[temps.shift()];
+for(const k of tempPrune(Object.keys(p),key,TEMP_MAX)) delete p[k];
 writeP(p);
 }catch(e){ console.error('temp stash failed (opening continues):',e); }     // ошибка в чужом узле не должна блокировать открытие другого патча
+}
+// Имя текущего патча и флаг «изменён» в панели; то же — в заголовке вкладки
+function updPatchBadge(){
+const el=document.getElementById('curPatch'); if(!el) return;
+const t=tempParse(currentPatchName), name=t?t.base:currentPatchName, show=!!currentPatchName||graphDirty;
+el.hidden=!show;
+el.classList.toggle('dirty',graphDirty);
+el.textContent=(name||'untitled')+(t?' (temp)':'')+(graphDirty?' ●':'');
+el.title=(graphDirty ? 'Unsaved changes' : 'Saved')+' — '+(currentPatchName||'new patch')+(graphDirty ? (currentPatchName in PRESETS ? '\nBuilt-in preset: Save keeps your own copy.' : '\nClick to save.') : '\nClick to show the patch list.');
+document.title=(graphDirty?'● ':'')+(name?name+' — ':'')+'DSP';
 }
 // Имя патча в адресе (#p=имя) — у каждой вкладки свой патч; #d=… — патч целиком в ссылке (только при «Copy link»)
 const hashParam=k=>{ const m=location.hash.match(new RegExp('[#&]'+k+'=([^&]*)')); try{ return m?decodeURIComponent(m[1]):''; }catch(e){ return ''; } };
@@ -119,7 +127,7 @@ async function loadFromHash(){
 const d=hashParam('d'), n=hashParam('p'), run=hashParam('run')==='1';
 if(d){
 let ok=false;
-try{ stashIfDirty(); deserialize(await unpackPatch(d)); currentPatchName=''; graphDirty=false; fitViewWhenReady(); stat.textContent='patch loaded from link'; ok=true; }
+try{ stashIfDirty(); deserialize(await unpackPatch(d)); currentPatchName=''; setDirty(false); fitViewWhenReady(); stat.textContent='patch loaded from link'; ok=true; }
 catch(e){ stat.textContent='bad link: '+e.message; }
 syncHash(); buildPatchList();
 if(run && ok) setTimeout(autoRun,500);
@@ -156,7 +164,7 @@ det.append(sum);
 return det;
 }
 function buildPatchList(){
-patchListEl.innerHTML='';
+patchListEl.innerHTML=''; updPatchBadge();
 const p=readP();
 const favList=favClean(favRaw(),n=>hasPatch(n,p)); favNow=new Set(favList);
 const q=patchQuery.trim().toLocaleLowerCase('ru');
@@ -166,8 +174,9 @@ const names=patchNames(PRESETS,p);
 if(q) for(const k of names) if(score(k)>=th){ strongAny=true; break; }
 const match=name=>{ if(!q) return true; const sc=score(name); return strongAny ? sc>=th : sc>0; };
 const custom=Object.keys(p).filter(k=>!(k in PRESETS) &&match(k));      // свои патчи; перекрывающий встроенное имя показываем среди встроенных
-const temp=custom.filter(k=>k.startsWith(TEMP_PREFIX)).sort().reverse();     // новые сверху
-const own=custom.filter(k=>!k.startsWith(TEMP_PREFIX)).sort();
+const tstamp=k=>tempParse(k).stamp;
+const temp=custom.filter(k=>tempParse(k)).sort((a,b)=>tstamp(b).localeCompare(tstamp(a))||a.localeCompare(b));     // новые сверху
+const own=custom.filter(k=>!tempParse(k)).sort();
 const builtin=Object.keys(PRESETS).filter(k=>match(k) &&!presetHidden(k,p));
 if(q) builtin.sort((a,b)=>score(b)-score(a));            // лучшие совпадения выше      // пресеты на модулях без нужного API не показываем
 let matches=0;
@@ -175,10 +184,17 @@ const addGroup=(key,label,keys,subs)=>{
 if(!keys.length) return;
 const det=makePatchDetails(key,label,q?true:openPatchCats.has(key));
 det.querySelector('summary').insertAdjacentHTML('beforeend', `<span class="cnt">${keys.length}</span>` );
+if(key==='temp'){
+const b=document.createElement('span'); b.className='pclr'; b.textContent='clear'; b.title='Delete all unsaved-edit copies';
+b.addEventListener('click',e=>{ e.preventDefault(); e.stopPropagation(); if(!confirm('Delete all '+keys.length+' unsaved-edit copies?')) return;
+const q=readP(); for(const k of Object.keys(q)) if(tempParse(k)) delete q[k]; writeP(q); buildPatchList(); });
+det.querySelector('summary').append(b);
+}
 const bySub=new Map();                                // подгруппа из одного пресета — без заголовка, под полным именем
 if(subs) for(const name of keys){ const k=presetSub(name); (bySub.get(k)||bySub.set(k,[]).get(k)).push(name); }
 const flat=subs ? keys.filter(n=>bySub.get(presetSub(n)).length<2) : keys;
-const add=(name,sub)=>{ matches++; const it=makePatchItem(name,p[name]?p[name].nodes.length:-1,sub&&name.startsWith(sub+': ')?name.slice(sub.length+2):name); if(sub) it.classList.add('insub'); det.append(it); };
+const add=(name,sub)=>{ matches++; const tp=tempParse(name), it=makePatchItem(name,p[name]?p[name].nodes.length:-1,tp ? tp.base+(tp.stamp?' · '+tp.stamp:'') : sub&&name.startsWith(sub+': ')?name.slice(sub.length+2):name);
+if(tp) it.title='Unsaved edits of «'+tp.base+'»'+(tp.stamp?', last change '+tp.stamp:'')+' · '+p[name].nodes.length+' nodes'; if(sub) it.classList.add('insub'); det.append(it); };
 for(const name of flat) add(name);
 if(subs) for(const [sub,list] of [...bySub].sort((a,b)=>a[0].localeCompare(b[0]))) if(list.length>1){
 const h=document.createElement('div'); h.className='psub'; h.textContent=sub; det.append(h);
@@ -192,7 +208,7 @@ addGroup('search','SEARCH',[...own,...temp,...builtin].sort((a,b)=>score(b)-scor
 patchListEl.classList.toggle('empty',matches===0);
 return;
 }
-addGroup('temp','TEMP (autosave)',temp);
+addGroup('temp','UNSAVED EDITS',temp);
 addGroup('own','MY PATCHES',own);
 const byCat={};                                       // встроенные — по категориям, не одним списком
 for(const name of builtin){ const cat=PRESET_CATS[name]||'Misc'; (byCat[cat]||(byCat[cat]=[])).push(name); }
@@ -206,7 +222,7 @@ stashIfDirty();
 const p=readP(); if(!hasPatch(name,p)) return;
 try{ deserialize(getPatch(name,p)); }
 catch(e){ console.error('open "'+name+'" failed:',e); stat.textContent='could not open «'+name+'»: '+(e&&e.message||e); buildPatchList(); return; }
-currentPatchName=name; graphDirty=false; syncHash();
+currentPatchName=name; setDirty(false); syncHash();
 stat.textContent='opened: '+name;
 buildPatchList(); closeSide();
 // телефон: вид пресета сохранён под большой экран (100 %, левый верхний угол) — на узком виден обрывок графа, поэтому вписываем патч целиком
@@ -223,12 +239,20 @@ stat.textContent='inserted: '+name+' (Ctrl+Z — undo)';
 if(narrowUI.matches) closeSide();
 }
 document.getElementById('psave').onclick=()=>{
-const name=prompt('Patch name',currentPatchName||'patch '+new Date().toLocaleString());
+const tp=tempParse(currentPatchName), dflt=tp ? tp.base+' (edited)' : currentPatchName in PRESETS ? currentPatchName+' (copy)' : currentPatchName;     // встроенное и temp не перезаписываем молча
+const name=prompt('Patch name',dflt||'patch '+new Date().toLocaleString());
 if(!name) return;
 const p=readP(); p[name]=serialize(); writeP(p);
-currentPatchName=name; graphDirty=false; syncHash();
+currentPatchName=name; setDirty(false); syncHash();
 stat.textContent='patch saved: '+name;
 buildPatchList();
+};
+document.getElementById('curPatch').onclick=()=>{
+if(graphDirty) return document.getElementById('psave').click();
+if(side.classList.contains('collapsed')) document.getElementById('menu').click();
+else if(narrowUI.matches && !side.classList.contains('open')) document.getElementById('menu').click();
+document.querySelector('.sidetab[data-tab="patches"]').click();
+patchListEl.querySelector('.pitem.on')?.scrollIntoView({block:'center'});
 };
 patchSearchEl.addEventListener('input',e=>{ patchQuery=e.target.value; buildPatchList(); });
 // Встроенные пресеты, снятые с поставки (имя начинается с…): стираются из старого хранилища при миграции

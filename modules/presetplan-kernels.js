@@ -32,6 +32,35 @@ function presetSrcIds(src,known){
   return out;
 }
 
+// ---- temp-копии: несохранённый граф, отложенный при переходе к другому патчу ----
+// Имя: «temp:<патч, с которого начали> · ГГГГ-ММ-ДД ЧЧ:ММ» — время последней правки (минуты), а не момента перехода.
+// Старый формат «temp:ГГГГ-ММ-ДД ЧЧ:ММ:СС — <патч>» тоже читается.
+const TEMP_PREFIX='temp:', TEMP_MAX=10;
+function tempStamp(ms){
+  const d=new Date(ms), z=n=>String(n).padStart(2,'0');
+  return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate())+' '+z(d.getHours())+':'+z(d.getMinutes());
+}
+const tempKey=(base,ms)=>TEMP_PREFIX+(base||'untitled')+' · '+tempStamp(ms);
+// имя temp-копии → {base: исходный патч, stamp: время правки}; не temp — null
+function tempParse(key){
+  if(typeof key!=='string' || !key.startsWith(TEMP_PREFIX)) return null;
+  let m=/^temp:(.*) · (\d{4}-\d\d-\d\d \d\d:\d\d)$/.exec(key);
+  if(m) return {base:m[1],stamp:m[2]};
+  m=/^temp:(\d{4}-\d\d-\d\d \d\d:\d\d)(?::\d\d)? — (.*)$/.exec(key);
+  if(m) return {base:m[2],stamp:m[1]};
+  return {base:key.slice(TEMP_PREFIX.length),stamp:''};
+}
+// Какие temp-копии стереть после записи newKey: прежние копии того же патча (остаётся последняя правка; у «untitled» копии
+// не связаны между собой) и самые старые сверх max. newKey не стирается никогда.
+function tempPrune(keys,newKey,max){
+  const nb=tempParse(newKey)?.base, drop=new Set();
+  const temps=[...new Set([...keys,newKey])].filter(k=>tempParse(k));
+  if(nb && nb!=='untitled') for(const k of temps) if(k!==newKey && tempParse(k).base===nb) drop.add(k);
+  const left=temps.filter(k=>!drop.has(k)&&k!==newKey).sort((a,b)=>tempParse(a).stamp.localeCompare(tempParse(b).stamp)||a.localeCompare(b));
+  while(left.length+1>(max||TEMP_MAX)) drop.add(left.shift());
+  return [...drop];
+}
+
 // Избранные пресеты (звезда в списке; в приложении Android первые становятся ярлыками при долгом нажатии на иконку).
 // Список имён: новая звезда — в начало, повторное нажатие снимает; без дублей, не длиннее max.
 function favToggle(list,name,max){
