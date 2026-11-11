@@ -52,7 +52,10 @@ class FakeEngine : AsrEngine {
 class FakeLlm : LlmEngine {
     var path: String? = null; var gpuLayers = 99; var freed = 0; var gens = 0; var lastPrompt = ""; var lastOpts: LlmOpts? = null; var failLoad: String? = null
     var template: Boolean = true; var failGen: String? = null; @Volatile var stop = false; var slowMs = 0L; var ctxSeen = 0
-    override fun load(path: String, ctx: Int, gpuLayers: Int, threads: Int, flash: Boolean, mmap: Boolean): String? { if (failLoad != null) return failLoad; this.path = path; this.gpuLayers = gpuLayers; ctxSeen = ctx; return null }
+    var threadsNow = 0; var resets = 0; var reused = 0; var flashSeen = 99
+    override fun load(path: String, ctx: Int, gpuLayers: Int, threads: Int, flash: Int, mmap: Boolean): String? { if (failLoad != null) return failLoad; this.path = path; this.gpuLayers = gpuLayers; ctxSeen = ctx; threadsNow = threads; flashSeen = flash; return null }
+    override fun setThreads(n: Int) { threadsNow = n }
+    override fun reset() { resets++; reused = 0 }
     override fun info() = "fake 1B Q4_0|600000000|8192|$ctxSeen"
     override fun backends() = "CPU:CPU|cpu" + (if (gpuLayers != 0) ";GPU:OpenCL|Adreno" else "")
     override fun format(m: List<ChatMsg>): ByteArray? = if (template) m.joinToString("") { "[${it.role}]${it.content}\n" }.plus("[assistant]").toByteArray() else null
@@ -68,7 +71,7 @@ class FakeLlm : LlmEngine {
         }
         return null
     }
-    override fun perf() = doubleArrayOf(100.0, 20.0, 500.0, 5.0)
+    override fun perf() = doubleArrayOf(100.0, 20.0, if (threadsNow == 4) 500.0 else 1000.0, 5.0, reused.toDouble())
     override fun cancel() { stop = true }
     override fun free() { freed++; path = null }
 }
@@ -201,10 +204,10 @@ fun main() {
     File(dir, "m/q.gguf").writeBytes(ByteArray(1000)); File(dir, "m/w.bin").writeBytes(ByteArray(10))
     val fl = FakeLlm(); val lc = LlmCore(store) { fl }
     ok("llm: chat without a model → clear error", lc.chat(listOf(ChatMsg("user", "hi")), LlmOpts()) { true }.err?.contains("llm.load") == true)
-    ok("llm: only .gguf files load, unknown names refused", !lc.load("w.bin", true, 4096, 4, false, true).ok && !lc.load("nope.gguf", true, 4096, 4, false, true).ok)
-    val ll = lc.load("q.gguf", true, 4096, 4, false, true)
+    ok("llm: only .gguf files load, unknown names refused", !lc.load("w.bin", true, 4096, 4, -1, true).ok && !lc.load("nope.gguf", true, 4096, 4, -1, true).ok)
+    val ll = lc.load("q.gguf", true, 4096, 4, -1, true)
     ok("llm load: GPU asks all layers, info and backends come from the engine", ll.ok && fl.gpuLayers == -1 && ll.info.startsWith("fake 1B") && ll.backends.contains("GPU:OpenCL") && lc.gpu && lc.ctx == 4096)
-    ok("llm load: the same settings again are free", lc.load("q.gguf", true, 4096, 4, false, true).ms == 0L && fl.freed == 0)
+    ok("llm load: the same settings again are free", lc.load("q.gguf", true, 4096, 4, -1, true).ms == 0L && fl.freed == 0)
     val pieces = ArrayList<String>()
     val dn = lc.chat(listOf(ChatMsg("system", "S"), ChatMsg("user", "Привет")), LlmOpts(max = 64, temp = 0.3f)) { pieces.add(it); true }
     ok("llm chat: tokens stream one by one and add up to the answer", dn.err == null && pieces.size == 5 && dn.text == "Привет, мир!" && pieces.joinToString("") == dn.text)
@@ -228,14 +231,39 @@ fun main() {
     fl.slowMs = 0; fl.failGen = "the request does not fit"
     ok("llm chat: an engine error is passed on", lc.chat(listOf(ChatMsg("user", "hi")), LlmOpts()) { true }.err == "the request does not fit")
     fl.failGen = null
-    val lcpu = lc.load("q.gguf", false, 2048, 4, false, true)
+    val lcpu = lc.load("q.gguf", false, 2048, 4, -1, true)
     ok("llm load: another backend or context reloads the model", lcpu.ok && fl.freed == 1 && fl.gpuLayers == 0 && !lcpu.backends.contains("GPU") && lc.ctx == 2048)
     fl.failLoad = "broken file"; fl.freed = 0
-    val lb = lc.load("q.gguf", true, 4096, 4, false, true)
+    val lb = lc.load("q.gguf", true, 4096, 4, -1, true)
     ok("llm load: an engine error is passed on and nothing stays loaded", !lb.ok && lb.err == "broken file" && !lc.loaded && lc.model == "")
-    fl.failLoad = null; lc.load("q.gguf", true, 4096, 4, false, true); lc.unload()
+    fl.failLoad = null; lc.load("q.gguf", true, 4096, 4, -1, true); lc.unload()
     ok("llm unload frees the model", !lc.loaded && lc.model == "")
     ok("llm commands need the app page", BridgeServer.powerCmd("llm.chat") && BridgeServer.powerCmd("llm.load"))
+
+    // --- скорость LLM: быстрые ядра, потоки, бенчмарк, KV-кэш в статистике
+    val k8 = listOf(2_265_600L, 2_265_600L, 2_265_600L, 2_265_600L, 2_803_200L, 2_803_200L, 2_803_200L, 3_302_400L)      // 4 малых + 3 больших + 1 «прайм»
+    ok("big cores: little ones are left out (≥ 70 % of the top frequency)", AiArgs.bigCores(k8, 8) == 4)
+    val k8b = listOf(1_800_000L, 1_800_000L, 1_800_000L, 1_800_000L, 2_900_000L, 2_900_000L, 2_900_000L, 3_300_000L)
+    ok("big cores: 4 little cores at 55 % are not counted", AiArgs.bigCores(k8b, 8) == 4)
+    ok("big cores: all equal → all, clamped to 8; unknown frequencies → half of the cores", AiArgs.bigCores(List(4) { 2_000_000L }, 4) == 4 && AiArgs.bigCores(List(12) { 2_000_000L }, 12) == 8 && AiArgs.bigCores(emptyList(), 8) == 4 && AiArgs.bigCores(listOf(0L, 0L), 6) == 3)
+    ok("big cores: at least 2", AiArgs.bigCores(listOf(3_000_000L, 1_000_000L, 1_000_000L, 1_000_000L), 4) == 2)
+    val fb = FakeLlm(); val bc = LlmCore(store) { fb }
+    bc.load("q.gguf", true, 4096, 6, -1, true)
+    ok("llm load: the flash setting «auto» (-1) reaches the engine, the threads too", fb.flashSeen == -1 && fb.threadsNow == 6)
+    bc.chat(listOf(ChatMsg("user", "hi")), LlmOpts(), 3) { true }
+    ok("llm chat: a different thread count is applied before the answer", fb.threadsNow == 3)
+    fb.threadsNow = 99; bc.chat(listOf(ChatMsg("user", "hi")), LlmOpts(), 3) { true }
+    ok("llm chat: the same count is not set again", fb.threadsNow == 99)
+    fb.reused = 17
+    ok("llm chat: tokens taken from the KV cache are reported", bc.chat(listOf(ChatMsg("user", "hi")), LlmOpts()) { true }.cached == 17)
+    val bn = bc.bench(listOf(2, 4, 6, 4, 99, 0))
+    ok("bench: every candidate once (duplicates and absurd values dropped), the cache is reset before each", bn.err == null && bn.rows.map { it.threads } == listOf(2, 4, 6) && fb.resets >= 3)
+    ok("bench: the fastest by answer speed wins and stays set", bn.best == 4 && fb.threadsNow == 4 && bn.rows.first { it.threads == 4 }.tps == 10.0 && bn.rows.first { it.threads == 2 }.tps == 5.0)
+    ok("bench: speeds come from the engine timings (tokens per second of the answer and of the request)", bn.rows[0].tps == 5.0 && Math.abs(bn.rows[0].ptps - 200.0) < 1e-9)
+    ok("bench: no list → an error, no model → an error", bc.bench(listOf(0, 99)).err != null && LlmCore(store) { FakeLlm() }.bench(listOf(2)).err!!.contains("llm.load"))
+    fb.failGen = "decode error"
+    ok("bench: an engine error stops it and is passed on", bc.bench(listOf(2, 4)).err == "decode error")
+    fb.failGen = null
 
 
     // --- нейросети TFLite

@@ -40,6 +40,14 @@ object AiArgs {
         return Cpu("asimddp" in f, "i8mm" in f, "asimdhp" in f || "fphp" in f, cores)
     }
 
+    /** Сколько потоков брать: число «больших» ядер — тех, чья максимальная частота не ниже 70 % от самой высокой (энергосберегающие тянут расчёт назад). Частоты — cpuinfo_max_freq каждого ядра. */
+    fun bigCores(maxFreqs: List<Long>, fallbackCores: Int): Int {
+        val f = maxFreqs.filter { it > 0 }
+        if (f.isEmpty()) return (fallbackCores / 2).coerceIn(2, 6)
+        val top = f.max()
+        return f.count { it * 10 >= top * 7 }.coerceIn(2, 8)
+    }
+
     /** Какую библиотеку грузить: null — арм64 без dotprod (или не ARM), нативный слой не включается. */
     fun lib(cpu: Cpu, arm64: Boolean, openclPresent: Boolean, gpu: Boolean, base: String = "dsp_whisper"): String? = when {
         !arm64 || !cpu.dotprod || !cpu.fp16 -> null
@@ -226,13 +234,15 @@ object LlmArgs {
 }
 
 interface LlmEngine {
-    fun load(path: String, ctx: Int, gpuLayers: Int, threads: Int, flash: Boolean, mmap: Boolean): String?     // null — готово
+    fun load(path: String, ctx: Int, gpuLayers: Int, threads: Int, flash: Int, mmap: Boolean): String?     // flash: -1 решает llama.cpp, 0 выкл., 1 вкл.; null — готово
     fun info(): String                                                  // «описание|байты|обучающий контекст|контекст»
     fun backends(): String
     fun format(m: List<ChatMsg>): ByteArray?                            // шаблон модели; null — у модели его нет
     fun countTokens(prompt: ByteArray): Int
     fun generate(prompt: ByteArray, o: LlmOpts, onToken: (String) -> Boolean): String?                         // null — готово, иначе ошибка
-    fun perf(): DoubleArray                                             // {мс запроса, токенов запроса, мс генерации, токенов}
+    fun perf(): DoubleArray                                             // {мс запроса, токенов запроса, мс генерации, токенов, токенов запроса из KV-кэша}
+    fun setThreads(n: Int)
+    fun reset()                                                         // сбросить KV-кэш (честный замер, новый разговор)
     fun cancel()
     fun free()
 }
@@ -246,12 +256,14 @@ class LlmCore(private val store: ModelStore, private val make: () -> LlmEngine) 
     private val lock = Any()
 
     class Loaded(val ok: Boolean, val err: String?, val info: String, val backends: String, val ms: Long)
-    class Done(val err: String?, val text: String, val tokens: Int, val promptTokens: Int, val ms: Long, val tps: Double, val ptps: Double, val trimmed: Int)
+    class Done(val err: String?, val text: String, val tokens: Int, val promptTokens: Int, val ms: Long, val tps: Double, val ptps: Double, val trimmed: Int, val cached: Int = 0)
+    class BenchRow(val threads: Int, val tps: Double, val ptps: Double)
+    class Bench(val err: String?, val rows: List<BenchRow>, val best: Int)
 
-    fun load(name: String, wantGpu: Boolean, nCtx: Int, threads: Int, flash: Boolean, mmap: Boolean): Loaded = synchronized(lock) {
+    fun load(name: String, wantGpu: Boolean, nCtx: Int, threads: Int, flash: Int, mmap: Boolean): Loaded = synchronized(lock) {
         val f = store.file(name)?.takeIf { it.name.endsWith(".gguf", true) } ?: return Loaded(false, "no model «$name» (.gguf) — download it first (model.get)", "", "", 0)
         if (eng != null && model == name && gpu == wantGpu && ctx == nCtx) return Loaded(true, null, eng!!.info(), eng!!.backends(), 0)
-        eng?.free(); eng = null; model = ""
+        eng?.free(); eng = null; model = ""; threadsNow = threads
         val t = System.currentTimeMillis()
         val e = make()
         val err = e.load(f.absolutePath, nCtx, if (wantGpu) -1 else 0, threads, flash, mmap)
@@ -260,9 +272,12 @@ class LlmCore(private val store: ModelStore, private val make: () -> LlmEngine) 
         Loaded(true, null, e.info(), e.backends(), System.currentTimeMillis() - t)
     }
 
-    fun chat(msgs: List<ChatMsg>, o: LlmOpts, onToken: (String) -> Boolean): Done {
+    private var threadsNow = 0
+
+    fun chat(msgs: List<ChatMsg>, o: LlmOpts, threads: Int = 0, onToken: (String) -> Boolean): Done {
         val e = synchronized(lock) { eng } ?: return Done("no model loaded (llm.load)", "", 0, 0, 0, 0.0, 0.0, 0)
         return synchronized(e) {
+            if (threads > 0 && threads != threadsNow) { e.setThreads(threads); threadsNow = threads }
             val t = System.currentTimeMillis()
             val fmt = { m: List<ChatMsg> -> e.format(m) ?: LlmArgs.chatMl(m) }
             val room = (ctx - o.max.coerceAtMost(ctx / 2) - 8).coerceAtLeast(64)
@@ -273,13 +288,36 @@ class LlmCore(private val store: ModelStore, private val make: () -> LlmEngine) 
             val p = e.perf()
             val tps = if (p[2] > 0) p[3] * 1000.0 / p[2] else 0.0
             val ptps = if (p[0] > 0) p[1] * 1000.0 / p[0] else 0.0
-            Done(err, sb.toString(), p[3].toInt(), p[1].toInt(), System.currentTimeMillis() - t, tps, ptps, dropped)
+            Done(err, sb.toString(), p[3].toInt(), p[1].toInt(), System.currentTimeMillis() - t, tps, ptps, dropped, if (p.size > 4) p[4].toInt() else 0)
         }
     }
 
+    /** Замер на этом телефоне с этой моделью: для каждого числа потоков одна и та же короткая генерация без кэша; лучшим остаётся самый быстрый по скорости ответа. Измерять надо на устройстве — здесь только обвязка. */
+    fun bench(cands: List<Int>, prompt: String = BENCH_PROMPT, tokens: Int = 48): Bench {
+        val e = synchronized(lock) { eng } ?: return Bench("no model loaded (llm.load)", emptyList(), 0)
+        val list = cands.filter { it in 1..16 }.distinct().take(8)
+        if (list.isEmpty()) return Bench("threads: a list of 1…16", emptyList(), 0)
+        return synchronized(e) {
+            val rows = ArrayList<BenchRow>()
+            for (n in list) {
+                e.setThreads(n); e.reset()
+                val err = e.generate(fmt(e, listOf(ChatMsg("user", prompt))), LlmOpts(max = tokens, temp = 0f)) { true }
+                if (err != null) { threadsNow = 0; return@synchronized Bench(err, rows, 0) }
+                val p = e.perf()
+                rows.add(BenchRow(n, if (p[2] > 0) p[3] * 1000.0 / p[2] else 0.0, if (p[0] > 0) p[1] * 1000.0 / p[0] else 0.0))
+            }
+            val best = rows.maxByOrNull { it.tps }?.threads ?: list.first()
+            e.setThreads(best); threadsNow = best; e.reset()
+            Bench(null, rows, best)
+        }
+    }
+    private fun fmt(e: LlmEngine, m: List<ChatMsg>) = e.format(m) ?: LlmArgs.chatMl(m)
+
     fun cancel() { synchronized(lock) { eng }?.cancel() }
-    fun unload() { synchronized(lock) { eng?.free(); eng = null; model = "" } }
+    fun unload() { synchronized(lock) { eng?.free(); eng = null; model = ""; threadsNow = 0 } }
     val loaded get() = synchronized(lock) { eng != null }
+
+    companion object { const val BENCH_PROMPT = "Write a short paragraph about the history of radio. Mention Marconi, Popov and the first transatlantic signal." }
 }
 
 /* ---------- нейросети TFLite (GPU-делегат): Basic Pitch, YAMNet и другие модели float32 ---------- */

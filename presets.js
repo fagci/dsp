@@ -527,6 +527,7 @@ const PRESET_CATS={
   'Map: OSM Radio Masts, Towers and Peaks (Overpass)':'Maps & Locating',
   'Ollama: Ask a Local LLM':'Tools',
   'Ollama: Chat with a Local LLM (Chat node)':'Tools',
+  'Agent: Weather Watcher — LLM with Tools (read inputs, calc, set outputs)':'Tools',
   'Ollama: Local LLM on the Phone (llama.cpp, GPU) — Chat':'Tools',
   'Ollama: Explain the Weather for Radio (Open-Meteo → LLM)':'Tools',
   'Cameras: Table of links → IP Camera → Frames + Archive':'Images & TV',
@@ -7881,6 +7882,24 @@ nt.size.w=900; nt.size.h=130; applySize(nt);
 const ch=addNode('chat',40,210,{me:'me'}); ch.size.w=380; ch.size.h=380; applySize(ch);
 const ol=addNode('ollama',480,210,{host:'app',model:'qwen2.5-1.5b-instruct-q4_0',appGpu:true,sys:'Отвечай кратко и по делу, на языке вопроса.',keep:6}); ol.size.w=420; ol.size.h=380; applySize(ol);
 addEdge(ch.id,'text',ol.id,'prompt'); addEdge(ch.id,'go',ol.id,'send'); addEdge(ol.id,'rec',ch.id,'rec');
+markWiresDirty();
+});
+preset('Agent: Weather Watcher — LLM with Tools (read inputs, calc, set outputs)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'An agent is a model that can act: Agent runs the loop «the model answers → calls a tool → gets the result → continues» until it has an answer. The model itself is the Ollama node (a server, or the host «app» — llama.cpp inside the Android app, where the KV cache keeps the long history cheap); the wires: Agent.prompt / system / send / clear / halt → Ollama, Ollama.last / new → Agent.\n'+
+  'The tools: calc, time, read / write (the inputs a…d s1 s2 and the outputs o1…o4 t1 t2 declared in «tools» — here the weather in, an alert level and a report out; the number is clamped to the range), http_get (only the hosts you list), notify / speak (the app). Only «allow» tools exist for the model; the step limit and a repeat guard stop a model that is stuck.\n'+
+  'Press «▶ Run the task» in Agent (or send a text to its «task» pin). A small model (Qwen2.5 3B, the host «app») follows the <tool_call> format well; weaker ones may need a lower temperature. Watch the tool calls in the node and in the «trace» pin.'});
+nt.size.w=1000; nt.size.h=150; applySize(nt);
+const me=addNode('geoMe',40,200,{src:'manual',lat:52.52,lon:13.405}); me.size.w=300; applySize(me);
+const mt=addNode('meteo',40,360,{}); mt.size.w=300; mt.size.h=220; applySize(mt);
+const ag=addNode('agent',400,200,{task:'Check the weather inputs. If the pressure is high and the air is calm (wind below 3 m/s) VHF / UHF ducting is likely: set the alert o1 to 2 or 3 and write a one-line report for the operator to t1. Otherwise set o1 to 0 and say why.',maxSteps:6}); ag.size.w=380; ag.size.h=430; applySize(ag);
+const ol=addNode('ollama',820,200,{host:'app',model:'qwen2.5-3b-instruct-q4_0',appGpu:true,keep:15,temp:.2,maxTok:400}); ol.size.w=380; ol.size.h=330; applySize(ol);
+const tp=addNode('textpanel',820,560,{lines:'# Agent\nalert level {a:0}\n{s1}'}); tp.size.w=380; tp.size.h=130; applySize(tp);
+addEdge(me.id,'lat',mt.id,'lat'); addEdge(me.id,'lon',mt.id,'lon');
+addEdge(mt.id,'temp',ag.id,'a'); addEdge(mt.id,'press',ag.id,'b'); addEdge(mt.id,'wind',ag.id,'c');
+addEdge(ag.id,'prompt',ol.id,'prompt'); addEdge(ag.id,'system',ol.id,'system'); addEdge(ag.id,'send',ol.id,'send'); addEdge(ag.id,'clear',ol.id,'clear'); addEdge(ag.id,'halt',ol.id,'stop');
+addEdge(ol.id,'last',ag.id,'reply'); addEdge(ol.id,'new',ag.id,'new');
+addEdge(ag.id,'o1',tp.id,'a'); addEdge(ag.id,'t1',tp.id,'s1');
 markWiresDirty();
 });
 preset('Ollama: Explain the Weather for Radio (Open-Meteo → LLM)', function(){

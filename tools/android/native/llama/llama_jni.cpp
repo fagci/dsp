@@ -23,7 +23,16 @@ struct Llm {
     const llama_vocab* vocab = nullptr;
     int n_ctx = 0;
     int n_batch = 0;
+    std::vector<llama_token> cached;      // токены, лежащие сейчас в KV-кэше (запрос + уже посчитанный ответ): общий префикс со следующим запросом не пересчитывается
+    int reused = 0;                       // сколько токенов последнего запроса взято из кэша
 };
+
+// Сколько первых токенов совпадает (чистая функция — проверяется на хосте: native/test/prefix_test.cpp)
+static size_t common_prefix(const std::vector<llama_token>& a, const std::vector<llama_token>& b) {
+    size_t n = std::min(a.size(), b.size()), i = 0;
+    while (i < n && a[i] == b[i]) i++;
+    return i;
+}
 
 // Длина самого длинного префикса, не обрывающегося посреди многобайтового символа UTF-8.
 static size_t utf8_complete(const std::string& s) {
@@ -53,8 +62,8 @@ JNIF(jstring, backends)(JNIEnv* env, jclass) {
 
 JNIF(jstring, systemInfo)(JNIEnv* env, jclass) { return env->NewStringUTF(llama_print_system_info()); }
 
-// gpuLayers: 0 — только CPU; < 0 — все слои на GPU. Возвращает указатель или 0.
-JNIF(jlong, init)(JNIEnv* env, jclass, jstring path, jint nCtx, jint gpuLayers, jint threads, jboolean flash, jboolean mmap) {
+// gpuLayers: 0 — только CPU; < 0 — все слои на GPU. flash: -1 решает сама llama.cpp (включит, если бэкенд умеет), 0 выкл., 1 вкл. Возвращает указатель или 0.
+JNIF(jlong, init)(JNIEnv* env, jclass, jstring path, jint nCtx, jint gpuLayers, jint threads, jint flash, jboolean mmap) {
     static bool inited = false;
     if (!inited) { llama_log_set(log_cb, nullptr); llama_backend_init(); inited = true; }
     const char* p = env->GetStringUTFChars(path, nullptr);
@@ -70,7 +79,7 @@ JNIF(jlong, init)(JNIEnv* env, jclass, jstring path, jint nCtx, jint gpuLayers, 
     cp.n_ubatch = 512;
     cp.n_threads = threads > 0 ? threads : 4;
     cp.n_threads_batch = cp.n_threads;
-    cp.flash_attn_type = flash ? LLAMA_FLASH_ATTN_TYPE_ENABLED : LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    cp.flash_attn_type = flash < 0 ? LLAMA_FLASH_ATTN_TYPE_AUTO : flash ? LLAMA_FLASH_ATTN_TYPE_ENABLED : LLAMA_FLASH_ATTN_TYPE_DISABLED;
     cp.no_perf = false;
     llama_context* c = llama_init_from_model(m, cp);
     if (!c) { llama_model_free(m); return 0; }
@@ -121,6 +130,19 @@ JNIF(jbyteArray, applyTemplate)(JNIEnv* env, jclass, jlong h, jobjectArray roles
     return out;
 }
 
+// Потоки без пересоздания контекста (для подбора на устройстве и для выбора быстрых ядер)
+JNIF(void, setThreads)(JNIEnv*, jclass, jlong h, jint n) {
+    Llm* l = (Llm*)(intptr_t)h; if (!l || n <= 0) return;
+    llama_set_n_threads(l->ctx, n, n);
+}
+
+// Сбросить KV-кэш (для честного замера и когда разговор начинается заново)
+JNIF(void, resetCache)(JNIEnv*, jclass, jlong h) {
+    Llm* l = (Llm*)(intptr_t)h; if (!l) return;
+    llama_memory_clear(llama_get_memory(l->ctx), true);
+    l->cached.clear();
+}
+
 // Число токенов запроса (для проверки длины до генерации)
 JNIF(jint, countTokens)(JNIEnv* env, jclass, jlong h, jbyteArray text) {
     Llm* l = (Llm*)(intptr_t)h; if (!l) return -1;
@@ -145,7 +167,15 @@ JNIF(jint, generate)(JNIEnv* env, jclass, jlong h, jbyteArray prompt, jint maxTo
     if (llama_tokenize(l->vocab, ps.data(), (int32_t)ps.size(), toks.data(), nt, true, true) < 0) return -5;
     if (nt >= l->n_ctx - 4) return -2;
 
-    llama_memory_clear(llama_get_memory(l->ctx), true);                    // без состояния: диалог приходит целиком
+    // KV-кэш переиспользуется: общий с прошлым запросом префикс (система + начало диалога) не считается заново, хвост после расхождения стирается.
+    // Последний токен запроса пересчитывается всегда: нужны его логиты.
+    llama_memory_t mem = llama_get_memory(l->ctx);
+    size_t keep = common_prefix(l->cached, toks);
+    if (keep >= toks.size()) keep = toks.size() - 1;
+    if (keep > 0 && !llama_memory_seq_rm(mem, 0, (llama_pos)keep, -1)) keep = 0;          // не всякая память умеет стирать хвост (скользящее окно, рекуррентные) — тогда с нуля
+    if (keep == 0) llama_memory_clear(mem, true);
+    l->cached.resize(keep);
+    l->reused = (int)keep;
 
     llama_sampler_chain_params sp = llama_sampler_chain_default_params();
     llama_sampler* smpl = llama_sampler_chain_init(sp);
@@ -160,12 +190,13 @@ JNIF(jint, generate)(JNIEnv* env, jclass, jlong h, jbyteArray prompt, jint maxTo
     }
 
     int rc = 0, gen = 0;
-    // запрос — кусками по n_batch
-    for (int i = 0; i < nt && rc == 0; i += l->n_batch) {
+    // запрос (без закэшированного начала) — кусками по n_batch
+    for (int i = (int)keep; i < nt && rc == 0; i += l->n_batch) {
         int n = std::min(l->n_batch, nt - i);
         llama_batch b = llama_batch_get_one(toks.data() + i, n);
-        if (llama_decode(l->ctx, b) != 0) rc = -3;
-        if (rc == 0 && env->CallBooleanMethod(sink, mCan)) { llama_sampler_free(smpl); return 0; }
+        if (llama_decode(l->ctx, b) != 0) { rc = -3; break; }
+        l->cached.insert(l->cached.end(), toks.begin() + i, toks.begin() + i + n);
+        if (env->CallBooleanMethod(sink, mCan)) { llama_sampler_free(smpl); return 0; }
     }
     std::string pend;
     int limit = std::min(maxTokens > 0 ? (int)maxTokens : 1 << 30, l->n_ctx - nt - 1);
@@ -189,6 +220,7 @@ JNIF(jint, generate)(JNIEnv* env, jclass, jlong h, jbyteArray prompt, jint maxTo
         if (env->CallBooleanMethod(sink, mCan)) break;
         llama_batch nb = llama_batch_get_one(&t, 1);
         if (llama_decode(l->ctx, nb) != 0) { rc = -3; break; }
+        l->cached.push_back(t);
     }
     if (rc == 0 && !pend.empty()) {                                        // хвост, оборвавшийся посреди символа: отдаём как есть (Kotlin заменит битое)
         jbyteArray b = env->NewByteArray((jsize)pend.size());
@@ -197,17 +229,18 @@ JNIF(jint, generate)(JNIEnv* env, jclass, jlong h, jbyteArray prompt, jint maxTo
         env->DeleteLocalRef(b);
     }
     llama_sampler_free(smpl);
+    if (rc != 0) { l->cached.clear(); llama_memory_clear(mem, true); }                // ошибка decode: состояние кэша неизвестно — сбрасываем
     return rc == 0 ? gen : rc;
 }
 
-// Время разбора запроса и генерации: {мс запроса, токенов запроса, мс генерации, токенов}
+// Время разбора запроса и генерации: {мс запроса, токенов запроса, мс генерации, токенов, токенов взято из KV-кэша}
 JNIF(jdoubleArray, perf)(JNIEnv* env, jclass, jlong h) {
     Llm* l = (Llm*)(intptr_t)h;
-    jdoubleArray out = env->NewDoubleArray(4);
+    jdoubleArray out = env->NewDoubleArray(5);
     if (!l) return out;
     llama_perf_context_data d = llama_perf_context(l->ctx);
-    double v[4] = {d.t_p_eval_ms, (double)d.n_p_eval, d.t_eval_ms, (double)d.n_eval};
-    env->SetDoubleArrayRegion(out, 0, 4, v);
+    double v[5] = {d.t_p_eval_ms, (double)d.n_p_eval, d.t_eval_ms, (double)d.n_eval, (double)l->reused};
+    env->SetDoubleArrayRegion(out, 0, 5, v);
     llama_perf_context_reset(l->ctx);
     return out;
 }

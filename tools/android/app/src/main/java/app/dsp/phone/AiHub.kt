@@ -31,6 +31,11 @@ class AiHub(private val ctx: Context, private val emit: Emit,
     private val cpu by lazy {
         AiArgs.cpu(try { File("/proc/cpuinfo").readText() } catch (e: Exception) { "" }, Runtime.getRuntime().availableProcessors())
     }
+    /** Потоков по умолчанию: «большие» ядра по cpuinfo_max_freq (без энергосберегающих). */
+    private val fastThreads by lazy {
+        val f = (0 until cpu.cores).mapNotNull { i -> try { File("/sys/devices/system/cpu/cpu$i/cpufreq/cpuinfo_max_freq").readText().trim().toLong() } catch (e: Exception) { null } }
+        AiArgs.bigCores(f, cpu.cores)
+    }
     private val arm64 get() = Build.SUPPORTED_64_BIT_ABIS.contains("arm64-v8a")
     private val openCl get() = AiArgs.OPENCL_PATHS.any { File(it).exists() }
 
@@ -47,7 +52,7 @@ class AiHub(private val ctx: Context, private val emit: Emit,
                     val m = mem()
                     val soc = if (Build.VERSION.SDK_INT >= 31) "${Build.SOC_MANUFACTURER} ${Build.SOC_MODEL}".trim() else Build.HARDWARE
                     Reply.done(c, id, cmd, null, "error",
-                        "arm64" to b(arm64), "cores" to cpu.cores.toString(), "dotprod" to b(cpu.dotprod), "i8mm" to b(cpu.i8mm), "fp16" to b(cpu.fp16),
+                        "arm64" to b(arm64), "cores" to cpu.cores.toString(), "fastThreads" to fastThreads.toString(), "dotprod" to b(cpu.dotprod), "i8mm" to b(cpu.i8mm), "fp16" to b(cpu.fp16),
                         "ramMb" to (m.totalMem shr 20).toString(), "availMb" to (m.availMem shr 20).toString(), "opencl" to b(openCl), "soc" to Json.str(soc),
                         "cpuLib" to Json.str(AiArgs.lib(cpu, arm64, openCl, false) ?: ""), "gpuLib" to Json.str(AiArgs.lib(cpu, arm64, openCl, true) ?: ""),
                         "loadedLib" to Json.str(WhisperNative.lib ?: ""), "model" to Json.str(core.model), "gpu" to b(core.gpu),
@@ -93,7 +98,7 @@ class AiHub(private val ctx: Context, private val emit: Emit,
                 }
                 "asr.run" -> {
                     val pcm = AiArgs.pcm(j.optString("pcm"), AiArgs.MAX_SAMPLES) ?: return Reply.done(c, id, cmd, "pcm: base64 of 16 kHz 16-bit mono little-endian, up to 10 minutes")
-                    val o = AsrOpts(lang = AiArgs.lang(j.optString("lang")), translate = j.optBoolean("translate"), threads = j.optInt("threads", 0).takeIf { it > 0 } ?: (cpu.cores / 2).coerceIn(2, 6),
+                    val o = AsrOpts(lang = AiArgs.lang(j.optString("lang")), translate = j.optBoolean("translate"), threads = j.optInt("threads", 0).takeIf { it > 0 } ?: fastThreads,
                         prompt = j.optString("prompt").take(400), beam = j.optInt("beam", 1).coerceIn(1, 8), temperature = j.optDouble("temperature", 0.0).toFloat().coerceIn(0f, 1f),
                         noContext = !j.optBoolean("context"), fast = j.optBoolean("fast"), suppressNst = j.optBoolean("suppressNst", true))
                     asr.execute {
@@ -109,8 +114,9 @@ class AiHub(private val ctx: Context, private val emit: Emit,
                     val size = store.file(name)?.length() ?: 0L
                     val m = mem()
                     if (size > 0 && !llm.loaded && m.availMem < size * 11 / 10) return@execute Reply.done(c, id, cmd, "not enough memory: the model needs about ${size * 11 / 10 shr 20} MB free, ${m.availMem shr 20} MB available — close other apps or take a smaller / more compressed model")
-                    val threads = j.optInt("threads", 0).takeIf { it > 0 } ?: (cpu.cores / 2).coerceIn(2, 6)
-                    val r = llm.load(name, want, j.optInt("ctx", 4096).coerceIn(512, 32768), threads, j.optBoolean("flash", false), j.optBoolean("mmap", true))
+                    val threads = j.optInt("threads", 0).takeIf { it > 0 } ?: fastThreads
+                    val fl = when (j.opt("flash")) { true -> 1; false -> 0; else -> -1 }                       // по умолчанию решает llama.cpp
+                    val r = llm.load(name, want, j.optInt("ctx", 4096).coerceIn(512, 32768), threads, fl, j.optBoolean("mmap", true))
                     Reply.done(c, id, cmd, r.err, "error", "info" to Json.str(r.info), "backends" to Json.str(r.backends), "ms" to r.ms.toString(), "model" to Json.str(llm.model),
                         "gpu" to b(llm.gpu && r.backends.contains("GPU:")), "ctx" to llm.ctx.toString())
                 }
@@ -119,10 +125,17 @@ class AiHub(private val ctx: Context, private val emit: Emit,
                     val o = LlmArgs.opts(j.optInt("max", 512), j.optDouble("temp", 0.7), j.optInt("top_k", 40), j.optDouble("top_p", 0.95), j.optDouble("min_p", 0.05), j.optDouble("repeat", 1.1), j.optInt("seed", 0))
                     val rid = if (id is Number) id.toString() else Json.str(id?.toString())
                     llmPool.execute {
-                        val r = llm.chat(msgs, o) { piece -> rec("ev" to "\"tok\"", "rid" to rid, "text" to Json.str(piece)); true }
+                        val r = llm.chat(msgs, o, j.optInt("threads", 0)) { piece -> rec("ev" to "\"tok\"", "rid" to rid, "text" to Json.str(piece)); true }
                         Reply.done(c, id, cmd, r.err, "error", "text" to Json.str(r.text), "tokens" to r.tokens.toString(), "promptTokens" to r.promptTokens.toString(), "ms" to r.ms.toString(),
-                            "tps" to Json.num(r.tps, 10.0), "ptps" to Json.num(r.ptps, 10.0), "trimmed" to r.trimmed.toString())
+                            "tps" to Json.num(r.tps, 10.0), "ptps" to Json.num(r.ptps, 10.0), "trimmed" to r.trimmed.toString(), "cached" to r.cached.toString())
                     }
+                }
+                "llm.bench" -> llmPool.execute {
+                    val arr = j.optJSONArray("threads")
+                    val cands = if (arr != null) (0 until arr.length()).map { arr.optInt(it) } else (listOf(2, 3, 4, 6, 8).filter { it <= cpu.cores } + fastThreads).distinct().sorted()
+                    val r = llm.bench(cands)
+                    Reply.done(c, id, cmd, r.err, "error", "best" to r.best.toString(), "fast" to fastThreads.toString(),
+                        "rows" to Json.rows(r.rows.map { Json.obj("threads" to it.threads.toString(), "tps" to Json.num(it.tps, 10.0), "ptps" to Json.num(it.ptps, 10.0)) }))
                 }
                 "llm.stop" -> { llm.cancel(); Reply.done(c, id, cmd, null) }
                 "llm.unload" -> llmPool.execute { llm.unload(); Reply.done(c, id, cmd, null) }
