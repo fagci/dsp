@@ -86,6 +86,16 @@ ok('fast window: OpenCL present but no supported GPU → another reason (Adreno 
 sent.length=0; await X.wapRun(new Float32Array(16000),{language:'ru',task:'transcribe',app:{...app,gpu:true,fastMode:'off'}});
 ok('fast window: «off» keeps the full window even on the CPU',sent.find(m=>m.cmd==='asr.run').fast===false);
 X.WAP.ready=''; gpuReply=null;
+
+// --- смена модели во время загрузки предыдущей: загрузки идут по очереди, последняя побеждает, ничего не зависает
+{ const order=[]; const old=bridge; let slow=true;
+  bridge=async(m,ws)=>{ if(m.cmd==='asr.load'){ order.push('load:'+m.model); if(slow){ slow=false; await wait(60); } return {backends:'CPU:CPU|x',ms:10,model:m.model,gpu:false}; } return old(m,ws); };
+  X.WAP.ready=''; X.WAP.loading=null; gpuReply=null;
+  const A={...app,name:'ggml-small-q5_1.bin',url:X.wapUrl('small-q5_1'),gpu:false}, B={...app,name:'ggml-medium-q5_0.bin',gpu:false};
+  const pa=X.wapLoad(A), pb=X.wapLoad(B); await Promise.all([pa,pb]);
+  ok('model change while another loads: both loads happen one after the other (the phone takes them in turn), the last one stays',order.join()==='load:ggml-small-q5_1.bin,load:ggml-medium-q5_0.bin' && X.WAP.ready==='ggml-medium-q5_0.bin|cpu' && X.WAP.loading===null,order.join()+' ready='+X.WAP.ready);
+  const p3=X.wapLoad(B); ok('the same model again is instant',await Promise.race([p3.then(()=>'done'),wait(20).then(()=>'slow')])==='done');
+  bridge=old; }
 // две фразы подряд — по очереди
 const order=[]; bridge=async(m)=>{ if(m.cmd==='asr.run'){ order.push('start'); await wait(30); order.push('end'); return {text:'a',ms:1,audioMs:1}; } return {models:[{name:app.name,partial:false}],gpu:true,backends:'',ms:0}; };
 await Promise.all([X.wapRun(new Float32Array(16000),{app}),X.wapRun(new Float32Array(16000),{app})]);

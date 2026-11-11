@@ -52,14 +52,18 @@ function wsWorker(){
 function wsLoad(repo){
   if(WS.ready===repo) return Promise.resolve();
   if(WS.loading && WS.repo===repo) return WS.loading;
-  WS.repo=repo; WS.files=[];
-  return WS.loading=(async()=>{
+  const prev=WS.loading; WS.repo=repo;
+  const p=WS.loading=(async()=>{
+    if(prev) await prev.catch(()=>{});                       // другая модель ещё грузится — ждём её: в воркере один ответ «load» за раз
+    if(WS.ready===repo) return;
+    WS.files=[];
     const w=wsWorker(), u=await wsRuntimeUrls();
     const m=await new Promise((res,rej)=>{ WS.pend.set('load',{res,rej}); w.postMessage({t:'load',model:repo,threads:Math.min(4,(navigator.hardwareConcurrency||4)>>1),...u}); });
     WS.ready=repo; WS.prog='';
     try{ LS.set(wsKey(repo),JSON.stringify(WS.files)); }catch(e){}
     return m;
-  })().catch(e=>{ WS.ready=''; throw e; }).finally(()=>{ WS.loading=null; });
+  })().catch(e=>{ if(WS.repo===repo) WS.ready=''; throw e; }).finally(()=>{ if(WS.loading===p) WS.loading=null; });
+  return p;
 }
 // распознать одну фразу (Float32Array 16 кГц); запуски идут по очереди — в воркере одна сеть
 function wsRun(audio,o){
@@ -86,6 +90,7 @@ function wsAppCfg(n){
 }
 function wsCfg(n){ const p=n.p, app=wsEngine(n)==='app' ? wsAppCfg(n) : null; return {repo:app ? app.name : wsRepo(p.model,p.custom), language:p.lang, task:p.task, norep:!!p.norep, app}; }
 // модель — заранее, пока идёт звук (первая загрузка долгая)
+const wsPreKey=n=>{ const c=wsCfg(n); return c.app ? 'a:'+c.app.name+'|'+(c.app.gpu ? 'gpu' : 'cpu') : 'b:'+c.repo; };
 function wsPreload(n){ const c=wsCfg(n); return c.app ? wapLoad(c.app) : wsLoad(c.repo); }
 function wsSegCfg(n){ const p=n.p; return {thr:Math.pow(10,p.thr/20), pre:.35, hang:+p.pause, max:+p.maxlen, min:.4}; }
 
@@ -217,7 +222,7 @@ def({ id:'whisper', lazy:'manual', title:'Speech to Text (Whisper, neural)', cat
           {n:'save',t:'button',label:'Save text',fn:n=>{ if(n.full) wsDownload(n.full,'whisper-'+Date.now()+'.txt'); }},
           {n:'custom',t:'text',d:'',label:'own model repo on huggingface.co (ONNX for Transformers.js), e.g. onnx-community/whisper-large-v3-turbo; empty — by «model»',adv:true}],
   init(n){ n.seg=null; n.segKey=''; n.sr=0; n.clock=0; n.jobs=[]; n.busy=false; n.gen=0; n.q=[]; n.text=''; n.full=''; n.count=0; n.go=false;
-           n.err=''; n.ms=0; n.skipped=0; n.dropped=0; n.mergedN=0; n.rev=0; n.retryAt=0; n.fileRun=false; n.fileStop=false; n.fileInfo=''; n.pre=false; n.stat=''; n.rtf=0; n.busyAt=0; n.partial=''; n.draftBusy=false; n.draftGen=0; n.draftAt=0; },
+           n.err=''; n.ms=0; n.skipped=0; n.dropped=0; n.mergedN=0; n.rev=0; n.retryAt=0; n.fileRun=false; n.fileStop=false; n.fileInfo=''; n.preKey=''; n.stat=''; n.rtf=0; n.busyAt=0; n.partial=''; n.draftBusy=false; n.draftGen=0; n.draftAt=0; },
   dispose(n){ n.gen++; n.jobs=[]; n.seg=null; },
   process(n,I){
     const x=I.in, sr=Eng.sr;
@@ -225,11 +230,12 @@ def({ id:'whisper', lazy:'manual', title:'Speech to Text (Whisper, neural)', cat
       const key=[sr,n.p.thr,n.p.pause,n.p.maxlen].join('|');
       if(!n.seg || n.segKey!==key){ n.seg=wsSegmenter(sr,wsSegCfg(n)); n.segKey=key; }
       n.clock+=x.length/sr;
-      if(!n.pre && performance.now()>=n.retryAt){ n.pre=true; wsPreload(n).catch(e=>{ n.pre=false; n.err=String(e.message||e); n.retryAt=performance.now()+8000; n.rev++; redraw(n); }); }
+      const pk=wsPreKey(n);                                     // движок + модель + GPU: сменились — грузим заново (раньше предзагрузка шла один раз за жизнь узла)
+      if(n.preKey!==pk && performance.now()>=n.retryAt){ n.preKey=pk; wsPreload(n).catch(e=>{ if(n.preKey===pk) n.preKey=''; n.err=String(e.message||e); n.retryAt=performance.now()+8000; n.rev++; redraw(n); }); }
       for(const s of n.seg.push(x)) wsEnqueue(n,wsTo16k(s,sr),n.clock);
       wsDraft(n);
     }
-    if(n.err && performance.now()>=n.retryAt && n.retryAt){ n.err=''; n.retryAt=0; n.pre=false; }
+    if(n.err && performance.now()>=n.retryAt && n.retryAt){ n.err=''; n.retryAt=0; n.preKey=''; }
     const st=wsStatus(n); if(st!==n.stat){ n.stat=st; redraw(n); }
     const rec=n.q.length ? n.q.splice(0) : null, go=n.go ? 1 : 0; n.go=false;
     return {text:n.text, partial:n.partial||'', full:n.full, go, rec, count:n.count, busy:n.jobs.length+(n.busy ? 1 : 0)}; },

@@ -71,8 +71,10 @@ function wapLoad(a){
   const key=a.name+'|'+(a.gpu ? 'gpu' : 'cpu');
   if(WAP.ready===key) return Promise.resolve();
   if(WAP.loading && WAP.key===key) return WAP.loading;
-  WAP.key=key;
-  return WAP.loading=(async()=>{
+  const prev=WAP.loading; WAP.key=key;
+  const p=WAP.loading=(async()=>{
+    if(prev) await prev.catch(()=>{});                      // другая модель ещё грузится — ждём её: на телефоне загрузки идут по очереди
+    if(WAP.ready===key) return;
     WAP.prog='asking the phone…';
     const c=await wapCaps();
     if(!c.dotprod || !c.fp16 || !c.arm64){ WAP.unsupported=true; throw new Error('this phone cannot run the native engine (arm64 with dotprod and fp16 needed) — pick the browser engine'); }
@@ -83,7 +85,8 @@ function wapLoad(a){
     WAP.why=a.gpu && !r.gpu ? (!c.opencl ? 'no OpenCL library on this phone' : 'OpenCL is there, but ggml-opencl found no supported GPU — Adreno 7xx / 8xx needed') : '';     // почему просили GPU, а считает CPU
     WAP.ready=key; WAP.info=(r.gpu ? 'GPU (OpenCL)' : 'CPU'+(WAP.why ? ' ('+WAP.why+')' : ''))+(r.ms ? ' · loaded in '+(r.ms/1000).toFixed(1)+' s' : ''); WAP.prog='';
     return r;
-  })().catch(e=>{ WAP.ready=''; WAP.prog=''; throw e; }).finally(()=>{ WAP.loading=null; });
+  })().catch(e=>{ if(WAP.key===key){ WAP.ready=''; WAP.prog=''; } throw e; }).finally(()=>{ if(WAP.loading===p) WAP.loading=null; });
+  return p;
 }
 // короткое окно энкодера (audio_ctx по длине фразы): стоимость растёт с длиной звука, а не с окном в 30 с — на CPU это разница между «успевает» и «нет».
 // fastMode: auto — включено, когда GPU не подключён (на GPU окно полное — точнее), on / off — как сказано; a.fast === true — принудительно (черновики)
