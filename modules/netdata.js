@@ -277,8 +277,8 @@ async function olmModels(n){
 const olmHint=base=>(typeof location!=='undefined' && location.protocol==='https:' && /^http:\/\/(?!127\.0\.0\.1|localhost)/.test(base) ? '\n  https page → http server: use 127.0.0.1 / localhost, a tunnel, or open the app over http' : '')
   +'\n  Ollama must allow this page: OLLAMA_ORIGINS=* (or the page address) and restart the server';
 async function olmSend(n,prompt,ctx){
-  if(n.busy) return;
   prompt=String(prompt||'').trim(); if(!prompt){ n.msg='the prompt is empty'; n.rev++; return; }
+  if(n.busy){ if(n.queue.length<5) n.queue.push([prompt,ctx]); else n.msg='the queue is full (5 questions)'; n.rev++; return; }     // вопрос не теряется: ответит следующим
   const model=String(n.p.model||'').trim();
   if(!model){ n.msg='choose a model («⟳ Models» or type a name)'; n.rev++; return; }
   const base=ndOllamaBase(n.p.host);
@@ -306,17 +306,20 @@ async function olmSend(n,prompt,ctx){
     }
     n.hist.push({role:'user',content:prompt},{role:'assistant',content:acc});
     n.hist=n.hist.slice(-Math.max(2,(+n.p.keep|0)*2));
-    n.last=acc; n.fresh=1;
+    n.last=acc; n.fresh=1; n.recOut={from:model,text:acc,role:'assistant',model,t:Date.now()};
   }catch(e){
-    if(e.name==='AbortError'){ n.msg='stopped'; if(acc){ n.last=acc; n.fresh=1; } }
+    if(e.name==='AbortError'){ n.msg='stopped'; n.queue.length=0; if(acc){ n.last=acc; n.fresh=1; n.recOut={from:model,text:acc,role:'assistant',model,t:Date.now(),partial:1}; } }
     else n.msg='failed: '+ndErr(e)+(e instanceof TypeError ? olmHint(base) : '');
-  }finally{ n.busy=false; n.rev=(n.rev||0)+1; }
+  }finally{
+    n.busy=false; n.rev=(n.rev||0)+1;
+    const nx=n.queue.shift(); if(nx) olmSend(n,nx[0],nx[1]);
+  }
 }
 def({ id:'ollama', title:'Ollama (local LLM)', cat:'Tools', readout:true, tall:true, w:340,
   kw:'ollama llm ai chat model language gpt llama qwen gemma mistral assistant ask question describe explain local',
   // чат с моделью на своём сервере Ollama (/api/chat, потоком); context — любой текст с проводов (запись, журнал, декодер)
   ins:[{n:'prompt',t:'txt'},{n:'system',t:'txt'},{n:'context',t:'txt'},{n:'send',t:'num'},{n:'stop',t:'num'},{n:'clear',t:'num'}],
-  outs:[{n:'text',t:'txt'},{n:'last',t:'txt'},{n:'new',t:'num'},{n:'busy',t:'num'},{n:'tps',t:'num'},{n:'tokens',t:'num'},{n:'models',t:'txt'}],
+  outs:[{n:'text',t:'txt'},{n:'last',t:'txt'},{n:'new',t:'num'},{n:'rec',t:'rec'},{n:'busy',t:'num'},{n:'tps',t:'num'},{n:'tokens',t:'num'},{n:'models',t:'txt'}],
   params:[{n:'host',t:'text',d:'http://127.0.0.1:11434',label:'Ollama server (host, host:port or URL)'},
           {n:'model',t:'text',d:'',label:'model (name from «⟳ Models», e.g. llama3.2)'},
           {n:'list',t:'button',label:'⟳ Models',fn:n=>olmModels(n)},
@@ -324,7 +327,7 @@ def({ id:'ollama', title:'Ollama (local LLM)', cat:'Tools', readout:true, tall:t
           {n:'sys',t:'text',d:'',label:'system prompt (the wire «system» overrides it)'},
           {n:'ask',t:'button',label:'▶ Ask',fn:n=>olmSend(n,n.inPrompt||n.p.prompt,n.inCtx)},
           {n:'stopb',t:'button',label:'■ Stop',fn:n=>n.acs?.c?.abort()},
-          {n:'clr',t:'button',label:'Clear dialogue',fn:n=>{ n.hist=[]; n.text=''; n.last=''; n.msg=''; n.rev++; }},
+          {n:'clr',t:'button',label:'Clear dialogue',fn:n=>{ n.queue.length=0; n.hist=[]; n.text=''; n.last=''; n.msg=''; n.rev++; }},
           {n:'auto',t:'check',d:false,label:'ask by itself when the «prompt» wire changes'},
           {n:'keep',t:'range',min:0,max:20,step:1,d:4,label:'exchanges kept in the dialogue (0 — every question alone)'},
           {n:'temp',t:'range',min:0,max:2,step:.1,d:.7,label:'temperature',adv:true},
@@ -333,7 +336,7 @@ def({ id:'ollama', title:'Ollama (local LLM)', cat:'Tools', readout:true, tall:t
           {n:'keepAlive',t:'text',d:'',label:'keep the model loaded (5m, 1h, 0 — unload at once)',adv:true},
           {n:'proxy',t:'check',d:false,label:'always through the CORS proxy from Settings (without it — directly, the proxy only after a refusal in «on error» mode)',adv:true}],
   init:n=>{ n.hist=[]; n.text=''; n.last=''; n.msg=''; n.busy=false; n.models=[]; n.stats=null; n.fresh=0; n.rev=0; n.sys='';
-    n.inPrompt=''; n.inCtx=''; n.prevPrompt=null; n.s=false; n.st=false; n.cl=false; n.t0=0; },
+    n.queue=[]; n.recOut=null; n.inPrompt=''; n.inCtx=''; n.prevPrompt=null; n.s=false; n.st=false; n.cl=false; n.t0=0; },
   dispose:n=>{ ndAbort(n); },
   drawKey:n=>n.rev+'|'+n.msg+'|'+n.busy,
   process(n,I){
@@ -346,9 +349,9 @@ def({ id:'ollama', title:'Ollama (local LLM)', cat:'Tools', readout:true, tall:t
     else if(n.p.auto && p && p!==n.prevPrompt && !n.busy) olmSend(n,p,n.inCtx);
     n.prevPrompt=p||n.prevPrompt;
     if(ndPulse(n,'st',I.stop)) n.acs?.c?.abort();
-    if(ndPulse(n,'cl',I.clear)){ n.hist=[]; n.text=''; n.last=''; n.msg=''; n.rev++; }
-    const fresh=n.fresh; n.fresh=0;
-    return {text:n.text,last:n.last||null,new:fresh,busy:n.busy ? 1 : 0,tps:n.stats?.tps??null,tokens:n.stats?.tokens??null,
+    if(ndPulse(n,'cl',I.clear)){ n.queue.length=0; n.hist=[]; n.text=''; n.last=''; n.msg=''; n.rev++; }
+    const fresh=n.fresh; n.fresh=0; const rec=fresh ? n.recOut : null;
+    return {text:n.text,last:n.last||null,new:fresh,rec,busy:n.busy ? 1 : 0,tps:n.stats?.tps??null,tokens:n.stats?.tokens??null,
       models:n.models.length ? n.models.map(m=>m.name).join('\n') : null};
   },
   draw(n){

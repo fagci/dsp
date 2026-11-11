@@ -18,7 +18,7 @@ const mkFetch=()=>async(u,o)=>{
   const text=typeof v.body==='string' ? v.body : JSON.stringify(v.body);
   const chunks=v.chunks||[text]; let i=0;
   return {ok:true,status:200,json:async()=>JSON.parse(text),text:async()=>text,
-    body:{getReader:()=>({read:async()=>i<chunks.length ? {done:false,value:enc(chunks[i++])} : {done:true}})}};
+    body:{getReader:()=>({read:async()=>o?.signal?.aborted ? Promise.reject(Object.assign(new Error('aborted'),{name:'AbortError'})) : i<chunks.length ? {done:false,value:enc(chunks[i++])} : {done:true}})}};
 };
 const store={};
 const NET={app:false,proxy:'P/{url}',mode:'always',need:new Set(),needs(u){ try{ return this.need.has(new URL(u).host); }catch(e){ return false; } },url(u){ return 'PROXY/'+encodeURIComponent(u); }};
@@ -227,6 +227,22 @@ ok('chunk: error',K.ndOllamaChunk({error:'model not found'}).err==='model not fo
   oa=node('ollama',{host:'http://192.168.1.9:11434',model:'m',prompt:'hi'}); await defs.ollama.params.find(p=>p.n==='ask').fn(oa);
   ok('app: the reason from the bridge is in the status, no CORS advice',/ConnectException/.test(oa.msg) && !/OLLAMA_ORIGINS/.test(oa.msg),oa.msg);
   NET.app=false; NET.proxy='P/{url}';
+
+  // Chat: ответ уходит записью {from, text} (автор — модель), а не только текстом; повтор того же текста не теряется; вопросы в очереди
+  NET.app=false; NET.proxy='P/{url}'; NET.mode='always';
+  routes={'/api/chat':{body:'',chunks:[chatOk2]}}; calls.length=0;
+  let oc=node('ollama',{model:'llama3.2:3b',host:'http://127.0.0.1:11434'});
+  defs.ollama.process(oc,{prompt:'q1'}); const a1=defs.ollama.params.find(p=>p.n==='ask').fn(oc); const a2=defs.ollama.params.find(p=>p.n==='ask').fn(oc); const a3=defs.ollama.params.find(p=>p.n==='ask').fn(oc);
+  ok('queue: questions asked while the model is busy wait for their turn',oc.queue.length===2 && calls.length===1);
+  await a1; await wait(80);
+  ok('queue: all three answered, in order, one at a time',calls.length===3 && oc.queue.length===0 && oc.hist.length===6,calls.length+' '+oc.hist.length);
+  oc=node('ollama',{model:'llama3.2:3b',prompt:'x'}); defs.ollama.process(oc,{}); await defs.ollama.params.find(p=>p.n==='ask').fn(oc);
+  const r1=defs.ollama.process(oc,{}), r2=defs.ollama.process(oc,{});
+  ok('rec: one record per answer, on its tick only; the author is the model',r1.rec && r1.rec.from==='llama3.2:3b' && r1.rec.text==='Hello' && r1.rec.role==='assistant' && r2.rec===null);
+  await defs.ollama.params.find(p=>p.n==='ask').fn(oc); const r3=defs.ollama.process(oc,{});
+  ok('rec: the same text again is a new object (Chat compares objects, not texts)',r3.rec && r3.rec!==r1.rec && r3.rec.text==='Hello');
+  oc=node('ollama',{model:'m',prompt:'p'}); defs.ollama.process(oc,{}); const sp=defs.ollama.params.find(p=>p.n==='ask').fn(oc); defs.ollama.params.find(p=>p.n==='ask').fn(oc); defs.ollama.params.find(p=>p.n==='stopb').fn(oc); await sp; await wait(30);
+  ok('stop: the queue is dropped with the answer',oc.queue.length===0 && /stopped/.test(oc.msg),oc.msg);
 
   // Ollama
   routes={'/api/tags':{body:{models:[{name:'llama3.2:3b'},{name:'qwen2.5:7b'}]}}};

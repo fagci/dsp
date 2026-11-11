@@ -526,6 +526,7 @@ const PRESET_CATS={
   'Aircraft: Nearby Online (adsb.lol / OpenSky) → Map':'Aircraft, Satellites & Telemetry',
   'Map: OSM Radio Masts, Towers and Peaks (Overpass)':'Maps & Locating',
   'Ollama: Ask a Local LLM':'Tools',
+  'Ollama: Chat with a Local LLM (Chat node)':'Tools',
   'Ollama: Explain the Weather for Radio (Open-Meteo → LLM)':'Tools',
   'Cameras: Table of links → IP Camera → Frames + Archive':'Images & TV',
   'Video: Table of Sources → Player with Seek and Saved Position':'Images & TV',
@@ -7855,6 +7856,17 @@ const nt=addNode('note',40,40,{text:'A language model on your own computer: Olla
 nt.size.w=900; nt.size.h=120; applySize(nt);
 const ol=addNode('ollama',40,190,{host:'http://127.0.0.1:11434',prompt:'Explain in two sentences what a squelch does in a radio receiver.',sys:'Answer briefly and precisely.'});
 ol.size.w=520; ol.size.h=360; applySize(ol);
+markWiresDirty();
+});
+preset('Ollama: Chat with a Local LLM (Chat node)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A chat window for a local model: what you type in Chat goes to Ollama («text» → prompt, «go» → send), the answer comes back as a record {from: model, text} to the «rec» pin of Chat — the author is the model name, and an answer repeated word for word is not lost.\n'+
+  'The dialogue is remembered («exchanges kept» on the Ollama node); questions typed while the model is still writing wait in a queue of five. The answer appears in Chat when it is finished — the Ollama node shows it growing meanwhile; «■ Stop» interrupts and drops the queue.\n'+
+  'Set the server and the model first (see «Ollama: Ask a Local LLM»: OLLAMA_ORIGINS=* on the server; the Android app needs nothing). Chat «my name» tells your messages from the answers.'});
+nt.size.w=900; nt.size.h=120; applySize(nt);
+const ch=addNode('chat',40,190,{me:'me'}); ch.size.w=380; ch.size.h=380; applySize(ch);
+const ol=addNode('ollama',480,190,{host:'http://127.0.0.1:11434',sys:'Answer briefly. You are a helper in a radio workbench.',keep:6}); ol.size.w=420; ol.size.h=380; applySize(ol);
+addEdge(ch.id,'text',ol.id,'prompt'); addEdge(ch.id,'go',ol.id,'send'); addEdge(ol.id,'rec',ch.id,'rec');
 markWiresDirty();
 });
 preset('Ollama: Explain the Weather for Radio (Open-Meteo → LLM)', function(){
