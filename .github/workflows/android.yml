@@ -28,7 +28,12 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.10.2' }
       - name: Проверки моста на JVM (сервер, поворот кадра, разбор BLE / Wi-Fi / ГНСС)
-        run: gradle -p tools/android/jvm-test runTests
+        run: |
+          # ДИАГНОСТИКА (временно): куда уходят 29 с перед compileKotlin — подробный лог с метками времени, печатаем только нужное
+          set -o pipefail
+          gradle -p tools/android/jvm-test runTests --info --console=plain 2>&1 | while IFS= read -r l; do echo "$(date +%T.%N | cut -c1-12) $l"; done > gradle-info.log; rc=$?
+          grep -iE "Task :(vlcJar|ltNative|compileKotlin)|Executing task|Transform|transform|Resolving|snapshot|up-to-date|from-cache|FROM-CACHE|Build cache|Copying|Skipping|Caching disabled" gradle-info.log | cut -c1-230 | head -150
+          exit $rc
 
   build:
     runs-on: ubuntu-latest
