@@ -41,6 +41,9 @@ object AiArgs {
     }
 
     /** Сколько потоков брать: число «больших» ядер — тех, чья максимальная частота не ниже 70 % от самой высокой (энергосберегающие тянут расчёт назад). Частоты — cpuinfo_max_freq каждого ядра. */
+    /** Потоков для LLM по умолчанию: генерация упирается в память, а не в вычисления, поэтому больше 4 только вредит (замер: 8 потоков 0.5 ток/с, 2 потока 5.2). */
+    fun llmThreads(big: Int): Int = big.coerceIn(2, 4)
+
     fun bigCores(maxFreqs: List<Long>, fallbackCores: Int): Int {
         val f = maxFreqs.filter { it > 0 }
         if (f.isEmpty()) return (fallbackCores / 2).coerceIn(2, 6)
@@ -299,12 +302,20 @@ class LlmCore(private val store: ModelStore, private val make: () -> LlmEngine) 
         if (list.isEmpty()) return Bench("threads: a list of 1…16", emptyList(), 0)
         return synchronized(e) {
             val rows = ArrayList<BenchRow>()
+            // прогрев: первая генерация подтягивает веса в память (mmap) и греет кэши — её в замер не берём
+            e.setThreads(list.first()); e.reset()
+            e.generate(fmt(e, listOf(ChatMsg("user", prompt))), LlmOpts(max = 8, temp = 0f)) { true }
             for (n in list) {
-                e.setThreads(n); e.reset()
-                val err = e.generate(fmt(e, listOf(ChatMsg("user", prompt))), LlmOpts(max = tokens, temp = 0f)) { true }
-                if (err != null) { threadsNow = 0; return@synchronized Bench(err, rows, 0) }
-                val p = e.perf()
-                rows.add(BenchRow(n, if (p[2] > 0) p[3] * 1000.0 / p[2] else 0.0, if (p[0] > 0) p[1] * 1000.0 / p[0] else 0.0))
+                e.setThreads(n)
+                val runs = ArrayList<BenchRow>()
+                repeat(2) {                                              // два прогона: на телефоне разброс большой
+                    e.reset()
+                    val err = e.generate(fmt(e, listOf(ChatMsg("user", prompt))), LlmOpts(max = tokens, temp = 0f)) { true }
+                    if (err != null) { threadsNow = 0; return@synchronized Bench(err, rows, 0) }
+                    val p = e.perf()
+                    runs.add(BenchRow(n, if (p[2] > 0) p[3] * 1000.0 / p[2] else 0.0, if (p[0] > 0) p[1] * 1000.0 / p[0] else 0.0))
+                }
+                rows.add(runs.maxByOrNull { it.tps }!!)                  // быстрейший из двух: провал одного прогона — это фон, а не потоки
             }
             val best = rows.maxByOrNull { it.tps }?.threads ?: list.first()
             e.setThreads(best); threadsNow = best; e.reset()

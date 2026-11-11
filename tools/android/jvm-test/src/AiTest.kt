@@ -246,6 +246,7 @@ fun main() {
     val k8b = listOf(1_800_000L, 1_800_000L, 1_800_000L, 1_800_000L, 2_900_000L, 2_900_000L, 2_900_000L, 3_300_000L)
     ok("big cores: 4 little cores at 55 % are not counted", AiArgs.bigCores(k8b, 8) == 4)
     ok("big cores: all equal → all, clamped to 8; unknown frequencies → half of the cores", AiArgs.bigCores(List(4) { 2_000_000L }, 4) == 4 && AiArgs.bigCores(List(12) { 2_000_000L }, 12) == 8 && AiArgs.bigCores(emptyList(), 8) == 4 && AiArgs.bigCores(listOf(0L, 0L), 6) == 3)
+    ok("llm threads: default 2…4, never all the big cores", AiArgs.llmThreads(8) == 4 && AiArgs.llmThreads(3) == 3 && AiArgs.llmThreads(1) == 2)
     ok("big cores: at least 2", AiArgs.bigCores(listOf(3_000_000L, 1_000_000L, 1_000_000L, 1_000_000L), 4) == 2)
     val fb = FakeLlm(); val bc = LlmCore(store) { fb }
     bc.load("q.gguf", true, 4096, 6, -1, true)

@@ -114,7 +114,7 @@ class AiHub(private val ctx: Context, private val emit: Emit,
                     val size = store.file(name)?.length() ?: 0L
                     val m = mem()
                     if (size > 0 && !llm.loaded && m.availMem < size * 11 / 10) return@execute Reply.done(c, id, cmd, "not enough memory: the model needs about ${size * 11 / 10 shr 20} MB free, ${m.availMem shr 20} MB available — close other apps or take a smaller / more compressed model")
-                    val threads = j.optInt("threads", 0).takeIf { it > 0 } ?: fastThreads
+                    val threads = j.optInt("threads", 0).takeIf { it > 0 } ?: AiArgs.llmThreads(fastThreads)
                     val fl = when (j.opt("flash")) { true -> 1; false -> 0; else -> -1 }                       // по умолчанию решает llama.cpp
                     val r = llm.load(name, want, j.optInt("ctx", 4096).coerceIn(512, 32768), threads, fl, j.optBoolean("mmap", true))
                     Reply.done(c, id, cmd, r.err, "error", "info" to Json.str(r.info), "backends" to Json.str(r.backends), "ms" to r.ms.toString(), "model" to Json.str(llm.model),
@@ -132,7 +132,7 @@ class AiHub(private val ctx: Context, private val emit: Emit,
                 }
                 "llm.bench" -> llmPool.execute {
                     val arr = j.optJSONArray("threads")
-                    val cands = if (arr != null) (0 until arr.length()).map { arr.optInt(it) } else (listOf(2, 3, 4, 6, 8).filter { it <= cpu.cores } + fastThreads).distinct().sorted()
+                    val cands = if (arr != null) (0 until arr.length()).map { arr.optInt(it) } else (listOf(2, 3, 4, 6).filter { it <= cpu.cores }).distinct().sorted()
                     val r = llm.bench(cands)
                     Reply.done(c, id, cmd, r.err, "error", "best" to r.best.toString(), "fast" to fastThreads.toString(),
                         "rows" to Json.rows(r.rows.map { Json.obj("threads" to it.threads.toString(), "tps" to Json.num(it.tps, 10.0), "ptps" to Json.num(it.ptps, 10.0)) }))
