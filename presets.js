@@ -522,6 +522,11 @@ const PRESET_CATS={
   'Digital TV: DVB-S/S2 from IQ (USB SDR → one receiver node)':'Images & TV',
   'Digital TV: IPTV (HTTP TS / HLS / M3U) → TS → Video and Sound':'Images & TV',
   'Webcams: OpenStreetMap map → Picture':'Images & TV',
+  'Weather: Open-Meteo Now, Dew Point and Elevation':'Maps & Locating',
+  'Aircraft: Nearby Online (adsb.lol / OpenSky) → Map':'Aircraft, Satellites & Telemetry',
+  'Map: OSM Radio Masts, Towers and Peaks (Overpass)':'Maps & Locating',
+  'Ollama: Ask a Local LLM':'Tools',
+  'Ollama: Explain the Weather for Radio (Open-Meteo → LLM)':'Tools',
   'Cameras: Table of links → IP Camera → Frames + Archive':'Images & TV',
   'Video: Table of Sources → Player with Seek and Saved Position':'Images & TV',
   'Video: Internet Archive Search → Episodes → Player':'Images & TV',
@@ -7799,6 +7804,70 @@ nt.size.w=900; nt.size.h=110; applySize(nt);
 const wc=addNode('webcams',40,170,{lat:52.52,lon:13.4,radius:25}); wc.size.h=380; applySize(wc);
 const map=addNode('geoMap',440,170,{mz:8,mlat:52.52,mlon:13.4,labels:true}); map.size.w=560; map.size.h=420; applySize(map);
 addEdge(wc.id,'rows',map.id,'rows'); addEdge(map.id,'sel',wc.id,'select');
+markWiresDirty();
+});
+preset('Weather: Open-Meteo Now, Dew Point and Elevation', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Weather without a key: Weather & Elevation (Open-Meteo) takes the point from lat / lon (or My Position) and gives the temperature, humidity, pressure, wind, cloud, rain, dew point and the elevation above sea level.\n'+
+  'It refreshes by itself every 10 minutes and when the point moves by more than 5 km. Offline it shows the last answer marked «stale». Pressure and humidity matter for VHF / UHF ducting, dew point for fog, the elevation for the radio horizon.\n'+
+  'Change the point in My Position (the locator or lat / lon); the dashboard below is a Text Panel on the output pins.'});
+nt.size.w=900; nt.size.h=110; applySize(nt);
+const me=addNode('geoMe',40,170,{src:'manual',lat:52.52,lon:13.405}); me.size.w=300; applySize(me);
+const mt=addNode('meteo',380,170,{}); mt.size.w=320; mt.size.h=230; applySize(mt);
+const tp=addNode('textpanel',740,170,{lines:'# Weather\n🌡 {a:0.0} °C  · dew point {b:0.0} °C\n💧 {c:0} %   · cloud {d:0} %\n🧭 {e:0} hPa\n💨 {f:0.0} m/s from {g:0}°\n⛰ {h:0} m a.s.l.\n[red if a>30]hot[/]  [blue if a<0]freezing[/]'});
+tp.size.w=300; tp.size.h=210; applySize(tp);
+addEdge(me.id,'lat',mt.id,'lat'); addEdge(me.id,'lon',mt.id,'lon');
+addEdge(mt.id,'temp',tp.id,'a'); addEdge(mt.id,'dew',tp.id,'b'); addEdge(mt.id,'hum',tp.id,'c'); addEdge(mt.id,'cloud',tp.id,'d');
+addEdge(mt.id,'press',tp.id,'e'); addEdge(mt.id,'wind',tp.id,'f'); addEdge(mt.id,'dir',tp.id,'g'); addEdge(mt.id,'elev',tp.id,'h');
+markWiresDirty();
+});
+preset('Aircraft: Nearby Online (adsb.lol / OpenSky) → Map', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Aircraft around a point without a key: Aircraft Nearby asks adsb.lol (or OpenSky: pick the source) for aircraft within the radius of lat / lon (or My Position) every 15 s and puts them on the map; the colour follows the altitude.\n'+
+  'Click an aircraft: the readout shows the callsign, hex, type, altitude, speed and squawk. The «nearest» pin is a text line with the distance and bearing. Compare with your own ADS-B receiver by the hex code: what the internet sees and you do not is outside your radio horizon.\n'+
+  'The answers come from volunteers\' receivers and may lag by seconds; offline the last list stays, marked «stale». OpenSky is anonymous and limited to a few hundred requests a day — raise the refresh interval.'});
+nt.size.w=900; nt.size.h=120; applySize(nt);
+const me=addNode('geoMe',40,190,{src:'manual',lat:52.52,lon:13.405}); me.size.w=300; applySize(me);
+const ac=addNode('airnet',40,370,{source:'adsb.lol',radius:100,refresh:15}); ac.size.w=340; ac.size.h=260; applySize(ac);
+const map=addNode('geoMap',420,190,{mz:8,mlat:52.52,mlon:13.405,labels:true}); map.size.w=600; map.size.h=440; applySize(map);
+addEdge(me.id,'lat',ac.id,'lat'); addEdge(me.id,'lon',ac.id,'lon');
+addEdge(ac.id,'rows',map.id,'rows'); addEdge(map.id,'sel',ac.id,'select');
+markWiresDirty();
+});
+preset('Map: OSM Radio Masts, Towers and Peaks (Overpass)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Where to put an antenna or what blocks it: OSM Objects asks OpenStreetMap (Overpass, three mirrors) for objects with a tag within the radius of lat / lon — radio masts, towers, communication towers, peaks, water towers, amateur radio clubs or your own key=value.\n'+
+  'Press «Search»; the objects go to the map, a click shows the name, the height, the elevation and the frequency from the tags, with a link to the OSM page. The nearest object and its distance are on the output pins.\n'+
+  'Only what people entered into OpenStreetMap is found. The last answer is kept for offline use.'});
+nt.size.w=900; nt.size.h=110; applySize(nt);
+const me=addNode('geoMe',40,170,{src:'manual',lat:47.37,lon:8.54}); me.size.w=300; applySize(me);
+const os=addNode('osmobj',40,350,{kind:'radio masts',radius:15}); os.size.w=340; os.size.h=260; applySize(os);
+const map=addNode('geoMap',420,170,{mz:11,mlat:47.37,mlon:8.54,labels:true}); map.size.w=600; map.size.h=440; applySize(map);
+addEdge(me.id,'lat',os.id,'lat'); addEdge(me.id,'lon',os.id,'lon');
+addEdge(os.id,'rows',map.id,'rows'); addEdge(map.id,'sel',os.id,'select');
+markWiresDirty();
+});
+preset('Ollama: Ask a Local LLM', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A language model on your own computer: Ollama (https://ollama.com) listens on port 11434. Press «⟳ Models» to see what is installed (ollama pull llama3.2), write a question and press «▶ Ask»; the answer arrives piece by piece.\n'+
+  'The page must be allowed to call the server: start it with OLLAMA_ORIGINS=* (or the address of this page). From an https page only 127.0.0.1 / localhost works, a server on another machine needs http or a tunnel. The dialogue is kept (see «exchanges kept»).\n'+
+  'Wires: «prompt», «system» and «context» take text from other nodes; «send» asks, «stop» interrupts. Outputs: «text» (grows while it is written), «last» (the finished answer), «new» (a pulse), speed in tokens/s.'});
+nt.size.w=900; nt.size.h=120; applySize(nt);
+const ol=addNode('ollama',40,190,{host:'http://127.0.0.1:11434',prompt:'Explain in two sentences what a squelch does in a radio receiver.',sys:'Answer briefly and precisely.'});
+ol.size.w=520; ol.size.h=360; applySize(ol);
+markWiresDirty();
+});
+preset('Ollama: Explain the Weather for Radio (Open-Meteo → LLM)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Data from one node, the explanation from another: the text of Weather & Elevation (temperature, humidity, pressure, wind) goes to the «context» pin of Ollama and is added to the question. Press «▶ Ask» — the model says what this means for VHF / UHF reception.\n'+
+  'The same wire takes anything else that gives text: the nearest aircraft, a decoder log, a Table row. A small model (3B) is fast but may be wrong in numbers — it comments, it does not measure. Start Ollama with OLLAMA_ORIGINS=* (see the preset «Ollama: Ask a Local LLM»).'});
+nt.size.w=900; nt.size.h=110; applySize(nt);
+const me=addNode('geoMe',40,170,{src:'manual',lat:52.52,lon:13.405}); me.size.w=300; applySize(me);
+const mt=addNode('meteo',380,170,{}); mt.size.w=320; mt.size.h=230; applySize(mt);
+const ol=addNode('ollama',740,170,{prompt:'Given this weather, what can I expect for VHF/UHF reception today: ducting, fading, noise? Three short points.',sys:'You are a radio amateur with 30 years of experience. Be brief and honest about uncertainty.'});
+ol.size.w=460; ol.size.h=380; applySize(ol);
+addEdge(me.id,'lat',mt.id,'lat'); addEdge(me.id,'lon',mt.id,'lon');
+addEdge(mt.id,'text',ol.id,'context');
 markWiresDirty();
 });
 preset('Analog TV: FPV / TV Receiver (USB SDR)', function(){
