@@ -66,3 +66,11 @@ function svSpread(d){
   const my=111320*(b-a), mx=111320*Math.cos((a+b)/2*Math.PI/180)*(e-c);
   return Math.hypot(mx,my);
 }
+
+// оценка положения устройства (id 'loc:тип:…') грубее порога своего типа (параметры errWifi/errBle/errBt/errCell, м; 0 — без порога): на карту не идёт
+function svTooVague(id,radius,p){
+  id=typeof id==='string' ? id : ''; if(!id.startsWith('loc:')) return false;
+  const r=+radius; if(!(r>0)) return false;
+  const k=id.slice(4), lim=+(p||{})[{wifi:'errWifi',ble:'errBle',bt:'errBt',cell:'errCell'}[k.slice(0,k.indexOf(':'))]];
+  return lim>0 && r>lim;
+}

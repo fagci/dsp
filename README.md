@@ -47,7 +47,7 @@ Fox hunt: RSSI marks along the route plus two bearings from a directional antenn
 
 <img src="docs/screenshots/foxhunt.png" alt="Source Locator: trilateration by RSSI and bearings">
 
-**Survey layer of the Map** (input `meas` from a Table of walk records: `dev`, `lat`, `lon`, `rssi`, `t`…): the walked track, a «Survey» panel with technology chips (Wi-Fi / BLE / BT / Cells), search, level and mark-count filters and a device list; click a device and the map flies to it and draws all its marks coloured by level with lines to the estimate. Preset «Map: Survey Explorer».
+**Survey layer of the Map** (input `meas` from a Table of walk records: `dev`, `lat`, `lon`, `rssi`, `t`…): the walked track, a «Survey» panel with technology chips (Wi-Fi / BLE / BT / Cells), search, level and mark-count filters and a device list; click a device and the map flies to it and draws all its marks coloured by level with lines to the estimate. Preset «Map: Survey Explorer». Estimates of devices that are located too vaguely for their type (error radius over a per-type limit: Wi-Fi 60 m, BLE 40 m, Bluetooth 40 m, cells 1500 m; Map › Survey) are not drawn.
 
 ### Satellites
 
