@@ -2263,6 +2263,7 @@ document.getElementById('arrange').onclick=()=>{
 document.getElementById('dup').onclick=()=>{ copySel(); pasteData(clip,30,30); };
 // «→+»: к выбранному узлу — модуль, подходящий его свободному выходу (нет выходов — входу); новый узел сразу соединён и выбран,
 // так что цепочку можно наращивать тапами (удобно на телефоне, где тянуть провода трудно)
+document.getElementById('cmdBtn').onclick=ev=>{ ev.stopPropagation(); cmdkOpen(); };   // без клавиатуры (телефон) палитру и Emmet-цепочки иначе не открыть
 document.getElementById('chain').onclick=ev=>{
   if(Sel.size!==1){ showToast('select one module first'); return; }
   const n=Graph.map[[...Sel][0]]; if(!n) return;
