@@ -22,7 +22,7 @@ function vpnConnect(n){
   n.want=true; n.warn=netInsecure(url) ? NET_INSECURE_MSG : '';
   let ws; try{ ws=new WebSocket(url); }catch(e){ n.status='error: '+e.message; return; }
   n.ws=ws; n.status='connecting…'; n.sentSub=null;
-  ws.onopen=()=>{ n.status='connected · press Start'; vpnSub(n); for(const c of n.pend.splice(0)) vpnSend(n,c); if(n.wantOn){ const c=vpnStartCmd(n); if(c) vpnSend(n,c); } };
+  ws.onopen=()=>{ n.status='connected · press Start'; vpnSub(n); for(const c of n.pend.splice(0)) vpnSend(n,c); if(n.wantOn){ const c=vpnStartCmd(n); if(c) vpnSend(n,c); } vpnSyncTls(n,true); };
   ws.onerror=()=>{ n.status='connection error — is the DSP app running?'; };
   ws.onclose=e=>{
     if(n.ws!==ws) return;
@@ -59,7 +59,20 @@ function vpnListApps(n){ n.status='asking for the installed apps…'; vpnSend(n,
 function vpnStopMon(n){ n.wantOn=false; vpnSend(n,vpnCmd('stop',n.p)); }
 // расшифровка TLS — отдельный, более узкий список: эти приложения тоже должны идти через сам туннель (mode/apps выше), иначе их
 // трафик сюда вообще не попадёт. tlsRows — Table с установленными или увиденными приложениями, как rows у выбора туннеля.
-function vpnSetTls(n){ n.status='setting the TLS decrypt list…'; vpnSend(n,vpnCmd('tls',n.p,n.tlsRows)); }
+// Список живёт в памяти процесса моста, а не на диске: перезапуск службы (новый CA, OEM добил приложение, перезагрузка
+// телефона) тихо обнуляет его там, и без этой пересылки узел продолжал бы показывать старое «TLS decrypt: N app(s)»,
+// хотя на деле расшифровка уже выключена — ни plain, ни даже tlserror оттуда больше не придёт, молча.
+function vpnTlsSig(n){ const c=vpnCmd('tls',n.p,n.tlsRows); return c ? JSON.stringify([c.apps,c.uids]) : ''; }
+function vpnSetTls(n){ n.status='setting the TLS decrypt list…'; vpnSend(n,vpnCmd('tls',n.p,n.tlsRows)); n.tlsSig=vpnTlsSig(n); n.tlsAt=Date.now(); }
+// force — всегда шлёт (сразу после «on open», список мог слететь вместе с процессом моста); иначе — только если список изменился
+// или мост мог перезапуститься без нашего ведома, и не чаще раза в 1.5 с
+function vpnSyncTls(n,force){
+  if(!n.ws || n.ws.readyState!==1) return;
+  const sig=vpnTlsSig(n);
+  if(!force && sig===n.tlsSig) return;
+  if(!force && Date.now()-n.tlsAt<1500) return;
+  vpnSend(n,vpnCmd('tls',n.p,n.tlsRows)); n.tlsSig=sig; n.tlsAt=Date.now();
+}
 function vpnGetCa(n){ n.status='asking for the CA certificate…'; vpnSend(n,vpnCmd('ca',n.p)); }
 function vpnResetCa(n){ n.status='issuing a new CA (old one must be removed from the device by hand)…'; vpnSend(n,vpnCmd('caReset',n.p)); }
 
@@ -118,7 +131,7 @@ def({ id:'vpnmon', title:'Network Monitor (DSP app, VPN)', cat:'Sources', always
     {n:'connect',t:'button',label:'Connect',fn:n=>vpnConnect(n)},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>vpnStop(n)}],
   init:n=>{ n.ws=null; n.want=false; n.wantOn=false; n.timer=null; n.seq=0; n.pend=[]; n.sentSub=null;
-            n.recQ=[]; n.flowQ=[]; n.appQ=[]; n.instQ=[]; n.plainQ=[]; n.errQ=[]; n.selRows=null; n.tlsRows=null; n.selSig=''; n.selAt=0; n.apps=new Map(); n.count=0; n.open=0; n.flows=0; n.bytesUp=0; n.bytesDown=0;
+            n.recQ=[]; n.flowQ=[]; n.appQ=[]; n.instQ=[]; n.plainQ=[]; n.errQ=[]; n.selRows=null; n.tlsRows=null; n.selSig=''; n.selAt=0; n.tlsSig=null; n.tlsAt=0; n.apps=new Map(); n.count=0; n.open=0; n.flows=0; n.bytesUp=0; n.bytesDown=0;
             n.caPem=''; n.caFingerprint=''; n.tlsCount=0;
             n.on=false; n.status='not connected'; n.warn=''; n.bridgeMsg=''; n.last=''; n.prevGo=0; },
   dispose:n=>vpnStop(n),
@@ -127,6 +140,7 @@ def({ id:'vpnmon', title:'Network Monitor (DSP app, VPN)', cat:'Sources', always
     const go=(I.go||0)>.5; if(go && !n.prevGo){ if(n.on) vpnStopMon(n); else vpnStart(n); } n.prevGo=go;
     n.selRows=Array.isArray(I.rows) ? I.rows : null;
     n.tlsRows=Array.isArray(I.tlsRows) ? I.tlsRows : null;
+    vpnSyncTls(n);
     // выбор изменился при работающем мониторе (другая таблица, другой текст, режим) — туннель пересоздаётся; не чаще раза в 1.5 с
     if(n.on && n.wantOn && Date.now()-n.selAt>1500){
       const c=vpnCmd('start',n.p,n.selRows);
