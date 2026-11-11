@@ -1559,7 +1559,7 @@ markWiresDirty();
 });
 preset('Phone App: Accelerometer over the Direct Channel (800 Hz, no jitter)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'Android app (tools/android): «direct sensor channel» (SensorDirectChannel, Android 8.1+). The usual way delivers sensor events through the system process with jitter and tops out near 200 Hz; here the sensor itself writes samples into shared memory and the app only reads it \u2014 a steady 50 / 200 / 800 Hz (the «sensor rate» picks the level: up to 50 \u2192 50, up to 200 \u2192 200, above \u2192 800 Hz, capped by what the phone\'s sensor can). Good for vibration and audio-band analysis.\n'+
+const nt=addNode('note',40,40,{text:'Android app (tools/android): «direct sensor channel» (SensorDirectChannel, Android 8+). The usual way delivers sensor events through the system process with jitter and tops out near 200 Hz; here the sensor itself writes samples into shared memory and the app only reads it \u2014 a steady 50 / 200 / 800 Hz (the «sensor rate» picks the level: up to 50 \u2192 50, up to 200 \u2192 200, above \u2192 800 Hz, capped by what the phone\'s sensor can). Good for vibration and audio-band analysis.\n'+
   'A sensor (or phone) without the direct mode quietly keeps the normal listener, so the patch always works. The records on rec carry the sensor\'s own time stamps \u2014 Rec Log keeps them as they are. Compare with the same sensor without the tick.'});
 nt.size.w=800; nt.size.h=140; applySize(nt);
 const tx=addNode('termux',40,210,{url:'ws://127.0.0.1:8765',gps:false,battery:false,accel:true,hz:'1000',direct:true});
