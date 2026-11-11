@@ -20,7 +20,7 @@ const ctx=vm.createContext({String,Number,Math,Array,Object,Set,Map,Promise,JSON
   setTimeout,clearTimeout,Error,btoa:s=>Buffer.from(s,'binary').toString('base64'),atob:s=>Buffer.from(s,'base64').toString('binary'),
   WebSocket:FakeWS, window:{DspApp:{appKey:()=>'k1'}}, DspApp:{appKey:()=>'k1'}, phoneUrl:(u,k)=>u+'/?key='+k, OfflineData:{item:o=>offline.push(o)}, performance});
 const read=f=>fs.readFileSync(path.join(root,'modules/'+f),'utf8');
-vm.runInContext(read('netsock-kernels.js')+'\n'+read('applink.js')+'\n'+read('whisper-app.js')+';this.X={AppLink,WAP,WAP_MODELS,wapFile,wapUrl,wapCustom,wapB64,wapCapsLine,wapLoad,wapRun,wapGet,wapHas};',ctx);
+vm.runInContext(read('netsock-kernels.js')+'\n'+read('applink.js')+'\n'+read('whisper-app.js')+';this.X={AppLink,WAP,WAP_MODELS,wapFile,wapUrl,wapCustom,wapB64,wapCapsLine,wapLoad,wapRun,wapGet,wapHas,wapFastOn};',ctx);
 const X=ctx.X;
 
 // --- чистое
@@ -36,12 +36,12 @@ ok('caps line',X.wapCapsLine({soc:'Qualcomm SM8650',dotprod:true,i8mm:true,openc
 // --- связь
 ok('Files → offline: the three phone models are registered (the app only)',offline.map(o=>o.id).join()==='whisper-app-large-v3-turbo-q5_0,whisper-app-medium-q5_0,whisper-app-small-q5_1' && offline.every(o=>o.mb>0 && /phone/.test(o.label)));
 const caps={arm64:true,dotprod:true,i8mm:false,fp16:true,opencl:true,cores:8,ramMb:11000,availMb:4000,soc:'Qualcomm SM8650'};
-let have=[]; const ev=[];
+let have=[]; const ev=[]; let gpuReply=null;
 bridge=async(m,ws)=>{
   if(m.cmd==='ai.caps') return caps;
   if(m.cmd==='model.list') return {models:have.map(n=>({name:n,size:1,partial:false}))};
   if(m.cmd==='model.get'){ ws.recv({src:'ai',ev:'progress',name:m.name,done:100,total:400}); ws.recv({src:'ai',ev:'progress',name:m.name,done:400,total:400}); await wait(30); have.push(m.name); return {name:m.name,size:400}; }
-  if(m.cmd==='asr.load') return {backends:'CPU:CPU|x;GPU:OpenCL|Adreno',ms:2500,model:m.model,gpu:!!m.gpu};
+  if(m.cmd==='asr.load') return {backends:'CPU:CPU|x',ms:2500,model:m.model,gpu:gpuReply===null ? !!m.gpu : gpuReply};
   if(m.cmd==='asr.run') return {text:'  Привет, мир.  ',segs:1,ms:1500,audioMs:3000};
   return {err:'unknown'};
 };
@@ -56,7 +56,7 @@ un(); sockets[0].recv({src:'ai',ev:'seg',text:'y'}); await wait(10); ok('link: a
 sockets[0].close(); await X.AppLink.call('ai.caps'); ok('link: reconnects after the bridge closed',sockets.length===2);
 
 // --- загрузка модели и распознавание
-sent.length=0; const app={name:'ggml-medium-q5_0.bin',url:X.wapUrl('medium-q5_0'),gpu:true,beam:3,fast:false,prompt:'Привет'};
+sent.length=0; const app={name:'ggml-medium-q5_0.bin',url:X.wapUrl('medium-q5_0'),gpu:true,beam:3,fastMode:'auto',prompt:'Привет'};
 const progs=[]; const t=setInterval(()=>progs.push(X.WAP.prog),5);
 await X.wapLoad(app); clearInterval(t);
 const cmds=sent.filter(m=>m.cmd).map(m=>m.cmd);
@@ -72,6 +72,20 @@ const rm=sent.find(m=>m.cmd==='asr.run');
 ok('run: phrase sent as base64 with the options',rm && Buffer.from(rm.pcm,'base64').length===96000 && rm.lang==='ru' && rm.translate===false && rm.beam===3 && rm.prompt==='Привет' && rm.fast===false);
 ok('run: text trimmed, time and audio length come back',r.text==='Привет, мир.' && r.ms===1500 && r.audioMs===3000);
 await X.wapRun(new Float32Array(16000),{language:'auto',task:'translate',app}); ok('run: translate goes to the phone',sent.filter(m=>m.cmd==='asr.run').at(-1).translate===true);
+
+// --- короткое окно энкодера: auto — когда GPU не подключён; почему CPU при просьбе о GPU
+ok('fast window: auto follows the backend (full window on the GPU, short on the CPU), on / off are respected, a forced draft always short',
+   (()=>{ X.WAP.gpuOn=true; const g=[X.wapFastOn({fastMode:'auto'}),X.wapFastOn({fastMode:'off'}),X.wapFastOn({fastMode:'on'}),X.wapFastOn({fastMode:'off',fast:true})];
+          X.WAP.gpuOn=false; const c=[X.wapFastOn({fastMode:'auto'}),X.wapFastOn({fastMode:'off'}),X.wapFastOn({fastMode:'on'}),X.wapFastOn({})]; return g.join()==='false,false,true,true' && c.join()==='true,false,true,true'; })());
+X.WAP.ready=''; gpuReply=true; sent.length=0; await X.wapLoad({...app,gpu:true}); await X.wapRun(new Float32Array(16000),{language:'ru',task:'transcribe',app:{...app,gpu:true}});
+ok('fast window: on the GPU (auto) the phrase goes with the full window',sent.find(m=>m.cmd==='asr.run').fast===false && X.WAP.why==='' && /GPU/.test(X.WAP.info));
+X.WAP.ready=''; gpuReply=false; X.WAP.caps={...X.WAP.caps,opencl:false}; sent.length=0; await X.wapLoad({...app,gpu:true}); await X.wapRun(new Float32Array(16000),{language:'ru',task:'transcribe',app:{...app,gpu:true}});
+ok('fast window: no GPU (auto) → the short window, and the reason is told (no OpenCL on this phone)',sent.find(m=>m.cmd==='asr.run').fast===true && /no OpenCL library/.test(X.WAP.why) && /^CPU \(no OpenCL library/.test(X.WAP.info),X.WAP.info);
+X.WAP.ready=''; X.WAP.caps={...X.WAP.caps,opencl:true}; await X.wapLoad({...app,gpu:true});
+ok('fast window: OpenCL present but no supported GPU → another reason (Adreno 7xx / 8xx)',/Adreno 7xx/.test(X.WAP.why));
+sent.length=0; await X.wapRun(new Float32Array(16000),{language:'ru',task:'transcribe',app:{...app,gpu:true,fastMode:'off'}});
+ok('fast window: «off» keeps the full window even on the CPU',sent.find(m=>m.cmd==='asr.run').fast===false);
+X.WAP.ready=''; gpuReply=null;
 // две фразы подряд — по очереди
 const order=[]; bridge=async(m)=>{ if(m.cmd==='asr.run'){ order.push('start'); await wait(30); order.push('end'); return {text:'a',ms:1,audioMs:1}; } return {models:[{name:app.name,partial:false}],gpu:true,backends:'',ms:0}; };
 await Promise.all([X.wapRun(new Float32Array(16000),{app}),X.wapRun(new Float32Array(16000),{app})]);

@@ -41,7 +41,7 @@ function wapCapsLine(c){
   return b.join(' · ');
 }
 
-const WAP={unsupported:false, caps:null, ready:'', key:'', loading:null, prog:'', info:'', chain:Promise.resolve(), off:null, dl:new Map()};
+const WAP={gpuOn:false, why:'', unsupported:false, caps:null, ready:'', key:'', loading:null, prog:'', info:'', chain:Promise.resolve(), off:null, dl:new Map()};
 function wapCaps(){
   if(WAP.caps) return Promise.resolve(WAP.caps);
   return AppLink.call('ai.caps',{},10000).then(c=>{ WAP.caps=c; return c; });
@@ -79,16 +79,21 @@ function wapLoad(a){
     await wapGet(a.name,a.url);
     WAP.prog='loading '+a.name+' into memory…';
     const r=await AppLink.call('asr.load',{model:a.name,gpu:!!a.gpu},300000);
-    WAP.ready=key; WAP.info=(r.gpu ? 'GPU (OpenCL)' : 'CPU')+(r.ms ? ' · loaded in '+(r.ms/1000).toFixed(1)+' s' : ''); WAP.prog='';
+    WAP.gpuOn=!!r.gpu;
+    WAP.why=a.gpu && !r.gpu ? (!c.opencl ? 'no OpenCL library on this phone' : 'OpenCL is there, but ggml-opencl found no supported GPU — Adreno 7xx / 8xx needed') : '';     // почему просили GPU, а считает CPU
+    WAP.ready=key; WAP.info=(r.gpu ? 'GPU (OpenCL)' : 'CPU'+(WAP.why ? ' ('+WAP.why+')' : ''))+(r.ms ? ' · loaded in '+(r.ms/1000).toFixed(1)+' s' : ''); WAP.prog='';
     return r;
   })().catch(e=>{ WAP.ready=''; WAP.prog=''; throw e; }).finally(()=>{ WAP.loading=null; });
 }
+// короткое окно энкодера (audio_ctx по длине фразы): стоимость растёт с длиной звука, а не с окном в 30 с — на CPU это разница между «успевает» и «нет».
+// fastMode: auto — включено, когда GPU не подключён (на GPU окно полное — точнее), on / off — как сказано; a.fast === true — принудительно (черновики)
+const wapFastOn=a=>a.fast===true || a.fastMode==='on' || (a.fastMode!=='off' && !WAP.gpuOn);
 // одна фраза (Float32Array 16 кГц) → {text, ms, audioMs}; запуски идут по очереди
 function wapRun(audio,o){
   const job=WAP.chain.then(async()=>{
     await wapLoad(o.app);
     const r=await AppLink.call('asr.run',{pcm:wapB64(audio),lang:o.language||'auto',translate:o.task==='translate',prompt:o.app.prompt||'',beam:o.app.beam||1,
-      fast:!!o.app.fast,suppressNst:true,temperature:0},600000);
+      fast:wapFastOn(o.app),suppressNst:true,temperature:0},600000);
     return {text:String(r.text||'').trim(),ms:r.ms,audioMs:r.audioMs};
   });
   WAP.chain=job.catch(()=>{});
