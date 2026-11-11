@@ -1,26 +1,35 @@
 "use strict";
-/* Какие встроенные пресеты пересобирать при запуске. Пересборка — это построение живого графа и сериализация, около 30 мс на пресет:
-   все ~700 разом — десятки секунд на телефоне (экран загрузки «висит»). Поэтому пересобираются только пресеты, у которых изменился
-   код построения (хэш исходника функции) или которых нет, а полностью — когда поднят PRESET_VER (изменились дефолты модулей, формат).
-   Без DOM — tools/test-presetplan.mjs */
+/* Два слоя патчей. Встроенные пресеты — это код (PRESETS: имя → функция-строитель), в хранилище их не копируем: список строится из имён,
+   а граф собирается при открытии и кэшируется в памяти. В хранилище (localStorage) лежат только патчи пользователя и temp-копии;
+   пользовательский патч с именем встроенного перекрывает его. Так старт не зависит от числа пресетов, а правка умолчаний модулей
+   не требует пересборки. Без DOM — tools/test-presetplan.mjs */
 
-// короткий хэш исходника функции-строителя (djb2) + длина
-function presetHash(fn){
-  const s=String(fn); let h=5381;
-  for(let i=0;i<s.length;i++) h=((h<<5)+h+s.charCodeAt(i))|0;
-  return (h>>>0).toString(36)+'.'+s.length.toString(36);
+// Одноразовая миграция старого хранилища: там лежали готовые копии всех встроенных пресетов — убираем их (и снятые с поставки),
+// остаются патчи пользователя. builtin — {имя: …} или Set имён; gone — префиксы снятых пресетов. → {user, dropped}
+function patchMigrate(stored,builtin,gone){
+  const has=n=>typeof builtin.has==='function' ? builtin.has(n) : Object.prototype.hasOwnProperty.call(builtin,n);
+  const user={}; let dropped=0;
+  for(const k of Object.keys(stored||{})){
+    if(has(k) || (gone||[]).some(g=>k.startsWith(g))){ dropped++; continue; }
+    user[k]=stored[k];
+  }
+  return {user, dropped};
 }
 
-// presets — {имя: строитель}; stored — сохранённые патчи {имя: …}; hashes — {имя: хэш} с прошлой сборки; ver / cur — сохранённая и текущая PRESET_VER
-// → {todo: имена к пересборке, hashes: хэши тех, что остаются как есть, full: полная ли пересборка}
-function presetPlan(presets,stored,hashes,ver,cur){
-  const full=ver<cur, todo=[], keep={};
-  for(const name of Object.keys(presets)){
-    const h=presetHash(presets[name]);
-    if(full || !stored[name] || (hashes||{})[name]!==h) todo.push(name);
-    else keep[name]=h;
-  }
-  return {todo, hashes:keep, full};
+// Имена в списке: встроенные + пользовательские (без дублей), порядок — встроенные, затем остальные
+function patchNames(builtin,user){
+  const out=Object.keys(builtin||{});
+  for(const k of Object.keys(user||{})) if(!(builtin && Object.prototype.hasOwnProperty.call(builtin,k))) out.push(k);
+  return out;
+}
+
+// Какие слова в кавычках встречаются в исходнике строителя — по ним решаем, нужны ли пресету спрятанные на этом устройстве модули,
+// не собирая граф. Лишние совпадения безвредны: берём только id из known (набор / объект).
+function presetSrcIds(src,known){
+  const has=n=>typeof known.has==='function' ? known.has(n) : Object.prototype.hasOwnProperty.call(known,n);
+  const out=new Set(); const re=/['"`]([A-Za-z0-9_]+)['"`]/g; let m;
+  while((m=re.exec(String(src)))) if(has(m[1])) out.add(m[1]);
+  return out;
 }
 
 // Избранные пресеты (звезда в списке; в приложении Android первые становятся ярлыками при долгом нажатии на иконку).
