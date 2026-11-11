@@ -30,6 +30,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    lint { checkReleaseBuilds = false }                                    // lintVital в assembleRelease съедает ~30 с на каждой сборке; ловит только фатальное (манифест), компиляция и проверки моста это и так покрывают
     androidResources { noCompress += listOf("wasm", "onnx", "bin", "img") }
     packaging { jniLibs { useLegacyPackaging = true } }                    // библиотеки libVLC / libtorrent сжимаются в APK (иначе ~+80 МБ к загрузке)
     sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/web"))
