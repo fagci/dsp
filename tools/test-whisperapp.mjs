@@ -20,7 +20,7 @@ const ctx=vm.createContext({String,Number,Math,Array,Object,Set,Map,Promise,JSON
   setTimeout,clearTimeout,Error,btoa:s=>Buffer.from(s,'binary').toString('base64'),atob:s=>Buffer.from(s,'base64').toString('binary'),
   WebSocket:FakeWS, window:{DspApp:{appKey:()=>'k1'}}, DspApp:{appKey:()=>'k1'}, phoneUrl:(u,k)=>u+'/?key='+k, OfflineData:{item:o=>offline.push(o)}, performance});
 const read=f=>fs.readFileSync(path.join(root,'modules/'+f),'utf8');
-vm.runInContext(read('netsock-kernels.js')+'\n'+read('applink.js')+'\n'+read('whisper-app.js')+';this.X={AppLink,WAP,WAP_MODELS,wapFile,wapUrl,wapCustom,wapB64,wapCapsLine,wapLoad,wapRun,wapGet,wapHas,wapFastOn};',ctx);
+vm.runInContext(read('netsock-kernels.js')+'\n'+read('applink.js')+'\n'+read('whisper-app.js')+';this.X={AppLink,WAP,WAP_MODELS,wapFile,wapUrl,wapCustom,wapB64,wapCapsLine,wapLoad,wapRun,wapGet,wapHas,wapFastOn,wapLighter};',ctx);
 const X=ctx.X;
 
 // --- чистое
@@ -110,4 +110,5 @@ const e2=await X.wapLoad(app).then(()=>null,e=>e); ok('load error from the phone
 // has()
 bridge=async()=>({models:[{name:'ggml-medium-q5_0.bin',partial:false},{name:'ggml-small-q5_1.bin',partial:true}]});
 ok('offline item: has() — a finished file only',await offline[1].has()===true && await offline[2].has()===false && await offline[0].has()===false);
+ok('lighter model hint: one step down, never the same one',X.wapLighter('ggml-medium-q5_0.bin')==='small-q5_1' && X.wapLighter('large-v3-turbo-q5_0')==='medium-q5_0' && X.wapLighter('tiny-q5_1')==='' && X.wapLighter('my.bin')==='');
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad ? 1 : 0);

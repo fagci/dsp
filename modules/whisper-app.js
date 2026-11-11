@@ -13,6 +13,9 @@ const WAP_MODELS={
   'small-q5_1':{mb:181,note:'fast, Russian is so-so'},
   'base-q5_1':{mb:60,note:'very fast, weak'},
   'tiny-q5_1':{mb:32,note:'only to try'}};
+// на ступень легче: подсказка при отставании не должна советовать ту модель, что уже стоит
+const WAP_LIGHTER={'large-v3-turbo-q5_0':'medium-q5_0','large-v3-turbo-q8_0':'medium-q5_0','medium-q5_0':'small-q5_1','small-q5_1':'base-q5_1','base-q5_1':'tiny-q5_1'};
+const wapLighter=name=>WAP_LIGHTER[String(name||'').replace(/^ggml-|\.bin$/g,'')]||'';
 const wapFile=m=>'ggml-'+m+'.bin';
 const wapUrl=m=>'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/'+wapFile(m);
 // своя модель: адрес .bin → имя файла на телефоне (только безопасные символы, расширение .bin)
