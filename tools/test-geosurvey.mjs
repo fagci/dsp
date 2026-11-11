@@ -2,7 +2,7 @@
 import vm from 'node:vm'; import fs from 'node:fs'; import path from 'node:path'; import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Array,Number,isFinite,String,Set,Map});
-vm.runInContext(fs.readFileSync(path.join(root,'modules/geosurvey-kernels.js'),'utf8')+';this.K={svIngest,svMatch,svList,svColor,svSpread};',ctx);
+vm.runInContext(fs.readFileSync(path.join(root,'modules/geosurvey-kernels.js'),'utf8')+';this.K={svIngest,svMatch,svList,svColor,svSpread,svTooVague};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const rows=[
@@ -25,4 +25,8 @@ ok('colour: weak is blue, strong is red',/hsl\(240/.test(K.svColor(-100)) && /hs
 ok('spread: two points 0.0003° apart in longitude is about 21 m',Math.abs(K.svSpread(S.devs.get('wifi:aa'))-21.4)<2,K.svSpread(S.devs.get('wifi:aa')));
 const J=K.svIngest([{t:'1000',dev:'a',lat:'50',lon:'85',acc:'5',rssi:'-50'},{t:'2000',dev:'a',lat:'50.0001',lon:'85',acc:'5',rssi:'-50'},{t:'3000',dev:'a',lat:'50.02',lon:'85',acc:'5',rssi:'-50'},{t:'4000',dev:'a',lat:'50.0002',lon:'85',acc:'5',rssi:'-50'}]);
 ok('GPS jump (2 km in 1 s) is dropped from the track, the walk goes on; the marks are kept',J.track.length===3 && J.track[2].lat===50.0002 && J.devs.get('a').pts.length===4,JSON.stringify(J.track));
+const P={errWifi:60,errBle:40,errBt:40,errCell:1500};
+ok('vague estimate: Wi-Fi 90 m > 60 m is hidden, 50 m is shown',K.svTooVague('loc:wifi:aa',90,P) && !K.svTooVague('loc:wifi:aa',50,P));
+ok('limits are per type: BLE 45 m hidden, cell 800 m shown, cell 2000 m hidden',K.svTooVague('loc:ble:bb',45,P) && !K.svTooVague('loc:cell:LTE:1',800,P) && K.svTooVague('loc:cell:LTE:1',2000,P));
+ok('limit 0 shows all; non-device ids and records without radius are never hidden',!K.svTooVague('loc:wifi:aa',9999,{errWifi:0}) && !K.svTooVague('estimate',9999,P) && !K.svTooVague('loc:wifi:aa',undefined,P) && !K.svTooVague('loc:x:aa',9999,P));
 console.log(bad?bad+' failed':'all ok'); process.exit(bad?1:0);

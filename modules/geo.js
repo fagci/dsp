@@ -1614,6 +1614,10 @@ def({ id:'geoMap', lazy:'manual', title:'Map', cat:'Geo',
           {n:'labels',t:'check',d:true,label:'labels'},
           {n:'circles',t:'select',opts:['all','selected','off'],d:'all',label:'radius circles (accuracy, error): all faint, only the selected object, or none'},
           {n:'cluster',t:'check',d:true,label:'cluster'},
+          {n:'errWifi',t:'range',min:0,max:2000,step:5,d:60,label:'hide Wi-Fi estimates with error radius over, m (0 — show all)'},
+          {n:'errBle',t:'range',min:0,max:2000,step:5,d:40,label:'hide BLE estimates with error radius over, m (0 — show all)'},
+          {n:'errBt',t:'range',min:0,max:2000,step:5,d:40,label:'hide Bluetooth estimates with error radius over, m (0 — show all)'},
+          {n:'errCell',t:'range',min:0,max:5000,step:50,d:1500,label:'hide cell tower estimates with error radius over, m (0 — show all)'},
           {n:'svDots',t:'select',opts:['selected','filtered'],d:'selected',label:'survey marks (input meas): of the selected device only, or of all devices passing the filter'},
           {n:'svTrack',t:'check',d:true,label:'survey: the walked track'},
           {n:'follow',t:'check',d:false,label:'follow'},
@@ -3012,7 +3016,10 @@ function geoSvApply(n){
   n.svKey=(n.svKey|0)+1; n._svUi=null;
   geoMapChanged(n);
 }
-const geoSvHide=(n,e)=>{ if(!n.svAllow) return false; const d=svDevOf(e); return d!=null && n.sv.devs.has(d) && !n.svAllow.has(d); };
+const geoSvTooVague=(n,e)=>e?.key!==n.selKey && svTooVague(e?.id,e?.rec?.radius,n.p);
+const geoSvHide=(n,e)=>{
+  if(geoSvTooVague(n,e)) return true;
+  if(!n.svAllow) return false; const d=svDevOf(e); return d!=null && n.sv.devs.has(d) && !n.svAllow.has(d); };
 function geoSvSel(n){
   if(!n.sv) return null;
   const e=n.selKey && n.ents.get(n.selKey), d=svDevOf(e);
@@ -3126,7 +3133,7 @@ const SV_NAME_KEYS=['wifi','ble','bt','cell'];
 defGroups('geoMap',[
   {n:'Edit', p:'mode tools addName addIcon drawColor'},
   {n:'Display', p:'ttl tiles tileFallback overlay ovAlpha iconScale grid labels circles cluster follow net'},
-  {n:'Survey', p:'svDots svTrack'},
+  {n:'Survey', p:'svDots svTrack errWifi errBle errBt errCell'},
   {n:'Data layers', p:'vfile vclr osmKind osmGo'},
   {n:'Tracks', p:'trail maxEnt arrows rayKm', open:false},
   {n:'Export', p:'store csv geojson kml gpx', open:false},
