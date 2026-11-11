@@ -528,6 +528,7 @@ const PRESET_CATS={
   'Ollama: Ask a Local LLM':'Tools',
   'Ollama: Chat with a Local LLM (Chat node)':'Tools',
   'Agent: Weather Watcher — LLM with Tools (read inputs, calc, set outputs)':'Tools',
+  'Agent: Any Node as a Tool — Actions through Pins (oscillator, log, approval)':'Tools',
   'Ollama: Local LLM on the Phone (llama.cpp, GPU) — Chat':'Tools',
   'Ollama: Explain the Weather for Radio (Open-Meteo → LLM)':'Tools',
   'Cameras: Table of links → IP Camera → Frames + Archive':'Images & TV',
@@ -7887,19 +7888,39 @@ markWiresDirty();
 preset('Agent: Weather Watcher — LLM with Tools (read inputs, calc, set outputs)', function(){
 clearAll();
 const nt=addNode('note',40,20,{text:'An agent is a model that can act: Agent runs the loop «the model answers → calls a tool → gets the result → continues» until it has an answer. The model itself is the Ollama node (a server, or the host «app» — llama.cpp inside the Android app, where the KV cache keeps the long history cheap); the wires: Agent.prompt / system / send / clear / halt → Ollama, Ollama.last / new → Agent.\n'+
-  'The tools: calc, time, read / write (the inputs a…d s1 s2 and the outputs o1…o4 t1 t2 declared in «tools» — here the weather in, an alert level and a report out; the number is clamped to the range), http_get (only the hosts you list), notify / speak (the app). Only «allow» tools exist for the model; the step limit and a repeat guard stop a model that is stuck.\n'+
+  'The tools: calc, time, read / write (the pins you declare in «tools» — here the weather in (temp, press, wind), an alert level and a report out; the number is clamped to the range), http_get (only the hosts you list), notify / speak (the app). Only «allow» tools exist for the model; the step limit and a repeat guard stop a model that is stuck.\n'+
   'Press «▶ Run the task» in Agent (or send a text to its «task» pin). A small model (Qwen2.5 3B, the host «app») follows the <tool_call> format well; weaker ones may need a lower temperature. Watch the tool calls in the node and in the «trace» pin.'});
 nt.size.w=1000; nt.size.h=150; applySize(nt);
 const me=addNode('geoMe',40,200,{src:'manual',lat:52.52,lon:13.405}); me.size.w=300; applySize(me);
 const mt=addNode('meteo',40,360,{}); mt.size.w=300; mt.size.h=220; applySize(mt);
-const ag=addNode('agent',400,200,{task:'Check the weather inputs. If the pressure is high and the air is calm (wind below 3 m/s) VHF / UHF ducting is likely: set the alert o1 to 2 or 3 and write a one-line report for the operator to t1. Otherwise set o1 to 0 and say why.',maxSteps:6}); ag.size.w=380; ag.size.h=430; applySize(ag);
+const ag=addNode('agent',400,200,{task:'Check the weather inputs. If the pressure is high and the air is calm (wind below 3 m/s) VHF / UHF ducting is likely: set the alert to 2 or 3 and write a one-line report for the operator. Otherwise set the alert to 0 and say why.',maxSteps:6}); ag.size.w=380; ag.size.h=430; applySize(ag);
 const ol=addNode('ollama',820,200,{host:'app',model:'qwen2.5-3b-instruct-q4_0',appGpu:true,keep:15,temp:.2,maxTok:400}); ol.size.w=380; ol.size.h=330; applySize(ol);
 const tp=addNode('textpanel',820,560,{lines:'# Agent\nalert level {a:0}\n{s1}'}); tp.size.w=380; tp.size.h=130; applySize(tp);
 addEdge(me.id,'lat',mt.id,'lat'); addEdge(me.id,'lon',mt.id,'lon');
-addEdge(mt.id,'temp',ag.id,'a'); addEdge(mt.id,'press',ag.id,'b'); addEdge(mt.id,'wind',ag.id,'c');
+addEdge(mt.id,'temp',ag.id,'temp'); addEdge(mt.id,'press',ag.id,'press'); addEdge(mt.id,'wind',ag.id,'wind');
 addEdge(ag.id,'prompt',ol.id,'prompt'); addEdge(ag.id,'system',ol.id,'system'); addEdge(ag.id,'send',ol.id,'send'); addEdge(ag.id,'clear',ol.id,'clear'); addEdge(ag.id,'halt',ol.id,'stop');
 addEdge(ol.id,'last',ag.id,'reply'); addEdge(ol.id,'new',ag.id,'new');
-addEdge(ag.id,'o1',tp.id,'a'); addEdge(ag.id,'t1',tp.id,'s1');
+addEdge(ag.id,'alert',tp.id,'a'); addEdge(ag.id,'report',tp.id,'s1');
+markWiresDirty();
+});
+preset('Agent: Any Node as a Tool — Actions through Pins (oscillator, log, approval)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Every line of «tools» in Agent makes a pin, and a pin can be wired to anything — so the model can act through any node of the graph.\n'+
+  'Here: «act set_freq(hz 100…2000) auto» is an output pin that carries the number to the oscillator\'s freq (the number is clamped); «act log(text) auto» writes a line to the ticker; «act alarm(level, text)» has two arguments, so it goes out as a record — and, because it has no «auto», it waits for your approval (the ✔ button of Agent, or a pulse on its «approve» pin; «pending» shows what it asks). «-> pin» (not used here) makes the action return the answer that comes back on an input pin.\n'+
+  'Task: «Tune the oscillator to 880 Hz, log what you did, then raise an alarm level 2 saying the tone is on.» The host «app» keeps the dialogue in the KV cache, so the steps are cheap.'});
+nt.size.w=1000; nt.size.h=150; applySize(nt);
+const ag=addNode('agent',40,200,{task:'Tune the oscillator to 880 Hz, log what you did, then raise an alarm level 2 saying the tone is on.',maxSteps:8,allow:'calc,time',
+  tools:'# actions: every one is an output pin with its own name\nact set_freq(hz:num 100..2000) "tune the oscillator, Hz" auto\nact log(text) "write a line to the log" auto\nact alarm(level:num 0..3, text) "raise an alarm (the operator approves it first)"\n'});
+ag.size.w=400; ag.size.h=460; applySize(ag);
+const ol=addNode('ollama',480,200,{host:'app',model:'qwen2.5-3b-instruct-q4_0',appGpu:true,keep:15,temp:.2,maxTok:400}); ol.size.w=380; ol.size.h=330; applySize(ol);
+const osc=addNode('osc',480,560,{wave:'sine',freq:440,amp:.2}); osc.size.w=300; applySize(osc);
+const tk=addNode('ticker',900,200,{time:true}); tk.size.w=360; tk.size.h=200; applySize(tk);
+const tk2=addNode('ticker',900,430,{time:true}); tk2.size.w=360; tk2.size.h=200; applySize(tk2);
+addEdge(ag.id,'prompt',ol.id,'prompt'); addEdge(ag.id,'system',ol.id,'system'); addEdge(ag.id,'send',ol.id,'send'); addEdge(ag.id,'clear',ol.id,'clear'); addEdge(ag.id,'halt',ol.id,'stop');
+addEdge(ol.id,'last',ag.id,'reply'); addEdge(ol.id,'new',ag.id,'new');
+addEdge(ag.id,'set_freq',osc.id,'freq');
+addEdge(ag.id,'log',tk.id,'text');
+addEdge(ag.id,'alarm',tk2.id,'rec');
 markWiresDirty();
 });
 preset('Ollama: Explain the Weather for Radio (Open-Meteo → LLM)', function(){

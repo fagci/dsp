@@ -12,24 +12,51 @@ const ctx=vm.createContext({Math,JSON,Set,Object,Array,String,Number,Date,Error,
   performance:{now:()=>clock.t}, def:d=>{ defs[d.id]=d; },
   ndFetch:async(n,url)=>{ calls.http.push(url); return {ok:true,status:200,text:async()=>'<html><script>x()</script><body>Temp <b>+4</b> °C</body></html>'}; },
   AppLink:{ok:true,call:async(cmd,args)=>{ calls.app.push([cmd,args]); return {}; }}});
-vm.runInContext(['agent-kernels.js','agent.js'].map(f=>fs.readFileSync(path.join(root,'modules/'+f),'utf8')).join('\n')+';this.K={agParseTools,agToolList,agAllowed,agSystemPrompt,agParseCalls,agCalc,agRunCall,agNew,agDecide,agFormatResults,agTraceLine,AG_BUILTIN,AG_SAMPLE};',ctx);
+vm.runInContext(['agent-kernels.js','agent.js'].map(f=>fs.readFileSync(path.join(root,'modules/'+f),'utf8')).join('\n')+';this.K={agParseTools,agToolList,agCoerce,agAllowed,agSystemPrompt,agParseCalls,agCalc,agRunCall,agNew,agDecide,agFormatResults,agTraceLine,AG_BUILTIN,AG_SAMPLE};',ctx);
 const K=ctx.K, D=defs.agent;
 const node=(p={})=>{ const n={p:{...Object.fromEntries(D.params.filter(q=>q.d!==undefined).map(q=>[q.n,q.d])),...p},el:null}; D.init(n); return n; };
 
 // --- описание инструментов узла
-const pt=K.agParseTools(`# comment\nread a "temperature, °C"\nread s1\nwrite o1 "alert" 3 0\nwrite o2 "free number"\nwrite t1 "report"\nread z "bad pin"\nwrite a "bad pin"\nsomething odd\nwrite o3 "gain, dB" -10 10`);
-ok('tools: reads and writes with their meanings, text and number pins told apart',pt.reads.length===2 && pt.reads[0].pin==='a' && pt.reads[0].num && pt.reads[0].desc==='temperature, °C' && pt.reads[1].pin==='s1' && !pt.reads[1].num && pt.writes.length===4);
-ok('tools: a range is ordered min…max, absent for text and for a number without one',pt.writes[0].min===0 && pt.writes[0].max===3 && pt.writes[1].min===undefined && pt.writes[2].min===undefined && pt.writes[3].min===-10 && pt.writes[3].max===10);
-ok('tools: unknown pins and odd lines are reported, not silently dropped',pt.errs.length===3 && /read z/.test(pt.errs[0]) && /write a/.test(pt.errs[1]) && /cannot read/.test(pt.errs[2]),JSON.stringify(pt.errs));
-ok('tools: the sample of the node parses without errors',K.agParseTools(K.AG_SAMPLE).errs.length===0 && K.agParseTools(K.AG_SAMPLE).reads.length===3);
+const pt=K.agParseTools(`# comment
+read temp "temperature, °C"
+read msg:text "last message"
+read blob:any
+write alert 3..0 "alert"
+write free:num "free number"
+write report:text "report" confirm
+write o3:num -10 10 "gain, dB"
+act notify_op(text) "show a notification"
+act set_gain(db:num -10..10) -> gain_now "set the gain" auto
+act ring() auto
+act pair(a:num, b:text, c:any) "three kinds of arguments"`);
+ok('tools: reads with their types (num by default)',pt.reads.map(r=>r.pin+':'+r.type).join()==='temp:num,msg:text,blob:any' && pt.reads[0].desc==='temperature, °C');
+ok('tools: writes with type, range (ordered, the «a b» and «a..b» forms), the confirm flag',pt.writes.map(w=>w.pin).join()==='alert,free,report,o3' && pt.writes[0].min===0 && pt.writes[0].max===3 && pt.writes[1].min===undefined && pt.writes[2].type==='text' && pt.writes[2].confirm===true && pt.writes[0].confirm===false && pt.writes[3].min===-10 && pt.writes[3].max===10);
+ok('tools: actions with typed arguments, ranges, a result pin and the confirm default (approval unless «auto»)',pt.acts.length===4 && pt.acts[0].args[0].type==='text' && pt.acts[0].confirm===true && pt.acts[1].args[0].min===-10 && pt.acts[1].result==='gain_now' && pt.acts[1].confirm===false && pt.acts[2].args.length===0 && pt.acts[3].args.map(a=>a.type).join()==='num,text,any',JSON.stringify(pt.acts));
+ok('tools: no errors for a correct text',pt.errs.length===0,JSON.stringify(pt.errs));
+const pe=K.agParseTools(`read task
+write prompt:num
+act calc(x)
+act dup(x)
+act dup(y)
+read z:float
+write q 5 "bad range"
+act big(a,b,c,d,e,f,g,h,i)
+act argdup(x, x)
+act bad(x:float)
+act m(x) -> task
+something odd`);
+ok('tools: fixed pin names, built-in tool names, repeats, unknown types, odd lines — all reported, none silently dropped',pe.errs.length===11 && pe.reads.length===0 && pe.writes.length===0 && pe.acts.length===1 && pe.acts[0].name==='dup',JSON.stringify(pe.errs));
+ok('tools: the sample of the node parses without errors, with reads, writes and no actions',K.agParseTools(K.AG_SAMPLE).errs.length===0 && K.agParseTools(K.AG_SAMPLE).reads.length===3 && K.agParseTools(K.AG_SAMPLE).writes.length===2);
 const al=K.agAllowed('calc, time;read http_get bogus WRITE');
 ok('allow: names split by commas / spaces, unknown ones dropped, case ignored; the default is the safe set',al.size===5 && al.has('write') && !al.has('bogus') && [...K.agAllowed(undefined)].join()==='calc,time,read,write' && K.agAllowed('').size===0);
 const tl=K.agToolList(pt,K.agAllowed('calc,read,write,speak'));
-ok('tool list: only the allowed ones, read / write list their pins',tl.map(t=>t.name).join()==='calc,read,write,speak' && tl[1].parameters.properties.pin.enum.join()==='a,s1' && tl[2].parameters.properties.pin.enum.join()==='o1,o2,t1,o3');
-ok('tool list: read / write vanish when no pins are declared',K.agToolList({reads:[],writes:[],errs:[]},K.agAllowed('calc,read,write')).map(t=>t.name).join()==='calc');
+ok('tool list: the allowed built-ins, then every declared action as a tool of its own',tl.map(t=>t.name).join()==='calc,read,write,speak,notify_op,set_gain,ring,pair');
+ok('tool list: read / write list their pins; an action has typed parameters, ranges and required arguments',tl[1].parameters.properties.pin.enum.join()==='temp,msg,blob' && tl[2].parameters.properties.pin.enum.join()==='alert,free,report,o3' && tl.find(t=>t.name==='set_gain').parameters.properties.db.minimum===-10 && tl.find(t=>t.name==='pair').parameters.properties.a.type==='number' && tl.find(t=>t.name==='pair').parameters.required.join()==='a,b,c');
+ok('tool list: an action that needs approval says so to the model, one with an answer says that too',/must approve/.test(tl.find(t=>t.name==='notify_op').description) && !/must approve/.test(tl.find(t=>t.name==='set_gain').description) && /Returns the answer/.test(tl.find(t=>t.name==='set_gain').description));
+ok('tool list: read / write vanish when no pins are declared; actions stay',K.agToolList({reads:[],writes:[],acts:[],errs:[]},K.agAllowed('calc,read,write')).map(t=>t.name).join()==='calc' && K.agToolList({reads:[],writes:[],acts:pt.acts,errs:[]},K.agAllowed('')).length===4);
 const sp=K.agSystemPrompt(pt,tl,'');
-ok('system prompt: tools as JSON, the call format, the pins with meanings and ranges',/<tools>/.test(sp) && /"name":"calc"/.test(sp) && /<tool_call>/.test(sp) && /a — temperature, °C \(number\)/.test(sp) && /o1 — alert \(number, 0…3\)/.test(sp) && /WITHOUT a tool call/.test(sp));
-ok('system prompt: no tools → says so',/no tools/.test(K.agSystemPrompt({reads:[],writes:[]},[],'')));
+ok('system prompt: tools as JSON, the call format, the pins with meanings and ranges, the actions',/<tools>/.test(sp) && /"name":"calc"/.test(sp) && /<tool_call>/.test(sp) && /temp — temperature, °C \(number\)/.test(sp) && /alert — alert \(number, 0…3\)/.test(sp) && /WITHOUT a tool call/.test(sp) && /set_gain\(db -10…10\)/.test(sp) && /\[needs approval\]/.test(sp) && /do not repeat it/.test(sp));
+ok('system prompt: no tools → says so',/no tools/.test(K.agSystemPrompt({reads:[],writes:[],acts:[]},[],'')));
 
 // --- разбор вызовов
 const c1=K.agParseCalls('Let me check. <tool_call>{"name":"calc","arguments":{"expression":"1+1"}}</tool_call><tool_call>{"name":"time","arguments":{}}</tool_call>');
@@ -63,7 +90,7 @@ ok('decide: no more than maxCalls calls per step',K.agDecide(K.agNew(),Array.fro
 ok('results go back as <tool_response> blocks',K.agFormatResults([{name:'calc',result:'2'},{name:'time',result:'x'}])==='<tool_response>{"name":"calc","result":"2"}</tool_response>\n<tool_response>{"name":"time","result":"x"}</tool_response>');
 
 // --- выполнение вызовов
-const vals={a:21.5,s1:'CQ CQ de R1ABC'}, outs={}; const parsed=K.agParseTools('read a "t"\nread s1\nwrite o1 "alert" 0 3\nwrite t1\nwrite o2');
+const vals={a:21.5,s1:'CQ CQ de R1ABC'}, outs={}; const parsed=K.agParseTools('read a "t"\nread s1:text\nwrite o1 "alert" 0 3\nwrite t1:text\nwrite o2');
 const rc=(name,args,allow='calc,time,read,write,http_get,notify,speak',c={})=>K.agRunCall({name,args},{now:()=>new Date(Date.UTC(2026,10,11,12,0,0)),read:p=>vals[p],write:(p,v)=>{ outs[p]=v; return v; },...c},parsed,K.agAllowed(allow));
 ok('run: calc, time',await rc('calc',{expression:'20*log(2.5)'})==='7.95880017344' && JSON.parse(await rc("time",{})).unix===1794398400);
 ok('run: read a number and a text, an unknown pin, a pin without a value',await rc('read',{pin:'a'})==='21.5' && await rc('read',{pin:'s1'})==='CQ CQ de R1ABC' && /no input «q»/.test(await rc('read',{pin:'q'})) && await rc('read',{pin:'a'},undefined,{read:()=>undefined})==='no value yet');
@@ -112,12 +139,65 @@ ok('agent: the tool result goes to the model as the next message',/^<tool_respon
 ok('agent: the trace lists the call and its result, the rec events too',/calc\(\{"expression":"20\*log\(2\.5\)"\}\) → 7\.9588/.test(n.trace[0]) && n.q.length===0 && r.seq.some(o=>o.rec && o.rec.some(e=>e.kind==='tool' && e.name==='calc')) && r.seq.some(o=>o.rec && o.rec.some(e=>e.kind==='final')));
 ok('agent: pulses are single ticks (send, clear), busy only while it works',r.seq.filter(o=>o.send).length===2 && r.seq.filter(o=>o.clear).length===1 && r.seq[0].busy===1 && r.last.busy===0);
 
-// B: чтение входа, запись выхода с ограничением, текстовый выход
-n=node({task:'Check the weather'}); m=llm([call('read',{pin:'a'})+call('read',{pin:'b'}),call('write',{pin:'o1',value:9})+call('write',{pin:'t1',value:'Ducting likely'}),'Alert set.']);
-D.params.find(p=>p.n==='run').fn(n); r=await run(n,m,{a:21.5,b:1031});
+// B: чтение входа, запись выхода с ограничением, текстовый выход (пины — по объявлениям в «tools»)
+n=node({task:'Check the weather'}); m=llm([call('read',{pin:'temp'})+call('read',{pin:'press'}),call('write',{pin:'alert',value:9})+call('write',{pin:'report',value:'Ducting likely'}),'Alert set.']);
+D.params.find(p=>p.n==='run').fn(n); r=await run(n,m,{temp:21.5,press:1031});
 ok('agent: two reads in one step come back together, with the real input values',/"result":"21\.5"/.test(m.log[2].prompt) && /"result":"1031"/.test(m.log[2].prompt) && m.log[2].prompt.split('\n').length===2);
-ok('agent: write is clamped to 0…3 and the outputs hold their values on the pins',r.last.o1===3 && r.last.t1==='Ducting likely' && r.last.o2===null && n.final==='Alert set.',JSON.stringify([r.last.o1,r.last.t1]));
-ok('agent: the system prompt tells the model what the pins mean (from the «tools» text)',/a — temperature, °C \(number\)/.test(m.log[1].system) && /o1 — alert level/.test(m.log[1].system));
+ok('agent: write is clamped to 0…3 and the outputs hold their values on the pins',r.last.alert===3 && r.last.report==='Ducting likely' && n.final==='Alert set.',JSON.stringify([r.last.alert,r.last.report]));
+ok('agent: the system prompt tells the model what the pins mean (from the «tools» text)',/temp — temperature, °C \(number\)/.test(m.log[1].system) && /alert — alert level/.test(m.log[1].system));
+ok('pins: the node\'s pins follow the declarations (reads and answer pins are inputs, writes and actions are outputs, the fixed ones stay)',(()=>{
+  const k=node({tools:'read x\nread y:text\nwrite w:num 0..1\nact go_fast(speed:num) -> speed_now auto\nact beep() auto'});
+  const ins=D.ins(k).map(p=>p.n), outs=D.outs(k).map(p=>p.n);
+  return ins.includes('task') && ins.includes('approve') && ins.includes('x') && ins.includes('y') && ins.includes('speed_now') && !ins.includes('w') && outs.includes('prompt') && outs.includes('pending') && outs.includes('w') && outs.includes('go_fast') && outs.includes('beep') && !outs.includes('x') && D.ins(k).every(p=>p.t==='val' || ['task','go','stop','reply','new','approve','deny'].includes(p.n)); })());
+ok('pins: a broken line makes no pin (and is shown in the node)',(()=>{ const k=node({tools:'read ok\nread bad:float\nwrite prompt'}); return D.ins(k).some(p=>p.n==='ok') && !D.ins(k).some(p=>p.n==='bad') && !D.outs(k).some(p=>p.n==='prompt' && p.t==='val'); })());
+
+// B2: действия — значения на пинах: одно значение держится, запись идёт один такт, без аргументов — импульс
+const TOOLS2='read lvl "level"\nact set_freq(hz:num 100..200) "tune" auto\nact message(to:text, body:text) "send a message" auto\nact beep() "beep" auto';
+n=node({task:'act',tools:TOOLS2}); m=llm([call('set_freq',{hz:500})+call('message',{to:'ann',body:'hi'})+call('beep',{}),'done']);
+D.params.find(p=>p.n==='run').fn(n); r=await run(n,m,{lvl:1},80);
+const emitted=k=>r.seq.map(o=>o[k]).filter(v=>v!=null);
+ok('act (one argument): the value goes to the pin as it is, clamped, and stays there',emitted('set_freq')[0]===200 && r.last.set_freq===200,JSON.stringify(emitted('set_freq')));
+ok('act (several arguments): a record for one tick only',JSON.stringify(emitted('message'))==='[{"to":"ann","body":"hi"}]' && r.last.message===null,JSON.stringify(emitted('message'))+' last='+JSON.stringify(r.last.send));
+ok('act (no arguments): a pulse for one tick',JSON.stringify(emitted('beep'))==='[1]' && r.last.beep===null);
+ok('act: the model gets «done» for each, and the rec log has the calls',/"result":"done"/.test(m.log[2].prompt) && m.log[2].prompt.split('\n').length===3 && r.seq.some(o=>o.rec && o.rec.some(e=>e.kind==='tool' && e.name==='message' && e.args.body==='hi')));
+n=node({task:'t',tools:TOOLS2}); m=llm([call('set_freq',{}),call('message',{to:'x'}),call('set_freq',{hz:'abc'}),call('set_freq',{hz:'150*2'}),'d']);
+D.params.find(p=>p.n==='run').fn(n); await run(n,m,{},300);
+ok('act: a missing argument and a non-number are explained to the model, an expression is calculated and clamped',/argument «hz» of set_freq is missing/.test(m.log[2].prompt) && /argument «body» of message is missing/.test(m.log[3].prompt) && /«hz» takes a number/.test(m.log[4].prompt) && n.o.set_freq===200,m.log.map(e=>e.prompt).join(' || ').slice(0,500)+' o='+JSON.stringify(n.o));
+
+// B3: действие с ответом: «-> пин»
+n=node({task:'t',actWait:1,tools:'act measure(hz:num) -> level "measure a level" auto'}); m=llm([call('measure',{hz:100}),'level noted']);
+D.params.find(p=>p.n==='run').fn(n);
+{ let I={level:-80}; for(let k=0;k<200;k++){ clock.t+=100; const o=D.process(n,I); const back=m.feed(o); I={level:-80,reply:back.reply,new:back.new}; await wait(30); if(n.phase==='idle' && k>3) break; } }
+ok('act with «-> pin»: no answer in time → the model is told (and what the pin still shows)',/did not answer in 1 s/.test(m.log[2].prompt) && /still shows: -80/.test(m.log[2].prompt),m.log[2] && m.log[2].prompt);
+n=node({task:'t',actWait:5,tools:'act measure(hz:num) -> level "measure a level" auto'}); m=llm([call('measure',{hz:100}),'level noted']);
+D.params.find(p=>p.n==='run').fn(n);
+{ let I={level:-80}, mm=m, seq=[]; for(let k=0;k<200;k++){ clock.t+=100; const o=D.process(n,I); seq.push(o); const back=mm.feed(o); I={level:(o.measure!=null ? -42.5 : I.level),...(back.new?{}:{})}; Object.assign(I,{reply:back.reply,new:back.new}); await wait(3); if(n.phase==='idle' && k>3) break; } }
+ok('act with «-> pin»: the changed value of the answer pin goes back to the model',/"result":"-42\.5"/.test(m.log[2].prompt) && n.final==='level noted',m.log[2] && m.log[2].prompt);
+
+// B4: подтверждение
+const TOOLS3='act sms(to:text, body:text) "send an SMS"\nwrite freq:num 88..108 "tuner" confirm';
+n=node({task:'t',tools:TOOLS3,confirmWait:50}); m=llm([call('sms',{to:'+7900',body:'ducting'}),'sent']);
+D.params.find(p=>p.n==='run').fn(n);
+{ let I={}, seq=[], asked=false; for(let k=0;k<200;k++){ clock.t+=100; const o=D.process(n,I); seq.push(o); if(o.pending && !asked){ asked=true; seq.asked=o.pending; I={approve:1}; } else I={}; Object.assign(I,m.feed(o)); await wait(3); if(n.phase==='idle' && k>3) break; } r={seq,last:seq.at(-1)}; }
+ok('confirm: an action waits for approval — the question is shown on «pending»; after «approve» it runs',/sms\(to="\+7900", body="ducting"\)/.test(r.seq.asked||'') && /"result":"done"/.test(m.log[2].prompt) && n.final==='sent' && r.seq.some(o=>o.sms && o.sms.to==='+7900'));
+ok('confirm: nothing goes to the pin before the approval',(()=>{ const first=r.seq.findIndex(o=>o.sms); const ask=r.seq.findIndex(o=>o.pending); return ask>=0 && first>ask; })());
+n=node({task:'t',tools:TOOLS3,confirmWait:50}); m=llm([call('sms',{to:'+7900',body:'x'}),'ok, not sent']);
+D.params.find(p=>p.n==='run').fn(n);
+{ let I={}, seq=[], asked=false; for(let k=0;k<200;k++){ clock.t+=100; const o=D.process(n,I); seq.push(o); if(o.pending && !asked){ asked=true; I={deny:1}; } else I={}; Object.assign(I,m.feed(o)); await wait(3); if(n.phase==='idle' && k>3) break; } r={seq}; }
+ok('confirm: «deny» — the model is told not to repeat it, nothing is sent',/denied by the user/.test(m.log[2].prompt) && !r.seq.some(o=>o.sms) && n.final==='ok, not sent');
+n=node({task:'t',tools:TOOLS3,confirmWait:10}); m=llm([call('sms',{to:'1',body:'x'}),'fine']); D.params.find(p=>p.n==='run').fn(n);
+{ let I={}; for(let k=0;k<60;k++){ clock.t+=100; const o=D.process(n,I); I=m.feed(o); await wait(3); if(n.pend) break; } const was=n.pend; D.params.find(p=>p.n==='no').fn(n); await wait(5); r={was}; }
+ok('confirm: the buttons answer too (✖ here), the question disappears',r.was && n.confirmText==='' && !n.pend);
+n=node({task:'t',tools:TOOLS3,confirmWait:10}); m=llm([call('sms',{to:'1',body:'x'}),'fine']); D.params.find(p=>p.n==='run').fn(n);
+{ let I={}; for(let k=0;k<60 && !n.pend;k++){ clock.t+=100; const o=D.process(n,I); I=m.feed(o); await wait(3); } }
+ok('confirm: a write marked «confirm» asks too; stopping the run denies a waiting question',(()=>{ return !!n.pend; })());
+D.params.find(p=>p.n==='stopb').fn(n); await wait(5);
+ok('confirm: stop by hand while asking → denied, the run is over',!n.pend && n.phase==='idle' && n.confirmText==='' && /stopped by hand/.test(n.final));
+n=node({task:'t',tools:'write freq:num 88..108 "tuner" confirm',confirmWait:10}); m=llm([call('write',{pin:'freq',value:200}),'x']); D.params.find(p=>p.n==='run').fn(n);
+{ let I={}; for(let k=0;k<60 && !n.pend;k++){ clock.t+=100; const o=D.process(n,I); I=m.feed(o); await wait(3); } }
+ok('confirm: write with «confirm» shows the clamped value in the question',n.pend && /write freq = 108/.test(n.pend.text),n.pend && n.pend.text);
+D.params.find(p=>p.n==='yes').fn(n); await wait(5); ok('confirm: ✔ approves — the value is set',n.o.freq===108);
+D.params.find(p=>p.n==='stopb').fn(n);
 
 // C: модель молчит — таймаут, модели велено остановиться
 n=node({task:'x',timeout:20}); m=llm([],9999); D.params.find(p=>p.n==='run').fn(n);
