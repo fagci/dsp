@@ -269,3 +269,76 @@ async function httpFetch(ns,url,o={}){
   }
   throw new Error('too many redirects');
 }
+
+/* ---------- клиент с потоком: тело ответа читается по мере прихода ---------- */
+// Как fetch: {ok,status,statusText,headers,url,body:{getReader()},text(),json()}. Тело не копится: Ollama, SSE, NDJSON идут по строкам.
+// Зачем: WebView приложения не отдаёт тело POST на перехват (CorsProxy.kt отвечает только за GET / HEAD / OPTIONS), и страница не может
+// сама позвать чужой API с POST без CORS. Здесь запрос идёт по сокету моста (tcp.connect, при https — с TLS приложения).
+// o: method, headers, body (строка | байты), signal (AbortSignal), timeout (до заголовка ответа, мс: модель может грузиться минутами),
+// connectTimeout, redirects (только для GET / HEAD: тело POST повторить нельзя, 3xx возвращается как есть).
+// Ошибка соединения с целью помечена `connect:true` — по ней видно, что запрос не уходил.
+const httpAbortErr=()=>Object.assign(new Error('aborted'),{name:'AbortError'});
+async function httpStream(ns,url,o={}){
+  const method=(o.method||'GET').toUpperCase();
+  const canFollow=method==='GET' || method==='HEAD';
+  let cur=url;
+  for(let hop=0;hop<=(o.redirects??5);hop++){
+    const u=httpParseUrl(cur); if(!u) throw new Error('http://host[:port]/path expected');
+    if(o.signal?.aborted) throw httpAbortErr();
+    const body=typeof o.body==='string' ? nsEnc(o.body) : o.body;
+    const h={host:u.host+(u.port!==(u.tls ? 443 : 80) ? ':'+u.port : ''),connection:'close','user-agent':'DSP',accept:'*/*'};
+    for(const k in (o.headers||{})) h[k.toLowerCase()]=o.headers[k];
+    if(u.auth && !h.authorization) h.authorization='Basic '+btoa(u.auth);
+    if(body) h['content-length']=String(body.length);
+    else if(method==='POST' || method==='PUT') h['content-length']='0';
+    const head=method+' '+u.path+' HTTP/1.1\r\n'+Object.keys(h).map(k=>k+': '+h[k]).join('\r\n')+'\r\n\r\n';
+    let c;
+    try{ c=await ns.connect(u.host,u.port,o.connectTimeout||8000,u.tls); }
+    catch(e){ throw Object.assign(e,{connect:true}); }
+    let aborted=false, done=false;
+    const finish=()=>{ if(done) return; done=true; o.signal?.removeEventListener('abort',onAbort); c.close(); };
+    const onAbort=()=>{ aborted=true; finish(); };
+    o.signal?.addEventListener('abort',onAbort);
+    try{
+      if(o.signal?.aborted) throw httpAbortErr();
+      await c.write(body ? nsCat([nsEnc(head),body]) : head);
+      const raw=await c.readUntil('\r\n\r\n',o.timeout||30000,65536);
+      if(aborted) throw httpAbortErr();
+      if(!raw) throw new Error('no answer');
+      const lines=nsDec(raw).trimEnd().split(/\r?\n/), m=/^HTTP\/\d\.\d (\d{3})\s*(.*)$/.exec(lines[0]);
+      if(!m) throw new Error('not an HTTP answer');
+      const status=+m[1], headers=httpParseHeaders(lines.slice(1));
+      if(canFollow && [301,302,303,307,308].includes(status) && headers.location && o.redirects!==0){
+        finish();
+        cur=/^https?:/i.test(headers.location) ? headers.location : (u.tls ? 'https://' : 'http://')+u.host+(u.port!==(u.tls ? 443 : 80) ? ':'+u.port : '')+(headers.location[0]==='/' ? '' : '/')+headers.location;
+        if(!httpParseUrl(cur)) throw new Error('redirect to '+cur+' (not an http / https address)');
+        continue;
+      }
+      const noBody=method==='HEAD' || status===204 || status===304 || status<200;
+      const chunked=/chunked/i.test(headers['transfer-encoding']||'');
+      let left=headers['content-length']!=null ? parseInt(headers['content-length'],10) : -1;
+      const lost=()=>aborted ? httpAbortErr() : new Error('closed before the end');
+      const read=async()=>{
+        if(aborted) throw httpAbortErr();
+        if(done) return {done:true,value:undefined};
+        if(noBody || (!chunked && left===0)){ finish(); return {done:true,value:undefined}; }
+        if(chunked){
+          const sz=await c.readLine(0); if(sz==null) throw lost();
+          const n=parseInt(sz.split(';')[0],16); if(!(n>=0)) throw new Error('bad chunk');
+          if(n===0){ try{ for(;;){ const t=await c.readLine(2000); if(!t) break; } }catch(e){} finish(); return {done:true,value:undefined}; }
+          const b=await c.read(n,0); if(b.length<n) throw lost();
+          await c.read(2,0); return {done:false,value:b};
+        }
+        const b=await c.readAny(0);
+        if(!b){ const short=left>0; finish(); if(aborted) throw httpAbortErr(); if(short) throw lost(); return {done:true,value:undefined}; }
+        if(left>0) left-=b.length;
+        return {done:false,value:b};
+      };
+      const reader={read,cancel(){ finish(); },releaseLock(){}};
+      const all=async()=>{ const parts=[]; for(;;){ const r=await read(); if(r.done) break; parts.push(r.value); } return nsCat(parts); };
+      return {ok:status>=200 && status<300,status,statusText:m[2],headers,url:cur,body:{getReader:()=>reader},
+        arrayBuffer:async()=>(await all()).buffer,text:async()=>nsDec(await all()),json:async()=>JSON.parse(nsDec(await all()))};
+    }catch(e){ finish(); throw aborted ? httpAbortErr() : e; }
+  }
+  throw new Error('too many redirects');
+}

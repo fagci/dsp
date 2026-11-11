@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 const sh = promisify(execFile);
 import { loadKernels, mockSock } from './netmock.mjs';
 let bad = 0; const ok = (n, c, x = '') => { if (!c) { bad++; console.log('FAIL', n, x); } else console.log('ok  ', n); };
-const K = loadKernels(['netsock-kernels.js', 'http-kernels.js'], 'NetSock,HttpServer,httpFileHandler,httpFetch,httpParseRequestHead,httpMultipart,vfsNorm,VfsMem,nsEnc,nsDec,httpParseUrl');
+const K = loadKernels(['netsock-kernels.js', 'http-kernels.js'], 'NetSock,HttpServer,httpFileHandler,httpFetch,httpStream,httpParseRequestHead,httpMultipart,vfsNorm,VfsMem,nsEnc,nsDec,httpParseUrl');
 const ns = mockSock(K);
 const dec = (b) => Buffer.from(b).toString();
 
@@ -107,6 +107,56 @@ ok('client refused', await K.httpFetch(ns, 'http://127.0.0.1:9/').then(() => fal
 const s3 = new K.HttpServer(ns, async (req) => ({ text: 'hi ' + req.path })); const p3 = await s3.start(0, false);
 c = await K.httpFetch(ns, 'http://127.0.0.1:' + p3 + '/dsp'); ok('DSP client ↔ DSP server', c.text() === 'hi /dsp');
 await s3.stop(); node.close();
+
+// --- потоковый клиент (httpStream): POST с телом, ответ по мере прихода, отмена, редиректы
+{ const seenReq = []; let closedByClient = 0;
+  const tgt = http.createServer((req, res) => {
+    const chunks = []; req.on('data', (d) => chunks.push(d));
+    req.on('end', () => {
+      const body = Buffer.concat(chunks).toString(); seenReq.push({ m: req.method, u: req.url, ct: req.headers['content-type'], cl: req.headers['content-length'], body });
+      if (req.url === '/echo') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ echo: body })); }
+      if (req.url === '/ndjson') {
+        res.writeHead(200, { 'content-type': 'application/x-ndjson' }); let n = 0;
+        const t = setInterval(() => { if (n < 3) res.write(JSON.stringify({ n: n++ }) + '\n'); else { clearInterval(t); res.end(JSON.stringify({ done: true }) + '\n'); } }, 70); return;
+      }
+      if (req.url === '/forever') { res.writeHead(200, { 'content-type': 'text/plain' }); const t = setInterval(() => res.write('tick\n'), 30); res.on('close', () => { clearInterval(t); closedByClient++; }); return; }
+      if (req.url === '/redir') { res.writeHead(302, { location: '/echo' }); return res.end(); }
+      if (req.url === '/until-close') { res.writeHead(200, { connection: 'close' }); res.write('a'); setTimeout(() => res.end('b'), 50); return; }
+      if (req.url === '/err') { res.writeHead(404, { 'content-type': 'application/json' }); return res.end('{"error":"model \\"zz\\" not found"}'); }
+      if (req.url === '/head') { res.writeHead(200, { 'content-length': '5' }); return res.end('12345'); }
+      res.writeHead(404); res.end('no');
+    });
+  });
+  await new Promise((r) => tgt.listen(0, '127.0.0.1', r));
+  const T = 'http://127.0.0.1:' + tgt.address().port;
+  const payload = JSON.stringify({ model: 'm', messages: [{ role: 'user', content: 'Привет' }] });
+  let r1 = await K.httpStream(ns, T + '/echo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload });
+  const j1 = await r1.json();
+  ok('stream: POST body reaches the server (UTF-8), length and type set', r1.ok && j1.echo === payload && seenReq.at(-1).ct === 'application/json' && +seenReq.at(-1).cl === Buffer.byteLength(payload) && seenReq.at(-1).m === 'POST');
+  const t0 = Date.now(); const times = []; const got = [];
+  r1 = await K.httpStream(ns, T + '/ndjson', { method: 'POST', body: '{}' });
+  const rd = r1.body.getReader(); let buf = '';
+  for (;;) { const x = await rd.read(); if (x.done) break; times.push(Date.now() - t0); buf += Buffer.from(x.value).toString(); }
+  const lines = buf.trim().split('\n').map((l) => JSON.parse(l));
+  ok('stream: a chunked answer arrives piece by piece, not all at the end', lines.length === 4 && lines[3].done === true && times.length >= 3 && times.at(-1) - times[0] > 100, JSON.stringify(times));
+  const ac = new AbortController(); r1 = await K.httpStream(ns, T + '/forever', { signal: ac.signal });
+  const rd2 = r1.body.getReader(); const a = await rd2.read(); ac.abort();
+  const err = await rd2.read().then(() => null, (e) => e);
+  ok('stream: abort mid-answer → AbortError', a.done === false && err && err.name === 'AbortError', err && err.message);
+  await new Promise((r) => setTimeout(r, 300)); ok('stream: abort closes the connection to the server', closedByClient >= 1, String(closedByClient));
+  const ac2 = new AbortController(); ac2.abort();
+  ok('stream: an already aborted signal does not connect', await K.httpStream(ns, T + '/echo', { signal: ac2.signal }).then(() => false, (e) => e.name === 'AbortError'));
+  r1 = await K.httpStream(ns, T + '/redir'); ok('stream: GET follows a redirect', r1.ok && (await r1.json()).echo === '' && r1.url.endsWith('/echo'));
+  r1 = await K.httpStream(ns, T + '/redir', { method: 'POST', body: '{}' }); ok('stream: a POST redirect is returned as is (the body cannot be repeated)', r1.status === 302 && !r1.ok);
+  r1 = await K.httpStream(ns, T + '/until-close'); ok('stream: an answer without length ends with the connection', (await r1.text()) === 'ab');
+  r1 = await K.httpStream(ns, T + '/err', { method: 'POST', body: '{}' }); const e1 = await r1.json();
+  ok('stream: error status and its JSON body are readable', !r1.ok && r1.status === 404 && /not found/.test(e1.error));
+  r1 = await K.httpStream(ns, T + '/head', { method: 'HEAD' }); ok('stream: HEAD has no body', r1.status === 200 && (await r1.text()) === '');
+  r1 = await K.httpStream(ns, T + '/head'); ok('stream: Content-Length body', (await r1.text()) === '12345');
+  const ce = await K.httpStream(ns, 'http://127.0.0.1:9/x').then(() => null, (e) => e); ok('stream: a refused connection is marked connect:true', ce && ce.connect === true);
+  ok('stream: not an http address', await K.httpStream(ns, 'ftp://x/').then(() => false, (e) => /http:\/\//.test(e.message)));
+  tgt.closeAllConnections?.(); tgt.close();
+}
 
 ns.app.stop();
 console.log(bad ? 'FAILED ' + bad : 'all ok');
