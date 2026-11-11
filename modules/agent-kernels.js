@@ -4,30 +4,62 @@
    Здесь — то, что можно проверить без сети: описание инструментов узла, подсказка модели, разбор её вызовов (<tool_call>…</tool_call>, как у Qwen /
    Hermes; для других моделей понимается и голый JSON), безопасный калькулятор (без eval) и решение, что делать с ответом. Тест tools/test-agent.mjs. */
 
-const AG_READ=['a','b','c','d','s1','s2'], AG_WRITE=['o1','o2','o3','o4','t1','t2'];
-const agIsNum=p=>/^[a-d]$|^o\d$/.test(p);
+// Пины узла — те, что объявлены в «tools» (любые имена и типы), плюс фиксированные ниже; чужие имена не должны с ними пересекаться.
+const AG_FIXED_IN=['task','go','stop','reply','new','approve','deny'];
+const AG_FIXED_OUT=['prompt','system','send','clear','halt','text','trace','rec','done','busy','steps','pending'];
+const AG_TYPES=['num','text','any'];
+const AG_NAME=/^[A-Za-z_]\w{0,31}$/;
 
-// Описание входов и выходов, видимых модели. Строки: read a "что это"; write o1 "что это" min max; # — комментарий.
-// read — a…d (числа), s1 s2 (текст); write — o1…o4 (числа, min / max ограничивают запись), t1 t2 (текст).
+// Описание того, что модель видит и умеет (текст параметра «tools»), по строке на пункт; # — комментарий:
+//   read  имя[:тип] "смысл"                                  — входной пин: модель читает значение (тип: num | text | any, по умолчанию num)
+//   write имя[:тип] [мин..макс] "смысл" [confirm|auto]       — выходной пин-значение (число зажимается в диапазон); по умолчанию без подтверждения
+//   act   имя(арг[:тип][ мин..макс], …) [-> пин] "смысл" [confirm|auto] — действие: отдельный инструмент со своими аргументами, выходной пин «имя»,
+//         а «-> пин» — входной пин, с которого берётся ответ (модель получает его как результат вызова); по умолчанию нужно подтверждение
+// Один аргумент — на пин уходит его значение как есть, несколько — запись {арг: значение}, ни одного — импульс 1.
 function agParseTools(text){
-  const reads=[], writes=[], errs=[];
+  const reads=[], writes=[], acts=[], errs=[], insUsed=new Set(AG_FIXED_IN), outsUsed=new Set(AG_FIXED_OUT), builtin=new Set(Object.keys(AG_BUILTIN));
+  const num='-?\\d+(?:\\.\\d+)?(?:e[+-]?\\d+)?', RNG=new RegExp('^('+num+')(?:\\.\\.|\\s+)('+num+')$','i');
+  const rng=t=>{ const m=RNG.exec(String(t||'').trim()); return m ? {min:Math.min(+m[1],+m[2]),max:Math.max(+m[1],+m[2])} : null; };
+  const claimIn=(name,line)=>{ if(insUsed.has(name)){ errs.push(name+': the input pin name is taken ('+line.slice(0,40)+')'); return false; } insUsed.add(name); return true; };
+  const claimOut=(name,line)=>{ if(outsUsed.has(name) || builtin.has(name)){ errs.push(name+': the name is taken or reserved ('+line.slice(0,40)+')'); return false; } outsUsed.add(name); return true; };
+  // хвост строки: «смысл» в кавычках, флаг confirm | auto и диапазон — в любом порядке
+  const tail=rest=>{
+    const dm=/"([^"]*)"/.exec(rest), desc=dm ? dm[1] : ''; rest=rest.replace(/"[^"]*"/,' ');
+    const fm=/(?:^|\s)(confirm|auto)(?=\s|$)/i.exec(rest), flag=fm ? fm[1].toLowerCase() : ''; if(fm) rest=rest.replace(fm[0],' ');
+    rest=rest.trim(); return {desc,flag,range:rest ? rng(rest) : null,junk:rest && !rng(rest) ? rest : ''};
+  };
   for(const raw of String(text||'').split('\n')){
     const l=raw.trim(); if(!l || l[0]==='#') continue;
-    const m=/^(read|write)\s+(\w{1,3})\s*(?:"([^"]*)")?\s*(?:(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)\s+(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?))?\s*$/i.exec(l);
-    if(!m){ errs.push('cannot read the line: '+l.slice(0,60)); continue; }
-    const kind=m[1].toLowerCase(), pin=m[2].toLowerCase(), desc=m[3]||'', ok=(kind==='read' ? AG_READ : AG_WRITE).includes(pin);
-    if(!ok){ errs.push(kind+' '+pin+': '+(kind==='read' ? 'pins are '+AG_READ.join(' ') : 'pins are '+AG_WRITE.join(' '))); continue; }
-    if(kind==='read') reads.push({pin,desc,num:agIsNum(pin)});
-    else{
-      const w={pin,desc,num:agIsNum(pin)};
-      if(w.num && m[4]!=null){ w.min=Math.min(+m[4],+m[5]); w.max=Math.max(+m[4],+m[5]); }
-      writes.push(w);
-    }
+    let m;
+    if((m=/^read\s+([A-Za-z_]\w{0,31})(?::(\w+))?\s*(?:"([^"]*)")?\s*$/i.exec(l))){
+      const name=m[1].toLowerCase(), type=(m[2]||'num').toLowerCase();
+      if(!AG_TYPES.includes(type)){ errs.push('type «'+type+'» is not num / text / any: '+l.slice(0,40)); continue; }
+      if(claimIn(name,l)) reads.push({pin:name,desc:m[3]||'',type});
+    }else if((m=/^write\s+([A-Za-z_]\w{0,31})(?::(\w+))?(?:\s+(.*))?$/i.exec(l))){
+      const name=m[1].toLowerCase(), type=(m[2]||'num').toLowerCase(), t=tail(m[3]||'');
+      if(!AG_TYPES.includes(type)){ errs.push('type «'+type+'» is not num / text / any: '+l.slice(0,40)); continue; }
+      if(t.junk){ errs.push('cannot read «'+t.junk.slice(0,30)+'» in: '+l.slice(0,40)+' (a range is min..max)'); continue; }
+      if(claimOut(name,l)){ const w={pin:name,desc:t.desc,type,confirm:t.flag==='confirm'}; if(t.range && type==='num'){ w.min=t.range.min; w.max=t.range.max; } writes.push(w); }
+    }else if((m=/^act\s+([A-Za-z_]\w{0,31})\s*\(([^)]*)\)\s*(?:->\s*([A-Za-z_]\w{0,31}))?(?:\s+(.*))?$/i.exec(l))){
+      const name=m[1].toLowerCase(), args=[], t=tail(m[4]||''); let bad=false;
+      if(t.junk || t.range){ errs.push('cannot read «'+(t.junk||'a range').slice(0,30)+'» after the arguments of '+name+' (put ranges inside: name(arg 0..9))'); continue; }
+      for(const part of m[2].split(',').map(x=>x.trim()).filter(Boolean)){
+        const a=/^([A-Za-z_]\w{0,31})(?::(\w+))?\s*(.*)$/.exec(part), type=a && (a[2]||'text').toLowerCase(), r=a && a[3] ? rng(a[3]) : null;
+        if(!a || !AG_TYPES.includes(type) || (a[3] && !r)){ errs.push('the argument «'+part.slice(0,30)+'» of '+name+' is not «name[:num|text|any] [min..max]»'); bad=true; break; }
+        if(args.some(x=>x.name===a[1].toLowerCase())){ errs.push('the argument «'+a[1]+'» of '+name+' is repeated'); bad=true; break; }
+        const arg={name:a[1].toLowerCase(),type}; if(r && type==='num'){ arg.min=r.min; arg.max=r.max; } args.push(arg);
+      }
+      if(bad || args.length>8) { if(!bad) errs.push(name+': at most 8 arguments'); continue; }
+      const result=m[3] ? m[3].toLowerCase() : '';
+      if(!claimOut(name,l)) continue;
+      if(result && !claimIn(result,l)){ outsUsed.delete(name); continue; }
+      acts.push({name,desc:t.desc,args,result,confirm:t.flag!=='auto'});
+    }else errs.push('cannot read the line: '+l.slice(0,60));
   }
-  return {reads,writes,errs};
+  return {reads,writes,acts,errs};
 }
 
-// Встроенные инструменты: описание для модели (JSON-схема), в allow — какие разрешил пользователь
+// Встроенные инструменты: описание для модели (JSON-схема); в allow — какие разрешил пользователь
 const AG_BUILTIN={
   calc:{description:'Evaluate a math expression. Numbers, + - * / % ^, parentheses, pi, e, sin cos tan asin acos atan sqrt log (base 10) ln exp abs min max pow floor ceil round.',
     parameters:{type:'object',properties:{expression:{type:'string',description:'e.g. 20*log(2.5)+3'}},required:['expression']}},
@@ -40,7 +72,8 @@ const AG_BUILTIN={
 const AG_ALLOW_DEFAULT='calc,time,read,write';
 const agAllowed=s=>{ const a=String(s==null ? AG_ALLOW_DEFAULT : s).split(/[\s,;]+/).map(x=>x.trim().toLowerCase()).filter(Boolean); return new Set(a.filter(x=>AG_BUILTIN[x])); };
 
-// список инструментов для этой настройки: read / write есть, только если объявлены пины
+const agTypeSchema=a=>a.type==='num' ? {type:'number',...(a.min!=null ? {minimum:a.min,maximum:a.max} : {})} : a.type==='text' ? {type:'string'} : {};
+// список инструментов для этой настройки: встроенные разрешённые (read / write — только если есть что читать и писать) + каждое объявленное действие
 function agToolList(parsed,allow){
   const out=[];
   for(const name of Object.keys(AG_BUILTIN)){
@@ -52,6 +85,10 @@ function agToolList(parsed,allow){
     if(name==='write') spec.parameters.properties.pin.enum=parsed.writes.map(r=>r.pin);
     out.push({name,...spec});
   }
+  for(const a of parsed.acts){
+    out.push({name:a.name,description:(a.desc||a.name)+(a.result ? ' Returns the answer of the graph.' : '')+(a.confirm ? ' The user must approve it first.' : ''),
+      parameters:{type:'object',properties:Object.fromEntries(a.args.map(x=>[x.name,agTypeSchema(x)])),required:a.args.map(x=>x.name)}});
+  }
   return out;
 }
 function agSystemPrompt(parsed,tools,extra){
@@ -61,8 +98,10 @@ function agSystemPrompt(parsed,tools,extra){
       'To call a tool, reply with exactly one or more blocks and nothing else:','<tool_call>{"name": "tool_name", "arguments": {"arg": "value"}}</tool_call>',
       'The results come back as <tool_response>…</tool_response> messages; then continue. When you have the answer, reply in plain text WITHOUT a tool call.','');
   }else L.push('There are no tools: answer from what you know.','');
-  if(parsed.reads.length) L.push('Inputs you can read: '+parsed.reads.map(r=>r.pin+(r.desc ? ' — '+r.desc : '')+(r.num ? ' (number)' : ' (text)')).join('; ')+'.');
-  if(parsed.writes.length) L.push('Outputs you can set: '+parsed.writes.map(w=>w.pin+(w.desc ? ' — '+w.desc : '')+(w.num ? ' (number'+(w.min!=null ? ', '+w.min+'…'+w.max : '')+')' : ' (text)')).join('; ')+'.');
+  const ty=t=>t==='num' ? 'number' : t==='text' ? 'text' : 'any value';
+  if(parsed.reads.length) L.push('Inputs you can read (tool read): '+parsed.reads.map(r=>r.pin+(r.desc ? ' — '+r.desc : '')+' ('+ty(r.type)+')').join('; ')+'.');
+  if(parsed.writes.length) L.push('Outputs you can set (tool write): '+parsed.writes.map(w=>w.pin+(w.desc ? ' — '+w.desc : '')+' ('+ty(w.type)+(w.min!=null ? ', '+w.min+'…'+w.max : '')+')').join('; ')+'.');
+  if(parsed.acts.length) L.push('Actions: '+parsed.acts.map(a=>a.name+'('+a.args.map(x=>x.name+(x.min!=null ? ' '+x.min+'…'+x.max : '')).join(', ')+')'+(a.confirm ? ' [needs approval]' : '')).join('; ')+'. If the user denies an action, do not repeat it.');
   L.push('Answer in the language of the task. Be brief.');
   if(extra) L.push('',String(extra));
   return L.join('\n');
@@ -127,28 +166,48 @@ function agCalc(expr){
 }
 const agNum=v=>Number.isFinite(v) ? String(+v.toPrecision(12)) : String(v);
 
-// --- выполнение вызова: sync-инструменты здесь, остальные (сеть, телефон) — через ctx
-// ctx: {now(), read(pin), write(pin,value) → записанное, http(url) → text, notify(text), speak(text)}; результат всегда строка (ошибка — «error: …»)
+// --- выполнение вызова: sync-инструменты здесь, остальные (сеть, телефон, действия графа, подтверждение) — через ctx
+// ctx: {now(), read(pin), write(pin,value) → записанное, http(url), notify(text), speak(text), confirm(text) → Promise<bool>, act(act,values) → Promise<string>}
+// результат всегда строка (ошибка — «error: …»)
 const AG_MAX_RESULT=1500;
+function agShow(v){ return v==null || v==='' ? '' : typeof v==='number' ? agNum(v) : typeof v==='string' ? v : JSON.stringify(v); }
+// значение аргумента по описанию: число (строка с выражением тоже годится) в диапазон, текст, любое как есть
+function agCoerce(a,v){
+  if(a.type==='num'){ let x; try{ x=typeof v==='string' ? agCalc(v) : +v; }catch(e){ x=NaN; } if(typeof v==='boolean') x=+v; if(!Number.isFinite(x)) throw new Error('«'+a.name+'» takes a number'); return a.min!=null ? Math.min(a.max,Math.max(a.min,x)) : x; }
+  if(a.type==='text') return String(v==null ? '' : typeof v==='object' ? JSON.stringify(v) : v).slice(0,2000);
+  return v;
+}
 async function agRunCall(call,ctx,parsed,allow){
   const cut=s=>{ s=String(s); return s.length>AG_MAX_RESULT ? s.slice(0,AG_MAX_RESULT)+'… (cut, '+s.length+' chars)' : s; };
   try{
     const name=call.name, a=call.args||{};
-    if(!AG_BUILTIN[name]) return 'error: unknown tool «'+String(name).slice(0,40)+'» (tools: '+[...allow].join(', ')+')';
+    const act=parsed.acts && parsed.acts.find(x=>x.name===name);
+    if(act){
+      const vals={}; for(const arg of act.args){ if(!(arg.name in a)) return 'error: the argument «'+arg.name+'» of '+name+' is missing'; vals[arg.name]=agCoerce(arg,a[arg.name]); }
+      const desc=name+'('+act.args.map(x=>x.name+'='+JSON.stringify(vals[x.name])).join(', ')+')';
+      if(act.confirm){
+        if(!ctx.confirm) return 'error: there is no way to ask the user';
+        if(!(await ctx.confirm(desc))) return 'denied by the user — do not repeat it';
+      }
+      return cut(await ctx.act(act,vals));
+    }
+    if(!AG_BUILTIN[name]) return 'error: unknown tool «'+String(name).slice(0,40)+'» (tools: '+[...allow,...(parsed.acts||[]).map(x=>x.name)].join(', ')+')';
     if(!allow.has(name)) return 'error: the tool «'+name+'» is not allowed';
     if(name==='calc') return agNum(agCalc(a.expression));
     if(name==='time'){ const d=ctx.now(); return JSON.stringify({iso:d.toISOString(),local:d.toString().replace(/ GMT.*/,''),unix:Math.floor(d.getTime()/1000)}); }
     if(name==='read'){
       const pin=String(a.pin||'').toLowerCase(), r=parsed.reads.find(x=>x.pin===pin);
       if(!r) return 'error: no input «'+pin+'» (inputs: '+parsed.reads.map(x=>x.pin).join(', ')+')';
-      const v=ctx.read(pin); return v==null || v==='' ? 'no value yet' : typeof v==='number' ? agNum(v) : cut(v);
+      const v=agShow(ctx.read(pin)); return v==='' ? 'no value yet' : cut(v);
     }
     if(name==='write'){
       const pin=String(a.pin||'').toLowerCase(), w=parsed.writes.find(x=>x.pin===pin);
       if(!w) return 'error: no output «'+pin+'» (outputs: '+parsed.writes.map(x=>x.pin).join(', ')+')';
-      let v=a.value;
-      if(w.num){ try{ v=typeof v==='string' ? agCalc(v) : +v; }catch(e){ v=NaN; } if(!Number.isFinite(v)) return 'error: «'+pin+'» takes a number'; if(w.min!=null) v=Math.min(w.max,Math.max(w.min,v)); }
-      else v=cut(v==null ? '' : typeof v==='object' ? JSON.stringify(v) : v);
+      const v=agCoerce({name:pin,type:w.type,min:w.min,max:w.max},a.value);
+      if(w.confirm){
+        if(!ctx.confirm) return 'error: there is no way to ask the user';
+        if(!(await ctx.confirm('write '+pin+' = '+JSON.stringify(v)))) return 'denied by the user — do not repeat it';
+      }
       const set=ctx.write(pin,v); return 'ok, '+pin+' = '+(typeof set==='number' ? agNum(set) : JSON.stringify(set));
     }
     if(name==='http_get'){ if(!ctx.http) return 'error: no allowed hosts (set «hosts»)'; return cut(await ctx.http(String(a.url||''))); }
