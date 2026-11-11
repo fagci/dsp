@@ -7,6 +7,7 @@ A browser can talk HTTP and WebSocket, nothing more: no raw sockets, no ICMP, no
 | **Network Scanner** | who is on the network: hosts of the /24 (ping, then TCP knocks, MAC from the ARP table with root), open TCP / UDP ports, banners |
 | **Device Discovery** | SSDP / UPnP and mDNS: cameras, printers, TVs, Chromecast, NAS |
 | **Traceroute / MTR** | the path to an address, router by router, with the time of every hop; several rounds give loss and spread per hop (mtr) |
+| **Network Links** | the phone's networks (Wi-Fi, mobile data, Ethernet over OTG, VPN) and the open sockets / servers of the app on each, with speed; the picture is drawn by **Graph** (output `rows`), changes come as records |
 | **Batch Check** | a list in, the answers in the same rows: ping, tcp port, web page (code, text, css block), IPTV stream, domain expiry, SMS with delivery report, SIM balance by USSD |
 | **Network Tools** | Wake-on-LAN, NTP time offset, syslog, SMTP mail, TFTP get and put |
 | **Syslog / TFTP Server** | the phone as a log collector or a TFTP server for routers and cameras |
@@ -16,6 +17,15 @@ A browser can talk HTTP and WebSocket, nothing more: no raw sockets, no ICMP, no
 
 ## Seeing a network as a graph
 The scanners emit records; **Rec → Entities** turns them into nodes and links by rules (templates *Network scan* and *Traceroute*), a **Table** with key `id` keeps one row per node, and **Graph** draws it. See [Tables and records](data.md). In Graph, `layout: LR` draws a path from left to right, `group` colours nodes and a click on a node lets you add a comment.
+
+## Several networks at once
+Android keeps Wi-Fi, mobile data, Ethernet and a VPN up at the same time, and a socket normally goes through the one Android prefers. The bridge commands `tcp.connect`, `tcp.listen`, `udp.open`, `udp.send`, `udp.request`, `ping`, `net.trace` and `net.info` take a field **`net`**: `wifi`, `cell`, `eth`, `vpn`, `bt`, `usb`, or the number from `net.list`. Empty or `default` — the system's choice.
+- `tcp.connect {host, port, net:"cell"}` goes over mobile data while Wi-Fi is on; the name is resolved by that network's DNS. `udp.request {host:"@dns", net:"cell"}` asks that network's DNS server.
+- `tcp.listen {port, net:"wifi"}` listens only on the address of that network (several servers at once: up to 16; the reply carries `addr` and `net`).
+- `ping` and `net.trace` with `net` send through the network's interface (`ping -I`); some phones refuse it — then the answer says so.
+- No such network → the error lists what exists now (`wifi#101, cell#102`).
+- `net.list` — the networks (`id`, `kind`, `iface`, `ips`, `dns`, `gateway`, `validated`, `metered`, `default`, `down`/`up` kbit/s). `net.sockets` — everything the app holds open: `{id, kind: tcp|tcp-server|udp, addr, net, server, age, rx, tx}`. `net.watch {on}` — a record `{src:'net', ev:'networks', nets, socks}` on every change (a network came up, went down, lost the internet).
+- The **Network Links** node shows it all; open the preset **Network: Phone Networks and Open Sockets — Live Map (Phone App)**. The bridge lost → the last state stays, marked *stale*.
 
 ## Traceroute in short
 1. Open the preset **Network: Traceroute and MTR — the Path to a Host as a Graph (Phone App)**.

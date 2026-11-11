@@ -696,6 +696,7 @@ const PRESET_CATS={
   'Network: Telnet Terminal and a Mail Alert (Phone App)':'Network & IoT',
   'Network: Scan the LAN — Hosts, Ports and Devices as a Graph (Phone App)':'Network & IoT',
   'Network: Traceroute and MTR — the Path to a Host as a Graph (Phone App)':'Network & IoT',
+  'Network: Phone Networks and Open Sockets — Live Map (Phone App)':'Network & IoT',
   'Network: Find a Device and Send It a File (Scan → FTP / HTTP)':'Network & IoT',
   'Network: HTTP Server — Answer Requests from the Graph (Phone App)':'Network & IoT',
   'Network: FTP Server — Share a Folder (Phone App)':'Network & IoT',
@@ -2140,6 +2141,20 @@ const st=addNode('table',780,680,{list:'@patch',key:'id',initial:false,cols:['ho
 st.size.w=700; st.size.h=300; applySize(st);
 addEdge(tr.id,'rec',ent.id,'rec'); addEdge(ent.id,'net',tb.id,'rec'); addEdge(tb.id,'rows',g.id,'rows');
 addEdge(tr.id,'rec',fl.id,'rec'); addEdge(fl.id,'rec',st.id,'rec');
+markWiresDirty();
+});
+preset('Network: Phone Networks and Open Sockets — Live Map (Phone App)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Which networks the phone has right now (Wi-Fi, mobile data, Ethernet over OTG, VPN) and what goes through each: open sockets and servers of the DSP app, with speed. Network Links asks the bridge (net.watch: a change arrives at once; net.sockets: counters every second) and gives the Graph a picture: Phone → networks (★ — the one Android uses by default, dashed — no internet) → sockets (◉ server, → connection, ≋ UDP; green and labelled with speed while bytes flow). The table on the right lists changes: a network came up, went down, lost the internet, became the default.\n'+
+  'A socket goes through a chosen network with the «net» field of tcp.connect / tcp.listen / udp.open / udp.send / udp.request / ping / net.trace / net.info: «wifi», «cell», «eth», «vpn» or the number from net.list. For example {cmd:"tcp.connect", host:"example.com", port:80, net:"cell"} goes over mobile data while Wi-Fi is on; tcp.listen with «net» listens only on the address of that network. Open any socket from the graph (Network Tools, HTTP Server, a Network node) and watch it appear.'});
+nt.size.w=1000; nt.size.h=190; applySize(nt);
+const nl=addNode('netlinks',40,260,{});
+nl.size.w=520; nl.size.h=420; applySize(nl);
+const g=addNode('graphview',600,260,{directed:false,weights:true,physics:true,edit:false});
+g.size.w=700; g.size.h=420; applySize(g);
+const tb=addNode('table',1340,260,{list:'@patch',key:'id',initial:false,cols:['what','kind','id']});
+tb.size.w=420; tb.size.h=420; applySize(tb);
+addEdge(nl.id,'rows',g.id,'rows'); addEdge(nl.id,'rec',tb.id,'rec');
 markWiresDirty();
 });
 preset('Network: Find a Device and Send It a File (Scan → FTP / HTTP)', function(){
