@@ -46,6 +46,19 @@ val copyWeb by tasks.registering(Sync::class) {
 }
 tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(copyWeb) }
 
+// Нативный слой (whisper.cpp, native/): собирается скриптом native/build.sh из исходников по тегу — нужны NDK, git, cmake и сеть.
+// Без него (-PnoNative) приложение собирается как раньше, а речь на телефоне просто недоступна (ai.caps покажет, что нативной библиотеки нет).
+val nativeOut = layout.buildDirectory.dir("generated/jniLibs")
+val buildNative by tasks.registering(Exec::class) {
+    onlyIf { !project.hasProperty("noNative") }
+    inputs.dir("../native"); outputs.dir(nativeOut)
+    val ndk = System.getenv("ANDROID_NDK_HOME") ?: System.getenv("ANDROID_NDK_ROOT")
+        ?: "${System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT") ?: ""}/ndk/" + (File("${System.getenv("ANDROID_HOME") ?: ""}/ndk").list()?.maxOrNull() ?: "")
+    commandLine("bash", rootDir.resolve("native/build.sh").absolutePath, ndk, nativeOut.get().asFile.absolutePath)
+}
+android.sourceSets["main"].jniLibs.srcDir(nativeOut)
+tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(buildNative) }
+
 dependencies {
     // Торренты (команды torrent.* моста, TorrentHub.kt): libtorrent; ARM — телефоны и приставки
     val lt = "2.1.0-39"

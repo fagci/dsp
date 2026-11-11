@@ -11,21 +11,7 @@ const ND_OVERPASS=['https://overpass-api.de/api/interpreter','https://overpass.k
 // Повтор безопасен и для POST: TypeError значит, что ответа не было вовсе, а наши запросы (чат, поиск) ничего не меняют на сервере.
 // Приложение Android: WebView не отдаёт тело POST на перехват (CorsProxy.kt отвечает за GET / HEAD / OPTIONS), поэтому POST идёт по сокету
 // моста — HTTP по tcp.connect (http-kernels.js: httpStream): ответ потоком, CORS и mixed content не мешают, OLLAMA_ORIGINS не нужен.
-const ND_APP={ns:null,p:null,
-  link(){
-    if(this.ns) return Promise.resolve(this.ns);
-    if(this.p) return this.p;
-    return this.p=new Promise((res,rej)=>{
-      let key=''; try{ key=(window.DspApp && DspApp.appKey && DspApp.appKey()) || ''; }catch(e){}
-      const url=phoneUrl('ws://127.0.0.1:8765',key); if(!url){ this.p=null; return rej(new Error('no bridge address')); }
-      let ws; try{ ws=new WebSocket(url); }catch(e){ this.p=null; return rej(e); }
-      const ns=new NetSock(m=>{ if(ws.readyState!==1) throw new Error('bridge is not connected'); ws.send(JSON.stringify(m)); });
-      ws.onopen=()=>{ ws.send(JSON.stringify({sub:['net']})); this.ns=ns; this.p=null; res(ns); };
-      ws.onerror=()=>{ if(!this.ns){ this.p=null; rej(new Error('the app bridge is not reachable')); } };
-      ws.onclose=()=>{ if(this.ns===ns) this.ns=null; };
-      ws.onmessage=e=>{ if(typeof e.data!=='string') return; let j; try{ j=JSON.parse(e.data); }catch(x){ return; } for(const r of Array.isArray(j) ? j : [j]) ns.feed(r); };
-    });
-  }};
+const ND_APP={link:()=>AppLink.link()};                       // одно соединение с мостом на всю страницу (applink.js)
 const ndIsPost=init=>{ const m=String(init?.method||'GET').toUpperCase(); return m!=='GET' && m!=='HEAD'; };
 async function ndFetch(n,url,init){
   const px=Net.proxy;
