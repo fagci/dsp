@@ -3,6 +3,7 @@ package app.dsp.phone
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArraySet
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Пины наружу (узлы Pins Out / Pins In / Pins (custom) страницы DSP, modules/pins.js): ретранслятор кадров по имени пина.
@@ -62,7 +63,15 @@ class PinRelay {
         return if ("*" in s) listOf("*") else s.toList()
     }
     private fun sendWant(g: Peer) { g.text(JSONObject().put("t", "want").put("names", JSONArray(wantNames(g))).toString()) }
-    private fun wantAll() { for (g in graphs()) sendWant(g) }
+    // Подписки меняются из потоков разных сокетов: без этого поток, посчитавший список до чужого выхода, мог отправить его
+    // после «свежего» — страница осталась бы с устаревшим want. Изменилось состояние за время рассылки — рассылаем заново,
+    // последним всегда уходит актуальный список (повтор безвреден: want идемпотентен). Блокировки нет: медленная страница не держит остальных.
+    private val wantVer = AtomicInteger()
+    private fun wantAll() {
+        wantVer.incrementAndGet()
+        var v: Int
+        do { v = wantVer.get(); for (g in graphs()) sendWant(g) } while (wantVer.get() != v)
+    }
 
     private fun take(a: JSONArray?): JSONArray {
         val r = JSONArray()
