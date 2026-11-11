@@ -263,6 +263,18 @@ async function olmModelsApp(n){
   }catch(e){ n.msg='models: '+e.message; }
   n.rev=(n.rev||0)+1;
 }
+// замер скорости на этом телефоне: подбирает число потоков и запоминает лучшее в параметре threads
+async function olmBench(n){
+  if(!olmApp(n)){ n.msg='the benchmark works with the host «app» only'; n.rev++; return; }
+  if(n.busy){ n.msg='wait for the answer to finish'; n.rev++; return; }
+  const spec=llmSpec(n.p.model); if(!spec){ n.msg='choose a model first'; n.rev++; return; }
+  n.busy=true; n.msg='benchmark: loading the model and trying thread counts…'; n.rev++;
+  try{
+    const r=await llmAppBench(spec,{gpu:!!n.p.appGpu,ctx:+n.p.numCtx||4096});
+    setMod(n,'threads',r.best); n.msg='benchmark (best — '+r.best+' threads, now set; the fast cores: '+r.fast+'):\n'+llmBenchText(r);
+  }catch(e){ n.msg='benchmark failed: '+e.message; }
+  finally{ n.busy=false; n.rev++; }
+}
 async function olmModels(n){
   if(olmApp(n)) return olmModelsApp(n);
   const base=ndOllamaBase(n.p.host);
@@ -295,8 +307,8 @@ async function olmSend(n,prompt,ctx){
       const spec=llmSpec(model); if(!spec) throw new Error('the model name is not valid: a key from the list, a .gguf file name or an address of a .gguf');
       if(typeof AppLink==='undefined' || !AppLink.ok) throw new Error('host «app» works only in the DSP app for Android');
       n.msg='';
-      const r=await llmAppRun(spec,{gpu:!!n.p.appGpu,ctx:+n.p.numCtx||4096,messages:msgs,max:+n.p.maxTok||512,temp:+n.p.temp,seed:+n.p.seed,signal:ac.signal},t=>{ acc+=t; n.text=acc; n.rev++; });
-      n.stats={tokens:r.tokens,promptTokens:r.promptTokens,tps:r.tps,total:+((r.ms||0)/1000).toFixed(1)};
+      const r=await llmAppRun(spec,{gpu:!!n.p.appGpu,ctx:+n.p.numCtx||4096,messages:msgs,max:+n.p.maxTok||512,temp:+n.p.temp,seed:+n.p.seed,threads:+n.p.threads||0,signal:ac.signal},t=>{ acc+=t; n.text=acc; n.rev++; });
+      n.stats={tokens:r.tokens,promptTokens:r.promptTokens,tps:r.tps,total:+((r.ms||0)/1000).toFixed(1),cached:r.cached|0};
     }else{
     const r=await ndFetch(n,base+'/api/chat',{method:'POST',signal:ac.signal,headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     if(!r.ok){ const t=await ndWhy(r); throw new Error('HTTP '+r.status+(t ? ': '+t : '')); }
@@ -334,6 +346,8 @@ def({ id:'ollama', title:'Ollama (local LLM)', cat:'Tools', readout:true, tall:t
           {n:'model',t:'text',d:'',label:'model (name from «⟳ Models», e.g. llama3.2). Host «app»: a list key (qwen2.5-3b-instruct-q4_0), a .gguf file on the phone or an address of a .gguf — downloaded once'},
           {n:'appGpu',t:'check',d:true,label:'host «app»: use the GPU (OpenCL, Adreno 7xx / 8xx; fastest with Q4_0 models); off — CPU only. Switching CPU → GPU needs an app restart'},
           {n:'maxTok',t:'range',min:32,max:4096,step:32,d:512,label:'host «app»: longest answer, tokens'},
+          {n:'threads',t:'num',d:0,min:0,max:16,step:1,label:'host «app»: threads (0 — the fast cores of the phone, found by the app; «⏱ Benchmark» picks the best on this phone)'},
+          {n:'bench',t:'button',label:'⏱ Benchmark (host «app»)',fn:n=>olmBench(n)},
           {n:'list',t:'button',label:'⟳ Models',fn:n=>olmModels(n)},
           {n:'prompt',t:'text',d:'',label:'question (the wire «prompt» overrides it)'},
           {n:'sys',t:'text',d:'',label:'system prompt (the wire «system» overrides it)'},
@@ -370,7 +384,7 @@ def({ id:'ollama', title:'Ollama (local LLM)', cat:'Tools', readout:true, tall:t
     const L=[];
     if(n.msg) L.push(n.msg);
     if(n.busy && !n.text && !n.msg) L.push('…');
-    if(n.stats) L.push(n.stats.tokens+' tokens · '+(n.stats.tps ?? '?')+' tok/s · '+n.stats.total+' s');
+    if(n.stats) L.push(n.stats.tokens+' tokens · '+(n.stats.tps ?? '?')+' tok/s · '+n.stats.total+' s'+(n.stats.cached ? ' · '+n.stats.cached+' prompt tokens from the cache' : ''));
     if(olmApp(n) && n.busy && !n.text && typeof LLMAP!=='undefined' && LLMAP.prog) L.push(LLMAP.prog+' (once — the model stays on the phone)');
     if(!n.text && !n.msg && n.models.length) L.push(n.models.length+' models: '+n.models.map(m=>m.name+(m.params ? ' ('+m.params+')' : '')).join(', '));
     if(!n.text && !n.msg && n.cat && n.cat.length) L.push('to download (type the key in «model»): '+n.cat.join('; '));

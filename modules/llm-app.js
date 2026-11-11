@@ -67,12 +67,18 @@ async function llmAppRun(spec,o,onTok){
   const stop=()=>{ AppLink.call('llm.stop',{},5000).catch(()=>{}); };
   o.signal?.addEventListener('abort',stop);
   try{
-    return await ns.call('llm.chat',{messages:o.messages,max:o.max||512,temp:o.temp ?? .7,seed:o.seed||0},0);
+    return await ns.call('llm.chat',{messages:o.messages,max:o.max||512,temp:o.temp ?? .7,seed:o.seed||0,...(o.threads>0 ? {threads:o.threads} : {})},0);
   }catch(e){
     if(o.signal?.aborted) throw Object.assign(new Error('aborted'),{name:'AbortError'});
     throw e;
   }finally{ off(); o.signal?.removeEventListener('abort',stop); }
 }
+// замер на этом телефоне: короткая генерация при разном числе потоков (без KV-кэша); → {rows:[{threads,tps,ptps}], best, fast}
+async function llmAppBench(spec,o){
+  await llmAppLoad(spec,o);
+  return AppLink.call('llm.bench',{},600000);
+}
+const llmBenchText=r=>r.rows.map(x=>x.threads+' threads: '+x.tps+' tok/s (request '+x.ptps+' tok/s)'+(x.threads===r.best ? ' ◀ best' : '')).join('\n');
 // пункты «⇩ offline» в Files: модели на телефоне (внутри приложения)
 if(typeof OfflineData!=='undefined' && typeof AppLink!=='undefined' && AppLink.ok){
   for(const k of Object.keys(LLM_CATALOG)){

@@ -24,7 +24,9 @@ object LlamaNative {
 
     @JvmStatic external fun backends(): String
     @JvmStatic external fun systemInfo(): String
-    @JvmStatic external fun init(path: String, nCtx: Int, gpuLayers: Int, threads: Int, flash: Boolean, mmap: Boolean): Long
+    @JvmStatic external fun init(path: String, nCtx: Int, gpuLayers: Int, threads: Int, flash: Int, mmap: Boolean): Long
+    @JvmStatic external fun setThreads(h: Long, n: Int)
+    @JvmStatic external fun resetCache(h: Long)
     @JvmStatic external fun free(h: Long)
     @JvmStatic external fun describe(h: Long): String
     @JvmStatic external fun applyTemplate(h: Long, roles: Array<String>, contents: Array<String>, addAss: Boolean): ByteArray?
@@ -38,7 +40,7 @@ class LlamaEngine : LlmEngine {
     private var h = 0L
     @Volatile private var stop = false
 
-    override fun load(path: String, ctx: Int, gpuLayers: Int, threads: Int, flash: Boolean, mmap: Boolean): String? {
+    override fun load(path: String, ctx: Int, gpuLayers: Int, threads: Int, flash: Int, mmap: Boolean): String? {
         val cores = Runtime.getRuntime().availableProcessors()
         val cpu = AiArgs.cpu(try { File("/proc/cpuinfo").readText() } catch (e: Exception) { "" }, cores)
         val arm64 = android.os.Build.SUPPORTED_64_BIT_ABIS.contains("arm64-v8a")
@@ -71,6 +73,8 @@ class LlamaEngine : LlmEngine {
     }
 
     override fun perf() = LlamaNative.perf(h)
+    override fun setThreads(n: Int) { if (h != 0L) LlamaNative.setThreads(h, n) }
+    override fun reset() { if (h != 0L) LlamaNative.resetCache(h) }
     override fun cancel() { stop = true }
     override fun free() { if (h != 0L) LlamaNative.free(h); h = 0 }
 }

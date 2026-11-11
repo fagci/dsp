@@ -45,7 +45,8 @@ bridge=async(m,ws)=>{
   if(m.cmd==='model.list') return {models:have.map(n=>({name:n,size:5e8,partial:false})).concat([{name:'ggml-x.bin',size:1,partial:false},{name:'half.gguf',size:1,partial:true}])};
   if(m.cmd==='model.get'){ ws.recv({src:'ai',ev:'progress',name:m.name,done:50,total:200}); ws.recv({src:'ai',ev:'progress',name:m.name,done:200,total:200}); await wait(30); have.push(m.name); return {name:m.name,size:200}; }
   if(m.cmd==='llm.load') return {info:'x|1|8192|'+m.ctx,backends:'CPU:CPU;GPU:OpenCL',ms:900,model:m.model,gpu:!!m.gpu,ctx:m.ctx};
-  if(m.cmd==='llm.chat'){ for(const t of answer){ await wait(15); ws.recv({src:'ai',ev:'tok',rid:m.id,text:t}); } await wait(40); return {text:answer.join(''),tokens:3,promptTokens:12,ms:400,tps:7.5,ptps:60,trimmed:0}; }
+  if(m.cmd==='llm.chat'){ for(const t of answer){ await wait(15); ws.recv({src:'ai',ev:'tok',rid:m.id,text:t}); } await wait(40); return {text:answer.join(''),tokens:3,promptTokens:12,ms:400,tps:7.5,ptps:60,trimmed:0,cached:9}; }
+  if(m.cmd==='llm.bench') return {best:4,fast:4,rows:[{threads:2,tps:5.1,ptps:20},{threads:4,tps:9.8,ptps:41},{threads:6,tps:8.2,ptps:39}]};
   if(m.cmd==='llm.stop') return {};
   return {err:'unknown'};
 };
@@ -76,6 +77,17 @@ ok('chat: the status of the loaded model',X.LLMAP.info.includes('GPU') && X.LLMA
 // другие настройки
 sent.length=0; n=node({model:'mine-q4_0.gguf',prompt:'x',appGpu:false,numCtx:2048,maxTok:128,temp:.2}); have=['mine-q4_0.gguf']; defs.ollama.process(n,{}); await ask(n);
 ok('chat: CPU, own context and answer length reach the phone',sent.find(m=>m.cmd==='llm.load').gpu===false && sent.find(m=>m.cmd==='llm.load').ctx===2048 && sent.find(m=>m.cmd==='llm.chat').max===128 && sent.find(m=>m.cmd==='llm.chat').temp===.2 && !sent.some(m=>m.cmd==='model.get'));
+
+// скорость: кэш запроса в статусе, потоки, бенчмарк
+ok('speed: tokens of the prompt taken from the KV cache are reported by the node',n.stats.cached===9);
+sent.length=0; n=node({model:'mine-q4_0.gguf',prompt:'x',threads:4}); have=['mine-q4_0.gguf']; defs.ollama.process(n,{}); await ask(n);
+ok('speed: the thread count goes with the request (not into a reload)',sent.find(m=>m.cmd==='llm.chat').threads===4 && !('threads' in sent.find(m=>m.cmd==='llm.load')));
+sent.length=0; n=node({model:'mine-q4_0.gguf',prompt:'x'}); defs.ollama.process(n,{}); await ask(n);
+ok('speed: threads 0 → the app chooses (the fast cores)',!('threads' in sent.find(m=>m.cmd==='llm.chat')));
+sent.length=0; n=node({model:'mine-q4_0.gguf'}); defs.ollama.process(n,{}); await defs.ollama.params.find(p=>p.n==='bench').fn(n);
+ok('benchmark: the best thread count is set in the node and the table is shown',sent.some(m=>m.cmd==='llm.bench') && n.p.threads===4 && /4 threads: 9\.8 tok\/s/.test(n.msg) && /◀ best/.test(n.msg) && !n.busy,n.msg);
+n=node({host:'http://127.0.0.1:11434',model:'m'}); await defs.ollama.params.find(p=>p.n==='bench').fn(n); ok('benchmark: not for a server host',/host «app» only/.test(n.msg));
+n=node({model:''}); await defs.ollama.params.find(p=>p.n==='bench').fn(n); ok('benchmark: needs a model',/choose a model/.test(n.msg));
 // отмена
 bridge=async(m,ws)=>{ if(m.cmd==='llm.chat'){ ws.recv({src:'ai',ev:'tok',rid:m.id,text:'Нач'}); await wait(300); return {err:'stopped'}; } return {models:[{name:'mine-q4_0.gguf',size:1,partial:false}],gpu:true,ctx:2048,info:'',...(m.cmd==='ai.caps'?caps:{})}; };
 sent.length=0; n=node({model:'mine-q4_0.gguf',prompt:'long'}); defs.ollama.process(n,{}); const pa=ask(n); await wait(150);
