@@ -30,12 +30,13 @@ function mockVpnBridge(onCmd) {
 }
 
 const got = [];
+let serverTlsApps = [];                               // «правда» моста — какая-то реальная служба могла её забыть (перезапуск), страница узнаёт только переспросив
 const br = await mockVpnBridge((m, reply) => {
   got.push(m);
-  if (m.cmd === 'vpn.tls') { reply({ apps: m.apps || [] }); return; }
+  if (m.cmd === 'vpn.tls') { serverTlsApps = m.apps || []; reply({ apps: serverTlsApps }); return; }
   if (m.cmd === 'vpn.tls.ca') {
-    if (m.reset) return reply({ pem: '-----BEGIN CERTIFICATE-----\nRESET\n-----END CERTIFICATE-----\n', fingerprint: 'AA:BB (new)', apps: [] });
-    return reply({ pem: '-----BEGIN CERTIFICATE-----\nABCD\n-----END CERTIFICATE-----\n', fingerprint: 'DE:AD:BE:EF', apps: ['com.a.one'] });
+    if (m.reset) return reply({ pem: '-----BEGIN CERTIFICATE-----\nRESET\n-----END CERTIFICATE-----\n', fingerprint: 'AA:BB (new)', apps: serverTlsApps });
+    return reply({ pem: '-----BEGIN CERTIFICATE-----\nABCD\n-----END CERTIFICATE-----\n', fingerprint: 'DE:AD:BE:EF', apps: serverTlsApps });
   }
   reply({});
 });
@@ -87,6 +88,16 @@ const line = await pg.evaluate(() => __vm.last);
 ok('the log line for the last event is the TLS error, readable', /TLS #9 bad\.example: untrusted upstream certificate/.test(line), line);
 ok('no page errors', errs.length === 0, errs.join(' | '));
 
+
+// Служба на телефоне перезапустилась (новый CA, OEM прибил процесс…) — список расшифровки там тихо обнулился, страница
+// об этом не знает, пока не переспросит. Рвём соединение (как настоящий обрыв), сервер «забывает» список, ждём переподключения.
+got.length = 0; serverTlsApps = [];
+await pg.evaluate(() => { __vm.p.reconnect = true; __vm.ws.close(); });
+await wait(4500);                                       // reconnect — через 3 с (vpnConnect), плюс время на onopen
+const afterReconnect = await pg.evaluate(() => ({ status: __vm.status, on: !!__vm.ws }));
+ok('page resends vpn.tls right after reconnecting (not only on a manual button press)', got.some((g) => g.cmd === 'vpn.tls'), JSON.stringify(got));
+ok('server truth is restored and the status reflects it, without touching the button', /TLS decrypt: 1/.test(afterReconnect.status), JSON.stringify(afterReconnect));
+ok('server actually has the app again (not just a stale client-side count)', JSON.stringify(serverTlsApps) === '["com.a.one"]', JSON.stringify(serverTlsApps));
 await b.close(); br.close();
 if (bad) { console.log(bad + ' failed'); process.exit(1); }
 console.log('e2e vpnmon-tls: all ok');
