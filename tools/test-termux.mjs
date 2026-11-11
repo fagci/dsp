@@ -85,6 +85,7 @@ if(fs.existsSync(kf)){
   ok('apply rotation → yaw −90 (CCW 90° about Z), pitch/roll 0',Math.abs(o.yaw+90)<1e-9 && Math.abs(o.pitch)<1e-9 && Math.abs(o.roll)<1e-9 && o.humid===41 && o.steps===1234,JSON.stringify(o));
   const pcm=K.termuxPcm({pcm:Buffer.from(new Int16Array([0,16384,-32768,32767]).buffer).toString('base64')});
   ok('mic pcm decode',pcm.length===4 && pcm[1]===.5 && pcm[2]===-1 && Math.abs(pcm[3]-.99997)<1e-4 && K.termuxPcm({})===null && K.termuxPcm({pcm:'!!'})===null);
+  ok('subscription: direct sensor channel only when ticked',K.termuxSubMsg({accel:true,hz:'200',direct:true}).direct===true && !('direct' in K.termuxSubMsg({accel:true,hz:'200'})) && K.termuxSubMsg({accel:true,hz:'200',direct:true}).hz===200);
   const mm=K.termuxSubMsg({micOn:true,micHz:'48000',cell:true,cellEvery:3,pkt:true,iface:' wlan0 ',filter:'tcp port 80',snap:'512',hz:'0'});
   ok('sub message: mic, cell, capture',mm.micHz===48000 && mm.cellEvery===3 && mm.iface==='wlan0' && mm.filter==='tcp port 80' && mm.snap===512 && mm.sub.join()==='cell,mic,pkt',JSON.stringify(mm));
   const ms=K.termuxSubMsg({micOn:true,micHz:'96000',micSrc:'unprocessed',micDev:'usb'});

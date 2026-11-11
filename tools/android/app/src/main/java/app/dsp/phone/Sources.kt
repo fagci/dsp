@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
+import android.hardware.SensorDirectChannel
 import android.hardware.SensorManager
 import android.hardware.TriggerEvent
 import android.hardware.TriggerEventListener
@@ -19,6 +20,7 @@ import android.net.wifi.WifiManager
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
+import android.os.SharedMemory
 import android.os.HandlerThread
 import android.os.SystemClock
 
@@ -33,6 +35,19 @@ class SensorHub(ctx: Context, private val emit: Emit) : SensorEventListener {
     private val thread = HandlerThread("dsp-sensors").also { it.start() }
     private val handler = Handler(thread.looper)
     private val active = HashMap<String, Int>()      // вид → Гц
+    /** Прямые каналы (SensorDirectChannel, Android 8.1+): вид → канал. Датчик пишет в общую память, ЦП только читает. */
+    private class Direct(val kind: String, val mem: SharedMemory, val ch: SensorDirectChannel, val ring: DirectRing, val token: Int, val level: Int)
+    private val direct = HashMap<String, Direct>()
+    private var polling = false
+    private val poll = object : Runnable {
+        override fun run() {
+            synchronized(this@SensorHub) {
+                for (d in direct.values) d.ring.drain { _, t, v -> record(d.kind, v, v.size, t) }
+                polling = direct.isNotEmpty()
+                if (polling) handler.postDelayed(this, 4)
+            }
+        }
+    }
 
     companion object {
         val TYPES = linkedMapOf(
@@ -107,17 +122,24 @@ class SensorHub(ctx: Context, private val emit: Emit) : SensorEventListener {
 
     /** Включает нужные датчики с частотой hz, лишние выключает. Возвращает виды, которых на телефоне нет. */
     @Synchronized
-    fun update(want: Set<String>, hz: Int): List<String> {
+    fun update(want: Set<String>, hz: Int, useDirect: Boolean = false): List<String> {
         val missing = ArrayList<String>()
         for ((kind, type) in TYPES) {
             val sensor = sm.getDefaultSensor(type)
             if (kind in want) {
                 if (sensor == null) { missing.add(kind); continue }
+                // прямой канал: у датчика есть частота прямого режима — берём его, иначе обычный слушатель
+                if (useDirect && kind in DIRECT_OK && openDirect(kind, sensor, hz)) {
+                    if (active.remove(kind) != null) sm.unregisterListener(this, sensor)
+                    continue
+                }
+                closeDirect(kind)
                 if (active[kind] == hz) continue
                 sm.unregisterListener(this, sensor)
                 if (sm.registerListener(this, sensor, 1_000_000 / hz.coerceIn(1, 1000), handler)) active[kind] = hz
-            } else if (active.remove(kind) != null) {
-                sm.unregisterListener(this, sensor)
+            } else {
+                closeDirect(kind)
+                if (active.remove(kind) != null) sm.unregisterListener(this, sensor)
             }
         }
         for (kind in TRIGGERS.keys) {
@@ -140,28 +162,71 @@ class SensorHub(ctx: Context, private val emit: Emit) : SensorEventListener {
     @Synchronized
     fun stop() {
         sm.unregisterListener(this); active.clear()
+        for (k in direct.keys.toList()) closeDirect(k)
         for (kind in armed) (sm.getDefaultSensor(TRIGGERS[kind]!!, true) ?: sm.getDefaultSensor(TRIGGERS[kind]!!))?.let { sm.cancelTriggerSensor(trig, it) }
         armed.clear()
+    }
+
+    /** Виды, у которых прямой режим имеет смысл: потоки отсчётов, а не события. */
+    private val DIRECT_OK = setOf("accel", "gyro", "mag", "accelraw", "gyroraw", "magraw", "gravity", "linear", "gamerot", "rotation")
+
+    /** Открыт ли прямой канал для вида: (уровень 1…3 → 50 / 200 / 800 Гц) — для /status и проверки. */
+    @Synchronized fun directLevels(): Map<String, Int> = direct.mapValues { it.value.level }
+
+    /** Включает прямой канал вида; false — датчик его не умеет (или Android старше 8.1), тогда вызывающий берёт обычный. */
+    private fun openDirect(kind: String, sensor: Sensor, hz: Int): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) return false
+        if (!sensor.isDirectChannelTypeSupported(SensorDirectChannel.TYPE_MEMORY_FILE)) return false
+        val level = DirectRing.level(hz, sensor.highestDirectReportRateLevel)
+        if (level == 0) return false
+        direct[kind]?.let { if (it.level == level) return true else closeDirect(kind) }
+        var mem: SharedMemory? = null
+        var ch: SensorDirectChannel? = null
+        try {
+            mem = SharedMemory.create("dsp-$kind", DirectRing.MEM_BYTES)
+            val map = mem.mapReadWrite()                            // память должна быть обнулена — SharedMemory.create так и делает
+            ch = sm.createDirectChannel(mem)
+            val token = ch.configure(sensor, level)
+            if (token <= 0) { ch.close(); mem.close(); return false }
+            direct[kind] = Direct(kind, mem, ch, DirectRing(map), token, level)
+        } catch (e: Exception) {
+            try { ch?.close() } catch (_: Exception) {}
+            try { mem?.close() } catch (_: Exception) {}
+            return false
+        }
+        if (!polling) { polling = true; handler.postDelayed(poll, 4) }
+        return true
+    }
+
+    private fun closeDirect(kind: String) {
+        val d = direct.remove(kind) ?: return
+        try { d.ch.configure(sm.getDefaultSensor(TYPES[kind]!!), SensorDirectChannel.RATE_STOP) } catch (_: Exception) {}
+        try { d.ch.close() } catch (_: Exception) {}
+        try { d.mem.close() } catch (_: Exception) {}
     }
 
     fun close() { stop(); thread.quitSafely() }
 
     override fun onSensorChanged(e: SensorEvent) {
         val kind = kindOf[e.sensor.type] ?: return
-        val v = e.values
+        record(kind, e.values, e.values.size, e.timestamp)
+    }
+
+    /** Запись датчика: v — значения (в прямом режиме массив длиннее нужного, потому размер n отдельно); tNs — время события в elapsedRealtime. */
+    private fun record(kind: String, v: FloatArray, n: Int, tNs: Long) {
         // время события в часах телефона (elapsedRealtime) → мс эпохи
-        val t = System.currentTimeMillis() - (SystemClock.elapsedRealtimeNanos() - e.timestamp) / 1_000_000
-        val xyz = kind in XYZ && v.size >= 3
+        val t = System.currentTimeMillis() - (SystemClock.elapsedRealtimeNanos() - tNs) / 1_000_000
+        val xyz = kind in XYZ && n >= 3
         emit(kind, Json.obj(
             "src" to "\"sensor\"", "sensor" to "\"$kind\"", "t" to t.toString(),
-            "x" to Json.num(if (v.isEmpty()) 1.0 else v[0].toDouble()),
+            "x" to Json.num(if (n == 0) 1.0 else v[0].toDouble()),
             "y" to if (xyz) Json.num(v[1].toDouble()) else null,
             "z" to if (xyz) Json.num(v[2].toDouble()) else null,
-            "w" to if (kind in QUAT && v.size >= 4) Json.num(v[3].toDouble()) else null,
-            "bx" to if (kind in UNCAL && v.size >= 6) Json.num(v[3].toDouble()) else null,
-            "by" to if (kind in UNCAL && v.size >= 6) Json.num(v[4].toDouble()) else null,
-            "bz" to if (kind in UNCAL && v.size >= 6) Json.num(v[5].toDouble()) else null,
-            "acc" to if (kind == "heading" && v.size >= 2) Json.num(v[1].toDouble()) else null,
+            "w" to if (kind in QUAT && n >= 4) Json.num(v[3].toDouble()) else null,
+            "bx" to if (kind in UNCAL && n >= 6) Json.num(v[3].toDouble()) else null,
+            "by" to if (kind in UNCAL && n >= 6) Json.num(v[4].toDouble()) else null,
+            "bz" to if (kind in UNCAL && n >= 6) Json.num(v[5].toDouble()) else null,
+            "acc" to if (kind == "heading" && n >= 2) Json.num(v[1].toDouble()) else null,
         ))
     }
 

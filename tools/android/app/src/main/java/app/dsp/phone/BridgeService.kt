@@ -333,7 +333,7 @@ class BridgeService : Service() {
         val w = server.wanted()
         val problems = HashSet<String>()
         val f = power.factor
-        for (k in sensors.update(w.subs.filter { it in SensorHub.ALL }.toSet(), if (f > 1) maxOf(5, w.hz / f) else w.hz)) problems.add("$k: no such sensor on this phone")
+        for (k in sensors.update(w.subs.filter { it in SensorHub.ALL }.toSet(), if (f > 1) maxOf(5, w.hz / f) else w.hz, w.direct && f <= 1)) problems.add("$k: no such sensor on this phone")
         val needGps = w.subs.any { it in POSITION }
         if (!gps.update(needGps)) problems.add("no position: allow Location for the DSP app and turn Location on")
         if (!wifi.update("wifi" in w.subs, w.wifiEvery * f)) problems.add("wifi: allow Location for the DSP app (Android hides the scan without it)")
