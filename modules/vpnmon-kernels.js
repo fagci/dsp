@@ -3,11 +3,35 @@
    агрегация по приложению, команды узла. Без TLS-перехвата — имя сервера только из DNS / SNI / HTTP Host, без расшифровки.
    Без DOM — проверяется в tools/test-vpnmon.mjs. */
 
-// команда запуска/остановки/переключения полного потока пакетов
-function vpnCmd(action,p){
-  if(action==='start') return {cmd:'vpn.start',packets:!!p.packets};
+// какие приложения идут через туннель
+const VPN_MODES=['all apps','only these','all except these'];
+const VPN_MODE_ID={'all apps':'all','only these':'only','all except these':'except'};
+/* Выбор из строк таблицы (установленные приложения vpn.apps или сводка по приложениям из трафика) и из текста: пакеты или uid.
+   У строки с pkgs берутся они все (общий uid), иначе pkg, иначе uid — мост сам превратит uid в пакеты. */
+function vpnPicks(rows,text){
+  const pk=new Set(), ud=new Set();
+  for(const r of Array.isArray(rows) ? rows : []){
+    if(!r || typeof r!=='object') continue;
+    if(Array.isArray(r.pkgs) && r.pkgs.length) for(const x of r.pkgs) pk.add(String(x));
+    else if(typeof r.pkg==='string' && r.pkg) pk.add(r.pkg);
+    else if(r.uid!=null && r.uid!=='' && Number.isInteger(+r.uid) && +r.uid>=0) ud.add(+r.uid);
+  }
+  for(const t of String(text||'').split(/[,;\s]+/)){ if(!t) continue; if(/^\d+$/.test(t)) ud.add(+t); else pk.add(t); }
+  return {apps:[...pk],uids:[...ud]};
+}
+// команда запуска/остановки/переключения полного потока пакетов; rows — выбор из таблицы. {error} — режим требует список, а его нет
+function vpnCmd(action,p,rows){
+  if(action==='start'){
+    const mode=VPN_MODE_ID[p.mode]||'all', c={cmd:'vpn.start',packets:!!p.packets,mode};
+    if(mode==='all') return c;
+    const pick=vpnPicks(rows,p.apps);
+    if(!pick.apps.length && !pick.uids.length) return {error:'pick the apps: fill «apps» or wire a Table with apps to «rows» (mode «'+p.mode+'»)'};
+    if(pick.apps.length) c.apps=pick.apps; if(pick.uids.length) c.uids=pick.uids;
+    return c;
+  }
   if(action==='stop') return {cmd:'vpn.stop'};
   if(action==='packets') return {cmd:'vpn.packets',on:!!p.packets};
+  if(action==='apps') return {cmd:'vpn.apps',system:!!p.system};
   return null;
 }
 

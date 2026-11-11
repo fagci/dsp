@@ -35,6 +35,9 @@ tasks.register<JavaExec>("runVpnEngineTest") {
 tasks.register<JavaExec>("runTlsTest") {
     classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.tlstest.TlsTestKt")
 }
+tasks.register<JavaExec>("runDefragTest") {
+    classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.defragtest.DefragTestKt")
+}
 tasks.register<JavaExec>("runNetSelTest") {
     classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.netseltest.NetSelTestKt")
 }
@@ -97,6 +100,6 @@ tasks.register<JavaExec>("runPinsTest") {
     classpath = sourceSets.main.get().runtimeClasspath; mainClass.set("app.dsp.phone.pinstest.PinsTestKt")
 }
 // Две группы: «медленные» почти ничего не считают, а ждут (паузы в TorrentTest / NetTxTest, ~27 с) — в CI идут отдельным параллельным джобом
-tasks.register("runTestsFast") { dependsOn("runPinsTest", "runVlcTest", "runScanDiagTest", "runStatsTest", "runShortcutTest", "runScreenTest", "runDialTest", "runFsTest", "runCallTest", "runMicTest", "runServerTest", "runRecordsTest", "runAlarmTest", "runBootTest", "runCalTest", "runRecTest", "runProxyTest", "runVpnEngineTest", "runTlsTest", "runTlsStoreTest", "runNetSelTest") }
+tasks.register("runTestsFast") { dependsOn("runPinsTest", "runVlcTest", "runScanDiagTest", "runStatsTest", "runShortcutTest", "runScreenTest", "runDialTest", "runFsTest", "runCallTest", "runMicTest", "runServerTest", "runRecordsTest", "runAlarmTest", "runBootTest", "runCalTest", "runRecTest", "runProxyTest", "runVpnEngineTest", "runTlsTest", "runTlsStoreTest", "runNetSelTest", "runDefragTest") }
 tasks.register("runTestsSlow") { dependsOn("runTorrentTest", "runNetTxTest") }
 tasks.register("runTests") { dependsOn("runTestsFast", "runTestsSlow") }   // локально — всё сразу

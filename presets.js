@@ -688,6 +688,7 @@ const PRESET_CATS={
   'Phone App: Wi-Fi, BLE and Bluetooth as Three Graphs':'Network & IoT',
   'Network: HTTP Server — Share Files with Any Browser (Phone App)':'Network & IoT',
   'Network: Which App Talks to Where (Phone VPN Monitor)':'Network & IoT',
+  'Network: Pick the Apps for the VPN Monitor (Installed Apps → Table → Monitor)':'Network & IoT',
   'Network: DNS Benchmark — Which Resolver Is Fastest From Here (Phone App)':'Network & IoT',
   'Network: Cast Receiver — the Phone as a DLNA Screen and Speaker (Phone App)':'Network & IoT',
   'Network: Cast to a TV or Speaker — Find the Player, Send a File or a Stream (Phone App)':'Network & IoT',
@@ -2306,6 +2307,20 @@ const tk=addNode('ticker',1120,260,{});
 tk.size.w=420; tk.size.h=120; applySize(tk);
 addEdge(vm.id,'apps',apps.id,'rec'); addEdge(vm.id,'flows',flows.id,'rec'); addEdge(vm.id,'rec',tk.id,'rec');
 addEdge(apps.id,'app',flows.id,'filter'); addEdge(flows.id,'app',apps.id,'filter');
+markWiresDirty();
+});
+preset('Network: Pick the Apps for the VPN Monitor (Installed Apps → Table → Monitor)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Watch only the apps you choose: the rest bypass the tunnel completely — they are not seen and not slowed down. Press «List apps» in Network Monitor: the Table fills with the installed apps (name, uid, package; one row per uid — apps that share a uid are one row). Narrow the Table with its filter (a word from the name or package: «telegram», «com.android.chrome») — what the filter leaves goes to Network Monitor «rows» as the chosen set. Mode «only these» watches exactly them, «all except these» hides them (a noisy app you do not care about); change the filter while it runs and the tunnel is rebuilt with the new choice (no new permission request).\n'+
+  'Another way: pick by traffic. Wire the Apps output of Network Monitor to a second Table (as in the preset «Which App Talks to Where») and its rows to «rows» instead — a row carries the uid and packages of the app that was seen talking. Or type packages / uids into the «apps» field. System apps: tick «List apps also shows system apps». The DSP app itself is never in the tunnel.'});
+nt.size.w=1000; nt.size.h=190; applySize(nt);
+const vm=addNode('vpnmon',40,260,{mode:'only these'});
+vm.size.w=380; vm.size.h=420; applySize(vm);
+const inst=addNode('table',460,260,{list:'@patch',key:'uid',initial:false,cols:['label','uid','pkg','system']});
+inst.size.w=620; inst.size.h=420; applySize(inst);
+const flows=addNode('table',1120,260,{list:'@patch',key:'id',initial:false,follow:true,cols:['app','proto','dst','dport','host','up','down']});
+flows.size.w=620; flows.size.h=420; applySize(flows);
+addEdge(vm.id,'installed',inst.id,'rec'); addEdge(inst.id,'rows',vm.id,'rows'); addEdge(vm.id,'flows',flows.id,'rec');
 markWiresDirty();
 });
 preset('Bridge: Serial Port ↔ BLE UART (USB Radio to a BLE Device)', function(){

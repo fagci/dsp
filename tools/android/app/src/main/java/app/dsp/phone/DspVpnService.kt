@@ -71,7 +71,15 @@ class DspVpnService : VpnService() {
         if (Build.VERSION.SDK_INT >= 29) startForeground(ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) else startForeground(ID, n)
 
         val b = Builder().setSession("DSP").addAddress(TUN_ADDR, 32).addRoute("0.0.0.0", 0).setMtu(MTU)
-        try { b.addDisallowedApplication(packageName) } catch (e: Exception) { }
+        // Выбор приложений: «only» — в туннель идут только они (остальные мимо, не видны и не замедляются), «except» — все кроме них. Само приложение всегда мимо.
+        val cur = sel; var added = 0; val missing = ArrayList<String>()
+        for (p in cur.pkgs) {
+            if (p == packageName) continue
+            try { if (cur.mode == "only") b.addAllowedApplication(p) else b.addDisallowedApplication(p); added++ } catch (e: Exception) { missing.add(p) }
+        }
+        if (cur.mode == "only" && added == 0) { stop("none of the chosen apps is installed: ${cur.pkgs.take(5).joinToString()}"); return }
+        if (cur.mode != "only") try { b.addDisallowedApplication(packageName) } catch (e: Exception) { }
+        if (missing.isNotEmpty()) emit(Json.note("warn", "VPN: not installed, skipped — ${missing.take(8).joinToString()}"))
         try { // DNS серверов самой сети, если есть — для совместимости с приватным DNS (DoT) на части прошивок
             val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
             val lp = cm.activeNetwork?.let { cm.getLinkProperties(it) }
@@ -164,12 +172,21 @@ class DspVpnService : VpnService() {
         synchronized(writeLock) { try { FileOutputStream(fd.fileDescriptor).write(p) } catch (e: Exception) { } }
     }
 
-    private fun stop(reason: String?) {
+    /** Закрыть движок и туннель, сервис остаётся — для смены выбора приложений без нового запроса разрешения. */
+    private fun teardown(reason: String?): Boolean {
         h.removeCallbacksAndMessages(null)
         val eng = engine; engine = null
         try { eng?.close() } catch (e: Exception) { }
         try { pfd?.close() } catch (e: Exception) { }; pfd = null
         if (eng != null) emit(Json.obj("src" to Json.str("vpn"), "ev" to Json.str("state"), "on" to "false", "msg" to reason?.let { Json.str(it) }, "t" to System.currentTimeMillis().toString()))
+        return eng != null
+    }
+
+    /** Туннель заново с новым выбором (sel уже заменён); ответ vpn.start ждёт notifyWaiters из start(). */
+    private fun reload() { h.post { teardown("the choice of apps changed"); start() } }
+
+    private fun stop(reason: String?) {
+        teardown(reason)
         stopForeground(STOP_FOREGROUND_REMOVE)
         if (inst === this) inst = null
         stopSelf()
@@ -183,9 +200,18 @@ class DspVpnService : VpnService() {
         const val TUN_ADDR = "10.8.0.2"; const val MTU = 1500; const val SNAP_MS = 2000L; const val PKT_CAP = 1500
         private const val FIRST_APP_UID = 10000
         @Volatile var inst: DspVpnService? = null
+        @Volatile var sel: AppSel = AppSel.ALL                    // какие приложения идут через туннель; применяется при установке туннеля
 
         /** true — туннель установлен, запрос на запуск не нужен. */
         fun running() = inst != null
+
+        /** Новый выбор приложений. Туннель уже работает и выбор другой — он пересоздаётся (true: надо ждать нового старта). */
+        fun select(n: AppSel): Boolean {
+            val changed = !sel.same(n); sel = n
+            val i = inst ?: return false
+            if (!changed) return false
+            i.reload(); return true
+        }
 
         /** Подписки на поток: on — записи с включением/выключением вкл; pkt — целиком каждый пакет (hex), тяжело. */
         fun setPackets(on: Boolean) { inst?.packets = on }
@@ -199,8 +225,8 @@ class DspVpnService : VpnService() {
         // ответ на саму команду идёт клиенту напрямую (не через подписку на vpn), так что причина отказа не потеряется, даже
         // если establish() упал раньше, чем страница успела подписаться на эфир.
         private val waiters = CopyOnWriteArrayList<(Boolean, String?) -> Unit>()
-        fun awaitStart(timeoutMs: Long, cb: (ok: Boolean, reason: String?) -> Unit) {
-            if (inst?.engine != null) { cb(true, null); return }
+        fun awaitStart(timeoutMs: Long, force: Boolean = false, cb: (ok: Boolean, reason: String?) -> Unit) {
+            if (!force && inst?.engine != null) { cb(true, null); return }
             waiters.add(cb)
             Handler(android.os.Looper.getMainLooper()).postDelayed({ if (waiters.remove(cb)) cb(false, "no answer from the tunnel in ${timeoutMs / 1000} s") }, timeoutMs)
         }
@@ -213,8 +239,29 @@ object VpnCmds {
     fun exec(ctx: Context, c: BridgeServer.Client, j: JSONObject) {
         val cmd = j.optString("cmd"); val id = j.opt("id")
         when (cmd) {
+            "vpn.apps" -> {
+                // Таблица установленных приложений: по uid (общий uid — одна строка). Системные — по запросу {system:true}.
+                val pm = ctx.packageManager
+                val apps = pm.getInstalledApplications(0).map {
+                    val sys = it.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM != 0 && it.flags and android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP == 0
+                    AppRows.App(it.uid, it.packageName, try { pm.getApplicationLabel(it).toString() } catch (e: Exception) { it.packageName }, sys)
+                }
+                Reply.done(c, id, cmd, null, extra = arrayOf("apps" to Json.rows(AppRows.group(apps, j.optBoolean("system", false)))))
+            }
+            "vpn.sel" -> Reply.done(c, id, cmd, null, extra = arrayOf("sel" to DspVpnService.sel.toJson(), "running" to DspVpnService.running().toString()))
             "vpn.start" -> {
                 DspVpnService.setPackets(j.optBoolean("packets", false))
+                // apps / uids / mode — какие приложения идут через туннель; без них прежний выбор остаётся (по умолчанию все)
+                if (j.has("apps") || j.has("uids") || j.has("mode")) {
+                    val pm = ctx.packageManager
+                    val (n, err) = AppSel.parse(j) { uid -> try { pm.getPackagesForUid(uid)?.toList() ?: emptyList() } catch (e: Exception) { emptyList() } }
+                    if (n == null) { Reply.done(c, id, cmd, err ?: "apps", "args"); return }
+                    if (DspVpnService.running() && DspVpnService.select(n)) {
+                        DspVpnService.awaitStart(6000, force = true) { ok, reason -> if (ok) Reply.done(c, id, cmd, null, extra = arrayOf("sel" to n.toJson())) else Reply.done(c, id, cmd, reason ?: "could not restart", "error") }
+                        return
+                    }
+                    DspVpnService.select(n)
+                }
                 if (DspVpnService.running()) { DspVpnService.announce(); Reply.done(c, id, cmd, null); return }
                 val prep = VpnService.prepare(ctx)
                 if (prep == null) {
