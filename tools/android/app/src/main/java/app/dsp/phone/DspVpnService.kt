@@ -66,7 +66,7 @@ class DspVpnService : VpnService() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         // Action.Builder(Icon, …) требует не-null значок — с null кнопка в уведомлении просто не срабатывает (как у BridgeService.notification())
         val n = Notification.Builder(this, CH).setContentTitle("DSP: network monitor")
-            .setContentText("Watching which app talks to which address").setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
+            .setContentText("Watching which app talks to which address").setSmallIcon(android.R.drawable.ic_menu_compass)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stop).setOngoing(true).build()
         if (Build.VERSION.SDK_INT >= 29) startForeground(ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE) else startForeground(ID, n)
 
@@ -221,6 +221,11 @@ class DspVpnService : VpnService() {
             никто не слушал (BridgeServer не шлёт эфир без подписчиков), а следующий «summary» придёт только через SNAP_MS. */
         fun announce() { inst?.let { it.emit(Json.obj("src" to Json.str("vpn"), "ev" to Json.str("state"), "on" to "true", "t" to System.currentTimeMillis().toString())) } }
 
+        /** vpn.stop когда служба уже не работает (процесс был убит системой, VPN отключён из системных настроек, или это повторное
+            «Стоп»): страница могла этого не узнать — ни один «state:false» не ушёл, пока никто не слушал. Шлём его прямо сейчас,
+            без service-интента, который иначе создавал бы и сразу убивал пустой экземпляр службы (а эфира всё равно бы не было: eng==null). */
+        fun announceOff() { BridgeService.inst?.vpnEmit(Json.obj("src" to Json.str("vpn"), "ev" to Json.str("state"), "on" to "false", "t" to System.currentTimeMillis().toString())) }
+
         // «vpn.start» ждёт настоящий исход (установился ли туннель), а не отвечает «ok» заранее — тот же приём, что у tcp.connect:
         // ответ на саму команду идёт клиенту напрямую (не через подписку на vpn), так что причина отказа не потеряется, даже
         // если establish() упал раньше, чем страница успела подписаться на эфир.
@@ -269,7 +274,13 @@ object VpnCmds {
                     DspVpnService.awaitStart(6000) { ok, reason -> if (ok) Reply.done(c, id, cmd, null) else Reply.done(c, id, cmd, reason ?: "could not start", "error") }
                 } else { ctx.startActivity(Intent(ctx, VpnConsentActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); Reply.done(c, id, cmd, "allow the VPN connection in the system window and repeat", "permission") }
             }
-            "vpn.stop" -> { ctx.startService(Intent(ctx, DspVpnService::class.java).setAction(DspVpnService.ACTION_STOP)); Reply.done(c, id, cmd, null) }
+            "vpn.stop" -> {
+                // не запущена (убита системой, VPN выключен из системных настроек, или это повторный «Стоп») — нечего останавливать,
+                // но страница должна узнать об этом (иначе статус «monitoring» зависает навсегда без способа его снять)
+                if (DspVpnService.running()) ctx.startService(Intent(ctx, DspVpnService::class.java).setAction(DspVpnService.ACTION_STOP))
+                else DspVpnService.announceOff()
+                Reply.done(c, id, cmd, null)
+            }
             "vpn.packets" -> { DspVpnService.setPackets(j.optBoolean("on", false)); Reply.done(c, id, cmd, null) }
             else -> Reply.done(c, id, cmd, "unknown command", "unknown")
         }
