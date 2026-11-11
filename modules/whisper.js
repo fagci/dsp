@@ -93,16 +93,17 @@ function wsSegCfg(n){ const p=n.p; return {thr:Math.pow(10,p.thr/20), pre:.35, h
 function wsEnqueue(n,audio,sec){
   if(n.draftBusy){ n.draftGen++; wapAbort(); }       // черновик этой фразы уже не нужен — итог считается сейчас
   if(n.partial){ n.partial=''; n.rev++; }
-  if(n.jobs.length>=6){ n.jobs.shift(); n.dropped++; }
   n.jobs.push({audio,sec:Math.max(0,sec-audio.length/16000)});
+  while(n.jobs.length>1 && wsQueueSec(n.jobs)>120){ n.jobs.shift(); n.dropped++; }     // бросаем самое старое только когда ждёт больше двух минут звука: обычно отставание гасится склейкой
   wsPump(n);
 }
 function wsPump(n){
   if(n.busy || !n.jobs.length) return;
-  const j=n.jobs.shift(), cfg=wsCfg(n), gen=n.gen; n.busy=true;
+  let j; if(n.jobs.length>=2){ const m=wsMergeJobs(n.jobs,28,.3); n.jobs.splice(0,m.taken); j=m.job; if(j.merged) n.mergedN=(n.mergedN||0)+j.merged; } else j=n.jobs.shift();     // очередь копится — склеиваем фразы в одно окно
+  const cfg=wsCfg(n), gen=n.gen; n.busy=true;
   wsRun(j.audio,cfg).then(r=>{
     if(gen!==n.gen) return;
-    const text=n.p.norep ? wsDeloop(r.text) : r.text; n.ms=r.ms; n.rtf=r.audioMs>0 ? r.ms/r.audioMs : 0;
+    const text=n.p.norep ? wsDeloop(r.text) : r.text; n.ms=r.ms; n.rtf=j.audio.length>0 ? r.ms/(j.audio.length/16) : 0;
     if(!text || (n.p.junk && (wsJunk(text) || wsLoop(text)))){ n.skipped++; return; }
     const line=n.p.stamps ? wsStamp(j.sec)+' '+text : text;
     n.text=text; n.partial=''; n.full=wsAppend(n.full,line,20000,'\n'); n.count++; n.go=true;
@@ -135,7 +136,9 @@ function wsStatus(n){
     if(n.fileInfo) bits.push(n.fileInfo); else bits.push(n.seg?.speaking ? 'hearing speech' : 'listening');
     if(n.busy || n.jobs.length) bits.push('recognising · queue '+(n.jobs.length+(n.busy ? 1 : 0)));
     else if(n.ms) bits.push(Math.round(n.ms)+' ms per phrase'+(n.rtf ? ' · ×'+n.rtf.toFixed(2)+' real time' : ''));
+    if(n.mergedN) bits.push('merged '+n.mergedN+' phrases when behind');
     if(n.dropped) bits.push('dropped '+n.dropped);
+    if(n.rtf>1.05) bits.push('slower than speech — a lighter phone model or «shorten the encoder window» keeps up');
     return bits.join(' · ');
   }
   if(n.err) return 'error: '+n.err+' (no network? Files → Offline data → «by hand» lets you open the links in a new tab and load the files)';
@@ -149,7 +152,9 @@ function wsStatus(n){
   else bits.push('listening');
   if(n.busy || n.jobs.length) bits.push('recognising · queue '+(n.jobs.length+(n.busy ? 1 : 0)));
   else if(n.ms) bits.push(Math.round(n.ms)+' ms per phrase');
+  if(n.mergedN) bits.push('merged '+n.mergedN+' phrases when behind');
   if(n.dropped) bits.push('dropped '+n.dropped);
+  if(n.rtf>1.05) bits.push('slower than speech — a smaller model keeps up');
   return bits.join(' · ');
 }
 
@@ -206,11 +211,11 @@ def({ id:'whisper', lazy:'manual', title:'Speech to Text (Whisper, neural)', cat
           {n:'norep',t:'check',d:true,label:'fight word loops («слово слово слово…»): decoder bans repeated 5-grams, long runs are collapsed'},
           {n:'stamps',t:'check',d:false,label:'time stamps [m:ss] in the transcript'},
           {n:'file',t:'button',label:'Transcribe file… / stop',fn:n=>wsPickFile(n)},
-          {n:'clear',t:'button',label:'Clear',fn:n=>{ n.full=''; n.text=''; n.count=0; n.skipped=0; n.dropped=0; n.rev++; redraw(n); }},
+          {n:'clear',t:'button',label:'Clear',fn:n=>{ n.full=''; n.text=''; n.count=0; n.skipped=0; n.dropped=0; n.mergedN=0; n.rev++; redraw(n); }},
           {n:'save',t:'button',label:'Save text',fn:n=>{ if(n.full) wsDownload(n.full,'whisper-'+Date.now()+'.txt'); }},
           {n:'custom',t:'text',d:'',label:'own model repo on huggingface.co (ONNX for Transformers.js), e.g. onnx-community/whisper-large-v3-turbo; empty — by «model»',adv:true}],
   init(n){ n.seg=null; n.segKey=''; n.sr=0; n.clock=0; n.jobs=[]; n.busy=false; n.gen=0; n.q=[]; n.text=''; n.full=''; n.count=0; n.go=false;
-           n.err=''; n.ms=0; n.skipped=0; n.dropped=0; n.rev=0; n.retryAt=0; n.fileRun=false; n.fileStop=false; n.fileInfo=''; n.pre=false; n.stat=''; n.rtf=0; n.partial=''; n.draftBusy=false; n.draftGen=0; n.draftAt=0; },
+           n.err=''; n.ms=0; n.skipped=0; n.dropped=0; n.mergedN=0; n.rev=0; n.retryAt=0; n.fileRun=false; n.fileStop=false; n.fileInfo=''; n.pre=false; n.stat=''; n.rtf=0; n.partial=''; n.draftBusy=false; n.draftGen=0; n.draftAt=0; },
   dispose(n){ n.gen++; n.jobs=[]; n.seg=null; },
   process(n,I){
     const x=I.in, sr=Eng.sr;
