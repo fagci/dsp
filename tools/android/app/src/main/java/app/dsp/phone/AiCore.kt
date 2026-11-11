@@ -44,6 +44,9 @@ object AiArgs {
     /** Потоков для LLM по умолчанию: генерация упирается в память, а не в вычисления, поэтому больше 4 только вредит (замер: 8 потоков 0.5 ток/с, 2 потока 5.2). */
     fun llmThreads(big: Int): Int = big.coerceIn(2, 4)
 
+    /** Потоков для Whisper по умолчанию: на 8 потоках фразы шли по 97 с, больше 4 не берём (остальным потокам не хватает ядер вместе с фоном). */
+    fun asrThreads(big: Int): Int = big.coerceIn(2, 4)
+
     fun bigCores(maxFreqs: List<Long>, fallbackCores: Int): Int {
         val f = maxFreqs.filter { it > 0 }
         if (f.isEmpty()) return (fallbackCores / 2).coerceIn(2, 6)
@@ -175,10 +178,13 @@ class AsrCore(private val store: ModelStore, private val make: () -> AsrEngine) 
         Loaded(true, null, e.backends(), System.currentTimeMillis() - t)
     }
 
+    /** Сегмент, который сама модель считает не речью (вероятность «тишины» выше порога), в текст не идёт: так отсекаются «Продолжение следует», «С вами был …» на шуме. */
+    companion object { const val NO_SPEECH = 0.6f }
+
     fun run(pcm: FloatArray, o: AsrOpts, sink: (AsrSeg) -> Unit): Ran {
         val e = synchronized(lock) { eng } ?: return Ran("no model loaded (asr.load)", "", 0, 0, 0)
         val t = System.currentTimeMillis(); val parts = ArrayList<String>()
-        val err = synchronized(e) { e.run(pcm, o) { s -> if (s.text.isNotBlank()) parts.add(s.text.trim()); sink(s) } }
+        val err = synchronized(e) { e.run(pcm, o) { s -> if (s.text.isNotBlank() && s.noSpeech < NO_SPEECH) parts.add(s.text.trim()); sink(s) } }
         return Ran(err, parts.joinToString(" "), parts.size, System.currentTimeMillis() - t, pcm.size * 1000L / 16000)
     }
 

@@ -98,7 +98,7 @@ class AiHub(private val ctx: Context, private val emit: Emit,
                 }
                 "asr.run" -> {
                     val pcm = AiArgs.pcm(j.optString("pcm"), AiArgs.MAX_SAMPLES) ?: return Reply.done(c, id, cmd, "pcm: base64 of 16 kHz 16-bit mono little-endian, up to 10 minutes")
-                    val o = AsrOpts(lang = AiArgs.lang(j.optString("lang")), translate = j.optBoolean("translate"), threads = j.optInt("threads", 0).takeIf { it > 0 } ?: fastThreads,
+                    val o = AsrOpts(lang = AiArgs.lang(j.optString("lang")), translate = j.optBoolean("translate"), threads = j.optInt("threads", 0).takeIf { it > 0 } ?: AiArgs.asrThreads(fastThreads),
                         prompt = j.optString("prompt").take(400), beam = j.optInt("beam", 1).coerceIn(1, 8), temperature = j.optDouble("temperature", 0.0).toFloat().coerceIn(0f, 1f),
                         noContext = !j.optBoolean("context"), fast = j.optBoolean("fast"), suppressNst = j.optBoolean("suppressNst", true))
                     asr.execute {

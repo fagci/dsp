@@ -144,7 +144,7 @@ function wsStatus(n){
     if(wapFastOn(cfg.app)) bits.push('short window');
     if(n.mergedN) bits.push('merged '+n.mergedN+' phrases when behind');
     if(n.dropped) bits.push('dropped '+n.dropped);
-    if(n.busy && n.busyAt && performance.now()-n.busyAt>20000) bits.push('this phrase has been running for '+Math.round((performance.now()-n.busyAt)/1000)+' s — the model is too heavy for this phone: pick medium-q5_0 or small-q5_1');
+    if(n.busy && n.busyAt && performance.now()-n.busyAt>20000) bits.push('this phrase has been running for '+Math.round((performance.now()-n.busyAt)/1000)+' s — the model is too heavy for this phone'+(wapLighter(cfg.app.name) ? ': pick '+wapLighter(cfg.app.name) : ' — pick a lighter one'));
     else if(n.rtf>1.05) bits.push(wapFastOn(cfg.app) ? 'slower than speech even with the short window — pick a lighter model (medium-q5_0, small-q5_1)' : 'slower than speech — set the short window to auto / on, or pick a lighter model');
     return bits.join(' · ');
   }
