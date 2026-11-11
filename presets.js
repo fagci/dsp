@@ -795,6 +795,7 @@ const PRESET_CATS={
   'Band Occupancy':'Analysis & Measurement',
   'Wavelet vs FFT':'Analysis & Measurement',
   'Vibration (Accelerometer)':'Analysis & Measurement',
+  'Phone App: Accelerometer over the Direct Channel (800 Hz, no jitter)':'Analysis & Measurement',
   'Low-Frequency Sensor Spectrum':'Analysis & Measurement',
   'Low-Frequency Accelerometer: Long Averaging, 3 Axes + Magnetometer Check':'Analysis & Measurement',
   'Event Capture':'Analysis & Measurement',
@@ -1553,6 +1554,23 @@ const log=addNode('recLog',460,570,{});
 log.size.w=380; applySize(log);
 addEdge(tx.id,'nmeatxt',nm.id,'text');
 addEdge(tx.id,'nused',t1.id,'in'); addEdge(tx.id,'cn0',t2.id,'in');
+addEdge(tx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: Accelerometer over the Direct Channel (800 Hz, no jitter)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Android app (tools/android): «direct sensor channel» (SensorDirectChannel, Android 8.1+). The usual way delivers sensor events through the system process with jitter and tops out near 200 Hz; here the sensor itself writes samples into shared memory and the app only reads it \u2014 a steady 50 / 200 / 800 Hz (the «sensor rate» picks the level: up to 50 \u2192 50, up to 200 \u2192 200, above \u2192 800 Hz, capped by what the phone\'s sensor can). Good for vibration and audio-band analysis.\n'+
+  'A sensor (or phone) without the direct mode quietly keeps the normal listener, so the patch always works. The records on rec carry the sensor\'s own time stamps \u2014 Rec Log keeps them as they are. Compare with the same sensor without the tick.'});
+nt.size.w=800; nt.size.h=140; applySize(nt);
+const tx=addNode('termux',40,210,{url:'ws://127.0.0.1:8765',gps:false,battery:false,accel:true,hz:'1000',direct:true});
+tx.size.w=380; tx.size.h=560; applySize(tx);
+const t1=addNode('trend',460,210,{span:20,auto:true});
+t1.size.w=360; t1.size.h=170; applySize(t1);
+const t2=addNode('trend',460,400,{span:20,auto:true});
+t2.size.w=360; t2.size.h=170; applySize(t2);
+const log=addNode('recLog',840,210,{});
+log.size.w=380; applySize(log);
+addEdge(tx.id,'ax',t1.id,'in'); addEdge(tx.id,'az',t2.id,'in');
 addEdge(tx.id,'rec',log.id,'rec');
 markWiresDirty();
 });

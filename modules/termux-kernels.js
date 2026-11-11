@@ -10,6 +10,7 @@ function termuxSub(p){ return TERMUX_SUBS.filter(k=>p[k==='mic'?'micOn':k]); }  
 function termuxSubMsg(p){
   const m={sub:termuxSub(p)}, hz=+p.hz;
   if(hz>0) m.hz=hz;
+  if(p.direct) m.direct=true;                                                        // SensorDirectChannel: приложение DSP, Android 8.1+ (иначе обычный слушатель)
   if(+p.wifiEvery>0 && p.wifi) m.wifiEvery=+p.wifiEvery;
   if(+p.cellEvery>0 && p.cell) m.cellEvery=+p.cellEvery;
   if(+p.statEvery>0 && (p.bstat || p.usage)) m.statEvery=+p.statEvery;

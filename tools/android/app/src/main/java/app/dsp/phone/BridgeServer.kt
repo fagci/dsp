@@ -22,7 +22,7 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Локальный сервер: WebSocket с JSON-записями (протокол tools/termux/bridge.mjs).
- *   ws://host:port/?token=…            {"sub":["accel","gps",…],"hz":200} → записи (массивами по ~40 мс)
+ *   ws://host:port/?token=…            {"sub":["accel","gps",…],"hz":200} → записи (массивами по ~40 мс); "direct":true — датчики через SensorDirectChannel (50 / 200 / 800 Гц без джиттера)
  *   http://host:port/status
  */
 class BridgeServer(
@@ -34,6 +34,7 @@ class BridgeServer(
     class Client(val sock: Socket) {
         @Volatile var subs: Set<String> = emptySet()
         @Volatile var hz = 0
+        @Volatile var direct = false
         @Volatile var wifiEvery = 0
         @Volatile var cellEvery = 0
         @Volatile var micHz = 0
@@ -66,6 +67,7 @@ class BridgeServer(
     data class Want(
         val subs: Set<String>, val hz: Int, val wifiEvery: Int,
         val cellEvery: Int = 5, val micHz: Int = 16000, val micSrc: String = "", val micDev: String = "", val micLow: Boolean = false, val micCh: Int = 1, val iface: String = "any", val filter: String = "", val snap: Int = 256, val bleOpts: String = "", val statEvery: Int = 1,
+        val direct: Boolean = false,
     )
 
     private class Req(val method: String, val path: String, val query: Map<String, String>, val headers: Map<String, String>)
@@ -184,7 +186,7 @@ class BridgeServer(
     fun wanted(): Want {
         val subs = HashSet<String>()
         var msrc = ""; var mdev = ""; var mlow = false; var mch = 1
-        var hz = 0; var wifi = 0; var cell = 0; var mic = 0; var iface = ""; var filter = ""; var snap = 0; var ble = ""; var stat = 0
+        var hz = 0; var wifi = 0; var cell = 0; var mic = 0; var iface = ""; var filter = ""; var snap = 0; var ble = ""; var stat = 0; var direct = false
         for (k in sinks) {
             subs.addAll(k.subs)
             if (k.hz > hz) hz = k.hz
@@ -199,6 +201,7 @@ class BridgeServer(
         for (c in clients) {
             subs.addAll(c.subs)
             if (c.hz > hz) hz = c.hz
+            if (c.direct) direct = true
             if (c.wifiEvery > 0 && (wifi == 0 || c.wifiEvery < wifi)) wifi = c.wifiEvery
             if (c.cellEvery > 0 && (cell == 0 || c.cellEvery < cell)) cell = c.cellEvery
             if (c.statEvery > 0 && (stat == 0 || c.statEvery < stat)) stat = c.statEvery
@@ -213,7 +216,7 @@ class BridgeServer(
             if (ble.isEmpty()) ble = c.bleOpts
         }
         return Want(subs, if (hz > 0) hz.coerceIn(1, 1000) else 20, if (wifi > 0) wifi else 10,
-            if (cell > 0) cell else 5, if (mic > 0) mic else 16000, msrc, mdev, mlow, mch, iface.ifEmpty { "any" }, filter, if (snap > 0) snap else 256, ble, if (stat > 0) stat else 1)
+            if (cell > 0) cell else 5, if (mic > 0) mic else 16000, msrc, mdev, mlow, mch, iface.ifEmpty { "any" }, filter, if (snap > 0) snap else 256, ble, if (stat > 0) stat else 1, direct)
     }
 
     /** Запись от источника; уйдёт подписанным клиентам в ближайшей пачке. */
@@ -458,6 +461,7 @@ class BridgeServer(
         val sub = j.optJSONArray("sub") ?: return
         c.subs = allowed(c, (0 until sub.length()).map { sub.optString(it) }.filter { it.isNotEmpty() }.toSet())
         c.hz = j.optInt("hz", 0)
+        c.direct = j.optBoolean("direct", false)
         c.wifiEvery = j.optInt("wifiEvery", 0)
         c.cellEvery = j.optInt("cellEvery", 0)
         c.micHz = j.optInt("micHz", 0)
