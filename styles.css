@@ -1881,3 +1881,12 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 .cmds-row button{flex:none;width:22px;height:18px;padding:0;font-size:9px;line-height:1;cursor:pointer;background:var(--panel2);border:1px solid var(--line);border-radius:3px;color:var(--txt)}
 .cmds-row button:hover{border-color:var(--acc)}
 .cmds-tpl{font:10px var(--mono);color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* текущий патч и флаг «изменён» в панели */
+#curPatch{max-width:30ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;padding:3px 8px;background:none;color:var(--dim);border:1px solid transparent}
+#curPatch:hover{color:var(--txt);border-color:var(--line,var(--panel2))}
+#curPatch.dirty{color:var(--acc)}
+.pcat summary .pclr{margin-left:8px;color:var(--dim);font-size:9px;text-decoration:underline;cursor:pointer}
+.pcat summary .pclr:hover{color:var(--acc)}
+.pcat summary .pclr+.cnt,.pcat summary .cnt+.pclr{margin-left:8px}
+@media (max-width:820px), (pointer:coarse){ #curPatch{order:-11;max-width:16ch} }

@@ -74,7 +74,7 @@ async function intakeFiles(files){
     }
     rest.push(f);
   }
-  if(patch){ try{ stashIfDirty(); deserialize(patch); fitViewWhenReady(); graphDirty=false; showToast('patch loaded'); }catch(e){ alert('Could not read the patch: '+e.message); } }
+  if(patch){ try{ stashIfDirty(); deserialize(patch); fitViewWhenReady(); setDirty(false); showToast('patch loaded'); }catch(e){ alert('Could not read the patch: '+e.message); } }
   if(rest.length){
     let n=Graph.nodes.find(x=>x.type==='table') || addNodeUI('table',40,40);
     await tblImport(n,rest);
