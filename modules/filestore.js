@@ -6,7 +6,7 @@
    FileStore — данные; fmMount — общий интерфейс менеджера (хлебные крошки, папки, импорт, скачивание, перенос), его же берут узлы. */
 
 const FS_SPACES=['audio','images','files'];
-const FM_SPACES=['files','audio','images','tables'];    // первый — корень, остальные лежат в нём системными папками; tables — списки Table (ListDB), см. TableStore
+const FM_SPACES=['files','audio','images','tables','mounts'];    // первый — корень, остальные лежат в нём системными папками; tables — списки Table (ListDB), см. TableStore; mounts — смонтированные папки (modules/mount.js)
 const FS_ROOT=0;                                       // корень снаружи — 0: null не попадает в индекс IndexedDB
 
 const FileStore = (() => {
@@ -459,7 +459,7 @@ const TableStore = (() => {
    Первое из spaces — корень («/»), остальные в нём системные папки; свои папки создаются где угодно. Действия — одна панель над
    отмеченным (клик — одна строка, Ctrl / Shift / ☑ — несколько): переименовать, перенести, копировать, скачать, удалить.
    Поиск по имени (в текущем хранилище), сортировка. */
-const fmBE=sp=>sp==='tables' ? TableStore : FileStore;
+const fmBE=sp=>sp==='tables' ? TableStore : sp==='mounts' ? MountStore : FileStore;
 const fmIcon=r=>{
   const m=r.mime||'';
   return r.space==='tables' ? '▦' : r.meta?.iq ? '≈' : m.startsWith('audio/') ? '♪' : m.startsWith('image/') ? '▣' : m.startsWith('video/') ? '▶' : m.startsWith('text/')||/json|xml/.test(m) ? '≡' : '·';
@@ -531,7 +531,7 @@ function fmMount(host,o={}){
   const mk=(t,title,fn)=>{ const b=document.createElement('button'); b.textContent=t; b.title=title; b.onclick=fn; return b; };
   const guard=fn=>async(...a)=>{ try{ return await fn(...a); }catch(e){ if(e.message!=='') alert(e.message||String(e)); } };
   const B=()=>fmBE(S.space);
-  const idOf=v=>S.space==='tables' || String(+v)!==v ? v : +v;      // id фото из старой базы бывают строками
+  const idOf=v=>S.space==='tables' || S.space==='mounts' || String(+v)!==v ? v : +v;      // id фото из старой базы бывают строками
   const inp=document.createElement('input'); inp.type='file'; inp.multiple=true; inp.hidden=true;
   const search=document.createElement('input'); search.type='search'; search.placeholder='search…'; search.className='fm-q';
   search.oninput=()=>{ S.q=search.value.trim().toLowerCase(); refresh(); };
@@ -543,6 +543,7 @@ function fmMount(host,o={}){
   bar.append(
     mk('＋ folder','New folder here',guard(async()=>{ const n=prompt('Folder name:'); if(n) await B().addFolder(S.space,n,S.folder); })),
     mk('⤒ import','Add files from this device',()=>inp.click()),
+    ...(spaces.includes('mounts') && typeof Mounts!=='undefined' ? [mk('⛓ mount',Mounts.app() ? 'Mount a folder of this phone: files stay where they are' : Mounts.web() ? 'Mount a folder of this computer: files stay where they are, changes are written to the disk' : 'Open a folder (read only, until the page is closed)',guard(async()=>{ const m=await Mounts.pick(); if(m) go('mounts',m.id+':'); }))] : []),
     mk('⇩ offline','Download data for working without a network (map, satellites, models, dictionaries)',()=>{ offP.hidden=!offP.hidden; if(!offP.hidden) OfflineData.draw(offP); }),
     inp);
   o.toolbar?.(bar);
@@ -558,7 +559,7 @@ function fmMount(host,o={}){
   async function addFiles(fs){
     const q=await FileStore.quota();
     for(const f of fs){
-      if(q && f.size>q.free){ alert('Not enough space for '+f.name+': needs '+fmSize(f.size)+', free '+fmSize(q.free)); continue; }
+      if(S.space!=='mounts' && q && f.size>q.free){ alert('Not enough space for '+f.name+': needs '+fmSize(f.size)+', free '+fmSize(q.free)); continue; }
       try{ await B().importFile(S.space,f,S.folder); }
       catch(e){ alert('Could not add '+f.name+': '+e.message); }
     }
@@ -610,7 +611,8 @@ function fmMount(host,o={}){
       act('⧉','Copy',()=>true,async s=>{ const t=await fmPickFolder(S.space,null,'Copy to…'); if(t===undefined) throw new Error('');
         for(const d of s.d) await B().copyFolder(d,t); for(const f of s.f) await B().copy(f,t); }),
       act('⤓','Download files',s=>s.f.length>0,async s=>{ for(const f of s.f){ const r=await B().get(f); if(r) await fmDownload(r); } }),
-      act('✕','Delete (can be undone)',()=>true,async s=>{
+      act('✕',S.space==='mounts' ? 'Delete from the real folder (a mounted folder itself is only unmounted)' : 'Delete (can be undone)',()=>true,async s=>{
+        if(S.space==='mounts' && !confirm('Delete '+(s.f.length+s.d.length)+' item(s) from the real folder? This cannot be undone.\n(A mounted folder itself is only disconnected — its files stay.)')) throw new Error('');
         const undo=await B().snapshot(s);
         for(const d of s.d) await B().deleteFolder(d);
         if(s.f.some(f=>S.selected?.id===f)) select(null);
@@ -624,7 +626,11 @@ function fmMount(host,o={}){
     const g=++S.pg; prev.textContent=''; prev.hidden=!rec;
     for(const u of S.pu) URL.revokeObjectURL(u); S.pu=[];                  // свои адреса: список перерисовывается чаще, чем меняется выбор
     if(!rec) return;
-    const m=rec.mime||'', url=()=>{ const u=URL.createObjectURL(rec.blob); S.pu.push(u); return u; };
+    const m=rec.mime||'';
+    if(rec.getBlob && !rec.blob && /^(image|video|audio)\//.test(m) && (rec.size||0)<=33554432){      // файл смонтированной папки: читается по требованию
+      try{ const b=await rec.getBlob(); if(g!==S.pg) return; rec={...rec,blob:b}; }catch(e){ if(g===S.pg) prev.textContent=e.message||String(e); return; }
+    }
+    const url=()=>{ const u=URL.createObjectURL(rec.blob); S.pu.push(u); return u; };
     if(m.startsWith('image/') && rec.blob){ const im=document.createElement('img'); im.src=url(); prev.append(im); }
     else if(m.startsWith('video/') && rec.blob){ const v=document.createElement('video'); v.src=url(); v.controls=true; v.preload='metadata'; prev.append(v); }
     else if(m.startsWith('audio/') && rec.blob && !rec.meta?.peaks && !o.previewExtra){ const a=document.createElement('audio'); a.src=url(); a.controls=true; a.preload='metadata'; prev.append(a); }
@@ -638,10 +644,18 @@ function fmMount(host,o={}){
   }
   async function refresh(){
     const g=++S.gen, be=B(), srch=!!S.q;
-    const [folders0,files0,path,use]=await Promise.all([
-      srch ? be.allFolders(S.space) : be.listFolders(S.space,S.folder),
-      srch ? be.listAll(S.space) : be.list(S.space,S.folder),
-      be.path(S.folder),be.usage(S.space)]);
+    let folders0,files0,path,use;
+    try{
+      [folders0,files0,path,use]=await Promise.all([
+        srch ? be.allFolders(S.space) : be.listFolders(S.space,S.folder),
+        srch ? be.listAll(S.space) : be.list(S.space,S.folder),
+        be.path(S.folder),be.usage(S.space)]);
+    }catch(e){                                         // смонтированная папка недоступна (нет разрешения, отключена, приложение закрыто)
+      if(S.dead || g!==S.gen || S.space!=='mounts') throw e;
+      list.textContent=''; const em=document.createElement('div'); em.className='fm-empty'; em.textContent=e.message||String(e); list.append(em);
+      crumbs.textContent=''; const up=document.createElement('button'); up.textContent='‹ mounts'; up.onclick=()=>go('mounts',null); crumbs.append(up);
+      info.textContent='click the folder again after allowing access'; return;
+    }
     if(S.dead || g!==S.gen) return;
     const sg=S.desc ? -1 : 1;
     const folders=folders0.filter(f=>!srch || f.name.toLowerCase().includes(S.q)).sort((a,b)=>FM_SORT.name(a,b)*(S.sort==='name' ? sg : 1));
@@ -712,7 +726,8 @@ function fmMount(host,o={}){
       list.append(row);
     }
     if(!list.children.length){ const e=document.createElement('div'); e.className='fm-empty'; e.textContent=srch ? 'nothing found' : 'empty — import files or drop them here'; list.append(e); }
-    info.textContent=use.files+(S.space==='tables' ? ' table' : ' file')+(use.files===1 ? '' : 's')+' · '+fmSize(use.bytes)+' in '+S.space;
+    if(S.space==='mounts') info.textContent=S.folder==null ? Mounts.list().filter(m=>!m.hidden).length+' mounted folder(s) — "⛓ mount" adds one' : files.length+' file(s), '+folders.length+' folder(s) here · changes go straight to the real folder';
+    else info.textContent=use.files+(S.space==='tables' ? ' table' : ' file')+(use.files===1 ? '' : 's')+' · '+fmSize(use.bytes)+' in '+S.space;
     drawDisk();
   }
   async function drawDisk(){

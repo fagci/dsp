@@ -640,6 +640,7 @@ const PRESET_CATS={
   'Color Meter and Spectrometer (camera + grating)':'Images & TV',
   'Screen: Live Pixel Color + Video Recording':'Images & TV',
   'Files over WebRTC':'Network & IoT',
+  'Mounted Folders: Write, List, Read (Loopback)':'Tools',
   'Call: voice, video, chat and files over WebRTC':'Network & IoT',
   'WebRTC: audio and video of the graph over a connection':'Network & IoT',
   'WebRTC Tunnel: Any Protocol Between Two Phones':'Network & IoT',
@@ -10624,6 +10625,23 @@ if(mqtt){
 markWiresDirty();
 });
 }
+preset('Mounted Folders: Write, List, Read (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Real folders inside the graph. In Files press «⛓ mount» and pick a folder: on a computer (Chrome / Edge / Opera) the files stay on the disk and changes are written there; in the DSP app on Android the system folder picker opens (SD card, Downloads, Documents…) and the access is remembered; in Firefox / Safari the folder is opened read-only until the page is closed. The folder then lives in Files → mounts like any other.\n'+
+  'This patch needs no mounted folder: the name «memory» is a scratch folder in memory. Text Source (repeats every 3 s, or press Send) → Text → Bytes → Mounted Folder (write to demo/hello.txt) → the same node reads it back (read) → Bytes → Text. Type the name of your mounted folder into «mount» to do the same on the real disk (delete removes real files: no undo). Not for radio: nothing is transmitted.'});
+nt.size.w=1000; nt.size.h=140; applySize(nt);
+const ts=addNode('textsrc',40,200,{text:'hello from the graph',repeat:3}); ts.size.w=280; ts.size.h=150; applySize(ts);
+const tb=addNode('txtToBin',360,200,{enc:'utf8',name:'hello.txt'});
+const wr=addNode('mountfs',660,200,{mount:'memory',action:'write',path:'demo/hello.txt'}); wr.size.w=360; wr.size.h=260; applySize(wr);
+const ls=addNode('mountfs',660,500,{mount:'memory',action:'list',path:'demo'}); ls.size.w=360; ls.size.h=240; applySize(ls);
+const rd=addNode('mountfs',1060,200,{mount:'memory',action:'read',path:'demo/hello.txt'}); rd.size.w=360; rd.size.h=260; applySize(rd);
+const bt=addNode('binToTxt',1460,200,{enc:'utf8'});
+addEdge(ts.id,'text',tb.id,'text'); addEdge(tb.id,'bin',wr.id,'bin');
+addEdge(ts.id,'go',wr.id,'go');
+addEdge(wr.id,'new',ls.id,'go'); addEdge(wr.id,'new',rd.id,'go');
+addEdge(rd.id,'bin',bt.id,'bin');
+markWiresDirty();
+});
 preset('Files over WebRTC', function(){
 clearAll();
 const nt=addNode('note',40,20,{text:'Direct file transfer between two browsers. One side presses Create offer in WebRTC Data and sends the code to the other, who presses Accept offer and sends the answer back (Apply answer). Then tap a file in Files and press «Send selected →»; or press Send file… in WebRTC Data to send a file from this device. Received files land in the Received folder of the matching storage (audio / images / files) of the Files node. Text, games and files share one connection, a file does not hold the chat.'});
