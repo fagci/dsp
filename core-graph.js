@@ -86,6 +86,12 @@ ghostDrop(n);
 n.el.remove();
 markTopoDirty();
 }
+const wireArm={e:null,path:null,t:0};
+function wireArmSet(e,path){
+clearTimeout(wireArm.t); wireArm.path?.classList.remove('arm');
+wireArm.e=e; wireArm.path=e?path:null;
+if(e){ path.classList.add('arm'); showToast('Tap the wire again to delete it',2500); wireArm.t=setTimeout(()=>wireArmSet(null),2500); }
+}
 function addEdge(from,fp,to,tp){
 if(from===to) return;
 if(!Graph.map[from] || !Graph.map[to]) return;    // узел не создался (неизвестный тип и т.п.) — тихо пропускаем связь
@@ -104,7 +110,11 @@ const hit=document.createElementNS('http://www.w3.org/2000/svg','path');
 hit.setAttribute('fill','none'); hit.setAttribute('stroke','transparent');
 hit.setAttribute('vector-effect','non-scaling-stroke');    // так и хитбокс не "худеет" при отдалении
 hit.setAttribute('stroke-width','10'); hit.setAttribute('class','whit'); hit.style.cursor='pointer';
-hit.addEventListener('click',()=>{ delEdge(e); Undo.push(); });
+// мышь — клик удаляет сразу; палец — первый тап только выделяет провод (в провод легко попасть, целясь в пин или двигая холст), второй удаляет
+let ptype='mouse'; hit.addEventListener('pointerdown',ev=>{ ptype=ev.pointerType; });
+hit.addEventListener('click',()=>{
+if(ptype!=='mouse' && wireArm.e!==e){ wireArmSet(e,path); return; }
+wireArmSet(null); delEdge(e); Undo.push(); });
 const ends=()=>[Graph.map[from]?.ports?.o?.[fp],Graph.map[to]?.ports?.i?.[tp]];
 hit.addEventListener('pointerenter',ev=>{ path.classList.add('hv'); ends().forEach(p=>p?.classList.add('hot')); wireProbeOn?.(e,ev); });   // концы провода подсвечены, даже если середина под узлом
 hit.addEventListener('pointerleave',()=>{ path.classList.remove('hv'); ends().forEach(p=>p?.classList.remove('hot')); wireProbeOff?.(e); });
@@ -2964,11 +2974,11 @@ return { x:(clientX-r.left)/view.k-view.x, y:(clientY-r.top)/view.k-view.y };
 const isCoarse=matchMedia('(pointer:coarse)').matches;
 const toastEl=document.getElementById('toast');       // нет в index.php — showToast тогда просто ничего не делает
 let toastTimer=null;
-function showToast(text){                            // короткое уведомление поверх канваса
+function showToast(text,ms){                            // короткое уведомление поверх канваса
 if(!toastEl) return;
 toastEl.textContent=text; toastEl.classList.add('show');
 clearTimeout(toastTimer);
-toastTimer=setTimeout(()=>toastEl.classList.remove('show'),1300);
+toastTimer=setTimeout(()=>toastEl.classList.remove('show'),ms||1300);
 }
 function makeCatItem(m){
 const b=document.createElement('button'); b.className='pitem'; b.draggable=true;

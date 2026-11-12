@@ -375,9 +375,10 @@ body.noedit #bar .ed{display:none}
    при наведении (.hv) провод становится ярче и толще.
    hit-путь тоже сюда попадает, но у него stroke:transparent — opacity на нём не видна */
 #wires path{opacity:.55;transition:opacity .12s}
-#wires path.hv{opacity:1;stroke-width:2.6}
+#wires path.hv,#wires path.arm{opacity:1;stroke-width:2.6}
+#wires path.arm{stroke:var(--err);stroke-dasharray:6 4}      /* тач: провод выбран первым тапом, второй удалит */
 #wires path.hl{opacity:1;stroke-width:2.2}
-#wires.hasSel path:not(.hl):not(.hv):not(.whit){opacity:.3}
+#wires.hasSel path:not(.hl):not(.hv):not(.arm):not(.whit){opacity:.3}
 @media (pointer:coarse){ #wires path.whit{stroke-width:20px} }   /* палец шире курсора */
 /* тач: зона касания пина тянется наружу (к соседним узлам), а не вверх-вниз — зоны соседних пинов не перекрываются (шаг 27px) */
 @media (pointer:coarse){
@@ -2011,3 +2012,10 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 /* пробник провода (modules/wireprobe.js) */
 .wprobe{position:fixed;z-index:90;pointer-events:none;max-width:min(380px,90vw);background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:4px;padding:5px 8px;font:11px/1.45 ui-monospace,monospace;box-shadow:0 2px 8px #0006;overflow-wrap:anywhere}
 .wprobe i{opacity:.6}.wprobe .werr{color:var(--err)}
+
+/* палец: кнопки справки и панели Power — под касание (были 26 и 19 px высотой, флажки 13 px) */
+@media (pointer:coarse){
+  #helpPanel .hp-b{min-width:40px;min-height:40px} #helpPanel .hp-q{min-height:40px;font-size:16px}
+  #powerPanel .pp-s button{min-height:36px;padding:1px 14px} #powerPanel input[type=checkbox]{width:22px;height:22px}
+  #powerPanel .pp-r{min-height:32px} #powerPanel .pp-z{padding:6px 10px;font-size:14px}
+}
