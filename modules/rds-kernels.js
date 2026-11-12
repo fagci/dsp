@@ -185,3 +185,36 @@ function rdsPsView(s){
   let o=''; for(let i=0;i<8;i++) o+=(s.psMask>>>i)&1 ? s.ps[i] : '·';
   return s.psMask ? o : '';
 }
+
+/* ---------- сборка (зеркало rdsParserMake: поля → биты с настоящими контрольными словами) ---------- */
+const RDSB_OFF=[0x0FC,0x198,0x168,0x1B4], RDSB_OFFC2=0x350;
+const rdsbSyn=w=>{ let r=0; for(let i=25;i>=0;i--){ r=(r<<1)|((w>>>i)&1); if(r&0x400) r^=0x5B9; } return r&0x3FF; };
+const rdsbBlock=(data,off)=>((data<<10)|(rdsbSyn(data<<10)^off))>>>0;
+const rdsbBitsOf=(w,n)=>Array.from({length:n},(_,i)=>(w>>>(n-1-i))&1);
+const rdsbCh=c=>typeof c==='string' ? (c.charCodeAt(0)&255) : c;
+// одна группа → 104 бита; c2 — блок C' (версия B)
+function rdsBuildGroup(pi,type,ver,tp,pty,low5,c,d,c2){
+  const b=(type<<12)|(ver<<11)|(tp<<10)|(pty<<5)|(low5&31);
+  return [rdsbBlock(pi,RDSB_OFF[0]),rdsbBlock(b,RDSB_OFF[1]),rdsbBlock(c,c2 ? RDSB_OFFC2 : RDSB_OFF[2]),rdsbBlock(d,RDSB_OFF[3])].flatMap(x=>rdsbBitsOf(x,26));
+}
+// o {pi,pty,tp,ta,ms,di:[4],ps (8 симв.),rt (до 64),rtAB,af:[кГц],ct:{ts,off}} → битовый массив (PS ×4 группы 0A, RT ×16 групп 2A, 4A при ct); repeat — сколько раз повторить
+function rdsBuild(o){
+  const pi=o.pi, pty=o.pty||0, tp=o.tp?1:0, bits=[], di=o.di||[0,0,0,0];
+  const ps=String(o.ps==null ? '' : o.ps).padEnd(8,' ').slice(0,8), af=(o.af||[]).filter(k=>k>=87600 && k<=107900);
+  const lst=af.length ? [224+Math.min(af.length,7),...af.slice(0,7).map(k=>(k-87500)/100)] : []; while(lst.length<8) lst.push(205);   // 224+N, затем частоты; 205 — заполнитель
+  for(let seg=0;seg<4;seg++)
+    bits.push(...rdsBuildGroup(pi,0,0,tp,pty,((o.ta?1:0)<<4)|((o.ms==null ? 1 : o.ms)<<3)|((di[seg]?1:0)<<2)|seg,(lst[seg*2]<<8)|lst[seg*2+1],(rdsbCh(ps[seg*2])<<8)|rdsbCh(ps[seg*2+1])));
+  if(o.rt!=null){
+    const rt=String(o.rt).slice(0,63)+'\r', n=Math.ceil(rt.length/4), pad=rt.padEnd(n*4,' ');
+    for(let a=0;a<n;a++){
+      const t=[...pad.slice(a*4,a*4+4)].map(rdsbCh);
+      bits.push(...rdsBuildGroup(pi,2,0,tp,pty,((o.rtAB?1:0)<<4)|a,(t[0]<<8)|t[1],(t[2]<<8)|t[3]));
+    }
+  }
+  if(o.ct){
+    const t=o.ct.ts, mjd=Math.floor(t/86400000)+40587, h=Math.floor(t%86400000/3600000), mi=Math.floor(t%3600000/60000);
+    const off=Math.round((o.ct.off||0)/30), offw=(off<0 ? 32 : 0)|Math.abs(off);
+    bits.push(...rdsBuildGroup(pi,4,0,tp,pty,mjd>>>15,((mjd&0x7FFF)<<1)|(h>>>4),((h&15)<<12)|(mi<<6)|offw));
+  }
+  return bits;
+}

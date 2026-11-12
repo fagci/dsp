@@ -191,3 +191,37 @@ function adsbRecs(n,changed){
   }
   return recs;
 }
+
+/* ---------- сборка кадра DF17 (зеркало adsbParse: ident, положение в воздухе, скорость) ---------- */
+function adsbSet(b,from,to,v){ for(let i=to-1;i>=from-1;i--){ if(v%2) b[i>>3]|=0x80>>(i&7); v=Math.floor(v/2); } }
+// высота, фт → AC12 (Q-бит, шаг 25 фт)
+function adsbAc12Enc(ft){ const n=Math.max(0,Math.min(2047,Math.round((ft+1000)/25))); return ((n>>5)<<6)|(((n>>4)&1)<<5)|0x10|(n&15); }
+// CPR: широта/долгота → 17-битные доли (чётный/нечётный кадр)
+function adsbCpr(lat,lon,odd){
+  const dlat=360/(odd ? 59 : 60), yz=Math.floor(131072*cprMod(lat,dlat)/dlat+0.5);
+  const rlat=dlat*(yz/131072+Math.floor(lat/dlat)), dlon=360/Math.max(cprNL(rlat)-(odd?1:0),1);
+  return {odd:odd?1:0, lat:(yz&0x1FFFF)/131072, lon:(Math.floor(131072*cprMod(lon,dlon)/dlon+0.5)&0x1FFFF)/131072};
+}
+// m: {icao:'4840D6', ca, tc, flight, cat | alt, cpr{odd,lat,lon} или lat/lon/odd | gs, track, vr} → 14 байт с CRC в хвосте
+function adsbBuild(m){
+  const b=new Uint8Array(14); adsbSet(b,1,5,17); adsbSet(b,6,8,m.ca==null ? 5 : m.ca);
+  adsbSet(b,9,32,parseInt(String(m.icao).replace(/[^0-9a-f]/gi,''),16));
+  let tc=m.tc;
+  if(m.flight!=null){
+    const cat=m.cat||'A0'; tc=0x45-cat.charCodeAt(0); adsbSet(b,33,37,tc); adsbSet(b,38,40,+cat[1]||0);
+    const s=String(m.flight).toUpperCase().padEnd(8,' ');
+    for(let k=0;k<8;k++){ const i=ADSB_CS.indexOf(s[k]); adsbSet(b,41+6*k,46+6*k,i<0 ? 32 : i); }
+  } else if(m.gs!=null){
+    tc=19; adsbSet(b,33,37,19); adsbSet(b,38,40,1);
+    const r=(m.track||0)*Math.PI/180, e=Math.round(m.gs*Math.sin(r)), n=Math.round(m.gs*Math.cos(r));
+    adsbSet(b,46,46,e<0 ? 1 : 0); adsbSet(b,47,56,Math.min(1023,Math.abs(e)+1)); adsbSet(b,57,57,n<0 ? 1 : 0); adsbSet(b,58,67,Math.min(1023,Math.abs(n)+1));
+    if(m.vr!=null){ adsbSet(b,68,68,1); adsbSet(b,69,69,m.vr<0 ? 1 : 0); adsbSet(b,70,78,Math.min(511,Math.round(Math.abs(m.vr)/64)+1)); }
+  } else {
+    tc=tc||11; adsbSet(b,33,37,tc);
+    const c=m.cpr||adsbCpr(m.lat,m.lon,m.odd);
+    if(m.alt!=null) adsbSet(b,41,52,adsbAc12Enc(m.alt));
+    adsbSet(b,54,54,c.odd); adsbSet(b,55,71,Math.round(c.lat*131072)); adsbSet(b,72,88,Math.round(c.lon*131072));
+  }
+  const p=modesCrc(b,11); b[11]=p>>16; b[12]=(p>>8)&255; b[13]=p&255;
+  return b;
+}

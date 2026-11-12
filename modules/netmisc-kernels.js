@@ -245,3 +245,30 @@ async function smtpSend(ns,o){
     return fin.text;
   } finally { await c.close(); }
 }
+
+/* ---------- сборка NTP и TFTP (зеркало ntpParse / tftpParse) ---------- */
+const ntpPutTs=(dv,o,ms)=>{ const s=ms/1000+NTP_EPOCH, sec=Math.floor(s); dv.setUint32(o,sec>>>0); dv.setUint32(o+4,Math.floor((s-sec)*4294967296)>>>0); };
+// ответ сервера: o {li,version,mode,stratum,poll,precision,refid,rx (приняли, мс от 1970),tx (отправили)}
+function ntpBuild(o){
+  const p=new Uint8Array(48), dv=new DataView(p.buffer);
+  p[0]=((o.li||0)<<6)|(((o.version==null ? 4 : o.version)&7)<<3)|((o.mode==null ? 4 : o.mode)&7);
+  p[1]=o.stratum==null ? 2 : o.stratum; p[2]=o.poll==null ? 6 : o.poll; p[3]=(o.precision==null ? -20 : o.precision)&255;
+  const r=String(o.refid==null ? '' : o.refid);
+  if(/^\d+\.\d+\.\d+\.\d+$/.test(r)) r.split('.').forEach((x,i)=>{ p[12+i]=+x&255; });
+  else for(let i=0;i<4 && i<r.length;i++) p[12+i]=r.charCodeAt(i)&255;
+  ntpPutTs(dv,32,o.rx); ntpPutTs(dv,40,o.tx);
+  return p;
+}
+// o: {op, file, mode, opts} / {op, blk, data} / {op, code, msg}
+function tftpBuild(o){
+  const z=new Uint8Array([0]), op=o.op, hd=new Uint8Array([0,op]), W=(...n)=>new Uint8Array(n);
+  if(op===3 || op===4) return nsCat([hd,W((o.blk>>8)&255,o.blk&255),op===3 ? (o.data||new Uint8Array(0)) : new Uint8Array(0)]);
+  if(op===5) return nsCat([hd,W((o.code>>8)&255,o.code&255),nsEnc(o.msg||''),z]);
+  if(op===1 || op===2 || op===6){
+    const parts=[hd];
+    if(op!==6) parts.push(nsEnc(o.file||''),z,nsEnc(o.mode||'octet'),z);
+    for(const k in (o.opts||{})) parts.push(nsEnc(k),z,nsEnc(String(o.opts[k])),z);
+    return nsCat(parts);
+  }
+  throw new Error('unknown TFTP opcode: '+op);
+}

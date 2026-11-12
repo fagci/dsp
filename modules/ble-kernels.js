@@ -68,3 +68,22 @@ function bleAdBytes(e){
   }
   return Uint8Array.from(out);
 }
+
+// значение → байты GATT-характеристики (зеркало bleDecode); возвращает Uint8Array
+function bleEncode(v,fmt){
+  const dv=new DataView(new ArrayBuffer(8)); let n=0; v=+v;
+  switch(fmt){
+    case 'uint8': case 'battery %': dv.setUint8(0,v); n=1; break;
+    case 'int8': dv.setInt8(0,v); n=1; break;
+    case 'uint16 LE': dv.setUint16(0,v,true); n=2; break;
+    case 'int16 LE': dv.setInt16(0,v,true); n=2; break;
+    case 'uint32 LE': dv.setUint32(0,v,true); n=4; break;
+    case 'int32 LE': dv.setInt32(0,v,true); n=4; break;
+    case 'float32 LE': dv.setFloat32(0,v,true); n=4; break;
+    case 'heart rate (bpm)': if(v<256){ dv.setUint8(0,0); dv.setUint8(1,v); n=2; } else { dv.setUint8(0,1); dv.setUint16(1,v,true); n=3; } break;
+    case 'temperature (°C)': {               // флаги 0 (°C) + FLOAT-32: мантисса 24 бита со знаком, десятичная экспонента -2
+      const m=Math.round(v*100); dv.setUint8(0,0); dv.setUint32(1,((m&0xFFFFFF)|(0xFE<<24))>>>0,true); n=5; break; }
+    default: return new Uint8Array(0);
+  }
+  return new Uint8Array(dv.buffer,0,n);
+}

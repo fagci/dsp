@@ -85,3 +85,47 @@ function odidLine(line){
   if(/^[0-9a-f\s:]{50,}$/i.test(t)) return {transport:null, rssi:null, mac:'', msgs:odidParse(odidHex(t))};
   return null;
 }
+
+/* ---------- сборка (зеркало odidMessage / odidParse) ---------- */
+const ODID_KIND={basic:0, location:1, auth:2, selfid:3, system:4, operator:5};
+const odidPutStr=(b,o,n,s)=>{ s=String(s==null ? '' : s); for(let i=0;i<n && i<s.length;i++) b[o+i]=s.charCodeAt(i)&255; };
+const odidPutI32=(b,o,v)=>{ v=Math.round(v)|0; b[o]=v&255; b[o+1]=(v>>8)&255; b[o+2]=(v>>16)&255; b[o+3]=(v>>24)&255; };
+const odidPutU16=(b,o,v)=>{ v=Math.max(0,Math.min(65535,Math.round(v))); b[o]=v&255; b[o+1]=v>>8; };
+const odidPutAlt=(b,o,v)=>odidPutU16(b,o,v==null ? 0 : Math.max(1,(v+1000)*2));    // 0 — неизвестно
+const odidPutLL=(b,o,lat,lon)=>{ if(lat==null || lon==null){ odidPutI32(b,o,0); odidPutI32(b,o+4,0); } else { odidPutI32(b,o,lat*1e7); odidPutI32(b,o+4,lon*1e7); } };
+// m — те же поля, что даёт odidMessage (kind, ver, idType/uaType, lat, lon, …) → 25 байт
+function odidBuild(m){
+  const type=ODID_KIND[m.kind]; if(type===undefined) throw new Error('unknown ODID message kind: '+m.kind);
+  const b=new Uint8Array(25); b[0]=(type<<4)|((m.ver==null ? 2 : m.ver)&15);
+  switch(type){
+    case 0: b[1]=((m.idType||0)<<4)|((m.uaType||0)&15); odidPutStr(b,2,20,m.id); break;
+    case 1: {
+      const dir=m.dir==null ? 361 : ((m.dir%360)+360)%360, ew=dir>=180 ? 1 : 0;
+      const sp=m.speed, mult=sp!=null && sp>63.75 ? 1 : 0;
+      b[1]=((m.status||0)<<4)|(m.heightRef==='ground' ? 4 : 0)|(ew<<1)|mult;
+      b[2]=Math.round(dir-(ew ? 180 : 0)) & 255;
+      b[3]=sp==null ? 255 : Math.min(254,Math.round(mult ? (sp-63.75)/0.75 : sp/0.25));
+      b[4]=m.vspeed==null ? 63 : Math.round(m.vspeed/0.5)&255;
+      odidPutLL(b,5,m.lat,m.lon);
+      odidPutAlt(b,13,m.altBaro); odidPutAlt(b,15,m.altGeo); odidPutAlt(b,17,m.height);
+      odidPutU16(b,21,m.ts==null ? 0xFFFF : m.ts*10);
+      break; }
+    case 2: b[1]=((m.authType||0)<<4)|((m.page||0)&15); break;
+    case 3: b[1]=m.descType||0; odidPutStr(b,2,23,m.text); break;
+    case 4:
+      b[1]=(m.opLocType||0)&3; odidPutLL(b,2,m.opLat,m.opLon);
+      odidPutU16(b,10,m.areaCount==null ? 1 : m.areaCount); b[12]=Math.min(255,Math.round((m.areaRadius||0)/10));
+      odidPutAlt(b,13,m.areaCeil); odidPutAlt(b,15,m.areaFloor);
+      b[17]=((m.category||0)<<4)|((m.class||0)&15); odidPutAlt(b,18,m.opAlt);
+      odidPutI32(b,20,m.time ? Math.round(m.time/1000)-ODID_EPOCH : 0);
+      break;
+    case 5: b[1]=m.opIdType||0; odidPutStr(b,2,20,m.id); break;
+  }
+  return b;
+}
+// список сообщений → Message Pack (0xF), до 9 штук
+function odidPack(msgs){
+  const n=Math.min(msgs.length,9), b=new Uint8Array(3+25*n); b[0]=0xF2; b[1]=25; b[2]=n;
+  for(let i=0;i<n;i++) b.set(odidBuild(msgs[i]),3+i*25);
+  return b;
+}
