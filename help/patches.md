@@ -9,6 +9,9 @@ The **Patches** tab has built-in presets (hundreds of them: demos, radio protoco
 - **Copy link** gives an address that opens the same patch; `#p=Name` opens a patch by name, `?readonly-tiles` shows only the tiles.
 - **Share…** in the settings panel sends the patch through the system share menu.
 
+## Patch bundle (graph and offline data in one file)
+- **Settings → Patch bundle → Export…** saves the graph and the files from Files → **Offline data** that you tick (models, dictionaries, the map; up to 8 MB are ticked by default) into one `.dspbundle`; it is about 1.4× the sum of the data. **Import…** or the toolbar **Open file** loads it: the data goes back to Offline data (a file with the same name is replaced) and the graph is opened, so the patch works on another device with no network. Logic: `modules/bundle-kernels.js`, `modules/bundle.js`, `node tools/test-bundle.mjs`. Preset «Help: Patch Bundle (Graph and Offline Data in One File)».
+
 ## Autosave
 The current canvas is saved in idle time; reopening the page brings it back. Presets are rebuilt when the app updates; your saved patches are never touched.
 

@@ -142,7 +142,7 @@ function bkDialog(title,groups,goLabel,go){
   box.innerHTML='<b style="font-size:13px">'+title+'</b>';
   const checks=groups.map(g=>{
     const l=document.createElement('label'); l.style.cssText='display:flex;gap:8px;align-items:flex-start;cursor:pointer';
-    const c=document.createElement('input'); c.type='checkbox'; c.checked=true; c.style.marginTop='2px';
+    const c=document.createElement('input'); c.type='checkbox'; c.checked=!g.off; c.style.marginTop='2px';
     const s=document.createElement('span'); s.textContent=g.label;
     l.append(c,s); box.append(l); return [g,c];
   });

@@ -365,6 +365,8 @@ const PRESET_CATS={
   'Meshtastic: Chat and Nodes on the Map':'Network & IoT',
   'Help: Your First Patch':'Start Here',
   'Chain: SDR with Spectrum Steering (Pins and Chunks)':'Start Here',
+  'Help: Wire Probe (Value, Rate, Age on a Wire)':'Start Here',
+  'Help: Patch Bundle (Graph and Offline Data in One File)':'Start Here',
   'Demo: Sweep and Waterfall':'Start Here',
   'Quick Audio Recording':'Start Here',
   'Find Sound Source (by Frequency)':'Start Here',
@@ -9982,6 +9984,27 @@ nt.size.w=820; nt.size.h=210; applySize(nt);
 const rx=addNode('rtlsdr',40,290,{sr:'2400000',freq:433900000,demod:'IQ'});
 const sa=addNode('sa',420,290,{auto:true,floor:-100,top:-30,split:1}); sa.size.w=640; sa.size.h=320; applySize(sa);
 addEdge(rx.id,'spec',sa.id,'spec'); addEdge(sa.id,'centerFreq',rx.id,'steerFreq');
+markWiresDirty();
+});
+preset('Help: Wire Probe (Value, Rate, Age on a Wire)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Hover a wire (do not click: a click deletes it): a tip shows where it goes from and to, its type, the last value, blocks per second and how long ago the source produced the last block.\n'+
+  'Press ▶ first. Try the wire Oscillator → Scope (a Float32 block: range and rms) and Master Clock → Counter (a number). When a source stays silent for 1.5 s the tip adds «source is not producing».\n'+
+  'Only the source of the wire under the cursor is counted, so the probe costs nothing when you do not hover. Logic: modules/wireprobe-kernels.js, node tools/test-wireprobe.mjs.'});
+nt.size.w=900; nt.size.h=150; applySize(nt);
+const o=addNode('osc',40,220,{wave:'saw',freq:220,amp:.5});
+const sc=addNode('scope',320,220); sc.size.w=320; sc.size.h=200; applySize(sc);
+const ck=addNode('clock',40,470,{bpm:120,div:'1/4'});
+const ct=addNode('counter',320,470,{});
+addEdge(o.id,'out',sc.id,'in1'); addEdge(ck.id,'step',ct.id,'in');
+markWiresDirty();
+});
+preset('Help: Patch Bundle (Graph and Offline Data in One File)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'Settings → Patch bundle → Export… saves this graph and the offline data you tick (Files → Offline data: models, dictionaries, the map) into one .dspbundle file; Import… (or the toolbar Open file) puts the data back and loads the graph — on another device, with no network.\n'+
+  'The basemap below needs data/basemap.json, which the app keeps offline. Export the bundle, open it on a phone without a connection and the map still draws. Up to 8 MB of data is ticked by default; the file is about 1.4 times the sum. Logic: modules/bundle-kernels.js, node tools/test-bundle.mjs.'});
+nt.size.w=900; nt.size.h=140; applySize(nt);
+const mp=addNode('geoMap',40,200,{}); mp.size.w=640; mp.size.h=380; applySize(mp);
 markWiresDirty();
 });
 preset('Help: Your First Patch', function(){

@@ -106,8 +106,9 @@ hit.setAttribute('vector-effect','non-scaling-stroke');    // так и хитб
 hit.setAttribute('stroke-width','10'); hit.setAttribute('class','whit'); hit.style.cursor='pointer';
 hit.addEventListener('click',()=>{ delEdge(e); Undo.push(); });
 const ends=()=>[Graph.map[from]?.ports?.o?.[fp],Graph.map[to]?.ports?.i?.[tp]];
-hit.addEventListener('pointerenter',()=>{ path.classList.add('hv'); ends().forEach(p=>p?.classList.add('hot')); });   // концы провода подсвечены, даже если середина под узлом
-hit.addEventListener('pointerleave',()=>{ path.classList.remove('hv'); ends().forEach(p=>p?.classList.remove('hot')); });
+hit.addEventListener('pointerenter',ev=>{ path.classList.add('hv'); ends().forEach(p=>p?.classList.add('hot')); wireProbeOn?.(e,ev); });   // концы провода подсвечены, даже если середина под узлом
+hit.addEventListener('pointerleave',()=>{ path.classList.remove('hv'); ends().forEach(p=>p?.classList.remove('hot')); wireProbeOff?.(e); });
+hit.addEventListener('pointermove',ev=>wireProbeMove?.(ev));
 wires.append(hit,path); e.path=path; e.hit=hit;
 Graph.edges.push(e); edgeHl(e); syncWired(Graph.map[from]); syncWired(Graph.map[to]); markTopoDirty(); markWiresDirty();
 syncLinkedParams(Graph.map[to]); syncLinkedParams(Graph.map[from]);
@@ -3045,7 +3046,7 @@ dl(new Blob([JSON.stringify(serialize(),null,1)],{type:'application/json'}),'pat
   if(sp) sp.onclick=()=>shareFile(new Blob([JSON.stringify(serialize(),null,1)],{type:'application/json'}),'patch.json'); }
 document.getElementById('load').onclick=()=>document.getElementById('fpick').click();
 document.getElementById('fpick').onchange=e=>{ const f=e.target.files[0]; if(!f) return;
-const r=new FileReader(); r.onload=()=>{ try{ stashIfDirty(); deserialize(JSON.parse(r.result)); fitViewWhenReady(); setDirty(false); }catch(err){ alert('Could not read file: '+err.message); } };
+const r=new FileReader(); r.onload=async()=>{ try{ let o=JSON.parse(r.result); if(o && o.format===BUNDLE_FORMAT) o=await bundleRestore(o); stashIfDirty(); deserialize(o); fitViewWhenReady(); setDirty(false); }catch(err){ alert('Could not read file: '+err.message); } };
 r.readAsText(f); e.target.value=''; };
 document.getElementById('clear').onclick=()=>{
 stashIfDirty();
