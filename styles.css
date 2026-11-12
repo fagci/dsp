@@ -390,6 +390,8 @@ body.noedit #bar .ed{display:none}
 .port.lit .pin,.port:hover .pin{opacity:1}
 .port.hot .pin{box-shadow:0 0 0 3px var(--acc)}
 /* режим связывания: подходящие пины ярче и крупнее, остальные притушены, скрытые лишние подходящие раскрыты, параметры-мишени обведены */
+/* отдалённый холст / тач: подписи пинов свёрнуты в точки, пока узел не выделен и пин не нужен для связывания */
+#content.pdots .node:not(.sel) .port:not(.lk-ok):not(.lit) .pin{font-size:0;padding:0}
 #content.linking .port.lk-no .pin{opacity:.18}
 #content.linking .port.lk-ok .pin{opacity:1;box-shadow:0 0 0 2px var(--acc);filter:brightness(1.15)}
 #content.linking .col.collapsed:not(.open) .port.extra.lk-ok{display:block}
@@ -764,6 +766,7 @@ body.noedit #bar .ed{display:none}
   font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--dim);border-bottom:1px solid var(--line)}
 .pgh:hover{color:var(--txt)}
 .pgn{margin-left:auto;font-size:9px;opacity:.7;letter-spacing:0}
+.pgc{font-style:normal;color:var(--acc);opacity:1}
 .pgb{display:flex;flex-direction:column;gap:3px;padding-top:5px}
 .pgb[hidden]{display:none}
 .pgb>.prm.wide{margin:0;align-self:stretch}
@@ -777,6 +780,11 @@ body.noedit #bar .ed{display:none}
 .dash-pane.nar .node .io3>.mid>.prm,.dash-pane.nar .node .io3>.mid>.advWrap,
 .node.vtop .io3>.mid>.prm,.node.vtop .io3>.mid>.advWrap{order:1}
 .dash-pane.nar .node .io3>.mid>canvas.view.main,.node.vtop .io3>.mid>canvas.view.main{margin-top:0}
+/* тач: у узла с холстом сначала картинка, параметры — под ней (как у viewTop) */
+@media (pointer:coarse){
+  #canvas #content .node:has(>.nbody>.io3>.mid>canvas.view.main) .io3>.mid>:is(.prm,.advWrap){order:1}
+  #canvas #content .node:has(>.nbody>.io3>.mid>canvas.view.main) .io3>.mid>canvas.view.main{margin-top:0}
+}
 /* полоса вкладок над холстом (Plan Studio): остаётся и в режиме «только холст» */
 .vtabs{display:flex;gap:2px;flex:none;min-width:0}
 #canvas #content .node .io3>.mid>.vtabs{grid-column:1/-1}
