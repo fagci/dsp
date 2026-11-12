@@ -462,7 +462,7 @@ body.noedit #bar .ed{display:none}
     display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px 10px}
   #canvas #content .node .io3>.mid>.advWrap>.prm.wide{grid-column:1/-1}
   /* свёрнутый advanced — обычная ячейка, а не отдельная строка */
-  #canvas #content .node .io3>.mid>.prm.wide.advToggle{grid-column:auto;align-self:center}
+  #canvas #content .node .io3>.mid>.prm.wide.advToggle{grid-column:1/-1;align-self:stretch}
   /* на широком узле ряды галочек/ручек занимают 2 ячейки, кнопки — одну, а не всю строку */
   @container nio (min-width:480px){
     #canvas #content .node .io3>.mid,#canvas #content .node .io3>.mid>.advWrap:not([hidden]){
@@ -765,7 +765,9 @@ body.noedit #bar .ed{display:none}
   .node.sel .rz-br::after{right:9px}
   .node.sel .rz-bl::after{left:9px;transform:scaleX(-1)}
 }
-.advToggle{white-space:nowrap;cursor:pointer;color:var(--dim);font-size:10px;user-select:none;margin-top:2px}
+.advToggle{display:flex;align-items:center;gap:6px;min-height:18px;padding:2px 0;white-space:nowrap;cursor:pointer;color:var(--dim);font-size:10px;letter-spacing:.05em;text-transform:uppercase;user-select:none;margin-top:2px;border-bottom:1px solid var(--line)}
+.advToggle.closed{border-bottom-color:transparent}
+@media (pointer:coarse){ .advToggle{min-height:30px} }
 .advToggle:hover{color:var(--txt)}
 .advWrap{row-gap:11px}
 /* группы параметров (renderParamGroups): сворачиваемая секция с заголовком */
