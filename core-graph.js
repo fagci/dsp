@@ -428,7 +428,7 @@ const main=loose.filter(p=>!p.adv), adv=loose.filter(p=>p.adv);
 renderParamRows(mid,n,main);
 if(adv.length){
 const tgl=document.createElement('div'); tgl.className='prm wide advToggle';
-tgl.innerHTML=`<span class="advLbl">${n.advOpen?'▾':'▸'} advanced (${adv.length})</span>`;
+tgl.dataset.count=adv.length; paintAdvHead(n,tgl,adv);
 const wrap=document.createElement('div'); wrap.className='advWrap'; wrap.hidden=!n.advOpen;
 wrap.dataset.count=adv.length;
 renderParamRows(wrap,n,adv);
@@ -701,12 +701,19 @@ const sec=[...(n.el?.querySelectorAll('.pgrp')||[])].find(e=>e.dataset.g===name)
 if(sec) paintGroup(n,sec,!!v);
 if(typeof dashFitSoon==='function' && dashMode) dashFitSoon();
 }
+// заголовок «advanced» — как у групп параметров (.pgh): стрелка, имя, счётчик, «● N» — сколько значений изменено против умолчания
+function paramChanged(n,q){ return (q.keys||[q.n]).some((k,i)=>{ const d=Array.isArray(q.d)?q.d[i]:q.d; return d!==undefined && n.p[k]!==undefined && n.p[k]!==d; }); }
+function paintAdvHead(n,tgl,adv){
+  const chg=adv.filter(q=>paramChanged(n,q)).length;
+  tgl.classList.toggle('closed',!n.advOpen);
+  tgl.innerHTML=`<span class="advLbl pgl">${n.advOpen?'▾':'▸'} advanced</span><span class="pgn">${chg?'<i class="pgc" title="changed from default">● '+chg+'</i> ':''}${adv.length}</span>`;
+}
 function setAdvOpen(n,v){
 n.advOpen=!!v;
 const wrap=n.el?.querySelector('.advWrap'); if(!wrap) return;
 wrap.hidden=!n.advOpen;
-const lbl=n.el.querySelector('.advToggle .advLbl');
-if(lbl) lbl.textContent=(n.advOpen?'▾':'▸')+' advanced ('+wrap.dataset.count+')';
+const tg=n.el.querySelector('.advToggle');
+if(tg) paintAdvHead(n,tg,(MOD[n.type].params||[]).filter(q=>q.adv && !q.hidden && !q.g));
 }
 const RO_CTL=/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, RO_CTL_T=/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/;
 function applySize(n){
