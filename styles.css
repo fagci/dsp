@@ -487,6 +487,19 @@ body.noedit #bar .ed{display:none}
 @media (hover:hover){   /* кнопки шапки — только у наведённого/выделенного узла; на тач-экране остаются */
   #content .node:not(:hover):not(.sel) .nhead :is(.x,.ren,.rst,.xpd,.hlp){visibility:hidden}
 }
+.nhead .more{display:none;cursor:pointer;color:var(--dim)}
+.nhead .more:hover{color:var(--acc)}
+/* process() падает — красная точка у названия (в точке LOD — красное кольцо) */
+.node.has-err:not(.lod-dot) .ttl::after{content:'●';color:#e05c5c;margin-left:5px;font-size:9px}
+#content .node.has-err.lod-dot{box-shadow:0 0 0 2px #e05c5c,0 2px 8px #0006}
+/* тач: в шапке остаются заголовок, «развернуть» и «⋯»; остальное — в меню (openNodeMenu) */
+@media (pointer:coarse){
+  #content .node .nhead :is(.fsb,.pipb,.wpb,.flb,.hlp,.rst,.ren,.x){display:none}
+  #content .node .nhead .more{display:flex;align-self:stretch;align-items:center;justify-content:center;min-width:36px;margin:-8px -2px -8px 0;padding:0 8px}
+  #content .node .nhead .more .i{width:20px;height:20px}
+  #content .node.lod-dot .nhead .more{display:none}
+}
+.dash-menu button.danger{color:#e05c5c}
 .nhead .ren:hover,.nhead .rst:hover,.nhead .xpd:hover,.nhead .hlp:hover{color:var(--acc);opacity:1}
 .nhead .x:hover{color:#e05c5c}
 .nbody{padding:0}
