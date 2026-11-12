@@ -32,6 +32,56 @@ function presetSrcIds(src,known){
   return out;
 }
 
+/* ---- поиск по пресетам не только по имени ----
+   Пресет — код, и запускать его ради поиска незачем: из исходника строителя берём то, что о нём известно. Текст заметок (text:'…'+'…'),
+   модули, которые он создаёт (addNode('rtlsdr',…) → «USB SDR»), категорию. Слово запроса ищется во всех полях, у каждого свой вес:
+   имя 1, категория .8, модули .7, заметка .5; все слова должны найтись (в любом поле). Нужны fzTokens / fzScoreWords (help-kernels.js). */
+const PS_W={name:1, cat:.8, mods:.7, note:.5};
+// текст всех заметок (литералы строк после «text:», в том числе склеенные «+»), одной строкой, не длиннее max
+function presetNoteOf(src,max){
+  const out=[], lit=/'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"|`((?:[^`\\]|\\.)*)`/g;
+  const re=/\btext\s*:\s*((?:(?:'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`)\s*\+?\s*)+)/g;
+  let m; const S=String(src||'');
+  while((m=re.exec(S))){ lit.lastIndex=0; let k; while((k=lit.exec(m[1]))) out.push((k[1] ?? k[2] ?? k[3] ?? '').replace(/\\n/g,' ').replace(/\\(.)/g,'$1')); }
+  return out.join(' ').replace(/\s+/g,' ').trim().slice(0,max||900);
+}
+// описание пресета для поиска: имя (с подгруппой), категория, названия и id модулей, заметка. known — {id: модуль}; titleOf(id) → название
+function presetDocOf(name,sub,cat,src,known,titleOf){
+  const ids=[...presetSrcIds(src,known)], titles=[...new Set(ids.map(id=>{ const t=titleOf ? titleOf(id) : ''; return String(t||id).replace(/\s*\([^)]*\)/g,''); }))];
+  const nm=(sub ? sub+' ' : '')+name, txt={name:nm+(/[-_]/.test(nm) ? ' '+nm.replace(/[-_]/g,'') : ''), cat:cat||'', mods:titles.join(' ')+' '+ids.join(' '), note:presetNoteOf(src)};
+  const d={name,titles,note:txt.note,cat:cat||''};
+  for(const k of Object.keys(txt)){ d[k+'Txt']=txt[k].toLocaleLowerCase('ru'); d[k+'Tok']=fzTokens(txt[k]); }
+  return d;
+}
+// сумма по словам лучшего (вес поля × оценка слова в поле); слово нигде не нашлось — 0 (все слова обязательны)
+function presetScoreDoc(words,d){
+  if(!words.length) return 1;
+  let sum=0;
+  for(const w of words){
+    let b=0;
+    for(const k of Object.keys(PS_W)){ const s=fzScoreWords([w],d[k+'Tok'],d[k+'Txt'])*PS_W[k]; if(s>b) b=s; }
+    if(!b) return 0; sum+=b;
+  }
+  return sum;
+}
+// почему найдено, когда слова нет в имени: «category Maps», «uses USB SDR, Table», «…кусок заметки…»; пусто — совпало по имени
+function presetWhy(words,d){
+  for(const w of words){
+    if(fzScoreWords([w],d.nameTok,d.nameTxt)>=2) continue;
+    if(fzScoreWords([w],d.catTok,d.catTxt)>=2) return 'category: '+d.cat;
+    const mt=d.titles.filter(t=>t.toLocaleLowerCase('ru').includes(w) || fzScoreWords([w],fzTokens(t),t.toLocaleLowerCase('ru'))>=2);
+    if(mt.length) return 'uses: '+mt.slice(0,3).join(', ');
+    const i=d.noteTxt.indexOf(w);
+    if(i>=0){                                                       // кусок вокруг слова, края — по границам слов
+      let a=Math.max(0,i-28), b=Math.min(d.note.length,i+w.length+36);
+      if(a>0){ const sp=d.note.indexOf(' ',a); if(sp>=0 && sp<i) a=sp+1; }
+      if(b<d.note.length){ const sp=d.note.lastIndexOf(' ',b); if(sp>i+w.length) b=sp; }
+      return (a?'…':'')+d.note.slice(a,b).trim()+(b<d.note.length?'…':'');
+    }
+  }
+  return '';
+}
+
 // ---- temp-копии: несохранённый граф, отложенный при переходе к другому патчу ----
 // Имя: «temp:<патч, с которого начали> · ГГГГ-ММ-ДД ЧЧ:ММ» — время последней правки (минуты), а не момента перехода.
 // Старый формат «temp:ГГГГ-ММ-ДД ЧЧ:ММ:СС — <патч>» тоже читается.

@@ -1,8 +1,9 @@
 // План пересборки пресетов: node tools/test-presetplan.mjs
 import fs from 'fs'; import vm from 'vm';
 const ctx={}; vm.createContext(ctx);
-vm.runInContext(fs.readFileSync(new URL('../modules/presetplan-kernels.js',import.meta.url),'utf8')+';this.patchMigrate=patchMigrate;this.patchNames=patchNames;this.presetSrcIds=presetSrcIds;this.tempKey=tempKey;this.tempParse=tempParse;this.tempPrune=tempPrune;this.tempStamp=tempStamp;this.favToggle=favToggle;this.favClean=favClean;',ctx);
-const {tempKey,tempParse,tempPrune,tempStamp,patchMigrate,patchNames,presetSrcIds,favToggle,favClean}=ctx;
+vm.runInContext(fs.readFileSync(new URL('../modules/help-kernels.js',import.meta.url),'utf8')+';this.fzTokens=fzTokens;this.fzScoreWords=fzScoreWords;',ctx);
+vm.runInContext(fs.readFileSync(new URL('../modules/presetplan-kernels.js',import.meta.url),'utf8')+';this.presetNoteOf=presetNoteOf;this.presetDocOf=presetDocOf;this.presetScoreDoc=presetScoreDoc;this.presetWhy=presetWhy;this.patchMigrate=patchMigrate;this.patchNames=patchNames;this.presetSrcIds=presetSrcIds;this.tempKey=tempKey;this.tempParse=tempParse;this.tempPrune=tempPrune;this.tempStamp=tempStamp;this.favToggle=favToggle;this.favClean=favClean;',ctx);
+const {presetNoteOf,presetDocOf,presetScoreDoc,presetWhy,tempKey,tempParse,tempPrune,tempStamp,patchMigrate,patchNames,presetSrcIds,favToggle,favClean}=ctx;
 let bad=0; const ok=(c,m)=>{ if(!c){ console.error('FAIL',m); bad++; } };
 const B={A:1,B:1};
 let m=patchMigrate({A:{x:1},B:{x:2},'Mine':{x:3},'Studio: DAW old':{x:4},'temp:1':{x:5}},B,['Studio: DAW']);
@@ -21,6 +22,25 @@ ok(favToggle(['1','2','3'],'4',3).join()==='4,1,2','star: at most max');
 ok(favToggle(null,'A').join()==='A' && favToggle(undefined,'A',0).join()==='A','star: no list is fine');
 ok(favClean(['A','B','A','C',7,''],n=>n!=='B').join()==='A,C','favClean: dropped patches and duplicates go');
 ok(favClean(null,()=>true).length===0,'favClean: no list');
+// ---- поиск по описанию пресета ----
+{ const known={rtlsdr:{title:'USB SDR'},sa:{title:'Spectrum Analyzer'},table:{title:'Table'},note:{title:'Note'}}, titleOf=id=>known[id]&&known[id].title;
+  const src="function(){ const nt=addNode('note',40,40,{text:'Collect POCSAG pages from a pager band.\\n'+\n  'The decoder lists every message; waterfall shows the activity.'}); const rx=addNode('rtlsdr',1,2,{}); const sa=addNode('sa',1,2,{}); addNode('table'); }";
+  ok(presetNoteOf(src)==='Collect POCSAG pages from a pager band. The decoder lists every message; waterfall shows the activity.','заметка: литералы, склеенные «+», переводы строк в пробелы');
+  ok(presetNoteOf("x({text:'a'}); y({text:\"b\"+'c'})")==='a b c' && presetNoteOf('')==='' && presetNoteOf(null)==='','заметка: несколько text:, пусто');
+  ok(presetNoteOf("text:'"+'x'.repeat(2000)+"'").length===900,'заметка: не длиннее предела');
+  const d=presetDocOf('Pager Messages (Generator)','POCSAG','Modems & Data Links',src,known,titleOf), W=s=>ctx.fzTokens(s.toLocaleLowerCase('ru'));
+  ok(d.titles.join()==='Note,USB SDR,Spectrum Analyzer,Table','модули пресета по названиям');
+  const S=q=>presetScoreDoc(W(q),d);
+  ok(S('pocsag')>S('waterfall') && S('waterfall')>0,'слово в имени весит больше, чем в заметке; заметка находится');
+  ok(S('usb sdr')>0 && S('table')>0,'модули пресета находятся по названию');
+  ok(S('modems')>0,'категория');
+  ok(S('pocsag waterfall')>0 && S('pocsag zzzz')===0,'все слова обязательны, из разных полей тоже');
+  ok(S('')===1,'пустой запрос подходит');
+  ok(presetScoreDoc(W('pager'),d)>presetScoreDoc(W('waterfall'),d),'имя выше заметки');
+  ok(presetWhy(W('pocsag'),d)==='' && presetWhy(W('modems'),d)==='category: Modems & Data Links','почему: по имени — пусто, по категории');
+  ok(presetWhy(W('sdr'),d)==='uses: USB SDR','почему: по модулю');
+  ok(/waterfall/.test(presetWhy(W('waterfall'),d)) && presetWhy(W('waterfall'),d).startsWith('…'),'почему: кусок заметки '+presetWhy(W('waterfall'),d));
+  ok(presetScoreDoc(W('pocsac'),d)>0,'опечатка всё ещё находит (нечётко)'); }
 const t0=new Date(2026,10,11,9,5,59).getTime();
 ok(tempStamp(t0)==='2026-11-11 09:05','temp: время без секунд, с ведущими нулями');
 ok(tempKey('Mixer',t0)==='temp:Mixer · 2026-11-11 09:05' && tempKey('',t0).startsWith('temp:untitled · '),'temp: имя = патч + время правки');

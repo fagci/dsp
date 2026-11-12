@@ -1915,3 +1915,5 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 .cmdk-pins{padding:2px 12px 4px;font-size:12px}
 .cmdk-src{margin-left:8px;font-family:monospace;font-size:11px;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cmdk-del{margin-left:auto;padding:0 6px;opacity:.5;cursor:pointer} .cmdk-del:hover{opacity:1;color:var(--acc)}
+
+.pitem .pwhy{display:block;font-size:10px;font-weight:400;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
