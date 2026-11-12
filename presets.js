@@ -487,7 +487,7 @@ const PRESET_CATS={
   'SAME / EAS: Alert Decoder Test (Loopback)':'Aircraft, Satellites & Telemetry',
   'SAME / EAS: NOAA Weather Radio (USB SDR)':'Aircraft, Satellites & Telemetry',
   'NWS Alerts: Test Generator → Decoder (Loopback)':'Aircraft, Satellites & Telemetry',
-  'NWS Alerts: Active Alerts for Oklahoma (Online)':'Aircraft, Satellites & Telemetry',
+  'NWS Alerts: Active Alerts by State (Online)':'Aircraft, Satellites & Telemetry',
   'SAME Filter by County and Event (Loopback)':'Aircraft, Satellites & Telemetry',
   'Weather Alert → APRS Bulletin and Object (Loopback)':'Modems & Data Links',
   'SELCAL: Test Signal (Loopback)':'HF Modes & Morse',
@@ -657,6 +657,8 @@ const PRESET_CATS={
   'Chirp Modem: Noise and Reflection':'Modems & Data Links',
   'APRS: Transmit and Receive (Loop)':'Modems & Data Links',
   'DTMF: Encoder + Decoder':'Modems & Data Links',
+  'Sub-tones: CTCSS Tone → Decoder with Voice (Loopback)':'Modems & Data Links',
+  'Sub-tones: DCS Code → Decoder with Voice (Loopback)':'Modems & Data Links',
   'Text → Bits → Text (Encodings)':'Modems & Data Links',
   'OFDM: Text via Multi-Carrier Modulation':'Modems & Data Links',
 
@@ -4757,24 +4759,24 @@ markWiresDirty();
 });
 preset('NWS Alerts: Test Generator → Decoder (Loopback)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'Alerts of the National Weather Service without a network: Alert Test Generator builds a CAP 1.2 XML (or NWS JSON, as api.weather.gov/alerts/active) from the fields, NWS Alerts reads the document from its doc input — the same parser that reads the real answer. Press Make: the alert comes out with the event code (TOR), the SAME areas (FIPS 040109 = Oklahoma County), the validity and the polygon centre.\n'+
-  'The records go on as rec: filter by areas / events right in NWS Alerts (OK, 40109, TOR *W, !RWT) and wire rec into Alert → APRS or a log. The generator is a test source only: it must not be sent into real alerting systems.'});
+const nt=addNode('note',40,40,{text:'Alerts of the National Weather Service without a network: Alert Test Generator builds a CAP 1.2 XML (or NWS JSON, as api.weather.gov/alerts/active) from the fields, NWS Alerts reads the document from its doc input — the same parser that reads the real answer. Press Make: the alert comes out with the event code (TOR), the SAME areas (a FIPS code PSSCCC: state + county), the validity and the polygon centre.\n'+
+  'The records go on as rec: filter by areas / events right in NWS Alerts (a state, a county code, TOR *W, !RWT) and wire rec into Alert → APRS or a log. The generator is a test source only: it must not be sent into real alerting systems.'});
 nt.size.w=880; nt.size.h=130; applySize(nt);
 const tx=addNode('wxAlertTx',40,230,{});
 tx.size.w=340; tx.size.h=360; applySize(tx);
-const rx=addNode('wxAlerts',430,230,{fips:'OK',events:'!RWT !RMT'});
+const rx=addNode('wxAlerts',430,230,{fips:'48',events:'!RWT !RMT'});
 rx.size.w=380; rx.size.h=340; applySize(rx);
 const log=addNode('recLog',860,230,{});
 log.size.w=420; applySize(log);
 addEdge(tx.id,'doc',rx.id,'doc'); addEdge(rx.id,'rec',log.id,'rec');
 markWiresDirty();
 });
-preset('NWS Alerts: Active Alerts for Oklahoma (Online)', function(){
+preset('NWS Alerts: Active Alerts by State (Online)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'Active alerts of the NWS (api.weather.gov, no key) for Oklahoma, refreshed every 2 minutes. The last good answer is kept and shown as «stale» when the network is gone. Filter counties with FIPS (40109 Oklahoma, 40143 Tulsa…) and events (TOR SVR FFW *W). Other sources: a forecast zone (OKZ025), your position (tick «by point»), your own CAP / Atom address (IPAWS, the NWS .atom feeds).\n'+
+const nt=addNode('note',40,40,{text:'Active alerts of the NWS (api.weather.gov, no key) for the state you type into «area» (empty — the whole country), refreshed every 2 minutes. The last good answer is kept and shown as «stale» when the network is gone. Filter counties with FIPS codes (SSCCC) and events (TOR SVR FFW *W). Other sources: a forecast zone code, your position (tick «by point»), your own CAP / Atom address (IPAWS, the NWS .atom feeds).\n'+
   'rec goes to the log and, if you like, to Alert → APRS (see the APRS relay preset). The same events come over the air as SAME on NOAA Weather Radio 162.400–162.550 MHz — the SAME / EAS presets.'});
 nt.size.w=880; nt.size.h=130; applySize(nt);
-const rx=addNode('wxAlerts',40,230,{area:'OK',events:'*W',first:true});
+const rx=addNode('wxAlerts',40,230,{area:'',events:'*W',first:true});
 rx.size.w=380; rx.size.h=340; applySize(rx);
 const log=addNode('recLog',470,230,{});
 log.size.w=440; applySize(log);
@@ -4783,12 +4785,12 @@ markWiresDirty();
 });
 preset('SAME Filter by County and Event (Loopback)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'SAME / EAS Decoder passes only the alerts for your areas and events: «only these areas» takes states (OK), counties (40109) or full PSSCCC codes, «only these events» — TOR SVR, wildcards (*W = all warnings) and exclusions (!RWT !RMT). The end-of-message NNNN is always passed. Here a tornado warning for Oklahoma County (040109) goes through the filter «OK»; set the generator to 048453 (Travis, TX) and it is dropped: the decoder says «filtered out».\n'+
+const nt=addNode('note',40,40,{text:'SAME / EAS Decoder passes only the alerts for your areas and events: «only these areas» takes states (two letters or FIPS), counties (SSCCC) or full PSSCCC codes, «only these events» — TOR SVR, wildcards (*W = all warnings) and exclusions (!RWT !RMT). The end-of-message NNNN is always passed. Here a tornado warning for county 048453 goes through the filter «48» (state code); put a code of another state into the generator and it is dropped: the decoder says «filtered out».\n'+
   'The test signal is for a cable or the sound-card loop only: never put it on the air or into an alerting system.'});
 nt.size.w=880; nt.size.h=130; applySize(nt);
-const tx=addNode('sameTx',40,230,{event:'TOR',loc:'040109',call:'KTEST/NW'});
+const tx=addNode('sameTx',40,230,{event:'TOR',loc:'048453',call:'KTEST/NW'});
 tx.size.w=340; tx.size.h=320; applySize(tx);
-const rx=addNode('sameRx',430,230,{fips:'OK',events:'TOR SVR FFW'});
+const rx=addNode('sameRx',430,230,{fips:'48',events:'TOR SVR FFW'});
 rx.size.w=520; rx.size.h=320; applySize(rx);
 const log=addNode('recLog',430,590,{});
 log.size.w=520; applySize(log);
@@ -4797,14 +4799,14 @@ markWiresDirty();
 });
 preset('Weather Alert → APRS Bulletin and Object (Loopback)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'The relay chain of a ham weather net without a radio: a SAME alert (sound-card loop) → SAME / EAS Decoder with a filter «OK» → Alert → APRS builds a bulletin «:BLN1WX   :Tornado Warning 040109 til HHMMZ» (and an object with coordinates when the alert has them or a station position is set) → Transmit AX.25/APRS → Bell202 → Receive AX.25 shows the frame back. Tests are skipped (!RWT…).\n'+
+const nt=addNode('note',40,40,{text:'The relay chain of a ham weather net without a radio: a SAME alert (sound-card loop) → SAME / EAS Decoder with a filter «48» → Alert → APRS builds a bulletin «:BLN1WX   :Tornado Warning 048453 til HHMMZ» (and an object with coordinates when the alert has them or a station position is set) → Transmit AX.25/APRS → Bell202 → Receive AX.25 shows the frame back. Tests are skipped (!RWT…).\n'+
   'Mirror of the chain: NWS Alerts gives the same records with the polygon centre, so the object lands on the map exactly. Test only — do not transmit this loop on 144.390 MHz with a test alert.'});
 nt.size.w=1000; nt.size.h=140; applySize(nt);
-const sx=addNode('sameTx',40,240,{event:'TOR',loc:'040109',call:'KTEST/NW',eom:false});
+const sx=addNode('sameTx',40,240,{event:'TOR',loc:'048453',call:'KTEST/NW',eom:false});
 sx.size.w=300; sx.size.h=320; applySize(sx);
-const sr=addNode('sameRx',380,240,{fips:'OK'});
+const sr=addNode('sameRx',380,240,{fips:'48'});
 sr.size.w=420; sr.size.h=280; applySize(sr);
-const ap=addNode('wxAprs',840,240,{mode:'both',lat:35.47,lon:-97.52});
+const ap=addNode('wxAprs',840,240,{mode:'both',lat:40,lon:-100});
 ap.size.w=320; ap.size.h=300; applySize(ap);
 const tx=addNode('ax25Tx',40,620,{src:'N0CALL-1',dst:'APRS',path:'WIDE1-1,WIDE2-1',baud:1200});
 tx.size.w=380; tx.size.h=300; applySize(tx);
@@ -7218,6 +7220,41 @@ addEdge(tx.id,'out',sc.id,'in1');
 markWiresDirty();
 });
 
+preset('Sub-tones: CTCSS Tone → Decoder with Voice (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'CTCSS (continuous tone-coded squelch, 67.0–254.1 Hz, 50 tones) without a radio: CTCSS Tone makes the sub-audible sine, an oscillator plays the part of a voice and noise stands for the channel; CTCSS Decoder low-passes the sound to ≈1 kHz and measures all 50 tones in a 0.5 s window — a tone is accepted when it is stronger than the rest of the tones by «ratio» and above the level threshold, twice in a row. The output `tone` goes to a number display, `active` can open a squelch.\n'+
+  'Change the tone in the generator while it runs; the neighbours 67.0 / 69.3 Hz are told apart. On a real receiver wire the audio before the sub-tone filter of the radio.'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const tx=addNode('ctcssTx',40,230,{tone:'100.0',amp:.1});
+const vo=addNode('osc',40,420,{wave:'sine',freq:900,amp:.3});
+const nz=addNode('osc',40,560,{wave:'noise',amp:.03});
+const m1=addNode('mixer',340,230,{channels:'3',ka:1,kb:1});
+const rx=addNode('ctcssRx',640,230,{});
+rx.size.w=320; rx.size.h=140; applySize(rx);
+const dsp=addNode('numview',1000,230,{});
+const log=addNode('recLog',640,420,{});
+log.size.w=360; applySize(log);
+addEdge(tx.id,'out',m1.id,'a'); addEdge(vo.id,'out',m1.id,'b'); addEdge(nz.id,'out',m1.id,'c');
+addEdge(m1.id,'out',rx.id,'in'); addEdge(rx.id,'tone',dsp.id,'in'); addEdge(rx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Sub-tones: DCS Code → Decoder with Voice (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'DCS (digital coded squelch) without a radio: DCS Code repeats a 23-bit Golay word (9 bits of code + marker 100 + 11 check bits) at 134.4 bit/s; DCS Decoder slices the sub-audible sound, looks for the word at every sample, repairs up to «bit errors» bits and confirms the code with two words in a row. 104 standard codes; D023I really reads as D047N because the Golay word is cyclic — the decoder reports N whenever such a code exists.\n'+
+  'Pick another code or tick «inverted» while it runs. The bit order and the polynomial follow common implementations and were not compared with a real radio.'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const tx=addNode('dcsTx',40,230,{code:'023',amp:.2});
+const vo=addNode('osc',40,420,{wave:'sine',freq:900,amp:.3});
+const nz=addNode('osc',40,560,{wave:'noise',amp:.03});
+const m1=addNode('mixer',340,230,{channels:'3',ka:1,kb:1});
+const rx=addNode('dcsRx',640,230,{});
+rx.size.w=320; rx.size.h=140; applySize(rx);
+const log=addNode('recLog',640,420,{});
+log.size.w=360; applySize(log);
+addEdge(tx.id,'out',m1.id,'a'); addEdge(vo.id,'out',m1.id,'b'); addEdge(nz.id,'out',m1.id,'c');
+addEdge(m1.id,'out',rx.id,'in'); addEdge(rx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
 preset('Text → Bits → Text (Encodings)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'A generic text↔bits (blk) layer, separate from timing.\n'+
