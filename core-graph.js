@@ -581,9 +581,9 @@ n.el.classList.toggle('folded',n.lod===LOD_CARD);
 n.el.classList.toggle('lod-dot',n.lod===LOD_DOT);
 markWiresDirty();
 }
-function addNodeUI(type,x,y){                         // узел, добавленный пользователем: служебные модули — сразу точкой
+function addNodeUI(type,x,y,extra){                         // узел, добавленный пользователем: служебные модули — сразу точкой
 // новая Table получает своё имя списка (table_ГГГГММДД_ЧЧММСС), а не общее «table»: иначе временные таблицы затирают друг друга
-const params=type==='table' && typeof tblNewName==='function' ? {list:tblNewName(new Date(),Graph.nodes.filter(m=>m.type==='table').map(m=>m.p.list))} : undefined;
+const params=type==='table' && typeof tblNewName==='function' ? {list:tblNewName(new Date(),Graph.nodes.filter(m=>m.type==='table').map(m=>m.p.list)),...extra} : extra;
 const n=addNode(type,x,y,params);
 if(n && MOD[type].lod==='dot') setLod(n,LOD_DOT);
 return n;
@@ -2305,7 +2305,7 @@ if((ev.ctrlKey||ev.metaKey) &&!ev.altKey &&!ev.shiftKey){
 }
 if(ev.ctrlKey||ev.metaKey||ev.altKey) return;
 if(ev.key===' ' && !(t&&(t.tagName==='BUTTON'||t.tagName==='SELECT'||t.tagName==='A'))){ ev.preventDefault(); runBtn.click(); return; }
-if(ev.key==='/'||ev.code==='Slash'){ ev.preventDefault(); cmdkOpen(); return; }
+if(ev.key==='/'||ev.code==='Slash'||ev.key==='>'){ ev.preventDefault(); cmdkOpen(); return; }   // «>» — то же, что «/»: с выделенным модулем сразу «продолжить от него»
 if(ev.key==='?'){ hpOpen(); if(typeof hpGo==='function') hpGo('page','help/shortcuts.md'); return; }
 if(ev.key==='+'||ev.key==='='||ev.key==='-'){ (ev.key==='-'?panzoom.zoomOut():panzoom.zoomIn()); return; }
 if(Sel.size && ev.key.indexOf('Arrow')===0){
@@ -2372,12 +2372,18 @@ for(const m of mods){ const s=modScoreW(m,words); if(s>0){ sc.push([m,s]); if(s>
 return (strong ? sc.filter(x=>x[1]>=th) : sc).sort((a,b)=>b[1]-a[1]||a[0].title.localeCompare(b[0].title)).map(x=>x[0]);
 }
 /* ---- командная палитра (Ctrl+K или /): модули и патчи одним нечётким поиском; «mic>fft>sa» — цепочка с живым превью ---- */
-let cmdkEl=null, cmdkSel=0, cmdkRows=[], cmdkKeep=null, cmdkChain=false, cmdkPrevT=0;
+let cmdkEl=null, cmdkSel=0, cmdkRows=[], cmdkKeep=null, cmdkChain=false, cmdkPrevT=0, cmdkDef=null;
+/* chunk-и: сохранённые цепочки с именами («mysdr = rtlsdr*>sa[spec>spec,steerFreq<centerFreq]»), в браузере. Имя в цепочке раскрывается на месте. */
+const CHUNK_KEY='dsp-chunks';
+function chunksRead(){ try{ const o=JSON.parse(LS.get(CHUNK_KEY)||'{}'); return o && typeof o==='object' && !Array.isArray(o) ? o : {}; }catch(e){ return {}; } }
+function chunkGet(key){ const o=chunksRead(); for(const k in o) if(k.toLowerCase()===key) return o[k]; return null; }
+function chunkSave(name,src){ const o=chunksRead(); for(const k of Object.keys(o)) if(k.toLowerCase()===name.toLowerCase()) delete o[k]; o[name]=src; LS.set(CHUNK_KEY,JSON.stringify(o)); }
+function chunkDel(name){ const o=chunksRead(); delete o[name]; LS.set(CHUNK_KEY,JSON.stringify(o)); }
 function cmdkOpen(){
 if(typeof dashMode!=='undefined' && dashMode) return;                    // палитра — для графа, в дашборде свои панели
 if(!cmdkEl){
   cmdkEl=document.createElement('div'); cmdkEl.id='cmdk'; cmdkEl.hidden=true;
-  cmdkEl.innerHTML='<input type="search" placeholder="Module or patch — fuzzy («phose» finds Phone sensors) · chain: mic>fft>sa, usb>(dac,sa)" autocomplete="off" spellcheck="false"><div class="cmdk-list"></div>';
+  cmdkEl.innerHTML='<input type="search" placeholder="Module or patch — fuzzy («phose» finds Phone sensors) · chain: mic>fft>sa, usb>(dac,sa), sa[spec>spec2, freq<f1] · chunk: name = chain" autocomplete="off" spellcheck="false"><div class="cmdk-list"></div>';
   document.body.append(cmdkEl);
   cmdkEl.querySelector('input').addEventListener('input',()=>{ cmdkRender(); clearTimeout(cmdkPrevT); cmdkPrevT=setTimeout(cmdkPreview,140); });
   cmdkEl.addEventListener('keydown',cmdkKeys);
@@ -2390,7 +2396,7 @@ if(!cmdkEl){
   });
   document.addEventListener('pointerdown',e=>{ if(cmdkEl && !cmdkEl.hidden && !cmdkEl.contains(e.target)) cmdkClose(); });
 }
-cmdkEl.hidden=false; cmdkSel=0; cmdkChain=false; cmdkKeep=null;
+cmdkEl.hidden=false; cmdkSel=0; cmdkChain=false; cmdkKeep=null; cmdkDef=null;
 const q=cmdkEl.querySelector('input'); q.value=Sel.size===1 ? '>' : '';   // выделен один модуль — сразу продолжение цепочки от него
 cmdkRender(); if(q.value) cmdkPrevT=setTimeout(cmdkPreview,0);
 setTimeout(()=>{ q.focus({preventScroll:true}); q.setSelectionRange(q.value.length,q.value.length); },0);
@@ -2401,7 +2407,8 @@ if(!cmdkEl || cmdkEl.hidden) return;
 cmdkTeardown();
 const v=cmdkEl.querySelector('input').value;
 if(!cmdkChain) return;
-const {cont,ast}=cmdkParse(v);                               // «>fft>sa» — продолжить цепочку от выделенного модуля
+const def=chainDefSplit(v);                                  // «имя = цепочка» — превью самой цепочки
+const {cont,ast}=cmdkParse(def ? def.src : v);               // «>fft>sa» — продолжить цепочку от выделенного модуля
 if(cont && Sel.size!==1) return;                             // про выделение — подсказка в cmdkRender
 const src=cont?Graph.map[[...Sel][0]]:null;
 const leaves=chainLeaves(ast);
@@ -2410,7 +2417,12 @@ const was=Undo.busy; Undo.busy=true;
 try{
   cmdkKeep=new Set(Graph.nodes.map(n=>n.id));
   const rect=cv.getBoundingClientRect();
-  for(const lf of leaves){ lf.node=addNodeUI(lf.m.id,0,0); }
+  const notes=[];
+  for(const lf of leaves){
+    const cz=lf.params ? chainCoerce(lf.m.id,lf.params,notes) : null;
+    lf.node=addNodeUI(lf.m.id,0,0,cz&&Object.keys(cz.known).length ? cz.known : undefined);
+    if(lf.node && cz) chainApplyRest(lf.node,cz.rest,notes);
+  }
   const made=leaves.filter(lf=>lf.node);
   const sz=lf=>({w:lf.node.el.offsetWidth||lf.node.size.w||180, h:lf.node.el.offsetHeight||lf.node.size.h||120});
   const lay=chainLayout(ast);
@@ -2423,11 +2435,11 @@ try{
   const y0=src ? src.y : (rect.height/2.4)/view.k-view.y-ay/2;
   for(const lf of made){ lf.node.x=x0+colX[lf.col]; lf.node.y=y0+lf.y; posNode(lf.node); }
   const hasNode=lf=>!!lf.node;
-  chainEdges(ast, src?[{node:src}]:[], (f,t)=>{
+  chainEdges(ast, src?[{node:src}]:[], (f,t,pins)=>{
     if(!hasNode(f)||!hasNode(t)) return;
-    const pin=chainPins(f.node,t.node);
-    if(pin) connect(f.node.id,pin[0],t.node.id,pin[1]);      // автоадаптер iq↔sig ставится сам
+    chainLink(f.node,t.node,pins,notes);                     // пины из [A>B, A<B] или автоподбор; автоадаптер iq↔sig ставится сам
   });
+  const pe=cmdkEl.querySelector('.cmdk-pins'); if(pe) pe.innerHTML=notes.map(x=>'<div class="'+(x.bad?'cmdk-bad':'cmdk-dim')+'">'+hlpEsc(x.t)+'</div>').join('');
   for(const n of Graph.nodes) if(!cmdkKeep.has(n.id)) n.el.classList.add('cmdk-ghost');   // превью — полупрозрачное
   for(const e of Graph.edges) if(!cmdkKeep.has(e.to)) e.path.classList.add('cmdk-ghost');
   for(const n of Graph.nodes) if(!cmdkKeep.has(n.id)) n._frozen=true;   // и не трогает железо: движок превью пропускает (микрофон, USB SDR…)
@@ -2436,6 +2448,7 @@ try{
 // строка → дерево с найденными модулями в листьях (.m); пустые ветки и всё после первого несовпадения отброшено
 function cmdkParse(v){
 const r=chainParse(v);
+r.ast=chainExpand(r.ast,chunkGet);                           // имя сохранённой цепочки раскрывается на месте
 const ids=new Map(Object.values(MOD).map(m=>[m.id.toLowerCase(),m]));
 chainResolve(r.ast,seg=>ids.get(seg.trim().toLowerCase())||modRank(Object.values(MOD),queryWords(seg))[0]||null);   // точный id важнее нечёткого поиска
 return r;
@@ -2448,8 +2461,8 @@ finally { Undo.busy=was; }
 cmdkKeep=null;
 }
 /* лучшая пара пинов a→b: тот же тип выше всего, iq↔sig — через автоадаптер, универсальный val — в последнюю очередь */
-function chainPins(a,b){
-const ins=portsOf(b,'ins').filter(p=>MULTI_T.has(p.t)||!Graph.edges.some(e=>e.to===b.id&&e.tp===p.n));
+function chainPins(a,b,any){
+const ins=portsOf(b,'ins').filter(p=>any||MULTI_T.has(p.t)||!Graph.edges.some(e=>e.to===b.id&&e.tp===p.n));
 const outs=portsOf(a,'outs');
 let best=null,bs=0;
 for(const o of outs) for(const p of ins){
@@ -2459,8 +2472,83 @@ for(const o of outs) for(const p of ins){
 }
 return best;
 }
+/* провод(а) между соседями цепочки по пинам из [A>B, A<B]: A — пин предыдущего узла, B — этого; «>» — из A в B, «<» — из B в A.
+   Имена пинов — нечёткие (spec2 / sp / centerF). Есть хоть одно «>» — автоподбор вперёд выключен; только «<» — автоподбор вперёд остаётся.
+   notes ← {t, bad} для строки «какие пины соединились». */
+function chainLink(a,b,pins,notes){
+const P=pins||[], nm=n=>shortLabel(MOD[n.type].title);
+const wire=(f,fp,t,tp)=>{ const n0=Graph.edges.length; connect(f.id,fp,t.id,tp); return Graph.edges.length>n0; };
+const names=(n,side)=>portsOf(n,side).map(x=>x.n).join(', ');
+if(!P.some(x=>x.dir==='>')){
+  const pin=chainPins(a,b);
+  if(pin){ if(wire(a,pin[0],b,pin[1])) notes.push({t:nm(a)+'.'+pin[0]+' → '+nm(b)+'.'+pin[1]+(P.length?'':' (auto)')}); }
+  else notes.push({t:'no compatible pins between '+nm(a)+' and '+nm(b),bad:true});
+}
+for(const x of P){
+  const fwd=x.dir==='>', src=fwd?a:b, dst=fwd?b:a;
+  const o=chainFindPin(portsOf(src,'outs'),fwd?x.from:x.to), i=chainFindPin(portsOf(dst,'ins'),fwd?x.to:x.from);
+  const lab=x.from+x.dir+x.to;
+  if(!o){ notes.push({t:'['+lab+'] '+nm(src)+' has no output «'+(fwd?x.from:x.to)+'» — outputs: '+names(src,'outs'),bad:true}); continue; }
+  if(!i){ notes.push({t:'['+lab+'] '+nm(dst)+' has no input «'+(fwd?x.to:x.from)+'» — inputs: '+names(dst,'ins'),bad:true}); continue; }
+  if(!typeCompat(o.t,i.t)){ notes.push({t:'['+lab+'] '+o.n+' ('+o.t+') does not fit '+i.n+' ('+i.t+')',bad:true}); continue; }
+  if(wire(src,o.n,dst,i.n)) notes.push({t:nm(src)+'.'+o.n+' → '+nm(dst)+'.'+i.n});
+  else notes.push({t:'['+lab+'] not connected (the input is taken or it would loop)',bad:true});
+}
+}
+// {sr:2.4M, mode:FM} → значения по типу параметра модуля. Описанные в params отдаём в known (идут в addNode — как у пресетов, без зажима UI),
+// остальные ключи — в rest (применятся к узлу, если такое поле у него есть: частота SDR и т.п.); неподходящее — в notes.
+function chainCoerce(type,params,notes){
+const defs=MOD[type].params||[], known={}, rest={}, lab=shortLabel(MOD[type].title);
+for(const k of Object.keys(params)){
+  const d=defs.find(x=>x.n===k&&x.t!=='button'); let v=params[k];
+  if(!d){ rest[k]=v; continue; }
+  if(d.t==='check') v=typeof v==='boolean' ? v : /^(1|on|yes|true)$/i.test(String(v));
+  else if(d.t==='num'||d.t==='range'){ v=+v; if(!isFinite(v)){ notes.push({t:lab+'.'+k+': not a number',bad:true}); continue; } }
+  else if(d.t==='select'){
+    const o=(typeof d.opts==='function' ? d.opts({type,p:{},cols:[]}) : d.opts)||[], hit=o.find(x=>String(x).toLowerCase()===String(v).toLowerCase());
+    if(o.length && hit===undefined){ notes.push({t:lab+'.'+k+': «'+v+'» is not one of '+o.join(', '),bad:true}); continue; }
+    v=hit!==undefined ? hit : String(v);
+  } else v=String(v);
+  known[k]=v;
+}
+return {known,rest};
+}
+function chainApplyRest(n,rest,notes){
+for(const k of Object.keys(rest)){
+  if(!n.p || !(k in n.p)){ notes.push({t:shortLabel(MOD[n.type].title)+' has no parameter «'+k+'»',bad:true}); continue; }
+  const cur=n.p[k]; let v=rest[k];
+  if(typeof cur==='number'){ v=+v; if(!isFinite(v)){ notes.push({t:k+': not a number',bad:true}); continue; } }
+  else if(typeof cur==='boolean') v=typeof v==='boolean' ? v : /^(1|on|yes|true)$/i.test(String(v));
+  else v=String(v);
+  try{ setMod(n,k,v); }catch(e){ n.p[k]=v; }
+}
+}
+// выделенное → строка цепочки для chunk-а; параметры — только отличающиеся от умолчаний (простые значения, не больше 8 на узел)
+function chunkFromSelection(){
+if(!Sel.size) return null;
+const ids=new Set(Sel), ns=Graph.nodes.filter(n=>ids.has(n.id)&&MOD[n.type]);
+if(!ns.length) return null;
+const nodes=ns.map(n=>{
+  const pr={}; let c=0;
+  for(const d of MOD[n.type].params||[]){
+    if(d.t==='button'||d.d===undefined||c>=8) continue;
+    const v=n.p[d.n]; if(v===d.d||v===undefined||v===null) continue;
+    if(typeof v==='number'||typeof v==='boolean'||(typeof v==='string'&&v.length<=40&&!/[\n\r]/.test(v))){ pr[d.n]=v; c++; }
+  }
+  return {id:n.id,type:n.type,x:n.x,y:n.y,params:c?pr:null};
+});
+const edges=Graph.edges.filter(e=>ids.has(e.from)&&ids.has(e.to)).map(e=>({from:e.from,fp:e.fp,to:e.to,tp:e.tp}));
+return chainFromGraph(nodes,edges,{id:t=>MOD[t].id,isSource:t=>MOD[t].cat==='Sources',
+  auto:(f,t)=>chainPins(Graph.map[f],Graph.map[t],true)});
+}
 function cmdkChainDone(){
 clearTimeout(cmdkPrevT);
+if(cmdkDef){                                                 // «имя = цепочка» (или «имя =» + выделение): сохраняем chunk, холст не трогаем
+  let src=cmdkDef.src, extra='';
+  if(!src){ const r=chunkFromSelection(); if(!r) return; src=r.text; if(r.lost.length) extra=' (without '+r.lost.length+' wire(s) of a merge)'; }
+  chunkSave(cmdkDef.name,src); const nm=cmdkDef.name;
+  cmdkClose(); stat.textContent='chunk «'+nm+'» = '+src+extra; return;
+}
 const added=Graph.nodes.filter(n=>cmdkKeep && !cmdkKeep.has(n.id));
 if(!added.length){ cmdkClose(); return; }
 for(const n of added) n.el.classList.remove('cmdk-ghost');   // превью стало постоянным — непрозрачное
@@ -2475,26 +2563,37 @@ stat.textContent='chain: '+added.map(n=>shortLabel(MOD[n.type].title)).join(' �
 function cmdkClose(){ cmdkTeardown(); if(cmdkEl) cmdkEl.hidden=true; }
 function cmdkRender(){
 const q=cmdkEl.querySelector('input').value, words=queryWords(q), list=cmdkEl.querySelector('.cmdk-list');
-cmdkChain=q.includes('>');
+cmdkDef=chainDefSplit(q);
+cmdkChain=!!cmdkDef || q.includes('>') || !!chunkGet(q.trim().toLowerCase());   // «>» или имя chunk-а — режим цепочки
 list.innerHTML='';
 if(cmdkChain){
-  const cont=q.trim().startsWith('>');
+  const qq=cmdkDef ? cmdkDef.src : q;                        // у «имя = цепочка» разбираем правую часть
+  const cont=qq.trim().startsWith('>');
+  if(cmdkDef && !qq.trim()){                                 // «имя =» без цепочки — сохранить выделенное
+    const sel=chunkFromSelection();
+    list.innerHTML='<div class="cmdk-chain"><div class="cmdk-step tree">'+(sel ? '<b>'+hlpEsc(cmdkDef.name)+'</b> = <code>'+hlpEsc(sel.text)+'</code>' : '<span class="cmdk-bad">select the modules to save first</span>')+'</div>'+
+      (sel && sel.lost.length ? '<div class="cmdk-hint cmdk-bad">'+sel.lost.length+' wire(s) cannot be written in a chain (a merge of two inputs) and are left out</div>' : '')+
+      '<div class="cmdk-hint">'+(sel ? 'Enter — save the selection as chunk «'+hlpEsc(cmdkDef.name)+'»' : 'or write the chain after «=»')+', Esc — cancel</div></div>';
+    return; }
   list.innerHTML='<div class="cmdk-chain"></div>';
   const box=list.querySelector('.cmdk-chain');
   if(cont && Sel.size!==1){ box.innerHTML='<div class="cmdk-hint">«&gt;fft&gt;sa» continues the chain from the selected module — select exactly one first</div>'; return; }
-  const full=chainParse(q);
-  if(!chainLeaves(full.ast).length){ box.innerHTML='<div class="cmdk-hint">mic&gt;fft&gt;sa — each part is a fuzzy module name, the canvas shows the preview<br>usb&gt;(dac,sa,iqshift&gt;iqdec) — branches from one module<br>&gt;fft&gt;sa — continue from the selected module</div>'; return; }
+  const full=chainParse(qq); full.ast=chainExpand(full.ast,chunkGet);
+  if(!chainLeaves(full.ast).length){ box.innerHTML='<div class="cmdk-hint">mic&gt;fft&gt;sa — each part is a fuzzy module name, the canvas shows the preview<br>usb&gt;(dac,sa,iqshift&gt;iqdec) — branches from one module<br>&gt;fft&gt;sa — continue from the selected module<br>usb&gt;sa[spec&gt;spec, steerFreq&lt;centerFreq] — pins: [A&gt;B] A of the previous module feeds B of this one, [A&lt;B] B of this one feeds A of the previous; {sr:2.4M} — parameters; * — the exit of a chunk<br>name = usb*&gt;sa[…] saves a chunk (then «name&gt;demod» expands it); «name =» saves the selected modules</div>'; return; }
   const total=chainLeaves(full.ast).length;
-  const {ast}=cmdkParse(q), found=chainLeaves(ast).length;
+  const {ast}=cmdkParse(qq), found=chainLeaves(ast).length;
   const lab=lf=>'<b>'+hlpEsc(lf.m.title)+'</b>';
   const from=cont ? '<b>'+hlpEsc(shortLabel(MOD[Graph.map[[...Sel][0]].type].title))+'</b> <span class="cmdk-dim">selected</span> → ' : '';
   box.insertAdjacentHTML('beforeend','<div class="cmdk-step tree">'+from+chainText(ast,lab)+'</div>');
+  box.insertAdjacentHTML('beforeend','<div class="cmdk-pins"></div>');
   const ok=found===total;
-  box.insertAdjacentHTML('beforeend','<div class="cmdk-hint">'+(ok?'Enter — add the chain, Esc — cancel':'<span class="cmdk-bad">'+(total-found)+' part(s) have no match — the chain stops there.</span> Enter — add the rest, Esc — cancel')+'</div>');
+  box.insertAdjacentHTML('beforeend','<div class="cmdk-hint">'+(cmdkDef ? (ok ? 'Enter — save chunk «'+hlpEsc(cmdkDef.name)+'» (nothing is added to the canvas), Esc — cancel' : '<span class="cmdk-bad">'+(total-found)+' part(s) have no match</span> — fix the chain, Esc — cancel') : ok?'Enter — add the chain, Esc — cancel':'<span class="cmdk-bad">'+(total-found)+' part(s) have no match — the chain stops there.</span> Enter — add the rest, Esc — cancel')+'</div>');
   return;
 }
 cmdkRows=[];
 cmdkSel=0;                                                   // каждый ввод — выделение снова на первом пункте
+const chunks=chunksRead();
+for(const nm of Object.keys(chunks)){ if(!words.length||fzScoreWords(words,fzTokens(nm),nm.toLocaleLowerCase('ru'))>=2*words.length) cmdkRows.push({kind:'chunk',name:nm,src:chunks[nm]}); }
 for(const m of modRank(Object.values(MOD),words).slice(0,8)) cmdkRows.push({kind:'mod',m});
 try{
   const names=patchNames(PRESETS,readP());
@@ -2510,7 +2609,9 @@ cmdkRows.forEach((r,i)=>{
   const b=document.createElement('button'); b.className='cmdk-row'+(i===cmdkSel?' on':'');
   b.innerHTML= r.kind==='mod'
     ? '<span class="cmdk-kind">module</span><b>'+hlpEsc(r.m.title)+'</b><span class="cmdk-dim">'+hlpEsc(r.m.id)+'</span>'
+    : r.kind==='chunk' ? '<span class="cmdk-kind">chunk</span><b>'+hlpEsc(r.name)+'</b><span class="cmdk-dim cmdk-src">'+hlpEsc(r.src)+'</span><span class="cmdk-del" title="Delete this chunk">×</span>'
     : '<span class="cmdk-kind">patch</span><b>'+hlpEsc(r.name)+'</b>';
+  if(r.kind==='chunk') b.querySelector('.cmdk-del').addEventListener('click',e=>{ e.stopPropagation(); if(confirm('Delete chunk «'+r.name+'»?')){ chunkDel(r.name); cmdkRender(); } });
   b.addEventListener('click',()=>cmdkRun(i));
   list.append(b);
 });
@@ -2528,6 +2629,9 @@ else if(e.key==='Enter'){ e.preventDefault(); cmdkRun(cmdkSel); }
 }
 function cmdkRun(i){
 const r=cmdkRows[i]; if(!r) return;
+if(r.kind==='chunk'){                                        // chunk — как цепочка: превью на холсте, Enter добавляет
+  const q=cmdkEl.querySelector('input'); q.value=r.name; cmdkRender(); cmdkPrevT=setTimeout(cmdkPreview,0); q.focus(); return;
+}
 cmdkClose();
 if(r.kind==='mod'){
   const rect=cv.getBoundingClientRect();

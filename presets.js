@@ -361,6 +361,7 @@ const PRESET_CATS={
   'Measure: IQ Quality — DC and Imbalance (Generator)':'Analysis & Measurement',
   'Meshtastic: Chat and Nodes on the Map':'Network & IoT',
   'Help: Your First Patch':'Start Here',
+  'Chain: SDR with Spectrum Steering (Pins and Chunks)':'Start Here',
   'Demo: Sweep and Waterfall':'Start Here',
   'Quick Audio Recording':'Start Here',
   'Find Sound Source (by Frequency)':'Start Here',
@@ -9914,6 +9915,20 @@ const g2=addNode('graphview',900,180,{directed:true,layout:'LR',edit:true});
 g2.size.w=420; g2.size.h=420; applySize(g2);
 addEdge(tb.id,'rows',g1.id,'rows'); addEdge(tb.id,'rows',g2.id,'rows');
 addEdge(g1.id,'edit',tb.id,'rec'); addEdge(g2.id,'edit',tb.id,'rec');
+markWiresDirty();
+});
+preset('Chain: SDR with Spectrum Steering (Pins and Chunks)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'This patch is what one line of the command palette builds (Ctrl+K, «/» or «>» on the canvas):\n'+
+  '    usb>sa[spec>spec, steerFreq<centerFreq]\n'+
+  'After a module name, [A>B] connects pin A of the PREVIOUS module to pin B of this one, and [A<B] connects pin B of this module to pin A of the previous one (here: the spectrum goes to the analyzer, and a click on the analyzer retunes the SDR). Pin names are fuzzy (steer<center works). With a «>» item the automatic pin choice is off for this link; with only «<» items it stays. The palette shows which pins were connected and why a pin was not found.\n'+
+  '{sr:2.4M, freq:433.9M} after a module sets its parameters (k, M, G suffixes).\n'+
+  'A chunk is a saved chain with a name: type   mysdr = usb*>sa[spec>spec, steerFreq<centerFreq]   and Enter (nothing is added); or select modules on the canvas and type   mysdr =   to save them. Then   mysdr>iqshift>demod   expands it in place; «*» marks the module the next link starts from (the SDR, not the analyzer). Chunks live in the browser, are listed in the palette (× deletes) and are in the backup.\n'+
+  'Try it: select the USB SDR here, press «>» and type   iqshift>iqdec>demod'});
+nt.size.w=820; nt.size.h=210; applySize(nt);
+const rx=addNode('rtlsdr',40,290,{sr:'2400000',freq:433900000,demod:'IQ'});
+const sa=addNode('sa',420,290,{auto:true,floor:-100,top:-30,split:1}); sa.size.w=640; sa.size.h=320; applySize(sa);
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(sa.id,'centerFreq',rx.id,'steerFreq');
 markWiresDirty();
 });
 preset('Help: Your First Patch', function(){
