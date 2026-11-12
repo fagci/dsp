@@ -131,6 +131,38 @@ const IQ_ADAPT={ iqSig:{type:'iqAudio', inp:'in', main:'out', second:'q'},
 function portT(n,dir,name){ return portsOf(n,dir).find(o=>o.n===name)?.t; }
 function isQPin(name){ return name==='Q' || name==='q'; }
 function buzz(ms){ try{ if(matchMedia('(pointer:coarse)').matches) navigator.vibrate?.(ms); }catch(e){} }   // короткий отклик на тач-устройстве
+/* Полное описание поля на тач-экране: подписи строк параметров укорочены (rowlabel-kernels.js), полный текст — в title, а его пальцем
+   не увидеть. Долгое нажатие на строку (0,55 с, без сдвига) показывает карточку: полная подпись, пояснение, умолчание и пределы. */
+{ let hold=0, tip=null, off=0, eat=false;
+  const hide=()=>{ clearTimeout(off); tip?.remove(); tip=null; };
+  const esc=s=>String(s).replace(/[&<>]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[ch]));
+  const show=row=>{
+    const n=Graph.map[row.dataset.node], s=n && (MOD[n.type].params||[]).find(q=>q.n===row.dataset.param || (q.keys||[]).includes(row.dataset.param));
+    const [head,...rest]=String(row.dataset.full||'').split('\n'), bits=[];
+    if(s){ const d=Array.isArray(s.d) ? s.d.join(' … ') : s.d;
+      if(d!==undefined && d!=='' && typeof d!=='object') bits.push('default '+(s.t==='check' ? (d?'on':'off') : d));
+      if(typeof s.min==='number' && typeof s.max==='number') bits.push(s.min+' … '+s.max+(s.step ? ', step '+s.step : '')); }
+    hide(); tip=document.createElement('div'); tip.className='wprobe rowtip';
+    tip.innerHTML='<b>'+esc(head)+'</b>'+rest.map(x=>'<br>'+esc(x)).join('')+(bits.length ? '<br><i>'+esc(bits.join(' · '))+'</i>' : '');
+    document.body.append(tip);
+    const r=row.getBoundingClientRect(), w=tip.offsetWidth, h=tip.offsetHeight;
+    tip.style.left=Math.max(4,Math.min(innerWidth-w-4,r.left))+'px';
+    tip.style.top=(r.top-h-8>4 ? r.top-h-8 : Math.min(innerHeight-h-4,r.bottom+8))+'px';   // над строкой: палец её не закрывает
+    buzz(12); off=setTimeout(hide,7000);
+  };
+  document.addEventListener('pointerdown',ev=>{
+    clearTimeout(hold); hide(); eat=false;
+    if(ev.pointerType==='mouse' || !ev.isPrimary) return;
+    const row=ev.target.closest?.('#content .prm.pr[data-full], #dashGrid .prm.pr[data-full]'); if(!row) return;
+    const x=ev.clientX, y=ev.clientY;
+    const stop=e=>{ if(e.type==='pointermove' && Math.hypot(e.clientX-x,e.clientY-y)<8) return;
+      clearTimeout(hold); for(const t of ['pointermove','pointerup','pointercancel']) removeEventListener(t,stop,true); };
+    for(const t of ['pointermove','pointerup','pointercancel']) addEventListener(t,stop,true);
+    hold=setTimeout(()=>{ show(row); eat=!!row.querySelector(':scope>select, :scope>input[type=checkbox]'); },550);
+  },true);
+  // отпускание после карточки — не переключение галочки и не открытие списка
+  document.addEventListener('click',ev=>{ if(eat){ eat=false; ev.preventDefault(); ev.stopPropagation(); } },true);
+}
 function connect(from,fp,to,tp){
 buzz(14);
 const a=Graph.map[from], b=Graph.map[to]; if(!a||!b||from===to) return;
@@ -603,21 +635,11 @@ const n=addNode(type,x,y,params);
 if(n && MOD[type].lod==='dot') setLod(n,LOD_DOT);
 return n;
 }
-// длинная подпись → короткое имя (без скобок и пояснения после «:» / « — »); полный текст остаётся в подсказке
-function shortLabel(t){
-let s=t.replace(/\s*\([^)]*\)/g,'');
-const i=s.search(/:\s/); if(i>3) s=s.slice(0,i);
-const j=s.indexOf(' — '); if(j>3) s=s.slice(0,j);
-s=s.replace(/[\s,…]+$/,'');
-return s||t;
-}
 // подряд идущие кнопки/галочки — в один ряд; общая раскладка для основных и adv-параметров
-function renderParamRows(container,n,params){
-// одинаковые короткие подписи («RTL-SDR», «band plan») нечитаемы: у таких берём хвост после «:» (или поле short)
-const shortCnt={}; for(const p of params){ const l=p.label||p.n; if(l.length>24){ const k=shortLabel(l); shortCnt[k]=(shortCnt[k]||0)+1; } }
-const shortOf=p=>{ const l=p.label||p.n; if(p.short) return p.short; const k=shortLabel(l);
-  if(shortCnt[k]>1){ const i=l.search(/:\s/); if(i>3){ const w=l.slice(i+2).replace(/\s*\([^)]*\)/g,'').split(/\s+/); let t=''; for(const x of w){ if((t+' '+x).length>30) break; t+=(t?' ':'')+x; } return k+': '+t; } }
-  return k; };
+function renderParamRows(container,n,params,group){
+// подписи строк — modules/rowlabel-kernels.js: короткое имя, без повтора имени секции, одинаковые различаются
+const ROW_T=['range','range2','check','select','buttons','num','text'], rowPs=params.filter(p=>ROW_T.includes(p.t)), rowLab=new Map();
+paramRowLabels(rowPs,group).forEach((x,k)=>rowLab.set(rowPs[k],x));
 // строки «подпись — значение» (по умолчанию; rows:false у модуля — прежняя раскладка): числа, выборы,
 // галочки, поля ввода — строками в сетке до 4 колонок; подряд идущие кнопки — одним рядом;
 // остальное (code, file, бесконечная крутилка) — как раньше
@@ -636,10 +658,11 @@ const q= p.t==='range' ? {...p,knob:false} : p.t==='buttons' ? {...p,t:'select'}
 const r=paramEl(n,q); r.classList.add('pr','pr-'+q.t);
 if(p.pri) r.classList.add('pri');
 const lab=r.querySelector(':scope>label');
-if(lab && (p.short || lab.textContent.length>24)){ r.title=lab.textContent; lab.textContent=shortOf(p); }
+const L=rowLab.get(p), um=lab && L.unit ? [0,L.text,L.unit] : null;
+r.dataset.full=L.full+(p.tip && p.tip!==L.full ? '\n'+p.tip : '');      // полный текст: подсказка мыши и долгое нажатие на тач-экране (rowTip)
+if(lab){ lab.textContent=L.text; if(L.more){ r.title=r.dataset.full; r.classList.add('pr-more'); } }
 // единица из хвоста подписи («bandwidth, Hz») — тусклым текстом после значения, подпись короче
-const um=lab && ['range','range2','num'].includes(q.t) && /^(.+?),\s*([^\s,]{1,8})$/.exec(lab.textContent);
-if(um){ lab.textContent=um[1]; const u=document.createElement('span'); u.className='pr-unit'; u.textContent=um[2];
+if(um){ const u=document.createElement('span'); u.className='pr-unit'; u.textContent=um[2];
 (q.t==='range' ? r.querySelector('.slidernum') : r).append(u); }
 if(q.t==='range'){ const box=r.querySelector('.slidernum'); if(box && lab) box.prepend(lab); }   // подпись внутри полоски: тащится вся строка
 const sel=r.querySelector(':scope>select');
@@ -691,7 +714,7 @@ const list=params.filter(p=>p.g===name); if(!list.length) continue;
 const sec=document.createElement('div'); sec.className='prm wide pgrp'; sec.dataset.g=name; sec.dataset.n=list.length;
 const head=document.createElement('div'); head.className='pgh';
 const body=document.createElement('div'); body.className='pgb';
-renderParamRows(body,n,list);
+renderParamRows(body,n,list,name);
 sec.append(head,body); container.append(sec);
 paintGroup(n,sec,gIsOpen(n,name));
 head.addEventListener('click',()=>setGroupOpen(n,name,!gIsOpen(n,name)));

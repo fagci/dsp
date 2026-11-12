@@ -9,6 +9,7 @@
 - Patches can be dragged from the list onto the canvas: they are *added* to the current graph.
 
 ## Looking at a wire
+- **The full text of a field**: labels in a module are shortened; hover a row to read the whole label, on a touch screen **press and hold the row** — a card shows the full label, the explanation, the default and the limits.
 - **Hover a wire** (do not click: a click deletes it; on a touch screen the first tap only marks the wire red, the second one deletes it): the tip shows `source.pin → target.pin`, the type, the last value (a number, a block's range and rms, the keys of a record), **blocks per second** and the **age** of the last block (`now`, `300 ms ago`; «source is not producing» after 1.5 s of silence; «engine stopped»). Only the source of that wire is counted, so there is no cost without a hover. Logic: `modules/wireprobe-kernels.js`, `node tools/test-wireprobe.mjs`. Preset «Help: Wire Probe (Value, Rate, Age on a Wire)».
 
 ## On a phone
