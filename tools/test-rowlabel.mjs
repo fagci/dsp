@@ -5,7 +5,7 @@ import vm from 'node:vm';
 let bad = 0;
 const ok = (n, c, x = '') => { if (!c) { bad++; console.log('FAIL', n, x); } else console.log('ok  ', n); };
 const ctx = vm.createContext({});
-vm.runInContext(fs.readFileSync(new URL('../modules/rowlabel-kernels.js', import.meta.url), 'utf8') + '\nthis.K={shortLabel,rowLabelNoGroup,paramRowLabels}', ctx);
+vm.runInContext(fs.readFileSync(new URL('../modules/rowlabel-kernels.js', import.meta.url), 'utf8') + '\nthis.K={shortLabel,rowLabelNoGroup,paramRowLabels,paramPackOrder}', ctx);
 const K = ctx.K, L = (ps, g) => K.paramRowLabels(ps, g), T = (ps, g) => L(ps, g).map(r => r.text + (r.unit ? ' [' + r.unit + ']' : '')).join(' | ');
 
 ok('short label: brackets and explanations go', K.shortLabel('hold time, s (0 — off): how long the squelch stays open') === 'hold time, s' && K.shortLabel('mode — pick one of the three') === 'mode');
@@ -21,5 +21,12 @@ ok('a foreign prefix stays', K.rowLabelNoGroup('vibrate: duration', 'Alarm') ===
 ok('more: only when something is hidden', (r => r[0].more === false && r[1].more === true && r[2].more === true && r[3].more === false)(L([{ n: 'a', t: 'check', label: 'grid' },
   { n: 'b', t: 'check', label: 'labels of the points on the map (name and time)' }, { n: 'c', t: 'check', label: 'x', tip: 'long text' }, { n: 'd', t: 'range', label: 'bandwidth, Hz' }])));
 ok('full text is kept', L([{ n: 'a', t: 'text', label: 'alarm: days — mon,wed,fri / weekdays' }], 'Alarm')[0].full === 'alarm: days — mon,wed,fri / weekdays' && T([{ n: 'a', t: 'text', label: 'alarm: days — mon,wed,fri / weekdays' }], 'Alarm') === 'days');
+{ // ряды, заданные вручную
+  const ps = ['a', 'b', 'c', 'd', 'e'].map(n => ({ n, t: 'check' })); ps.push({ n: 'go', t: 'button' });
+  const o = K.paramPackOrder(ps, ['d b', 'e x', 'go a']);
+  ok('pack: a row stands at its first field, in the order of the hint', o.list.map(p => p.n).join('') === 'adbcego', o.list.map(p => p.n).join(''));
+  ok('pack: only rows with two fields here; buttons never', o.row.size === 2 && o.row.get(ps[1]) === 0 && o.row.get(ps[3]) === 0 && !o.row.has(ps[4]) && !o.row.has(ps[0]));
+  ok('pack: no hint — the same list', K.paramPackOrder(ps).list.length === 6 && K.paramPackOrder(ps, []).row.size === 0);
+}
 console.log(bad ? bad + ' FAILED' : 'all ok');
 process.exit(bad ? 1 : 0);

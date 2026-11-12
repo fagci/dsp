@@ -743,6 +743,16 @@ body.noedit #bar .ed{display:none}
 /* узкий узел (до 560px: телефон, узкая панель дашборда) — один столбец, как список настроек: подпись слева, значение справа.
    Ряды в одну и в две ячейки вперемешку выглядели случайными; колонки — только там, где им есть место. */
 @container nio (max-width:559px){ .prmrows>.prm.pr{flex-basis:100%} }
+/* ряд, заданный вручную (def.pack): на узком узле его поля делят строку поровну (2–4 в ряд), остальные идут по одному;
+   на широком узле ряд растворяется в общих колонках */
+@container nio (max-width:559px){
+  .prmrows>.prm.pr.pk2{flex:1 1 calc((100% - 12px)/2 - 1px)}
+  .prmrows>.prm.pr.pk3{flex:1 1 calc((100% - 24px)/3 - 1px)}
+  .prmrows>.prm.pr.pk4{flex:1 1 calc((100% - 36px)/4 - 1px)}
+  .prmrows>.prm.pr.pk{min-width:0;flex-wrap:nowrap}
+  .prmrows>.prm.pr.pk>label{flex:1 1 0;min-width:0}
+  .prmrows>.pr-check:is(.pk3,.pk4)::after{display:none}      /* три галочки и больше — точка без «on / off» */
+}
 .dash-body .node .io3{container:nio/inline-size}
 /* единица (хвост подписи «…, Hz») — тусклым текстом после значения */
 .prmrows .pr-unit{position:relative;z-index:1;flex:none;margin-left:-3px;font-size:10px;color:var(--dim);pointer-events:none}

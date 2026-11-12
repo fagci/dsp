@@ -1,4 +1,4 @@
-def({ id:'osc', title:'Oscillator', cat:'Sources',
+def({ id:'osc', title:'Oscillator', cat:'Sources', pack:['fmHz phase'],
   outs:[{n:'out',t:'sig'},{n:'sync',t:'sig'}],
   ins:[{n:'freq',t:'num'},{n:'amp',t:'num'},{n:'fmHz',t:'num'},{n:'phase',t:'num'},
        {n:'fm',t:'sig'},{n:'sync',t:'sig'}],
@@ -168,7 +168,7 @@ def({ id:'sweep', title:'Sweep / Jammer', cat:'Sources', outs:[{n:'out',t:'sig'}
 const SRATE_OPTS=['auto','8000','16000','22050','44100','48000','96000','192000'];
 function srOf(n){ return n.p.srate==='auto' ? undefined : +n.p.srate; }
 
-def({ id:'mic', title:'Microphone (A+B)', cat:'Sources',
+def({ id:'mic', title:'Microphone (A+B)', cat:'Sources', pack:['echo ns agc'],
   outs:[{n:'a',t:'sig'},{n:'b',t:'sig'}],
   ins:[{n:'gainA',t:'num'},{n:'gainB',t:'num'},{n:'echo',t:'num'},{n:'ns',t:'num'},{n:'agc',t:'num'}],
   params:[{n:'unlock',t:'button',label:'show device names',fn:n=>Eng.unlockLabels()},
@@ -191,9 +191,9 @@ def({ id:'mic', title:'Microphone (A+B)', cat:'Sources',
           {n:'srate',t:'select',d:'auto',label:'sample rate', opts:()=>SRATE_OPTS, fn:n=>armAll(n)},
           // эффекты — это constraints getUserMedia, общие на оба входа (см. Eng.fx); сперва
           // пробуем применить живьём (applyConstraints), без пересоздания потока
-          {n:'echo',t:'check',d:false,label:'echo cancellation',fn:n=>reapplyFx(n)},
-          {n:'ns',t:'check',d:false,label:'noise suppression',fn:n=>reapplyFx(n)},
-          {n:'agc',t:'check',d:false,label:'auto gain control',fn:n=>reapplyFx(n)}],
+          {n:'echo',t:'check',d:false,label:'echo cancellation',short:'AEC',fn:n=>reapplyFx(n)},
+          {n:'ns',t:'check',d:false,label:'noise suppression',short:'NS',fn:n=>reapplyFx(n)},
+          {n:'agc',t:'check',d:false,label:'auto gain control',short:'AGC',fn:n=>reapplyFx(n)}],
   init:n=>{ n.armed=false; n.status=''; },
   process(n,I){
     if(typeof I.gainA==='number') setMod(n,'gainA',I.gainA);
@@ -1022,7 +1022,7 @@ def({ id:'const', title:'Constant', cat:'Control', outs:[{n:'out',t:'num'}],
   process(n,I){ if(typeof I.v==='number') setMod(n,'v',I.v); return {out:n.p.v}; }});
 
 
-def({ id:'lfo', title:'LFO', cat:'Control', outs:[{n:'out',t:'num'},{n:'sync',t:'sig'}],
+def({ id:'lfo', title:'LFO', cat:'Control', pack:['min max'], outs:[{n:'out',t:'num'},{n:'sync',t:'sig'}],
   ins:[{n:'freq',t:'num'},{n:'sync',t:'sig'}],
   params:[{n:'freq',t:'range',min:.01,max:20,step:.01,d:.5},
           {n:'min',t:'num',d:0},{n:'max',t:'num',d:1},
