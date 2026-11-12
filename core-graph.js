@@ -2379,11 +2379,53 @@ function chunksRead(){ try{ const o=JSON.parse(LS.get(CHUNK_KEY)||'{}'); return 
 function chunkGet(key){ const o=chunksRead(); for(const k in o) if(k.toLowerCase()===key) return o[k]; return null; }
 function chunkSave(name,src){ const o=chunksRead(); for(const k of Object.keys(o)) if(k.toLowerCase()===name.toLowerCase()) delete o[k]; o[name]=src; LS.set(CHUNK_KEY,JSON.stringify(o)); }
 function chunkDel(name){ const o=chunksRead(); delete o[name]; LS.set(CHUNK_KEY,JSON.stringify(o)); }
+/* команды графа в палитре: «очистить канвас», «упорядочить», «запустить»… Находятся нечётким поиском по названию и ключевым словам (и по-русски).
+   btn — id кнопки тулбара (команда = её клик; нет кнопки или она скрыта — команды нет); run — свой обработчик. */
+const CMDK_CMDS=[
+  {t:'Clear canvas',kw:'clear canvas wipe all new empty patch очистить канвас холст удалить всё новый',btn:'clear'},
+  {t:'Run / stop',kw:'run stop start pause play engine запустить остановить старт стоп пуск',btn:'run',key:'Space'},
+  {t:'Undo',kw:'undo back отменить назад',btn:'undo',key:'Ctrl+Z'},
+  {t:'Redo',kw:'redo forward повторить вперёд',btn:'redo',key:'Ctrl+Shift+Z'},
+  {t:'Fit patch to screen',kw:'fit zoom all view reset вписать показать всё масштаб',btn:'fit'},
+  {t:'Arrange the graph',kw:'arrange layout auto tidy align columns упорядочить раскладка выровнять граф',btn:'arrange'},
+  {t:'Align selected modules',kw:'align selected выровнять выделенные',btn:'align'},
+  {t:'Duplicate selected modules',kw:'duplicate copy clone selected дублировать копировать выделенные',btn:'dup',key:'D'},
+  {t:'Select all modules',kw:'select all выделить все',key:'Ctrl+A',run:()=>{ Sel.clear(); for(const n of Graph.nodes) Sel.add(n.id); syncSel(); }},
+  {t:'Delete selected modules',kw:'delete remove selected del удалить выделенные',key:'Delete',run:()=>{ delSel(); }},
+  {t:'Detail level of modules: full → compact → dots',kw:'detail level lod compact dots dot collapse expand подробность компактно точки свернуть',btn:'lod'},
+  {t:'Wire bundles on / off',kw:'wire bundle harness wires провода пучки жгуты',btn:'bundle'},
+  {t:'Dashboard view',kw:'dashboard tiles panes view дашборд плитки панели',btn:'dash'},
+  {t:'Power profile',kw:'power profile cpu battery profiler load heat профайлер нагрузка процессор батарея',btn:'power'},
+  {t:'Save current patch',kw:'save patch store сохранить патч',btn:'psave',key:'Ctrl+S'},
+  {t:'Save to file',kw:'save file download export json сохранить в файл скачать',btn:'save'},
+  {t:'Open file',kw:'open load file import json открыть файл загрузить',btn:'load'},
+  {t:'Copy link to this patch',kw:'link share url copy patch ссылка поделиться',btn:'plink'},
+  {t:'Share the patch',kw:'share send patch отправить поделиться',btn:'sharePatch'},
+  {t:'Backup: export everything',kw:'backup export all data резервная копия экспорт',btn:'bkExport'},
+  {t:'Backup: restore from a file',kw:'backup import restore восстановить импорт копия',btn:'bkImport'},
+  {t:'Sync devices',kw:'sync devices keep files table synchronize синхронизация устройства',btn:'syncOpen'},
+  {t:'Settings',kw:'settings options sample rate proxy настройки параметры',btn:'settings'},
+  {t:'Help and manual',kw:'help manual docs справка помощь руководство',btn:'helpBtn',key:'F1'},
+  {t:'Errors of this session',kw:'errors log report bug ошибки журнал',btn:'errBadge'},
+  {t:'Show / hide the sidebar',kw:'sidebar menu panel hide show боковая панель меню',btn:'menu'},
+  {t:'Zoom in',kw:'zoom in closer увеличить приблизить',key:'+',run:()=>panzoom.zoomIn()},
+  {t:'Zoom out',kw:'zoom out farther уменьшить отдалить',key:'-',run:()=>panzoom.zoomOut()},
+  {t:'Refresh app files (keeps all data)',kw:'refresh update reload cache service worker обновить приложение кэш',btn:'wipe'},
+];
+function cmdkCommands(words){
+const out=[];
+for(const c of CMDK_CMDS){
+  if(c.btn){ const b=document.getElementById(c.btn); if(!b || b.hidden || b.disabled) continue; }
+  const text=c.t+' '+c.kw;
+  if(fzScoreWords(words,fzTokens(text),text.toLocaleLowerCase('ru'))>=2*words.length) out.push(c);
+}
+return out;
+}
 function cmdkOpen(){
 if(typeof dashMode!=='undefined' && dashMode) return;                    // палитра — для графа, в дашборде свои панели
 if(!cmdkEl){
   cmdkEl=document.createElement('div'); cmdkEl.id='cmdk'; cmdkEl.hidden=true;
-  cmdkEl.innerHTML='<input type="search" placeholder="Module or patch — fuzzy («phose» finds Phone sensors) · chain: mic>fft>sa, usb>(dac,sa), sa[spec>spec2, freq<f1] · chunk: name = chain" autocomplete="off" spellcheck="false"><div class="cmdk-list"></div>';
+  cmdkEl.innerHTML='<input type="search" placeholder="Module, patch or command («clear canvas», «arrange») — fuzzy («phose» finds Phone sensors) · chain: mic>fft>sa, usb>(dac,sa), sa[spec>spec2, freq<f1] · chunk: name = chain" autocomplete="off" spellcheck="false"><div class="cmdk-list"></div>';
   document.body.append(cmdkEl);
   cmdkEl.querySelector('input').addEventListener('input',()=>{ cmdkRender(); clearTimeout(cmdkPrevT); cmdkPrevT=setTimeout(cmdkPreview,140); });
   cmdkEl.addEventListener('keydown',cmdkKeys);
@@ -2592,6 +2634,7 @@ if(cmdkChain){
 }
 cmdkRows=[];
 cmdkSel=0;                                                   // каждый ввод — выделение снова на первом пункте
+if(words.length) for(const c of cmdkCommands(words).slice(0,4)) cmdkRows.push({kind:'cmd',c});
 const chunks=chunksRead();
 for(const nm of Object.keys(chunks)){ if(!words.length||fzScoreWords(words,fzTokens(nm),nm.toLocaleLowerCase('ru'))>=2*words.length) cmdkRows.push({kind:'chunk',name:nm,src:chunks[nm]}); }
 for(const m of modRank(Object.values(MOD),words).slice(0,8)) cmdkRows.push({kind:'mod',m});
@@ -2609,6 +2652,7 @@ cmdkRows.forEach((r,i)=>{
   const b=document.createElement('button'); b.className='cmdk-row'+(i===cmdkSel?' on':'');
   b.innerHTML= r.kind==='mod'
     ? '<span class="cmdk-kind">module</span><b>'+hlpEsc(r.m.title)+'</b><span class="cmdk-dim">'+hlpEsc(r.m.id)+'</span>'
+    : r.kind==='cmd' ? '<span class="cmdk-kind">command</span><b>'+hlpEsc(r.c.t)+'</b>'+(r.c.key ? '<span class="cmdk-dim">'+hlpEsc(r.c.key)+'</span>' : '')
     : r.kind==='chunk' ? '<span class="cmdk-kind">chunk</span><b>'+hlpEsc(r.name)+'</b><span class="cmdk-dim cmdk-src">'+hlpEsc(r.src)+'</span><span class="cmdk-del" title="Delete this chunk">×</span>'
     : '<span class="cmdk-kind">patch</span><b>'+hlpEsc(r.name)+'</b>';
   if(r.kind==='chunk') b.querySelector('.cmdk-del').addEventListener('click',e=>{ e.stopPropagation(); if(confirm('Delete chunk «'+r.name+'»?')){ chunkDel(r.name); cmdkRender(); } });
@@ -2633,6 +2677,7 @@ if(r.kind==='chunk'){                                        // chunk — как
   const q=cmdkEl.querySelector('input'); q.value=r.name; cmdkRender(); cmdkPrevT=setTimeout(cmdkPreview,0); q.focus(); return;
 }
 cmdkClose();
+if(r.kind==='cmd'){ const c=r.c; setTimeout(()=>{ if(c.run) c.run(); else document.getElementById(c.btn)?.click(); },0); return; }   // после закрытия палитры: фокус и превью не мешают
 if(r.kind==='mod'){
   const rect=cv.getBoundingClientRect();
   const n=addNodeUI(r.m.id,(rect.width/2)/view.k-view.x-90,(rect.height/3)/view.k-view.y);
