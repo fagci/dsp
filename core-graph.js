@@ -921,9 +921,7 @@ arc=mk('kn-val'); svg.append(mk('kn-track'),arc); box.prepend(svg); }
 const pct=v=> s.log
 ? clamp(Math.log(v/smin)/Math.log(smax/smin),0,1)*100
 : clamp((v-smin)/((smax-smin)||1),0,1)*100;
-const disp=v=> (s.step &&s.step >=1)
-? (Math.abs(v) >=1000 ? (Math.round(v/10)/100)+'k' : String(Math.round(v)))
-: fmt(v);
+const disp=fmt;
 const render=v=>{ if(arc) arc.style.strokeDasharray=pct(v)+' 100'; else fillEl.style.width=pct(v)+'%';
 valEl.textContent=disp(v); };
 const setV=v=>{ v=clamp(v,smin,smax); n.p[s.n]=v; render(v); };
@@ -1076,7 +1074,7 @@ const valEl=document.createElement('span'); valEl.className='sn-val';
 box.append(fillEl,valEl);
 const pct=v=> log? clamp(Math.log(v/min)/Math.log(max/min),0,1)*100
 : clamp((v-min)/((max-min)||1),0,1)*100;
-const disp=v=> Math.abs(v) >=1000? (Math.round(v/10)/100)+'k' : String(Math.round(v));
+const disp=fmt;
 const render=v=>{ fillEl.style.width=pct(v)+'%'; valEl.textContent=disp(v); };
 const setV=v=>{
 v=clamp(v,min,max);
@@ -1235,7 +1233,8 @@ n.pel=n.pel||{}; n.pel[s.n]=row;
 return row;
 }
 const fmt=v=>{ v=+v||0;                              // на случай пропущенного значения — не падать, а показать 0
-return Math.abs(v) >=1000?(v/1000).toFixed(2)+'k':Math.abs(v) >=10?v.toFixed(1):v.toFixed(3); };
+// точное число, без «8.08k»: целое — как есть, дробное — 7 значащих цифр (срезает хвост вида 0.30000000000000004)
+return Number.isInteger(v) ? String(v) : String(+v.toPrecision(7)); };
 /* ---- провода ---- */
 function portPos(n,el,dir){
 if(n.lod && !n.ghost){                             // свёрнутый узел: слева входы, справа выходы
