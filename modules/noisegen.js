@@ -1,14 +1,14 @@
 "use strict";
 /* ============================ Noise Generator ============================
    Несколько шумов сразу (white / pink / brown / blue / violet) — каждый со своим уровнем, без эквалайзера: спектр задаёт сам цвет шума.
-   Рядом генеративные звуки, которые не повторяются: дождь, прибой, ветер с порывами, случайные колокольчики в строе (пентатоника…),
+   Рядом генеративные звуки, которые не повторяются: дождь, прибой, ветер с порывами, гроза с раскатами, костёр с потрескиванием, ночные сверчки, случайные колокольчики в строе (пентатоника…),
    сердцебиение и тон разностной частоты (binaural — в разные уши, monaural — смесь в обоих, isochronic — пульсирующий тон для колонок).
    Пульсация подложки (AM, Гц) — «изохронный шум». Входы vol / carrier / beat / pulse / bpm принимают числа: Table, Breath Pacer, LFO.
    Ядро — modules/noisegen-kernels.js (tools/test-noisegen.mjs). */
 
 const nsgOn=k=>n=>n.p[k]>0;
 def({ id:'noisegen', title:'Noise Generator', cat:'Sources', w:280, readout:true,
-  kw:'white pink brown red blue violet noise colour color rain sea ocean waves wind chimes bells heartbeat binaural monaural isochronic sleep relax focus masking nature ambient generative sound health',
+  kw:'white pink brown red blue violet noise colour color rain sea ocean waves wind thunder storm fire campfire crackle crickets night chimes bells heartbeat binaural monaural isochronic sleep relax focus masking nature ambient generative sound health',
   outs:[{n:'L',t:'sig'},{n:'R',t:'sig'},{n:'out',t:'sig'}],
   ins:[{n:'vol',t:'num'},{n:'carrier',t:'num'},{n:'beat',t:'num'},{n:'pulse',t:'num'},{n:'bpm',t:'num'}],
   params:[
@@ -24,6 +24,12 @@ def({ id:'noisegen', title:'Noise Generator', cat:'Sources', w:280, readout:true
     {n:'waves',t:'range',min:0,max:1,step:.01,d:0,label:'waves (surf)'},
     {n:'period',t:'range',min:3,max:20,step:.1,d:9,label:'wave period, s',if:nsgOn('waves')},
     {n:'wind',t:'range',min:0,max:1,step:.01,d:0,label:'wind (gusts)'},
+    {n:'thunder',t:'range',min:0,max:1,step:.01,d:0,label:'thunder (rolls)',tip:'random claps: near ones start with a dry crack, far ones are late, low and quiet; then a rumble rolls away'},
+    {n:'storm',t:'range',min:.5,max:12,step:.5,d:2,label:'thunderclaps per minute',if:nsgOn('thunder')},
+    {n:'fire',t:'range',min:0,max:1,step:.01,d:0,label:'campfire (crackle)'},
+    {n:'crackle',t:'range',min:1,max:40,step:1,d:8,label:'crackles per second',if:nsgOn('fire')},
+    {n:'crickets',t:'range',min:0,max:1,step:.01,d:0,label:'crickets (night)'},
+    {n:'temp',t:'range',min:5,max:35,step:1,d:20,label:'air temperature, °C',tip:'warmer — crickets chirp faster (about 6 % per degree)',if:nsgOn('crickets')},
     {n:'chimes',t:'range',min:0,max:1,step:.01,d:0,label:'chimes (random bells)'},
     {n:'rate',t:'range',min:1,max:60,step:1,d:8,label:'chimes per minute',if:nsgOn('chimes')},
     {n:'scale',t:'select',opts:Object.keys(NSG_SCALES),d:'pentatonic',label:'scale',if:nsgOn('chimes')},
