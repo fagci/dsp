@@ -12,6 +12,7 @@ const files=[...worker.match(/importScripts\((.*)\);/)[1].matchAll(/'([^']+)'/g)
 const ctx=vm.createContext({console,Math,Float32Array,Float64Array,Uint8Array,Uint16Array,Uint32Array,Int8Array,Int16Array,Int32Array,Map,Set,Date,JSON,Array,Object,String,Number,parseInt,parseFloat,isFinite,isNaN,Symbol,Promise,BigInt,DataView,WebAssembly,atob,Blob,File,TextEncoder,TextDecoder,Error});
 ctx.self=ctx;
 for(const f of files) vm.runInContext(rd(f),ctx,{filename:f});
+vm.runInContext(rd('modules/timeline-kernels.js'),ctx,{filename:'timeline-kernels.js'});
 vm.runInContext(rd('modules/iqfiles-kernels.js'),ctx,{filename:'iqfiles-kernels.js'});
 const ev=s=>vm.runInContext(s,ctx);
 // сборка и разбор файлов — из исходников узлов (по меткам-комментариям)
@@ -62,6 +63,34 @@ const ok=(c,m)=>{ if(!c){ bad++; console.log('FAIL',m); } else console.log('ok  
   // поток начался заново — кольцо и метки сброшены
   ok(ev(`(()=>{ const c=iqfCutNew(); let ch=mk(0,100,.1); iqfCutPush(c,0,ch.re,ch.im,0); iqfCutMark(c,10,50); ch=mk(0,100,.1); iqfCutPush(c,0,ch.re,ch.im,1); return c.ring.length===1 && c.marks.length===0; })()`), 'перезапуск потока');
   ok(ev(`iqfCutHas((()=>{ const c=iqfCutNew(); const ch=mk(5000,100,.1); iqfCutPush(c,5000,ch.re,ch.im,0); globalThis.cc=c; return c; })(),5050,1000) && !iqfCutHas(cc,900000,1000)`), 'номер отсчёта чужого потока отбрасывается');
+}
+
+// ---- триггер с предысторией и запись по условию ----
+{
+  // куски по границам чанков → смежные сливаются: [начало, конец, подпись]
+  ev(`globalThis.spans=ps=>{ const o=[]; for(const p of ps){ const l=o[o.length-1]; if(l && l[1]===p.t0) l[1]=p.t0+p.n; else o.push([p.t0,p.t0+p.n,p.label]); } return o; }`);
+  const run=js=>JSON.parse(ev(`(()=>{ const c=iqfCutNew(), sr=1000;
+    for(let k=0;k<10;k++){ const ch=mk(k*100,100,.1); iqfCutPush(c,ch.t0,ch.re,ch.im,k*100); ${js} }
+    return JSON.stringify(spans(iqfCutTake(c,0,true,sr))); })()`));
+  // условие держится на чанках 4 и 5 (отсчёты 400..600): в запись — 150 мс до фронта и 120 мс после спада
+  const r=run(`iqfCutTrigger(c,k===4||k===5,sr,150,120,'go');`);
+  ok(r.length===1 && r[0][0]===250 && r[0][1]===720 && r[0][2]==='go', 'триггер: предыстория до фронта и выдержка после спада '+JSON.stringify(r));
+  // выдержка 150 мс перекрывает паузу в 100 мс между всплесками: один кусок, одна предыстория
+  const r2=run(`iqfCutTrigger(c,k===2||k===4,sr,50,150,'g');`);
+  ok(r2.length===1 && r2[0][0]===150 && r2[0][1]===650, 'выдержка сливает близкие всплески '+JSON.stringify(r2));
+  // далёкие всплески — два куска, у каждого своя предыстория
+  const r3=run(`iqfCutTrigger(c,k===2||k===8,sr,30,0,'g');`);
+  ok(r3.length===2 && r3[0][0]===170 && r3[0][1]===300 && r3[1][0]===770, 'далёкие всплески — раздельно '+JSON.stringify(r3));
+  ok(ev(`iqfCutTrigger(iqfCutNew(),true,1000,10,10,'x')`)===false, 'пустое кольцо — не падает');
+  // пакет по записи: конец в 500, длина 80 мс, до — 40, после — 20 → 380..520
+  const r4=JSON.parse(ev(`(()=>{ const c=iqfCutNew(); for(let k=0;k<10;k++){ const ch=mk(k*100,100,.1); iqfCutPush(c,ch.t0,ch.re,ch.im,k*100); }
+    iqfCutMarkPacket(c,500,1000,80,40,20,'p'); return JSON.stringify(spans(iqfCutTake(c,0,true,1000))); })()`));
+  ok(r4.length===1 && r4[0][0]===380 && r4[0][1]===520, 'пакет целиком: длина + запас до и после '+JSON.stringify(r4));
+  const m=(e,row)=>ev(`iqfMatch(${JSON.stringify(e)})(${JSON.stringify(row)})`);
+  ok(m('data~123',{data:'AB123F'})===true && m('data~123',{data:'AB999'})===false, 'условие data~123');
+  ok(m('rssi>-70 kind=beacon',{rssi:-60,kind:'beacon'})===true && m('rssi>-70 kind=beacon',{rssi:-80,kind:'beacon'})===false, 'несколько условий');
+  ok(m('',{x:1})===true && m('',null)===false && m('data~1','str')===false, 'пустое условие — любая запись; не запись — нет');
+  ok(ev(`iqfMatchLabel({data:'12   3\\n4'})`)==='12 3 4' && ev(`iqfMatchLabel({name:'N',data:'d'})`)==='N' && ev(`iqfMatchLabel({})`)==='match', 'подпись куска');
 }
 
 // ---- описание ----

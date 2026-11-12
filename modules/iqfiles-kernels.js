@@ -52,6 +52,36 @@ function iqfCutMarkWall(c, wa, wb, label, sr){
     prev=w1;
   }
 }
+/* ---- триггер с предысторией ----
+   Решение о куске отложено на lag отсчётов (кольцо), поэтому метку можно поставить и НАЗАД: на фронте условия
+   в запись попадает padB мс до него, а после спада — ещё padA мс (выдержка). Вызывать после iqfCutPush того же чанка.
+   on — условие выполнено на этом чанке. Возвращает true, если на этом чанке начался новый всплеск (передний фронт). */
+function iqfCutTrigger(c, on, sr, padB, padA, label){
+  const last=c.ring.length ? c.ring[c.ring.length-1] : null; if(!last) return false;
+  const a=last.t0, b=a+last.n;
+  if(on){
+    const fresh=!(c.trigEnd>=a);                                    // выдержка прошлого всплеска уже кончилась
+    if(fresh) iqfCutMark(c, Math.round(a-padB*sr/1000), a, label);
+    iqfCutMark(c, a, b, label); c.trigEnd=b+Math.round(padA*sr/1000);
+    return fresh;
+  }
+  if(c.trigEnd>a) iqfCutMark(c, a, Math.min(b,c.trigEnd), label);
+  return false;
+}
+// пакет, найденный декодером: end — номер отсчёта конца пакета, durMs — его длина; padB / padA — запас до и после, мс
+function iqfCutMarkPacket(c, end, sr, durMs, padB, padA, label){
+  iqfCutMark(c, Math.round(end-((+durMs||0)+padB)*sr/1000), Math.round(end+padA*sr/1000), label);
+}
+// условие на запись: «data~123 rssi>-70» (синтаксис фильтра Timeline); пустое — подходит любая. Нужен timeline-kernels.js
+function iqfMatch(expr){
+  const f=String(expr||'').trim() && typeof tlFilter==='function' ? tlFilter(expr) : null;
+  return f ? row=>!!row && typeof row==='object' && f({row}) : row=>!!row && typeof row==='object';
+}
+// подпись куска по записи: label / name / text / data / type (короткая)
+function iqfMatchLabel(r){
+  const v=r.label ?? r.name ?? r.text ?? r.msg ?? r.data ?? r.type ?? r.kind;
+  return v==null ? 'match' : String(v).replace(/\s+/g,' ').slice(0,40);
+}
 // достаёт решённые чанки (старше lag отсчётов; flush — все); отдаёт куски в метках: {t0, n, a, wall, label}
 function iqfCutTake(c, lag, flush, sr){
   const out=[], limit=flush ? Infinity : c.end-lag;

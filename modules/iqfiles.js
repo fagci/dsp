@@ -179,14 +179,16 @@ async function iqrFinish(n, again){
   if(r.n>0) await iqrSave(n, r); else n.msg='nothing to save (no '+(n.p.mode==='voice only' ? 'voice' : 'signal')+' in the stream)';
 }
 def({ id:'iqRec', title:'IQ Recorder', cat:'Output', kw:'iq record save files voice dmr baseband sigmf wav channel band gate tag metadata archive',
-  ins:[{n:'in',t:'iq'},{n:'voice',t:'rec'},{n:'go',t:'num'},{n:'freq',t:'num'},{n:'tag',t:'txt'}],
-  outs:[{n:'sec',t:'num'},{n:'size',t:'num'},{n:'saved',t:'num'},{n:'files',t:'num'}],
+  ins:[{n:'in',t:'iq'},{n:'voice',t:'rec'},{n:'rec',t:'rec'},{n:'go',t:'num'},{n:'freq',t:'num'},{n:'tag',t:'txt'}],
+  outs:[{n:'sec',t:'num'},{n:'size',t:'num'},{n:'saved',t:'num'},{n:'files',t:'num'},{n:'hits',t:'num'}],
   readout:true, tall:true, w:340,
   params:[
     {n:'start',t:'button',label:'● Record',fn:n=>{ n.armed=true; n.off=false; n.msg=''; }},
     {n:'stop',t:'button',label:'■ Stop and save',fn:n=>{ n.off=true; iqrFinish(n,false); }},
-    {n:'mode',t:'select',opts:['everything','voice only','go input'],d:'everything',
-      label:'what goes in: everything · voice only (parts of the stream marked by voice records of a decoder: DMR bursts, merged into one file) · go input above 0.5'},
+    {n:'mode',t:'select',opts:['everything','voice only','go input','on match'],d:'everything',
+      label:'what goes in: everything · voice only (parts of the stream marked by voice records of a decoder: DMR bursts, merged into one file) · go input (while it is above 0.5, with the margin before it rose) · on match (a whole packet whose record from the rec input satisfies «when»)'},
+    {n:'when',t:'text',d:'',label:'on match: condition on a record, like the Timeline filter — data~123 · rssi>-70 kind=beacon · word (any column); empty — every record',if:n=>n.p.mode==='on match'},
+    {n:'plen',t:'range',min:0,max:2000,step:5,d:60,label:'on match: packet length when the record has no dur (ms), counted back from its end',if:n=>n.p.mode==='on match'},
     {n:'band',t:'select',opts:['whole input','channel'],d:'whole input',label:'whole input — the stream as it comes; channel — only one channel (shifted and decimated)'},
     {n:'chOff',t:'num',d:0,label:'channel: offset from the input centre, Hz (the freq input — absolute frequency — overrides it)'},
     {n:'chBw',t:'range',min:1000,max:1000000,step:500,log:true,d:25000,label:'channel: bandwidth, Hz'},
@@ -194,10 +196,11 @@ def({ id:'iqRec', title:'IQ Recorder', cat:'Output', kw:'iq record save files vo
     {n:'tag',t:'text',d:'',label:'tags, comma separated (the first goes into the file name); the tag input overrides'},
     {n:'folder',t:'text',d:IQF_FOLDER,label:'folder in Files'},
     {n:'autostart',t:'check',d:false,label:'record as soon as the stream arrives'},
-    {n:'padB',t:'range',min:0,max:1000,step:10,d:300,label:'voice: margin before, ms (the decoder needs the sync word and header before the voice to lock again when the file is played back)'},
-    {n:'padA',t:'range',min:0,max:1000,step:10,d:100,label:'voice: margin after, ms'},
+    {n:'padB',t:'range',min:0,max:1000,step:10,d:300,label:'margin before, ms — voice / go / match: taken from the past (the decoder needs the sync word and header before the voice to lock again when the file is played back)'},
+    {n:'padA',t:'range',min:0,max:1000,step:10,d:100,label:'margin after, ms (for go — it holds the recording after the input falls)'},
+    {n:'hold',t:'range',min:1,max:10,step:.5,d:1.5,adv:true,label:'history kept for a decision, s — must exceed margin before + packet length + the delay of the decoder that sends the record (more — more memory)'},
     {n:'split',t:'range',min:8,max:900,step:8,log:true,d:256,label:'start a new file after, MB (recordings are kept in memory until saved)'}],
-  init:n=>{ n.cut=iqfCutNew(); n.rec=null; n.armed=false; n.off=false; n.msg=''; n.files=0; n.savedP=0; n.freqIn=null; n.tagIn=null; n.inSr=0; n.inFc=0; n.busy=false; },
+  init:n=>{ n.cut=iqfCutNew(); n.rec=null; n.armed=false; n.off=false; n.msg=''; n.files=0; n.savedP=0; n.freqIn=null; n.tagIn=null; n.inSr=0; n.inFc=0; n.busy=false; n.hits=0; },
   dispose:n=>{ if(n.rec) iqrFinish(n,false); },
   process(n,I){
     const s=iqIn(I,'in'), p=n.p;
@@ -210,11 +213,26 @@ def({ id:'iqRec', title:'IQ Recorder', cat:'Output', kw:'iq record save files vo
       if(n.rec && (n.rec.inSr!==s.sr || n.rec.inFc!==s.fc || !!n.rec.M!==(p.band==='channel') || n.rec.kind!==(p.fmt==='SigMF' ? 'sigmf' : 'wav'))){
         iqrFinish(n,true);                       // сменились частота потока, центр или режим — новый файл
       }
-      if(!n.rec){ n.rec=iqrNew(n,s); n.rec.autoTags=[...(p.mode==='voice only' ? ['voice'] : []), ...(p.band==='channel' ? ['channel'] : [])]; }
+      if(!n.rec){ n.rec=iqrNew(n,s); n.rec.autoTags=[...(p.mode==='voice only' ? ['voice'] : p.mode==='on match' ? ['match'] : p.mode==='go input' ? ['trigger'] : []), ...(p.band==='channel' ? ['channel'] : [])]; }
       const r=n.rec, c=n.cut;
       for(const ch of s.chunks) iqfCutPush(c, ch.t0, ch.re, ch.im, Date.now());
       if(p.mode==='everything') iqfCutGate(c, true, '');
-      else if(p.mode==='go input') iqfCutGate(c, typeof I.go==='number' && I.go>0.5, 'go');
+      else if(p.mode==='go input'){
+        iqfCutGate(c, false);
+        if(iqfCutTrigger(c, typeof I.go==='number' && I.go>0.5, s.sr, +p.padB, +p.padA, 'go')) n.hits++;
+      }
+      else if(p.mode==='on match'){
+        iqfCutGate(c, false);
+        const ok=iqfMatch(p.when), tick=BLOCK/Eng.sr*1000+50;
+        for(const v of [...recList(I.rec), ...recList(I.voice)]){
+          if(!ok(v)) continue;
+          const lab=iqfMatchLabel(v), dur=+v.dur>0 ? +v.dur : +p.plen;
+          n.hits++; r.voice++; if(v.src) r.srcs.add(v.src);
+          if(typeof v.st==='number' && (v.ssr==null || v.ssr===s.sr) && iqfCutHas(c, v.st, s.sr)) iqfCutMarkPacket(c, v.st, s.sr, dur, +p.padB, +p.padA, lab);
+          else if(typeof v.t==='number') iqfCutMarkWall(c, v.t-dur-+p.padB-tick, v.t+ +p.padA, lab, s.sr);
+          else iqfCutMarkPacket(c, c.end, s.sr, dur, +p.padB, +p.padA, lab);      // без отметок положения — по моменту прихода записи
+        }
+      }
       else{
         iqfCutGate(c, false);
         const tick=BLOCK/Eng.sr*1000+50;
@@ -226,13 +244,13 @@ def({ id:'iqRec', title:'IQ Recorder', cat:'Output', kw:'iq record save files vo
           else if(typeof v.t==='number') iqfCutMarkWall(c, v.t-(IQF_VOICE_MS+ +p.padB)-tick, v.t+ +p.padA, lab, s.sr);
         }
       }
-      r.autoTags=[...new Set([...r.autoTags.filter(t=>t==='voice' || t==='channel'), ...r.srcs])];
-      iqrFeed(n, r, s, iqfCutTake(c, Math.round(s.sr*1.5), false, s.sr));
+      r.autoTags=[...new Set([...r.autoTags.filter(t=>t==='voice' || t==='channel' || t==='match' || t==='trigger'), ...r.srcs])];
+      iqrFeed(n, r, s, iqfCutTake(c, Math.round(s.sr*Math.max(1,+p.hold||1.5)), false, s.sr));
       if(r.n*4>=(+p.split)*1e6) iqrFinish(n,true);
     }
     if(n.rec){ sec=n.rec.n/n.rec.rate; size=n.rec.n*4; }
     const saved=n.savedP>0 ? 1 : 0; if(n.savedP>0) n.savedP--;
-    return {sec, size, saved, files:n.files};
+    return {sec, size, saved, files:n.files, hits:n.hits};
   },
   draw(n){
     const el=n.el.querySelector('.readout'); if(!el) return;
@@ -240,7 +258,7 @@ def({ id:'iqRec', title:'IQ Recorder', cat:'Output', kw:'iq record save files vo
     const head=r ? '● recording · '+p.mode+(p.band==='channel' ? ' · channel' : '') : n.armed ? '◌ armed, waiting for the stream' : '○ idle';
     const rate=r ? r.rate : n.inSr;
     const lines=[head+(rate ? ' · '+iqfRate(rate)+' @ '+iqfFreq(r ? r.freq : n.inFc) : '')];
-    if(r) lines.push(iqfDur(r.n/r.rate)+' · '+iqfBytes(r.n*4)+' in memory · '+r.segs.length+' segment'+(r.segs.length===1 ? '' : 's')+(p.mode==='voice only' ? ' · '+r.voice+' voice packets' : ''));
+    if(r) lines.push(iqfDur(r.n/r.rate)+' · '+iqfBytes(r.n*4)+' in memory · '+r.segs.length+' segment'+(r.segs.length===1 ? '' : 's')+(p.mode==='voice only' ? ' · '+r.voice+' voice packets' : p.mode==='on match' ? ' · '+n.hits+' matches' : p.mode==='go input' ? ' · '+n.hits+' triggers' : ''));
     if(n.msg) lines.push(n.msg);
     if(!n.inSr && !r) lines.push('no input');
     el.textContent=lines.join('\n');

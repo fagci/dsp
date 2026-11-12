@@ -484,6 +484,7 @@ const PRESET_CATS={
   'Selcall ZVEI / CCIR: Five-Tone Decoder (USB SDR, NFM)':'Digital Voice & Trunking',
   'TBSK: Spread-Spectrum Data Over Sound (Loopback)':'Modems & Data Links',
   'POCSAG: Pager Messages (Generator)':'Modems & Data Links',
+  'IQ: Record the Packet that Matches (Generator)':'Modems & Data Links',
   'POCSAG: Pager Messages (USB SDR)':'Modems & Data Links',
   'AIS: Vessels on the Map (Generator)':'Aircraft, Satellites & Telemetry',
   'AIS: Messages → HEX Structure (Generator)':'Aircraft, Satellites & Telemetry',
@@ -4516,6 +4517,26 @@ ms.size.w=480; ms.size.h=300; applySize(ms);
 const log=addNode('recLog',340,620,{});
 log.size.w=520; applySize(log);
 addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'rec',ms.id,'rec'); addEdge(de.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('IQ: Record the Packet that Matches (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Record the baseband only of the packet you need, with its history. The generator sends pager messages; the decoder emits a record per message, IQ Recorder in "on match" mode\n'+
+  'saves a piece of the stream only when the record satisfies «when» — here text~SERVER (the filter of the Timeline: data~123, rssi>-70 kind=beacon, a bare word looks in every column).\n'+
+  'The piece is the whole packet: its length (the dur column of the record, or "packet length" when there is none) counted back from the end, plus the margin before it (taken from the stream history,\n'+
+  'so the start of the packet is not lost although the decoder answers later — "history kept" must be longer) and the margin after. Matches: the count on the readout and the hits output; tags and labels go into Files / SigMF.\n'+
+  'The «go input» mode does the same by a level: wire any 0/1 signal to go and the recording starts with the margin before the edge. «■ Stop and save» saves the file; play it back with IQ File Player.'});
+nt.size.w=800; nt.size.h=150; applySize(nt);
+const gn=addNode('iqGen',40,260,{sr:'256000',fc:466000000,mode:'POCSAG',off:5000,lvl:-20,noise:-50});
+const de=addNode('pocsagRx',340,260,{});
+de.size.w=520; de.size.h=300; applySize(de);
+const rc=addNode('iqRec',340,600,{mode:'on match',when:'text~SERVER',plen:400,padB:300,padA:200,hold:3,fmt:'SigMF',tag:'pager',autostart:true});
+rc.size.w=480; rc.size.h=240; applySize(rc);
+const ms=addNode('msgLog',900,260,{});
+ms.size.w=480; ms.size.h=300; applySize(ms);
+const fl=addNode('files',900,600,{});
+fl.size.w=480; fl.size.h=300; applySize(fl);
+addEdge(gn.id,'iq',de.id,'in'); addEdge(gn.id,'iq',rc.id,'in'); addEdge(de.id,'rec',rc.id,'rec'); addEdge(de.id,'rec',ms.id,'rec');
 markWiresDirty();
 });
 preset('POCSAG: Pager Messages (USB SDR)', function(){
