@@ -690,7 +690,9 @@ function paintGroup(n,sec,open){
 sec.classList.toggle('closed',!open);
 sec.querySelector('.pgb').hidden=!open;
 const name=sec.dataset.g, cnt=sec.dataset.n;
-sec.querySelector('.pgh').innerHTML=`<span class="pgl">${open?'▾':'▸'} ${name.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span><span class="pgn">${cnt}</span>`;
+// сколько параметров группы изменено против умолчания — точка и число рядом со счётчиком (видно и у свёрнутой группы)
+const chg=(MOD[n.type].params||[]).filter(q=>q.g===name && !q.hidden && (q.keys||[q.n]).some((k,i)=>{ const d=Array.isArray(q.d)?q.d[i]:q.d; return d!==undefined && n.p[k]!==undefined && n.p[k]!==d; })).length;
+sec.querySelector('.pgh').innerHTML=`<span class="pgl">${open?'▾':'▸'} ${name.replace(/&/g,'&amp;').replace(/</g,'&lt;')}</span><span class="pgn">${chg?'<i class="pgc" title="changed from default">● '+chg+'</i> ':''}${cnt}</span>`;
 }
 function setGroupOpen(n,name,v){
 (n.gOpen||(n.gOpen={}))[name]=!!v;
@@ -1307,6 +1309,7 @@ if(r) r.disabled=Undo.idx>=Undo.stack.length-1;
 const Sel=new Set();
 function syncSel(){ for(const n of Graph.nodes) n.el.classList.toggle('sel',Sel.has(n.id));
 Graph.edges.forEach(edgeHl); wires.classList.toggle('hasSel',Sel.size>0);
+if(content.classList.contains('pdots')) markWiresDirty();       // у выделенного узла подписи пинов раскрываются — концы проводов сдвигаются
 const cb=document.getElementById('chain'); if(cb) cb.disabled=Sel.size!==1 || (typeof dashMode!=='undefined' && dashMode); }
 function selSet(id,add){
 if(!add){ Sel.clear(); Sel.add(id); }
@@ -1390,6 +1393,7 @@ zoomEndT=setTimeout(()=>{ zooming=false; if(!panzooming){ panLayers=false; clear
 let rescaleT=0, rescaleK=null;
 content.addEventListener('panzoomchange',ev=>{
 view.x=ev.detail.x; view.y=ev.detail.y; view.k=ev.detail.scale;
+pinDotsSync();
 if(view.k!==rescaleK){ rescaleK=view.k; clearTimeout(rescaleT); rescaleT=setTimeout(rescaleCanvases,250); }
 wires.style.transform=content.style.transform;
 if(panzooming) panLift(true);
@@ -1702,8 +1706,14 @@ if(link) dropLink(ev);
 }
 window.addEventListener('pointerup',endPointer);
 window.addEventListener('pointercancel',endPointer);
+// подписи пинов сворачиваются в точки, когда узел мелкий (холст отдалён; на тач-экране порог выше): иначе подписи соседних узлов наезжают друг на друга.
+// Подписи остаются у выделенного узла, у подходящих пинов при связывании и у выбранного пина (стили — #content.pdots в styles.css)
+function pinDotsSync(){
+const on=view.k<(matchMedia('(pointer:coarse)').matches ? .9 : .6);
+if(content.classList.contains('pdots')!==on){ content.classList.toggle('pdots',on); markWiresDirty(); }
+}
 function applyView(){                                 // программная установка вида (fitView и т.п.)
-panzoom.zoom(view.k,{animate:false});
+panzoom.zoom(view.k,{animate:false}); pinDotsSync();
 panzoom.pan(view.x,view.y,{animate:false});
 wires.style.transform=content.style.transform;
 syncGridBg();
