@@ -168,8 +168,8 @@ patchListEl.innerHTML=''; updPatchBadge();
 const p=readP();
 const favList=favClean(favRaw(),n=>hasPatch(n,p)); favNow=new Set(favList);
 const q=patchQuery.trim().toLocaleLowerCase('ru');
-const words=fzTokens(q), score=name=>{ let t=presetSub(name)+' '+name; if(/[-_]/.test(t)) t+=' '+t.replace(/[-_]/g,''); return fzScoreWords(words,fzTokens(t),t.toLocaleLowerCase('ru')); };   // нечётко: опечатки и сокращения
-const th=2*words.length; let strongAny=false;            // есть точные совпадения (слово — в начале слова / внутри имени) — нечёткие не показываем
+const words=fzTokens(q), score=name=>presetScore(words,name);   // нечётко: опечатки и сокращения; встроенные — ещё и по категории, модулям и заметке
+const th=words.length; let strongAny=false;            // есть точные совпадения (слово — в начале слова / внутри имени) — нечёткие не показываем
 const names=patchNames(PRESETS,p);
 if(q) for(const k of names) if(score(k)>=th){ strongAny=true; break; }
 const match=name=>{ if(!q) return true; const sc=score(name); return strongAny ? sc>=th : sc>0; };
@@ -194,7 +194,9 @@ const bySub=new Map();                                // подгруппа из
 if(subs) for(const name of keys){ const k=presetSub(name); (bySub.get(k)||bySub.set(k,[]).get(k)).push(name); }
 const flat=subs ? keys.filter(n=>bySub.get(presetSub(n)).length<2) : keys;
 const add=(name,sub)=>{ matches++; const tp=tempParse(name), it=makePatchItem(name,p[name]?p[name].nodes.length:-1,tp ? tp.base+(tp.stamp?' · '+tp.stamp:'') : sub&&name.startsWith(sub+': ')?name.slice(sub.length+2):name);
-if(tp) it.title='Unsaved edits of «'+tp.base+'»'+(tp.stamp?', last change '+tp.stamp:'')+' · '+p[name].nodes.length+' nodes'; if(sub) it.classList.add('insub'); det.append(it); };
+if(tp) it.title='Unsaved edits of «'+tp.base+'»'+(tp.stamp?', last change '+tp.stamp:'')+' · '+p[name].nodes.length+' nodes'; if(sub) it.classList.add('insub');
+if(q && PRESETS[name]){ const why=presetWhy(words,presetDoc(name)); if(why){ const w=document.createElement('span'); w.className='pwhy'; w.textContent=why; it.querySelector('.ptxt').append(w); it.title+=' — '+why; } }   // слова нет в имени — показываем, где нашлось
+det.append(it); };
 for(const name of flat) add(name);
 if(subs) for(const [sub,list] of [...bySub].sort((a,b)=>a[0].localeCompare(b[0]))) if(list.length>1){
 const h=document.createElement('div'); h.className='psub'; h.textContent=sub; det.append(h);
@@ -843,6 +845,18 @@ const PRESET_CATS={
 // подгруппа внутри категории: по умолчанию префикс имени до «: »; нестандартную задаём здесь (ищется тоже)
 const PRESET_SUBS={};
 const presetSub=name=>PRESET_SUBS[name] ?? (name.indexOf(': ')>0 ? name.slice(0,name.indexOf(': ')) : '');
+/* описание пресета для поиска (категория, модули, текст заметки — из исходника строителя, граф не собирается); строится по первому запросу и помнится */
+const presetDocs=new Map();
+function presetDoc(name){
+let d=presetDocs.get(name);
+if(!d){ d=presetDocOf(name,presetSub(name),PRESET_CATS[name]||'',String(PRESETS[name]),MOD,id=>MOD[id]&&MOD[id].title); presetDocs.set(name,d); }
+return d;
+}
+// оценка имени (встроенный пресет — по всему описанию, свой патч — по имени); 0 — не подходит. strong — порог «точного» совпадения слова
+function presetScore(words,name){
+if(PRESETS[name]) return presetScoreDoc(words,presetDoc(name));
+let t=presetSub(name)+' '+name; if(/[-_]/.test(t)) t+=' '+t.replace(/[-_]/g,''); return fzScoreWords(words,fzTokens(t),t.toLocaleLowerCase('ru'));
+}
 const PRESETS={};
 function preset(name,fn){
 if(PRESETS[name]) console.warn('дублирующееся имя пресета: '+name);

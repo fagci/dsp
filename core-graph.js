@@ -2640,8 +2640,8 @@ for(const nm of Object.keys(chunks)){ if(!words.length||fzScoreWords(words,fzTok
 for(const m of modRank(Object.values(MOD),words).slice(0,8)) cmdkRows.push({kind:'mod',m});
 try{
   const names=patchNames(PRESETS,readP());
-  const sc=n=>{ let s=(typeof presetSub==='function'?presetSub(n)+' ':'')+n; if(/[-_]/.test(s)) s+=' '+s.replace(/[-_]/g,''); return fzScoreWords(words,fzTokens(s),s.toLocaleLowerCase('ru')); };
-  const th=2*words.length; let strong=false;
+  const sc=n=>presetScore(words,n);                          // имя, категория, модули и заметка пресета (presets.js)
+  const th=words.length; let strong=false;
   if(words.length) for(const n of names) if(sc(n)>=th){ strong=true; break; }
   const hit=names.filter(n=>!words.length||(strong?sc(n)>=th:sc(n)>0));
   hit.sort((a,b)=>sc(b)-sc(a)||a.localeCompare(b));
@@ -2654,7 +2654,7 @@ cmdkRows.forEach((r,i)=>{
     ? '<span class="cmdk-kind">module</span><b>'+hlpEsc(r.m.title)+'</b><span class="cmdk-dim">'+hlpEsc(r.m.id)+'</span>'
     : r.kind==='cmd' ? '<span class="cmdk-kind">command</span><b>'+hlpEsc(r.c.t)+'</b>'+(r.c.key ? '<span class="cmdk-dim">'+hlpEsc(r.c.key)+'</span>' : '')
     : r.kind==='chunk' ? '<span class="cmdk-kind">chunk</span><b>'+hlpEsc(r.name)+'</b><span class="cmdk-dim cmdk-src">'+hlpEsc(r.src)+'</span><span class="cmdk-del" title="Delete this chunk">×</span>'
-    : '<span class="cmdk-kind">patch</span><b>'+hlpEsc(r.name)+'</b>';
+    : '<span class="cmdk-kind">patch</span><b>'+hlpEsc(r.name)+'</b>'+(PRESETS[r.name] && words.length ? (w=>w?'<span class="cmdk-dim cmdk-src">'+hlpEsc(w)+'</span>':'')(presetWhy(words,presetDoc(r.name))) : '');
   if(r.kind==='chunk') b.querySelector('.cmdk-del').addEventListener('click',e=>{ e.stopPropagation(); if(confirm('Delete chunk «'+r.name+'»?')){ chunkDel(r.name); cmdkRender(); } });
   b.addEventListener('click',()=>cmdkRun(i));
   list.append(b);
