@@ -1519,21 +1519,40 @@ function stopAllDrags(){                              // второй палец
     if(e.pointerType!=='touch') return;
     cancelAnimationFrame(raf); raf=0; st=null;
     if(!e.isPrimary) return;                             // второй палец — пинч
+    if(st0 && st0.id===e.pointerId){ st=st0; st.free=!e.target.closest(SKIP); st0=null; return; }
     const t=e.target, host=t.closest?.('.node,.dash-pane'); if(!host || t.closest(SKIP)) return;
-    st={id:e.pointerId, host, from:t, x:e.clientX, y:e.clientY, x0:e.clientX, y0:e.clientY, t:e.timeStamp, vx:0, vy:0, on:false};
+    st={id:e.pointerId, host, from:t, x:e.clientX, y:e.clientY, x0:e.clientX, y0:e.clientY, t:e.timeStamp, vx:0, vy:0, on:false, free:true};
   });
+  // узел не помещается в экран (широкий модуль на телефоне): свободного холста рядом нет, а тело узла сплошь из контролов —
+  // ловим касание раньше них (capture). Вертикальный жест по контролу двигает холст (слайдер от него сам отказывается),
+  // горизонтальный — только с места без контрола (free), иначе это ход слайдера.
+  let st0=null;
+  const over=h=>{ if(h.parentNode!==content) return false; const r=h.getBoundingClientRect(), c=cv.getBoundingClientRect();
+    return r.left<c.left-1 || r.right>c.right+1 || r.top<c.top-1 || r.bottom>c.bottom+1; };
+  cv.addEventListener('pointerdown',e=>{
+    st0=null; if(e.pointerType!=='touch' || !e.isPrimary || uiLocked()) return;
+    const t=e.target, host=t.closest?.('.node');
+    if(!host || t.closest('.port,textarea,.rz,.ownpinch,.nhead,canvas,[contenteditable],[class*=knob]') || !over(host)) return;
+    cancelAnimationFrame(raf); raf=0;
+    st=st0={id:e.pointerId, host, from:t, x:e.clientX, y:e.clientY, x0:e.clientX, y0:e.clientY, t:e.timeStamp, vx:0, vy:0, on:false, free:false, big:true};
+  },true);
   window.addEventListener('pointermove',e=>{
     if(!st || e.pointerId!==st.id) return;
     if(!st.on){
       if(Math.hypot(e.clientX-st.x0,e.clientY-st.y0)<8) return;
       // жест начинается на том, что реально может прокрутиться в эту сторону; иначе — не наш (узел тащит interact)
       const dx=st.x0-e.clientX, dy=st.y0-e.clientY, horiz=Math.abs(dx)>Math.abs(dy);
-      if(!(horiz ? find(st.from,st.host,'x',-dx) : find(st.from,st.host,'y',-dy))){ st=null; return; }
+      const sc=st.free && (horiz ? find(st.from,st.host,'x',-dx) : find(st.from,st.host,'y',-dy));
+      if(!sc){
+        if(!st.big || (horiz && !st.free) || uiLocked() || !over(st.host)){ st=null; return; }
+        st.pan=true;
+      }
       st.on=true;
     }
     const dt=Math.max(1,e.timeStamp-st.t), dx=e.clientX-st.x, dy=e.clientY-st.y;
     st.vx=.8*st.vx+.2*dx/dt; st.vy=.8*st.vy+.2*dy/dt;
     st.x=e.clientX; st.y=e.clientY; st.t=e.timeStamp;
+    if(st.pan){ view.x+=dx/view.k; view.y+=dy/view.k; zoomTouch(); applyView(); return; }
     scrollBy(dx,dy);
   },{passive:true});
   const end=e=>{
@@ -1541,7 +1560,7 @@ function stopAllDrags(){                              // второй палец
     const s=st; st=null;
     if(!s.on) return;
     swallow=true; setTimeout(()=>{ swallow=false; },350);      // палец отпущен после прокрутки — это не клик по строке
-    if(e.type==='pointercancel' || e.timeStamp-s.t>80) return;
+    if(s.pan || e.type==='pointercancel' || e.timeStamp-s.t>80) return;
     let vx=s.vx, vy=s.vy, t0=performance.now(); st=null;
     const step=now=>{
       const dt=now-t0; t0=now; const k=Math.pow(.995,dt);
@@ -1593,19 +1612,22 @@ const GRID=10;
 function bindDrag(headEl,n){
 interact(headEl).draggable({ ignoreFrom:'.x', listeners:{
 start(ev){ if(uiLocked()){ ev.interaction.stop(); return; }
+n.__pan=null;
+if(matchMedia('(pointer:coarse)').matches && n.el.offsetWidth*view.k>cv.clientWidth){ n.__pan={x:view.x,y:view.y}; return; }   // узел шире экрана: тянуть его некуда — заголовок двигает холст
 if(!Sel.has(n.id)) selSet(n.id,ev.shiftKey);
 const group=[...Sel].map(id=>Graph.map[id]).filter(Boolean);
 group.forEach(g=>g.el.style.zIndex=++zCounter);
 n.__x0=n.x; n.__y0=n.y;                        // абсолютный отсчёт от старта — без накопления ошибки округления
 n.__grp=group.map(g=>({g,ox:g.x-n.x,oy:g.y-n.y})); n.__moved=false; activeInteractions++; dragWiresStart(); },
 move(ev){ if(uiLocked()) return;
+if(n.__pan){ view.x=n.__pan.x+(ev.clientX-ev.clientX0)/view.k; view.y=n.__pan.y+(ev.clientY-ev.clientY0)/view.k; applyView(); return; }
 const sn=v=>ev.altKey ? Math.round(v) : Math.round(v/GRID)*GRID;    // привязка к сетке, Alt — свободно
 n.x=sn(n.__x0+(ev.clientX-ev.clientX0)/view.k);
 n.y=sn(n.__y0+(ev.clientY-ev.clientY0)/view.k);
 for(const it of n.__grp){ it.g.x=n.x+it.ox; it.g.y=n.y+it.oy;
 posNode(it.g); }
 n.__moved=true; drawWiresSoon(); },
-end(){ activeInteractions--; dragWiresEnd(); if(n.__moved) Undo.push(); n.__grp=null; }
+end(){ if(n.__pan){ n.__pan=null; return; } activeInteractions--; dragWiresEnd(); if(n.__moved) Undo.push(); n.__grp=null; }
 }});
 }
 function bindResize(rzEl,n,dir){
@@ -1809,15 +1831,17 @@ if(content.classList.contains('pdots')!==on){ content.classList.toggle('pdots',o
 }
 /* ---- фокус на узле (тач) ----
    При мелком масштабе (k<0.7) тап по телу узла не крутит параметры (они мельче пальца), а приближает узел на всю ширину экрана;
-   плашка «Back» возвращает прежний вид. Пины, провода и холст те же — узел не переносится. */
-const FOCUS_K=.7;
-let focusPrev=null, focusK=0, focusBarEl=null;
-function focusBarHide(){ if(focusBarEl) focusBarEl.hidden=true; focusPrev=null; }
+   плашка «Back» возвращает прежний вид. Пины, провода и холст те же — узел не переносится.
+   Широкий узел вписывается целиком (масштаб до FOCUS_MIN, его контролы при этом работают); ещё шире — встаёт левым краем,
+   дальше листается пальцем по телу узла (см. прокрутку одним пальцем выше). */
+const FOCUS_K=.7, FOCUS_MIN=.55;
+let focusPrev=null, focusK=0, focusId=null, focusBarEl=null;
+function focusBarHide(){ if(focusBarEl) focusBarEl.hidden=true; focusPrev=null; focusId=null; }
 function focusNode(n){
-  const w=n.el.offsetWidth||n.size.w, k=clamp((cv.clientWidth-76)/(w+16),.8,1.6);
+  const w=n.el.offsetWidth||n.size.w, k=clamp((cv.clientWidth-76)/(w+16),FOCUS_MIN,1.6);
   if(!focusPrev) focusPrev={x:view.x,y:view.y,k:view.k};           // «назад» — вид до первого приближения, а не до предыдущего узла
-  view.k=k; focusK=k;
-  view.x=cv.clientWidth/2/k-(n.x+w/2); view.y=14/k-n.y;            // по центру, верхом к верху экрана (длинный узел — листается панорамой)
+  view.k=k; focusK=k; focusId=n.id;
+  view.x=(w+16)*k>cv.clientWidth-76 ? 38/k-n.x : cv.clientWidth/2/k-(n.x+w/2); view.y=14/k-n.y;            // по центру, верхом к верху экрана (длинный узел — листается панорамой)
   applyView(); selSet(n.id,false); drawWiresSoon?.();
   if(!focusBarEl){ focusBarEl=document.createElement('div'); focusBarEl.id='focusBar';
     focusBarEl.innerHTML='<button type="button">◂ Back to overview</button>';
@@ -1828,7 +1852,7 @@ function focusNode(n){
 function focusBarCheck(){ if(focusPrev && Math.abs(view.k-focusK)>focusK*.08) focusBarHide(); }   // щипком ушли от приближения — плашка не нужна
 function bindFocusTap(n,el){
   let d=null;
-  const low=()=>view.k<FOCUS_K && matchMedia('(pointer:coarse)').matches && el.parentNode===content && !n.lod;
+  const low=()=>view.k<FOCUS_K && !(focusId===n.id && focusPrev) && matchMedia('(pointer:coarse)').matches && el.parentNode===content && !n.lod;
   el.addEventListener('pointerdown',ev=>{
     d=null; if(!low() || !ev.target.closest('.mid')) return;
     d={x:ev.clientX,y:ev.clientY,t:ev.timeStamp};
