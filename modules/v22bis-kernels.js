@@ -10,7 +10,8 @@
 
 const V22_C=[[1,1],[3,1],[1,3],[3,3],[-1,1],[-1,3],[-3,1],[-3,3],[-1,-1],[-3,-1],[-1,-3],[-3,-3],[1,-1],[1,-3],[3,-1],[3,-3]];
 const V22_STEP=[1,0,2,3], V22_INV=[1,0,2,3], V22_K=1/Math.sqrt(10), V22_BETA=0.75;
-const V22_SYM=ms=>Math.round(ms*0.6);                      // миллисекунды → символы (600 бод)
+const V22_SYM=ms=>Math.round(ms*0.6), V22_DLY=55;          // миллисекунды → символы (600 бод); V22_DLY — запаздывание решений эквалайзера (мс)
+const V22_UNUSED=0;                      // миллисекунды → символы (600 бод)
 function v22Scr(){ let reg=0, cnt=0;
   return {tx(bit){ if(cnt>=64){ bit^=1; cnt=0; } const o=(bit^(reg>>13)^(reg>>16))&1; reg=((reg<<1)|o)&0x3FFFF; if(o) cnt++; else cnt=0; return o; },
           rx(bit){ bit&=1; let o=(bit^(reg>>13)^(reg>>16))&1; reg=((reg<<1)|bit)&0x3FFFF; if(cnt>=64){ o^=1; cnt=0; } if(bit) cnt++; else cnt=0; return o; }}; }
@@ -24,11 +25,17 @@ function v22RxNew(calling,hook){
   const mr=new Float64Array(2*Nf), mi=new Float64Array(2*Nf), ya=new Float64Array(256), yb=new Float64Array(256);
   const c20=new Float64Array(T), s20=new Float64Array(T); for(let i=0;i<T;i++){ c20[i]=Math.cos(MDM_2PI*i/T); s20[i]=Math.sin(MDM_2PI*i/T); }
   let wp=0, nco=0, n=0, Xr=0, Xi=0, P=0, ts=-1, pw=0, th=0, fr=0;
-  const E={mode16:false,active:false,evm:0,TOFF:0}; let err2=0, errN=0;
+  // T/2-эквалайзер: 96 отводов, главный отвод — 23-й (11 символов до, 36 после ≈ 60 мс эха), решения запаздывают на V22_DLY мс
+  const Nt=64, M0=23, xr=new Float64Array(Nt), xi=new Float64Array(Nt), wr=new Float64Array(Nt), wi=new Float64Array(Nt); wr[M0]=1;
+  const interpAt=(t)=>{ const i0=Math.floor(t), f=t-i0, a=i0&255, b=(i0+1)&255; return [ya[a]*(1-f)+ya[b]*f, yb[a]*(1-f)+yb[b]*f]; };
+  // adapt: эквалайзер учится только на скремблированных данных (на чистом тоне U11 он бы уплыл)
+  const E={mode16:false,active:false,evm:0,TOFF:0,adapt:false}; let err2=0, errN=0;
   const lam=1-1/180;
   function symbol(){
-    const i0=Math.floor(ts), f=ts-i0, a=i0&255, b=(i0+1)&255;
-    const yr=ya[a]*(1-f)+ya[b]*f, yi=yb[a]*(1-f)+yb[b]*f;
+    // два отсчёта T/2 в линию эквалайзера; оценка символа с запаздыванием
+    const s1=interpAt(ts-T/2), s2=interpAt(ts);
+    xr.copyWithin(0,2); xi.copyWithin(0,2); xr[Nt-2]=s1[0]; xi[Nt-2]=s1[1]; xr[Nt-1]=s2[0]; xi[Nt-1]=s2[1];
+    let yr=0, yi=0, en=1e-30; for(let k=0;k<Nt;k++){ yr+=wr[k]*xr[k]-wi[k]*xi[k]; yi+=wr[k]*xi[k]+wi[k]*xr[k]; en+=xr[k]*xr[k]+xi[k]*xi[k]; }
     const ratio=Math.hypot(Xr,Xi)/(P+1e-30);
     if(ratio>0.08){ const te=((-Math.atan2(Xi,Xr)/MDM_2PI*T+E.TOFF)%T+T)%T; let er=te-(((ts%T)+T)%T); if(er>T/2) er-=T; else if(er<-T/2) er+=T; ts+=T+0.12*er; } else ts+=T;
     pw=pw?pw*(1-1/64)+(yr*yr+yi*yi)/64:(yr*yr+yi*yi);
@@ -40,7 +47,9 @@ function v22RxNew(calling,hook){
     // квадрант по знакам неоднозначен вблизи осей — берём ближайшую точку из 4 (1200) по углу
     if(!E.mode16){ let best=1e9; for(let k=0;k<4;k++){ const r=v22Rot([3,1],k), dd=(zr-r[0])*(zr-r[0])+(zi-r[1])*(zi-r[1]); if(dd<best){ best=dd; q=k; d=r; } } }
     const phi=Math.atan2(zi*d[0]-zr*d[1],zr*d[0]+zi*d[1]);
-    fr=Math.max(-0.05,Math.min(0.05,fr+0.0025*phi)); th+=fr+0.07*phi; if(th>Math.PI) th-=MDM_2PI; else if(th<-Math.PI) th+=MDM_2PI;
+    fr=Math.max(-0.05,Math.min(0.05,fr+(E.pb||0.0025)*phi)); th+=fr+(E.pa||0.07)*phi; if(th>Math.PI) th-=MDM_2PI; else if(th<-Math.PI) th+=MDM_2PI;
+    { const ex=(zr-d[0])/g, ey=(zi-d[1])/g, er_=ex*c-ey*s, ei_=ex*s+ey*c, k=(E.eqMu!==undefined?E.eqMu:E.mode16?(E.eqMu16||0.02):(E.eqMu12||0.02))/en;   // ошибка — обратно в область выхода эквалайзера
+      if(E.eqOn!==false && E.adapt) for(let q2=0;q2<Nt;q2++){ wr[q2]-=k*(er_*xr[q2]+ei_*xi[q2]); wi[q2]-=k*(ei_*xr[q2]-er_*xi[q2]); } }
     err2+=(zr-d[0])*(zr-d[0])+(zi-d[1])*(zi-d[1]); if(++errN>=128){ E.evm=-10*Math.log10(Math.max(err2/errN/10,1e-9)); err2=0; errN=0; }
     hook(q,idx,zr,zi); }
   E.push=function(x){
@@ -83,6 +92,7 @@ function v22New(o){
     S.c3=st===3?S.c3+1:0;
     S.alt=((st===1&&prev===3)||(st===3&&prev===1))?S.alt+1:0;
     if(S.alt>=30) S.inS1=true;
+    if(S.sawS1 || S.neg===1200) rx.adapt=true;
     if(S.inS1 && S.alt===0){ S.inS1=false; S.sawS1=true; S.onS1End(); }
     if(S.rxn>=S.mode16At && S.mode16At>=0) rx.mode16=true;
     const bits=[V22_INV[st]>>1,V22_INV[st]&1]; if(rx.mode16){ bits.push(idx>>1,idx&1); }
@@ -92,16 +102,16 @@ function v22New(o){
   S.onS1End=()=>{
     if(S.rate<2400) return;
     if(S.phase==='wait'||S.phase==='c_sil'){ return; }
-    if(S.calling && S.phase==='c_s1'){ S.neg=2400; tx.at(600,'S1111'); S.mode16At=S.rxn+V22_SYM(500); S.phase='c_2400'; S.log('V.22bis: S1 от отвечающего принят, через 600 мс — 2400'); }
-    else if(!S.calling && S.phase==='u11'){ S.neg=2400; tx.go('S1'); tx.at(600,'S1111'); S.mode16At=S.rxn+V22_SYM(500); S.phase='a_2400'; S.log('V.22bis: S1 от звонящего принят, отвечаю S1 и 2400'); } };
+    if(S.calling && S.phase==='c_s1'){ S.neg=2400; tx.at(600-V22_DLY,'S1111'); S.mode16At=S.rxn+V22_SYM(450); S.phase='c_2400'; S.log('V.22bis: S1 от отвечающего принят, через 600 мс — 2400'); }
+    else if(!S.calling && S.phase==='u11'){ S.neg=2400; tx.go('S1'); tx.at(600-V22_DLY,'S1111'); S.mode16At=S.rxn+V22_SYM(450); S.phase='a_2400'; S.log('V.22bis: S1 от звонящего принят, отвечаю S1 и 2400'); } };
   S.afterBits=()=>{
     if(S.calling && S.phase==='wait' && S.c3>=V22_SYM(150)){ S.phase='c_sil'; S.log('V.22bis: единицы отвечающего приняты, пауза 456 мс');
-      if(S.rate>=2400){ tx.at(456,'S1'); S.phase='c_s1'; } else { tx.at(456,'S11'); S.phase='c_1200'; } }
+      if(S.rate>=2400){ tx.at(456-V22_DLY,'S1'); S.phase='c_s1'; } else { tx.at(456-V22_DLY,'S11'); S.phase='c_1200'; } }
     if(!S.dec1200 && S.ones>=324 && (!S.sawS1 || S.rate<2400)){ S.dec1200=true; S.rxReady=true;
       if(!S.calling && S.phase==='u11'){ S.neg=1200; tx.go('S11'); tx.at(765,'DATA'); S.phase='a_1200'; S.log('V.22: скремблированные единицы, продолжаю на 1200'); }
       else if(S.calling && (S.phase==='c_s1'||S.phase==='c_1200') && S.neg!==2400){ S.neg=1200; tx.sched={at:tx.n+V22_SYM(765),stage:'DATA'}; S.phase='c_1200'; S.log('V.22: отвечающий только 1200'); } }
     if(!S.rxReady){
-      if(S.neg===2400 && rx.mode16 && S.rxn>=S.mode16At+V22_SYM(150) && S.ones>=32) S.rxReady=true;
+      if(S.neg===2400 && rx.mode16 && S.rxn>=S.mode16At+15 && S.ones>=32) S.rxReady=true;
       else if(S.neg===1200 && S.txData1200) S.rxReady=true; }
     if(S.neg===1200 && tx.stage==='DATA' && !S.txData1200){ S.txData1200=true; }
     if(!S.connected && tx.stage==='DATA' && S.rxReady){ S.connected=true; S.log('V.22'+(S.neg===2400?'bis 2400':' 1200')+': данные'); } };

@@ -261,13 +261,18 @@ function mdmBiquad(type,f,Q){ const w=MDM_2PI*f/MDM_FS, c=Math.cos(w), s=Math.si
   const a0=1+al; return {b0:b0/a0,b1:b1/a0,b2:b2/a0,a1:-2*c/a0,a2:(1-al)/a0,x1:0,x2:0,y1:0,y2:0}; }
 const mdmBqRun=(q,x)=>{ const y=q.b0*x+q.b1*q.x1+q.b2*q.x2-q.a1*q.y1-q.a2*q.y2; q.x2=q.x1; q.x1=x; q.y2=q.y1; q.y1=y; return y; };
 function mdmLineNew(o){
-  o=Object.assign({lo:300,hi:3400,snr:45,delayMs:8,gainDb:-6,law:false,seed:7,drift:0},o||{});
+  o=Object.assign({lo:300,hi:3400,snr:45,delayMs:8,gainDb:-6,law:false,seed:7,ppm:0,echo:0},o||{});
   const rnd=mdmRng(o.seed), g=Math.pow(10,o.gainDb/20), sig=g*Math.sqrt(2*0.0225*Math.pow(10,-o.snr/10))*(o.snr>=200?0:1);
-  const L=Math.max(1,mdmMs(o.delayMs)), dl=new Float64Array(L+2); let wp=0;
+  const L=Math.max(2,mdmMs(o.delayMs)), N=L+64+Math.ceil(mdmMs(60)), dl=new Float64Array(N); let wp=0, rp=0, first=true;
   const bq=[mdmBiquad('hp',o.lo,0.5412),mdmBiquad('hp',o.lo,1.3066),mdmBiquad('lp',o.hi,0.5412),mdmBiquad('lp',o.hi,1.3066)];
-  const mu=255;
+  const mu=255, step=1+o.ppm*1e-6, taps=o.echo>0?[[mdmMs(7),0.5*o.echo],[mdmMs(19),0.35*o.echo],[mdmMs(43),0.25*o.echo]]:[];   // комнатное эхо: три отражения
+  const ed=new Float64Array(mdmMs(50)+2); let ew=0;
   return {o, run(x,n,y){ for(let i=0;i<n;i++){
       let v=x[i]*g; for(const q of bq) v=mdmBqRun(q,v);
       if(o.law){ const a=Math.max(-1,Math.min(1,v*2)); const c=Math.sign(a)*Math.log(1+mu*Math.abs(a))/Math.log(1+mu), qn=Math.round(c*127)/127; v=Math.sign(qn)*(Math.pow(1+mu,Math.abs(qn))-1)/mu/2; }
-      dl[wp]=v; const rp=(wp-L+dl.length)%dl.length; wp=(wp+1)%dl.length;
-      y[i]=dl[rp]+sig*mdmGauss(rnd); } return y; }}; }
+      if(taps.length){ ed[ew]=v; let r=v; for(const [d,k] of taps) r+=k*ed[(ew-d+ed.length)%ed.length]; ew=(ew+1)%ed.length; v=r; }
+      dl[wp]=v; wp=(wp+1)%N;
+      if(first){ rp=wp-L; if(rp<0) rp+=N; first=false; }
+      const i0=Math.floor(rp), fr=rp-i0, a=dl[i0%N], b=dl[(i0+1)%N];             // дробная задержка: расхождение тактов
+      rp+=step; if(rp>=N) rp-=N;
+      y[i]=a+(b-a)*fr+sig*mdmGauss(rnd); } return y; }}; }
