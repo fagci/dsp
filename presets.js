@@ -298,6 +298,8 @@ const PRESET_CATS={
   'Health: Binaural':'Health',
   'Health: Breath':'Health',
   'Health: Noise and Nature Mixer':'Health',
+  'Health: Camp Night (Thunder, Campfire, Crickets)':'Health',
+  'Health: Sleep Timer (Fade Out, Then Stop)':'Health',
   'Health: Chakra Tones (Solfeggio and Note Scale)':'Health',
   'Tools: Rangefinder and Protractor (Phone Camera Angles)':'Tools',
   'Tools: Sound Level Meter (Microphone, dBA)':'Tools',
@@ -10781,5 +10783,37 @@ addEdge(tb.id,'freq',os.id,'freq'); addEdge(lf.id,'out',os.id,'amp');
 addEdge(os.id,'out',mx.id,'a'); addEdge(ng.id,'L',mx.id,'b'); addEdge(ng.id,'R',mx.id,'c');
 addEdge(mx.id,'L',dc.id,'L'); addEdge(mx.id,'R',dc.id,'R');
 addEdge(os.id,'out',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
+markWiresDirty();
+});
+
+preset('Health: Camp Night (Thunder, Campfire, Crickets)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Three more layers of the Noise Generator: THUNDER (random claps — a near one starts with a dry crack, a far one is late, low and quiet; then a rumble rolls away; «thunderclaps per minute»), CAMPFIRE (a low flame roar that flickers plus pops and snaps; «crackles per second») and CRICKETS (six singers that chirp in bursts and fall silent in turns; warmer air — faster chirps).\n'+
+  'Here: a campfire on a night with crickets, a far storm, a little wind and brown noise as the ground. Move the sliders — every layer has its own level. Same seed — same night.'});
+nt.size.w=900; nt.size.h=120; applySize(nt);
+const ng=addNode('noisegen',40,200,{vol:.6,pink:0,brown:.2,wind:.12,thunder:.55,storm:2.5,fire:.5,crackle:10,crickets:.35,temp:22,width:1}); ng.size.w=300; applySize(ng);
+const dc=addNode('dac',380,200,{vol:.3,mode:'stereo'});
+const ff=addNode('fft',380,310,{size:'4096'});
+const sa=addNode('sa',380,430,{fmin:20,fmax:12000,split:.4}); sa.size.w=620; sa.size.h=300; applySize(sa);
+addEdge(ng.id,'L',dc.id,'L'); addEdge(ng.id,'R',dc.id,'R');
+addEdge(ng.id,'out',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
+markWiresDirty();
+});
+
+preset('Health: Sleep Timer (Fade Out, Then Stop)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Sleep Timer sits between the sound and the sound card: after «sleep after» minutes the volume fades out over «fade-out» seconds, then the sound engine STOPS (or pauses) — nothing is computed any more, the microphone is released, the battery is saved. Press Play again and a new night starts.\n'+
+  'It starts by itself when the sound starts («start with the engine»). To start at a set time instead, switch that off and wire a Trigger Clock (mode schedule, «23:00», zone local) to «start» — as here; with «start with the engine» on, the clock simply restarts the countdown. «+10 min» extends and brings the volume back, Cancel resets.\n'+
+  'The «gain» output (1 → 0) can drive anything else. Here: brown noise, soft rain and crickets under a 30-minute timer. For a test set minutes to 1 and the fade to 10 s.'});
+nt.size.w=900; nt.size.h=150; applySize(nt);
+const ng=addNode('noisegen',40,230,{vol:.55,pink:0,brown:.3,rain:.3,density:100,crickets:.2,width:1}); ng.size.w=300; applySize(ng);
+const tc=addNode('tclock',380,230,{mode:'schedule',at:'23:00',tz:'local'});
+const st=addNode('sleeptimer',380,380,{min:30,fade:180,curve:'quadratic',action:'stop sound',auto:true}); st.size.w=260; applySize(st);
+const dc=addNode('dac',700,230,{vol:.3,mode:'stereo'});
+const tr=addNode('trend',700,360,{span:300,auto:false,lo:0,hi:1}); tr.size.w=360; tr.size.h=160; applySize(tr);
+addEdge(ng.id,'L',st.id,'L'); addEdge(ng.id,'R',st.id,'R');
+addEdge(tc.id,'trig',st.id,'start');
+addEdge(st.id,'L',dc.id,'L'); addEdge(st.id,'R',dc.id,'R');
+addEdge(st.id,'gain',tr.id,'in');
 markWiresDirty();
 });

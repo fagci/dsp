@@ -130,4 +130,27 @@ const zc=(x,t0,t1)=>{ let c=0; for(let i=Math.round(t0*sr)+1;i<Math.round(t1*sr)
   const w=render({wind:1},20), e2=[]; for(let i=0;i+win<w.L.length;i+=win) e2.push(rms(w.L.subarray(i,i+win)));
   ok('wind: порывы меняют громкость',Math.max(...e2)/Math.min(...e2)>1.5); }
 
+// 11. гроза: низкий раскат + сухой треск у близкой, события приходят и уходят
+{ const {L}=render({thunder:1,storm:12},24), b=octaves(L,[63,125,250,500,1000,2000,4000,8000]).map(v=>Math.pow(10,v/10));
+  const low=b[0]+b[1]+b[2], all=b.reduce((a,v)=>a+v,0);
+  ok(`thunder: энергия до 350 Гц ≥ 70 % (${(100*low/all).toFixed(0)} %)`,low/all>.7,low/all);
+  const win=Math.round(sr*.25), e=[]; for(let i=0;i+win<L.length;i+=win) e.push(rms(L.subarray(i,i+win)));
+  ok(`thunder: раскаты затухают до тишины между ударами (макс/мин ${(Math.max(...e)/(Math.min(...e)+1e-9)).toFixed(0)})`,Math.max(...e)/(Math.min(...e)+1e-9)>20);
+  ok('thunder: пик заметный, но < 1',(()=>{ let m=0; for(const v of L) m=Math.max(m,Math.abs(v)); return m>.2 && m<1; })()); }
+
+// 12. костёр: гул + щелчки; больше crackle — больше щелчков
+{ const pops=x=>{ let c=0, last=-1e9; for(let i=1;i<x.length;i++){ if(Math.abs(x[i]-x[i-1])>.12 && i-last>sr*.004){ c++; last=i; } } return c; };
+  const lo=render({fire:1,crackle:3},6).L, hi=render({fire:1,crackle:30},6).L;
+  ok(`fire: crackle 30 щёлкает чаще, чем crackle 3 (${pops(hi)} > ${pops(lo)})`,pops(hi)>pops(lo)*2);
+  const r=rms(render({fire:1},10).L); ok(`fire: RMS ${r.toFixed(3)} в 0,08…0,2`,r>.08 && r<.2);
+  const o=octaves(render({fire:1},8).L,[125,250,500,1000,2000,4000,8000]).map(v=>Math.pow(10,v/10));
+  ok('fire: основная энергия — гул ниже 1 кГц',(o[0]+o[1]+o[2])/o.reduce((a,v)=>a+v,0)>.6); }
+
+// 13. сверчки: почти вся энергия выше 3 кГц, стрекот пачками
+{ const {L}=render({crickets:1},10), b=octaves(L,[500,1000,2000,4000,8000]).map(v=>Math.pow(10,v/10));
+  ok(`crickets: энергия выше 3 кГц ≥ 90 % (${(100*(b[3]+b[4])/b.reduce((a,v)=>a+v,0)).toFixed(0)} %)`,(b[3]+b[4])/b.reduce((a,v)=>a+v,0)>.9);
+  const win=Math.round(sr*.005); let hi=0, lo=0, n=0; for(let i=0;i+win<L.length;i+=win){ const r=rms(L.subarray(i,i+win)); n++; if(r>.02) hi++; else if(r<.002) lo++; }
+  ok(`crickets: пачки импульсов — окна и громкие, и тихие (${hi} / ${lo} из ${n})`,hi>n*.03 && lo>n*.2);
+  ok('crickets: RMS в разумных пределах',rms(L)>.02 && rms(L)<.2); }
+
 console.log(bad?'FAILED':'all ok'); process.exit(bad?1:0);

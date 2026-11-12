@@ -2,15 +2,16 @@
 /* ======================= NOISE GENERATOR — ядро ======================= */
 // Цветные шумы и генеративные звуки без DOM: node tools/test-noisegen.mjs.
 // Шумы: white / pink / brown / blue / violet (наклон спектра 0 / −3 / −6 / +3 / +6 дБ на октаву, без эквалайзера — просто уровни).
-// Генеративные: rain, waves, wind, chimes (случайные колокольчики в строе), heart (сердцебиение), tone (бинауральный / монауральный / изохронный).
+// Генеративные: rain, waves, wind, thunder (раскаты), fire (костёр с потрескиванием), crickets (ночные сверчки), chimes (случайные колокольчики в строе),
+// heart (сердцебиение), tone (бинауральный / монауральный / изохронный).
 // Всё синтезируется на месте, без выборок и сети; seed даёт повторяемый результат. Выход — стереопара L/R.
 
-const NSG_KEYS=['white','pink','brown','blue','violet','rain','waves','wind','chimes','heart','tone'];
+const NSG_KEYS=['white','pink','brown','blue','violet','rain','waves','wind','thunder','fire','crickets','chimes','heart','tone'];
 const NSG_SCALES={'pentatonic':[0,2,4,7,9],'minor pentatonic':[0,3,5,7,10],'lydian':[0,2,4,6,7,9,11],'whole tone':[0,2,4,6,8,10],'hirajoshi':[0,2,3,7,8]};
 const NSG_MODES=['binaural','monaural','isochronic'];
 // усиление источников: при уровне 1 каждый даёт примерно −14 дБFS (RMS ≈ 0,2) — подобрано замером (tools/test-noisegen.mjs)
-const NSG_N={pink:.564,blue:1.69,rain:2.2,waves:3,wind:11};          // нормировка слоёв до равной громкости
-const NSG_G={white:.2,pink:.2,brown:.2,blue:.2,violet:.2,rain:.2,waves:.2,wind:.2,chimes:.35,heart:.55,tone:.3};
+const NSG_N={pink:.564,blue:1.69,rain:2.2,waves:3,wind:11,thunder:3,fire:1,crickets:1};          // нормировка слоёв до равной громкости
+const NSG_G={white:.2,pink:.2,brown:.2,blue:.2,violet:.2,rain:.2,waves:.2,wind:.2,thunder:.6,fire:.2,crickets:.45,chimes:.35,heart:.55,tone:.3};
 
 function nsgRng(seed){
   let a=(seed>>>0)||1;
@@ -21,12 +22,15 @@ function nsgEar(){
   return {b:[0,0,0,0,0,0,0], br:0, pp:0, wp:0,                 // pink (Kellet), brown, предыдущий pink (blue) и white (violet)
     re:0, re2:0, rw:0, rl:0, rh1:0, rh2:0,                      // дождь
     wb:0, wf1:0, wf2:0,                                         // волны
-    sl:0, sb:0};                                                // ветер: ФНЧ и полоса фильтра с переменными состояниями
+    sl:0, sb:0,                                                 // ветер: ФНЧ и полоса фильтра с переменными состояниями
+    t1:0, t2:0, tw:0,                                           // гроза: два ФНЧ раската и предыдущий отсчёт для «треска»
+    fp:0, fq:0, fw:0, fr:0};                                    // костёр: всплески, мелкие щелчки, предыдущий отсчёт, гул
 }
 function nsgInit(sr,seed){
   const lv={}; for(const k of NSG_KEYS) lv[k]=0;
   return {sr, rnd:nsgRng(seed), ear:[nsgEar(),nsgEar()], lv, t:0,
     gust:0, gustT:0, gustNext:0,
+    storms:[], thEnv:0, thCrack:0, flk:0, flkT:0, flkNext:0, crick:null,
     voices:[], hbPh:0, tPl:0, tPr:0, tPc:0, tGate:0, cf:null, bf:null, pulsePh:0, v0:null};
 }
 
@@ -72,18 +76,78 @@ function nsgEarSample(S,e,P,lv,ei,k){
     e.sl+=f*e.sb; const hi=w-e.sl-.9*e.sb; e.sb+=f*hi;
     o+=e.sb*(.3+.9*g*g)*lv.wind*NSG_G.wind*k.windN;
   }
+  if(lv.thunder>1e-4 && (S.thEnv>1e-5 || S.thCrack>1e-5)){        // раскат — низкий шум под огибающей событий; у близкой грозы впереди сухой треск
+    const w=rnd()*2-1;
+    e.t1+=k.tc*(w-e.t1); e.t2+=k.tc*(e.t1-e.t2);
+    o+=(e.t2*S.thEnv*k.thN+(w-e.tw)*S.thCrack*.5)*lv.thunder*NSG_G.thunder*NSG_N.thunder;
+    e.tw=w;
+  }
+  if(lv.fire>1e-4){                                              // гул пламени (низкий шум с мерцанием) + хлопки и щелчки угольков
+    const w=rnd()*2-1;
+    if(rnd()<k.pPop) e.fp+=.08+1.6*Math.pow(rnd(),3);
+    if(rnd()<k.pPop*5) e.fq+=.05+.25*rnd();
+    e.fp*=k.fd1; e.fq*=k.fd2;
+    e.fr+=k.fc*(w-e.fr);
+    o+=(e.fr*(.35+.65*S.flk)*k.roar+(w-e.fw)*(e.fp+e.fq))*lv.fire*NSG_G.fire*NSG_N.fire;
+    e.fw=w;
+  }
   return o;
+}
+
+// Гроза: события по Пуассону (P.storm в минуту). Событие = задержка (дальше — позже), «треск» только у близкой грозы
+// и 3…7 раскатов, каждый нарастает ~0,12 с и затухает 0,7…2,2 с; дальняя гроза тише.
+function nsgThunder(S,rate,dt,N){
+  const rnd=S.rnd;
+  if(rnd()<rate*dt){
+    const dist=rnd(), n=3+((rnd()*5)|0), delay=dist*1.5, g=1-.6*dist, pulses=[]; let at=delay;
+    for(let i=0;i<n;i++){ pulses.push({at, amp:g*(1-i/n)*(.4+.6*rnd()), d:Math.exp(-dt/(.7+1.5*rnd())), x:0, y:0, on:false}); at+=.2+rnd(); }
+    S.storms.push({age:0, end:at+5, pulses, crack:dist<.55?(1-dist/.55):0, delay});
+  }
+  let env=0, crack=0; const ka=1-Math.exp(-dt/.12), kc=Math.exp(-dt/.04);
+  for(let v=S.storms.length-1;v>=0;v--){
+    const ev=S.storms[v]; ev.age+=dt;
+    if(ev.age>=ev.delay){ ev.cx=(ev.cx===undefined?ev.crack:ev.cx)*kc; crack+=ev.cx; }
+    for(const q of ev.pulses){
+      if(ev.age>=q.at){ if(!q.on){ q.on=true; q.x=q.amp; q.y=0; } q.y+=(1-q.y)*ka; q.x*=q.d; env+=q.x*q.y; } }
+    if(ev.age>ev.end) S.storms.splice(v,1);
+  }
+  S.thEnv=env; S.thCrack=crack;
+}
+// Сверчки: 6 голосов; каждый — несущая 4…5,6 кГц, пачки из 3–4 коротких импульсов, свой период стрекота, то поют, то замолкают.
+// temp — температура °C: чем теплее, тем чаще стрекочут (правило Долбера, ~6 % на градус)
+function nsgCrickets(S,lv,dt,temp){
+  const rnd=S.rnd, TP=6.2831853;
+  if(!S.crick){ S.crick=[]; for(let i=0;i<6;i++){ const pan=(rnd()*2-1)*.85;
+    S.crick.push({f:4200+1400*rnd(), ph:0, cph:rnd(), per:.45+.3*rnd(), np:3+((rnd()*2)|0), pr:30+10*rnd(), on:rnd()<.7, next:S.t+2+12*rnd(), a:0, amp:.5+.5*rnd(),
+      gl:Math.cos((pan+1)*Math.PI/4), gr:Math.sin((pan+1)*Math.PI/4)}); } }
+  const kT=Math.pow(1.06,(temp==null?20:temp)-20), ka=1-Math.exp(-dt/.4);
+  let l=0, r=0;
+  for(const c of S.crick){
+    if(S.t>=c.next){ c.on=!c.on; c.next=S.t+(c.on?4+16*rnd():2+8*rnd()); }
+    c.a+=((c.on?1:0)-c.a)*ka;
+    c.cph+=dt*kT/c.per; if(c.cph>=1) c.cph-=1;
+    const tc=c.cph*c.per/kT, span=c.np/(c.pr*kT);
+    if(tc>=span || c.a<1e-3) continue;
+    const q=tc*c.pr*kT, f=q-Math.floor(q), env=f<.55?Math.pow(Math.sin(Math.PI*f/.55),2):0;
+    c.ph+=TP*c.f*dt; if(c.ph>TP) c.ph-=TP;
+    const s=Math.sin(c.ph)*env*c.a*c.amp*lv.crickets*NSG_G.crickets;
+    l+=s*c.gl; r+=s*c.gr;
+  }
+  return [l,r];
 }
 
 // P: уровни по NSG_KEYS (0…1) и vol, width, mode, carrier, beat, pulse, depth, bpm, density, period, rate (колокольчиков в минуту), scale, root
 // пишет N отсчётов в oL / oR
 function nsgRender(S,P,oL,oR,N){
   const sr=S.sr, dt=1/sr, rnd=S.rnd, lv=S.lv, TP=6.2831853;
-  const kl=1-Math.exp(-dt/.05), kg=1-Math.exp(-dt/.5), kgust=1-Math.exp(-dt/1.3);
+  const kl=1-Math.exp(-dt/.05), kg=1-Math.exp(-dt/.5), kgust=1-Math.exp(-dt/1.3), kflk=1-Math.exp(-dt/.25);
   const ba=Math.exp(-TP*25*dt);
   const k={pink:1,blue:1,ba,bn:Math.sqrt(1-ba*ba),
     pDrop:Math.max(0,P.density||0)*dt, rd1:Math.exp(-dt/.0025), rd2:Math.exp(-dt/.012), rainN:NSG_N.rain,
-    period:Math.max(2,P.period||9), wa:Math.exp(-TP*40*dt), wn:0, waveN:NSG_N.waves, windN:NSG_N.wind};
+    period:Math.max(2,P.period||9), wa:Math.exp(-TP*40*dt), wn:0, waveN:NSG_N.waves, windN:NSG_N.wind,
+    tc:1-Math.exp(-TP*120*dt), thN:1,                                            // гроза: раскат — два ФНЧ на 120 Гц
+    pPop:Math.max(0,P.crackle==null?8:P.crackle)*dt, fd1:Math.exp(-dt/.002), fd2:Math.exp(-dt/.0008),
+    fc:1-Math.exp(-TP*300*dt), roar:12};                                          // костёр: гул — ФНЧ 300 Гц
   k.wn=Math.sqrt(1-k.wa*k.wa);
   k.pink=NSG_N.pink; k.blue=NSG_N.blue;
   const w=Math.min(1,Math.max(0,P.width==null?1:P.width));
@@ -96,17 +160,22 @@ function nsgRender(S,P,oL,oR,N){
   const tgt={}; for(const key of NSG_KEYS) tgt[key]=Math.min(1,Math.max(0,P[key]||0));
   const rec=S.ear[0], rer=S.ear[1];
   for(let i=0;i<N;i++){
-    for(let j=0;j<11;j++){ const key=NSG_KEYS[j]; lv[key]+=(tgt[key]-lv[key])*kl; }
+    for(let j=0;j<NSG_KEYS.length;j++){ const key=NSG_KEYS[j]; lv[key]+=(tgt[key]-lv[key])*kl; }
     S.t+=dt;
     if(lv.wind>1e-4 || tgt.wind>0){                              // порывы: новая цель раз в 1,5…5 с, ход к ней плавный
       if(S.t>=S.gustNext){ S.gustT=rnd(); S.gustNext=S.t+1.5+3.5*rnd(); }
       S.gust+=(S.gustT-S.gust)*kgust;
     }
+    if(lv.thunder>1e-4 || S.storms.length) nsgThunder(S,lv.thunder>1e-4 ? Math.max(0,P.storm==null?2:P.storm)/60 : 0,dt);
+    if(lv.fire>1e-4){                                            // мерцание пламени: новая цель раз в 0,3…1,2 с, ход к ней плавный
+      if(S.t>=S.flkNext){ S.flkT=rnd(); S.flkNext=S.t+.3+.9*rnd(); }
+      S.flk+=(S.flkT-S.flk)*kflk; }
     let l=nsgEarSample(S,rec,P,lv,0,k), r=nsgEarSample(S,rer,P,lv,1,k);
     if(w<1){ const m=(l+r)*.70710678; l=m+(l-m)*w; r=m+(r-m)*w; }     // width 0 — моно, 1 — независимые уши
     if(pulse>0){                                                 // медленная амплитудная пульсация подложки (изохронный шум)
       S.pulsePh+=pulse*dt; if(S.pulsePh>=1) S.pulsePh-=1;
       const g=1-depth*(.5-.5*Math.cos(TP*S.pulsePh)); l*=g; r*=g; }
+    if(lv.crickets>1e-4){ const c=nsgCrickets(S,lv,dt,P.temp); l+=c[0]; r+=c[1]; }
     if(lv.chimes>1e-4 || S.voices.length){
       if(lv.chimes>1e-4 && rnd()<rate*dt){                       // новая нота в строе
         const oc=rnd(), d=sc[(rnd()*sc.length)|0], m=root+d+12*(oc<.4?0:oc<.8?1:2);
