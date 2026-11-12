@@ -356,6 +356,7 @@ const PRESET_CATS={
   'Measure: Modulation Meter — FM and AM (Generator)':'Analysis & Measurement',
   'Measure: Channel Model — Noise, Fading and Doppler on a Signal (Generator)':'Analysis & Measurement',
   'Measure: Spectrum Baseline — New Signal and Missing Carrier Alarm (Generator)':'Analysis & Measurement',
+  'Measure: Air Diary — Who Transmits and When (Generator)':'Analysis & Measurement',
   'Measure: SINAD of an FM Receiver (Generator)':'Analysis & Measurement',
   'Measure: IQ Quality — DC and Imbalance (Generator)':'Analysis & Measurement',
   'Meshtastic: Chat and Nodes on the Map':'Network & IoT',
@@ -3911,6 +3912,28 @@ const n1=addNode('numview',1480,260,{label:'deviations'});
 addEdge(g1.id,'iq',a1.id,'a'); addEdge(g2.id,'iq',a1.id,'b'); addEdge(a1.id,'out',a2.id,'a'); addEdge(g3.id,'iq',a2.id,'b');
 addEdge(a2.id,'out',sp.id,'in'); addEdge(sp.id,'spec',bl.id,'spec'); addEdge(sp.id,'spec',sa.id,'spec'); addEdge(bl.id,'base',sa.id,'spec2');
 addEdge(bl.id,'bands',sa.id,'bands'); addEdge(bl.id,'count',n1.id,'in');
+markWiresDirty();
+});
+preset('Measure: Air Diary — Who Transmits and When (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Air Diary keeps a diary of the band: for every hour of the day and every frequency cell — the share of time the cell was above the floor (the map: colour = busy %, hover for the hour, frequency, level). It is kept in the browser under the diary name\n'+
+  'and grows for days: put it behind any spectrum (a USB SDR, a sweep, IQ Spectrum) and leave it running; the map below fills row by row as the hours pass. Older than «days» is forgotten, «Map → CSV» exports it.\n'+
+  'It also looks for transmitters that repeat. Here two are simulated: a station that hops between two frequencies every 4 s (on each frequency its transmissions repeat every 8 s) and a carrier that never goes off. After «transmissions needed» repeats (about a minute) the readout, the Table (tx) and the log (rec) name them:\n'+
+  'beacon / periodic (period, duty, regularity %), continuous (a carrier on for a minute), daily (the same hour on several days). Every transmission goes to the Timeline (bursts): lanes by frequency, period, jitter, duty.'});
+nt.size.w=900; nt.size.h=170; applySize(nt);
+const g1=addNode('iqGen',40,260,{sr:'1024000',fc:433000000,mode:'carrier',off:-250000,lvl:-35,noise:-100});
+const g2=addNode('iqGen',320,260,{sr:'1024000',fc:433000000,mode:'AM',off:150000,lvl:-40,tone:700,depth:.5,noise:-70});
+const lf=addNode('lfo',600,260,{freq:.125,min:-250000,max:100000,wave:'sq'});
+const a1=addNode('iqAdd',40,680,{});
+const sp=addNode('iqSpec',320,680,{size:'4096',avg:'4',upd:30});
+const ad=addNode('airdiary',900,260,{diary:'demo',slot:'60',thr:20,hold:800,minBursts:5,contMin:20,minDays:3});
+ad.size.w=640; ad.size.h=600; applySize(ad);
+const tb=addNode('table',1560,260,{}); tb.size.w=520; tb.size.h=300; applySize(tb);
+const tl=addNode('timeline',900,920,{by:'freq',gap:0}); tl.size.w=700; tl.size.h=260; applySize(tl);
+const lg=addNode('recLog',1560,600,{}); lg.size.w=520; applySize(lg);
+addEdge(g1.id,'iq',a1.id,'a'); addEdge(g2.id,'iq',a1.id,'b'); addEdge(lf.id,'out',g1.id,'off');
+addEdge(a1.id,'out',sp.id,'in'); addEdge(sp.id,'spec',ad.id,'spec');
+addEdge(ad.id,'tx',tb.id,'rows'); addEdge(ad.id,'bursts',tl.id,'rows'); addEdge(ad.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Measure: SINAD of an FM Receiver (Generator)', function(){
