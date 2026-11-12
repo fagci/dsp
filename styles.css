@@ -1794,7 +1794,14 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 .stu-tile{grid-column:1/-1;width:100%;min-width:0;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
 .stu-tile>.stu-p-rack{display:flex;flex-direction:column;background:var(--panel);min-height:0}
 .stu-p-roll,.stu-p-list{display:flex;flex-direction:column;flex:1;min-height:0;min-width:0}
-.stu-p-mix{display:flex;flex-direction:row;flex:1;min-height:0}
+.stu-p-mix{display:flex;flex-direction:row;flex:1;min-height:0;min-width:0;container:stumix/inline-size}
+.stu-mixin{display:flex;flex-direction:row;flex:1;min-height:0;min-width:0}
+/* узкая панель (телефон, тайл в дашборде): панель эффектов в 320px не оставляла места полосам — полосы сверху, эффекты под ними */
+@container stumix (max-width:560px){
+  .stu-mixin{flex-direction:column;overflow-y:auto}
+  .stu-mixin>.stu-strips{flex:0 0 auto}
+  .stu-mixin>.stu-fxp{flex:1 0 auto;overflow:visible;border-left:0;border-top:1px solid var(--line)}
+}
 .stu-p-inst{display:flex;flex-direction:column;overflow:auto;flex:1;min-height:0}
 .stu-rack>.stu-p-rack{flex:1}
 .stu-tile .stu-top{flex-wrap:wrap;align-content:flex-start;overflow:auto}

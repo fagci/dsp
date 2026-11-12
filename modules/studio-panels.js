@@ -63,8 +63,8 @@ class StuRack extends StuPanel{
 /* ---------- микшер ---------- */
 class StuMixer extends StuPanel{
   constructor(app){
-    super(app,'mix'); this.el.innerHTML='<div class="stu-strips"></div><div class="stu-fxp"></div>';
-    this.stripsEl=this.el.children[0]; this.fxEl=this.el.children[1]; this.meters=new Float32Array(ST_INSERTS+1); this.hold=new Float32Array(ST_INSERTS+1); this.stripCv=[];
+    super(app,'mix'); this.el.innerHTML='<div class="stu-mixin"><div class="stu-strips"></div><div class="stu-fxp"></div></div>';     // обёртка — чтобы панель была контейнером (@container stumix): на узком полосы сверху, эффекты снизу
+    this.stripsEl=this.el.firstChild.children[0]; this.fxEl=this.el.firstChild.children[1]; this.meters=new Float32Array(ST_INSERTS+1); this.hold=new Float32Array(ST_INSERTS+1); this.stripCv=[];
     this.refresh();
   }
   refresh(){

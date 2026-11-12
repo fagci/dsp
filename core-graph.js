@@ -1659,6 +1659,21 @@ const d=Math.hypot(x-(r.left+r.right)/2,y-(r.top+r.bottom)/2); if(d<bd){ bd=d; b
 return best;
 }
 function clearPending(){ if(pending){ pending.el.classList.remove('lit'); pending=null; if(stat.textContent.startsWith('port selected')) stat.textContent=''; } linkSync(); }
+function setPending(n,port,dir,el){
+clearPending();
+pending={n,port,dir,el};
+el.classList.add('lit'); linkMarkOn(n,port,dir);
+stat.textContent='port selected: '+port+' — tap the second one, or an empty spot to pick a module';
+linkBarShow('Pin «'+port+'» — tap the second pin, or empty space for a module');
+}
+// палец мимо пина (при вписанном патче пин — несколько пикселей): ближайший видимый пин рядом с точкой тапа по пустому месту
+function pinNearest(x,y){
+let best=null, bd=26;
+for(const el of content.querySelectorAll('.port[data-port]')){ const pin=el.firstElementChild; if(!pin) continue;
+const r=pin.getBoundingClientRect(); if(!r.width) continue;
+const d=Math.hypot(x-(r.left+r.right)/2,y-(r.top+r.bottom)/2); if(d<bd){ bd=d; best=el; } }
+return best;
+}
 function bindPendingComplete(el,n,param){            // второй тап (клик-клик, без удержания) — довязать провод прямо
 el.addEventListener('pointerdown',ev=>{              // на контрол; ловим в capture — раньше, чем свой драг поля у box
 if(!pending) return;
@@ -1699,11 +1714,7 @@ if(link.dir==='o') connect(link.n.id,link.port,el.dataset.node,el.dataset.port);
 else connect(el.dataset.node,el.dataset.port,link.n.id,link.port);
 clearPending();
 } else if(moved <8){                                // это был тап — ждём второй
-clearPending();
-pending={n:link.n,port:link.port,dir:link.dir,el:link.el};
-link.el.classList.add('lit');
-stat.textContent='port selected: '+link.port+' — tap the second one, or an empty spot to pick a module';
-linkBarShow('Pin «'+link.port+'» — tap the second pin, or empty space for a module');
+setPending(link.n,link.port,link.dir,link.el);
 } else if(moved>=8 && (hit===cv || hit===content)){   // провод отпущен на пустом месте — модули, подходящие этому порту
 const t=portT(link.n,link.dir==='o'?'outs':'ins',link.port);
 if(t) openModPicker(ev.clientX,ev.clientY,toCanvas(ev),{n:link.n,port:link.port,dir:link.dir,type:t});
@@ -1720,7 +1731,8 @@ if(mg){ const pn=pending; ev.stopPropagation(); ev.preventDefault();
 if(pn.dir==='o') connect(pn.n.id,pn.port,mg.dataset.node,mg.dataset.port); else connect(mg.dataset.node,mg.dataset.port,pn.n.id,pn.port);
 stat.textContent='connection created'; clearPending(); return; } }
 if(!ev.shiftKey &&Sel.size){ Sel.clear(); syncSel(); }
-tapFrom=pending ? {n:pending.n,port:pending.port,dir:pending.dir,x:ev.clientX,y:ev.clientY,t:ev.timeStamp,id:ev.pointerId,far:two} : null; }
+tapFrom=pending ? {n:pending.n,port:pending.port,dir:pending.dir,x:ev.clientX,y:ev.clientY,t:ev.timeStamp,id:ev.pointerId,far:two}
+ : ev.pointerType==='touch' ? {pick:true,x:ev.clientX,y:ev.clientY,t:ev.timeStamp,id:ev.pointerId,far:two} : null; }
 },true);
 // выбран порт, затем тап по пустому месту — выбор модуля для него (отпускание рядом с точкой нажатия).
 // Перетаскивание пустого места (панорама, щипок) выбор пина не снимает: до второго пина ещё нужно доехать.
@@ -1730,6 +1742,11 @@ cv.addEventListener('pointerup',ev=>{
 const f=tapFrom; if(!f || ev.pointerId!==f.id) return;
 tapFrom=null;
 if(f.far || Math.hypot(ev.clientX-f.x,ev.clientY-f.y)>8) return;     // двигали холст — пин остаётся выбранным
+if(f.pick){                                        // пина ещё нет: тап рядом с пином — выбор этого пина
+if(pending || ev.timeStamp-f.t>500) return;
+const el=pinNearest(ev.clientX,ev.clientY), n=el && Graph.map[el.dataset.node];
+if(n){ buzz(8); setPending(n,el.dataset.port,el.dataset.dir,el); }
+return; }
 clearPending();
 if(ev.timeStamp-f.t>500) return;
 const t=portT(f.n,f.dir==='o'?'outs':'ins',f.port);
