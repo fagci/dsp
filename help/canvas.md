@@ -5,6 +5,7 @@
 - **Double-click an empty spot** of the canvas and search.
 - **Drop a wire on an empty spot** (or select a pin and tap an empty spot): the picker lists only modules that have a matching pin and connects the new one for you.
 - **→+ (quick chain)** in the toolbar, with one module selected: the picker shows what fits the free output of the selected module, connects the new module and selects it — repeat to grow a chain.
+- **Chains in the command palette** (**Ctrl+K**, **/** or **>**): `usb>(dac,sa)` builds modules and wires with a live preview. After a module name `[A>B, A<B]` chooses the pins to join with the previous module (the palette lists which pins were connected and why a pin was not found), `{sr:2.4M}` sets parameters, and a **chunk** is a named chain: `mysdr = usb*>sa[spec>spec, steerFreq<centerFreq]` saves it (or `mysdr =` with modules selected), `mysdr>demod` expands it. Chunks are kept in the browser, listed in the palette and included in the backup. A wire that joins two inputs cannot be written in a chain: it is left out when saving the selection (the palette says so). Preset «Chain: SDR with Spectrum Steering (Pins and Chunks)». Logic: `modules/chain-kernels.js`, `node tools/test-chain.mjs`.
 - Patches can be dragged from the list onto the canvas: they are *added* to the current graph.
 
 ## On a phone

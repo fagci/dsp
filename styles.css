@@ -1911,3 +1911,7 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 #sunriseLamp[hidden]{display:none}
 #sunriseLamp .sunl-t{color:#fff;font-size:clamp(22px,6vw,44px);font-weight:300;letter-spacing:.02em;opacity:.85}
 #sunriseLamp .sunl-h{color:#fff;font-size:13px;opacity:.5}
+
+.cmdk-pins{padding:2px 12px 4px;font-size:12px}
+.cmdk-src{margin-left:8px;font-family:monospace;font-size:11px;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmdk-del{margin-left:auto;padding:0 6px;opacity:.5;cursor:pointer} .cmdk-del:hover{opacity:1;color:var(--acc)}
