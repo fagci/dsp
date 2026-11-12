@@ -10692,7 +10692,7 @@ markWiresDirty();
 preset('Mounted Folders: Write, List, Read (Loopback)', function(){
 clearAll();
 const nt=addNode('note',40,20,{text:'Real folders inside the graph. In Files press «⛓ mount» and pick a folder: on a computer (Chrome / Edge / Opera) the files stay on the disk and changes are written there; in the DSP app on Android the system folder picker opens (SD card, Downloads, Documents…) and the access is remembered; in Firefox / Safari the folder is opened read-only until the page is closed. The folder then lives in Files → mounts like any other.\n'+
-  'This patch needs no mounted folder: the name «memory» is a scratch folder in memory. Text Source (repeats every 3 s, or press Send) → Text → Bytes → Mounted Folder (write to demo/hello.txt) → the same node reads it back (read) → Bytes → Text. Type the name of your mounted folder into «mount» to do the same on the real disk (delete removes real files: no undo). Not for radio: nothing is transmitted.'});
+  'This patch needs no mounted folder: the name «memory» is a scratch folder in memory. Text Source (repeats every 3 s, or press Send) → Text → Bytes → Mounted Folder (write to demo/hello.txt) → the same node reads it back (read) → Bytes → Text. Type the name of your mounted folder into «mount» to do the same on the real disk (delete removes real files: no undo). The Files node saves into a mounted folder too: its «path» input takes «mounts/NAME/folders/file.ext» (here the bytes land in memory/inbox/hello.txt; recording and received bytes alike; with a mounted folder open in the node and an empty path — into that folder). Not for radio: nothing is transmitted.'});
 nt.size.w=1000; nt.size.h=140; applySize(nt);
 const ts=addNode('textsrc',40,200,{text:'hello from the graph',repeat:3}); ts.size.w=280; ts.size.h=150; applySize(ts);
 const tb=addNode('txtToBin',360,200,{enc:'utf8',name:'hello.txt'});
@@ -10704,6 +10704,10 @@ addEdge(ts.id,'text',tb.id,'text'); addEdge(tb.id,'bin',wr.id,'bin');
 addEdge(ts.id,'go',wr.id,'go');
 addEdge(wr.id,'new',ls.id,'go'); addEdge(wr.id,'new',rd.id,'go');
 addEdge(rd.id,'bin',bt.id,'bin');
+const pt=addNode('textsrc',360,420,{text:'mounts/memory/inbox'}); pt.size.w=280; pt.size.h=110; applySize(pt);
+const fl=addNode('files',360,560,{}); fl.size.w=300; fl.size.h=300; applySize(fl);
+const li=addNode('mountfs',1060,500,{mount:'memory',action:'list',path:'inbox'}); li.size.w=360; li.size.h=240; applySize(li);
+addEdge(tb.id,'bin',fl.id,'bin'); addEdge(pt.id,'text',fl.id,'path'); addEdge(fl.id,'ok',li.id,'go');
 markWiresDirty();
 });
 preset('Files over WebRTC', function(){

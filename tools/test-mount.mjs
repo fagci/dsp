@@ -221,5 +221,35 @@ ok('MountApp: commands went through the bridge', fb.log.includes('fs.list') && f
   ok('node run: unknown mount → status says so', n.ok===0 && /no mounted folder "missing"/.test(n.text), n.text);
 }
 
+// ---- узел Files: запись и приём в смонтированную папку (реальный filestore.js) ----
+{
+  const g2={...g,Mounts:undefined,document:{createElement:()=>({})},window:{},navigator:{},SampleDB:{},decodeAudioFile:null,OfflineData:{},
+    indexedDB:undefined,syUid:()=>'u',syncNoteDel:async()=>{},fmtDur:()=>'',ListDB:{},tblListFile:()=>{},tblReadList:()=>{},tblPut:()=>{},tcRenameTarget:()=>{},tblImportFile:()=>{},
+    Eng:{},BLOCK:128,setMod:()=>{},applySize:()=>{},iqfPreview:()=>{},fmDownload:()=>{}};
+  g2.def=()=>{}; vm.createContext(g2);
+  vm.runInContext(rd('mount-kernels.js')+rd('mount.js')+';this.MM=Mounts;',g2);
+  let loaded=true; try{ vm.runInContext(rd('filestore.js')+';this.F={fsDest,fsSaveBlob,fsReceive,fsPutMount};',g2); }catch(e){ loaded=false; console.log('load error',e.message); }
+  ok('filestore.js loads for the test', loaded);
+  if(loaded){
+    const F=g2.F, M=g2.MM, mem=M.scratch(), fsm=await M.fsOf(mem);
+    const n={pathIn:'',okP:0,p:{},fm:null};
+    n.pathIn='mounts/memory/rec/a.wav'; await F.fsSaveBlob(n,new Blob(['RIFF']),'x.wav','files');
+    ok('Files node: record into mounts/<name>/dir/file', await txt(await fsm.read('rec/a.wav'))==='RIFF' && n.okP===2);
+    n.pathIn='mounts/memory/rec'; await F.fsSaveBlob(n,new Blob(['2']),'rec 1.wav','files'); await F.fsSaveBlob(n,new Blob(['3']),'rec 1.wav','files');
+    ok('Files node: no file name → free names, nothing overwritten', (await fsm.list('rec')).map(e=>e.name).sort().join()==='a.wav,rec 1 (1).wav,rec 1.wav');
+    await F.fsReceive({...n,pathIn:'mounts/memory/inbox'},{d:bytes(104,105),name:'hello.txt',mime:'text/plain'});
+    ok('Files node: bin received into a mounted folder keeps its name', await txt(await fsm.read('inbox/hello.txt'))==='hi');
+    await F.fsReceive({...n,pathIn:'mounts/memory/inbox/fixed.bin'},{d:bytes(1),name:'ignored.txt'});
+    ok('Files node: an explicit file name wins', (await fsm.list('inbox')).some(e=>e.name==='fixed.bin'));
+    ok('Files node: unknown mount → clear error', await rej(F.fsDest(n,'mounts/nope/x.txt','files'),/no mounted folder "nope"/));
+    // открыта смонтированная папка в менеджере узла, path пуст
+    await fsm.mkdir('open/here'); const nn={pathIn:'',okP:0,p:{},fm:{space:'mounts',folder:'memory:open/here'}};
+    M.byId=id=>id==='memory' ? mem : undefined;
+    await F.fsReceive(nn,{d:bytes(7),name:'o.bin'});
+    ok('Files node: open mounted folder + empty path → that folder', (await fsm.list('open/here')).some(e=>e.name==='o.bin'));
+    const ro={fs:{caps:{write:false}},dir:''}; ok('Files node: read-only mount → clear error', await rej(F.fsPutMount({mount:ro,name:'a'},new Blob([]),'a'),/read-only/));
+  }
+}
+
 console.log(bad?'FAILED '+bad:'all ok');
 process.exit(bad?1:0);

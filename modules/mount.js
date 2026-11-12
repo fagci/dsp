@@ -195,6 +195,7 @@ const MountStore=(() => {
     async copyFolder(id,parentId=null){ return this.copy(id,parentId); },
     // удаление в смонтированной папке настоящее — вернуть нечем (менеджер спрашивает подтверждение и «Undo» не рисует)
     async snapshot(){ return null; },
+    bust,                                                          // после записи снаружи (узел Files: запись, приём)
     async importFile(space,file,folderId=null,name){
       if(folderId==null || folderId===FS_ROOT) throw new Error('Open a mounted folder first (or use "⛓ mount")');
       const [m,p]=need(folderId), f=await canWrite(m), nm=await freeName(m,p,name||file.name||'file');
