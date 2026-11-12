@@ -164,6 +164,7 @@ function sameClose(n,recs,texts){
       line=f.eventName+' ('+f.event+') · '+f.orgName+' · '+f.locations.length+' area'+(f.locations.length>1 ? 's' : '')+(f.states.length ? ' '+f.states.join(' ') : '')+
         ' · valid '+f.purge+' min · day '+f.jday+' '+String(f.hour).padStart(2,'0')+':'+String(f.min).padStart(2,'0')+' UTC · '+f.callsign;
       if(rec.areaNames) line+=' · '+rec.areaNames;
+      if(typeof nwrFirst==='function'){ const t=nwrFirst(rec.locations); if(t){ rec.nwr=nwrLabel(t); rec.nwrFreq=t.freq*1e6; line+=' · NWR '+t.call+' '+t.freq.toFixed(3); } }
       rec.text=line;
       if(typeof wxMatch==='function' && !wxMatch({locations:rec.locations,event:rec.event},n.p.fips,n.p.events)){ n.skipped=(n.skipped||0)+1; n.last='filtered out: '+line; return; }
     } else { rec.kind='raw'; rec.text=s; line='unparsed: '+s; }

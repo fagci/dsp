@@ -486,6 +486,7 @@ const PRESET_CATS={
   'Time Signal: DCF77 / WWVB from a Sound Card (192 kS/s)':'HF Modes & Morse',
   'SAME / EAS: Alert Decoder Test (Loopback)':'Aircraft, Satellites & Telemetry',
   'SAME / EAS: NOAA Weather Radio (USB SDR)':'Aircraft, Satellites & Telemetry',
+  'NWR Stations: Which Transmitter to Tune (Loopback)':'Aircraft, Satellites & Telemetry',
   'NWS Alerts: Test Generator → Decoder (Loopback)':'Aircraft, Satellites & Telemetry',
   'NWS Alerts: Active Alerts by State (Online)':'Aircraft, Satellites & Telemetry',
   'SAME Filter by County and Event (Loopback)':'Aircraft, Satellites & Telemetry',
@@ -4758,6 +4759,23 @@ const log=addNode('recLog',420,560,{});
 log.size.w=260; applySize(log);
 addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'audio',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
 addEdge(rx.id,'audio',dc.id,'L'); addEdge(rx.id,'audio',dc.id,'R');
+markWiresDirty();
+});
+preset('NWR Stations: Which Transmitter to Tune (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'NOAA Weather Radio has about a thousand transmitters on seven channels, 162.400–162.550 MHz (WX1–WX7), and a county is heard from one or several of them. NWR Stations knows them all (the NWS list, built in, works offline): give it a county as a code or ST:County in «area», wire the `rec` of SAME / EAS Decoder (the first county of the alert), or give a position (wires, parameters, My Position) and it lists the nearest. The `freq` output (Hz) tunes a receiver, `rows` goes to a map.\n'+
+  'Here a SAME test alert for county 048453 goes through the decoder into the first node and the transmitter that serves it is shown with its channel; the second node finds the nearest ones to a position you type. In the decoder the line of the alert now ends with «NWR call frequency». The test signal is for a cable or the sound-card loop only: never put it on the air or into an alerting system.'});
+nt.size.w=980; nt.size.h=170; applySize(nt);
+const tx=addNode('sameTx',40,260,{event:'TOR',loc:'048453',call:'KTEST/NW'});
+tx.size.w=320; tx.size.h=320; applySize(tx);
+const rx=addNode('sameRx',400,260,{});
+rx.size.w=480; rx.size.h=300; applySize(rx);
+const nw=addNode('nwrFind',920,260,{});
+nw.size.w=420; nw.size.h=260; applySize(nw);
+const fv=addNode('numview',1380,260,{digits:0});
+const n2=addNode('nwrFind',920,600,{lat:32.75,lon:-97.33,count:4});
+n2.size.w=420; n2.size.h=240; applySize(n2);
+addEdge(tx.id,'out',rx.id,'in'); addEdge(rx.id,'rec',nw.id,'rec'); addEdge(nw.id,'freq',fv.id,'in');
 markWiresDirty();
 });
 preset('NWS Alerts: Test Generator → Decoder (Loopback)', function(){
