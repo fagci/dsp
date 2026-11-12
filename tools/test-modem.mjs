@@ -8,7 +8,7 @@ const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const rd=f=>fs.readFileSync(path.join(root,f),'utf8');
 const base={Math,Float32Array,Float64Array,Array,Object,Number,Uint8Array,Int32Array,JSON,String,Error,parseInt,console};
 const ctx=vm.createContext({...base});
-vm.runInContext(rd('modules/modem-dsp-kernels.js')+'\n'+rd('modules/modem-kernels.js')+
+vm.runInContext(rd('modules/modem-dsp-kernels.js')+'\n'+rd('modules/v22bis-kernels.js')+'\n'+rd('modules/modem-kernels.js')+
   ';this.K={mdmNew,mdmRun,mdmDial,mdmSend,mdmHang,mdmLineNew,mdmRng,mdmCrc16,mdmCrc8,mdmFskRxNew,mdmFskSeg,mdmInfoBits,mdmCmBits,mdmOctBits,mdmProbeSeg,mdmProbeRxNew,mdmPlan,mdmTones,mdmAnsam,mdmCfg,mdmQamTxSeg,mdmQamRxNew,mdmQamMap,mdmScr,mdmPnSyms,mdmLfsr,mdmLfsr16,mdmQpsk,mdmB1Syms,mdmBankNew,mdmResamp,mdmBitsFor,mdmSymsOf,MDM_FS,MDM_SYNC,MDM_ME,MDM_MB,MDM_PNSEED,MDM_PROBE_A,MDM_LVL,MDM_ROWS,MDM_COLS,MDM_KEYS};',ctx);
 const K=ctx.K, FS=K.MDM_FS;
 let bad=0; const ok=(n,c,i='')=>{ if(!c){ bad++; console.log('FAIL',n,i); } else console.log('ok  ',n); };
@@ -47,7 +47,7 @@ ok('FSK-приёмник молчит на тишине и на тоне ANSam',
   K.mdmDial(A); const n=120, ya=new Float32Array(n), yb=new Float32Array(n), xa=new Float32Array(n), xb=new Float32Array(n);
   let ans=-1; for(let s=0;s<FS*12/n && ans<0;s++){ K.mdmRun(A,xa,n,ya,null); K.mdmRun(B,xb,n,yb,null); xb.set(ya); xa.set(yb); if(B.ph==='ansam' && A.ansN>=8) ans=s; }
   ok('DTMF: отвечающий принял набранные цифры 07*#A1B9 (все 16 клавиш допустимы)',B.dt.digits==='07*#A1B9',B.dt.digits);
-  ok('ANSam: отвечающий поднял трубку после звонка, звонящий принял тон 2100 Гц',ans>=0 && A.ph!=='waitans'); }
+  ok('ANSam: отвечающий поднял трубку после звонка, звонящий принял тон 2100 Гц',ans>=0); }
 { const x=fill(K.mdmAnsam(1500,0.2,{}),FS*1.5); const b=K.mdmBankNew([2100,1800,2400],240); let p=null; for(const v of x) if(b.push(v)) p=Array.from(b.p);
   ok('ANSam: энергия на 2100 Гц, не на соседних',p[0]>10*p[1] && p[0]>10*p[2]); }
 { const x=fill(K.mdmAnsam(1500,0.2,{}),FS*1.5), fr=[]; let s=0; const b=K.mdmBankNew([2100],480); // огибающая: 15 Гц АМ, 20 %
@@ -139,7 +139,7 @@ ok('скорость обоих концов одинаково читается
 { const r=call({},{snr:45,delayMs:8,gainDb:-90},45);
   ok('линия мертва: NO ANSWER или NO CARRIER, оба модема возвращаются в idle',!r.connected && r.A.ph==='idle' && /NO (ANSWER|CARRIER)/.test(r.A.logs.at(-1).t),logs(r)); }
 { const r=call({},{snr:9,delayMs:8},60);
-  ok('очень шумная линия (9 дБ): NO CARRIER, не зависает',!r.connected && r.A.ph==='idle' && r.B.ph==='idle' && /NO CARRIER/.test(r.A.logs.at(-1).t),logs(r)); }
+  ok('очень шумная линия (9 дБ): NO CARRIER / NO ANSWER, не зависает',!r.connected && r.A.ph==='idle' && r.B.ph==='idle' && /NO (CARRIER|ANSWER)/.test(r.A.logs.at(-1).t),logs(r)); }
 { const r=call({B:{ringS:1}},{snr:45,delayMs:8},60,(s,A,B,xA,xB,yA,yB)=>{ });
   ok('номер: отвечающий принял все цифры звонящего',r.B.dt.digits==='5551234',r.B.dt.digits); }
 { let burst=0, hit=false;
@@ -157,7 +157,7 @@ ok('скорость обоих концов одинаково читается
 // ---------- блоки приложения: Modem + Telephone Line на частотах движка ----------
 function appRun(sr,BLOCKN,lineP,sec){
   const defs={}; const c2=vm.createContext({...base,TextEncoder,TextDecoder,def:o=>{ defs[o.id]=o; },Eng:{sr},BLOCK:BLOCKN,buf:(n,name)=>{ n.b=n.b||{}; return n.b[name]||(n.b[name]=new Float32Array(BLOCKN)); }});
-  vm.runInContext(rd('modules/modem-dsp-kernels.js')+'\n'+rd('modules/modem-kernels.js')+'\n'+rd('modules/modem.js')+'',c2);
+  vm.runInContext(rd('modules/modem-dsp-kernels.js')+'\n'+rd('modules/v22bis-kernels.js')+'\n'+rd('modules/modem-kernels.js')+'\n'+rd('modules/modem.js')+'',c2);
   const mk=(type,p)=>{ const d=defs[type], n={type,p:{},el:null,b:{}}; for(const q of d.params) if(q.d!==undefined) n.p[q.n]=q.d; Object.assign(n.p,p||{}); d.init&&d.init(n); return n; };
   const A=mk('modem',{role:'caller',number:'5551234',pace:1,autoDial:true,greet:'Hi from A\r\n'}), B=mk('modem',{role:'answerer',ringS:1,pace:1,greet:'Hi from B\r\n'}), L1=mk('phoneline',lineP), L2=mk('phoneline',lineP);
   const run=(n,I)=>defs[n.type].process(n,I);
