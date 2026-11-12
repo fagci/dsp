@@ -1009,14 +1009,15 @@ for(const k of Object.keys(ST_EXAMPLES)){ const nm='Studio Song: '+k; PRESET_CAT
 /* ---- демо-патч ---- */
 function buildDemo(){
 clearAll();
+// три колонки: мелкие блоки слева, высокие приборы — в своих; так патч вписывается и в экран телефона, и в окно
 const o1=addNode('osc',40,40,{freq:400,amp:.3,wave:'saw'});
-const lf=addNode('lfo',40,260,{freq:.3,min:300,max:3000});
-const f =addNode('biquad',300,40,{type:'lp',freq:1200,Q:6});
-const sc=addNode('scope',560,40);
-const ff=addNode('fft',300,300,{size:'2048'});
-const wf=addNode('sa',560,300,{fmin:0,fmax:6000,split:.4});
-const dc=addNode('dac',820,40,{vol:.25});
-const mt=addNode('stats',820,220,{view:'bar'}); mt.size.h=26; applySize(mt);
+const lf=addNode('lfo',40,290,{freq:.3,min:300,max:3000});
+const f =addNode('biquad',40,540,{type:'lp',freq:1200,Q:6});
+const ff=addNode('fft',40,720,{size:'2048'});
+const dc=addNode('dac',40,980,{vol:.25});
+const sc=addNode('scope',300,40);
+const mt=addNode('stats',300,840,{view:'bar'}); mt.size.h=26; applySize(mt);
+const wf=addNode('sa',730,40,{fmin:0,fmax:6000,split:.4});
 addEdge(o1.id,'out',f.id,'in');
 addEdge(lf.id,'out',f.id,'freq');
 addEdge(f.id,'out',sc.id,'in1');
@@ -1024,6 +1025,7 @@ addEdge(f.id,'out',ff.id,'in');
 addEdge(ff.id,'spec',wf.id,'spec');
 addEdge(f.id,'out',dc.id,'L');
 addEdge(f.id,'out',mt.id,'in');
+autoLayout();                                       // узлы по колонкам; высота зависит от устройства (на телефоне строки выше) — пересечения раздвигаем
 markWiresDirty();
 }
 preset('Demo: Sweep and Waterfall', buildDemo);
