@@ -486,6 +486,10 @@ const PRESET_CATS={
   'Time Signal: DCF77 / WWVB from a Sound Card (192 kS/s)':'HF Modes & Morse',
   'SAME / EAS: Alert Decoder Test (Loopback)':'Aircraft, Satellites & Telemetry',
   'SAME / EAS: NOAA Weather Radio (USB SDR)':'Aircraft, Satellites & Telemetry',
+  'NWS Alerts: Test Generator → Decoder (Loopback)':'Aircraft, Satellites & Telemetry',
+  'NWS Alerts: Active Alerts for Oklahoma (Online)':'Aircraft, Satellites & Telemetry',
+  'SAME Filter by County and Event (Loopback)':'Aircraft, Satellites & Telemetry',
+  'Weather Alert → APRS Bulletin and Object (Loopback)':'Modems & Data Links',
   'SELCAL: Test Signal (Loopback)':'HF Modes & Morse',
   'SELCAL: HF Aeronautical Channel (KiwiSDR)':'HF Modes & Morse',
   'Selcall ZVEI / CCIR: Five-Tone Decoder Test (Loopback)':'Digital Voice & Trunking',
@@ -4749,6 +4753,68 @@ const log=addNode('recLog',420,560,{});
 log.size.w=260; applySize(log);
 addEdge(rx.id,'spec',sa.id,'spec'); addEdge(rx.id,'audio',de.id,'in'); addEdge(de.id,'rec',log.id,'rec');
 addEdge(rx.id,'audio',dc.id,'L'); addEdge(rx.id,'audio',dc.id,'R');
+markWiresDirty();
+});
+preset('NWS Alerts: Test Generator → Decoder (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Alerts of the National Weather Service without a network: Alert Test Generator builds a CAP 1.2 XML (or NWS JSON, as api.weather.gov/alerts/active) from the fields, NWS Alerts reads the document from its doc input — the same parser that reads the real answer. Press Make: the alert comes out with the event code (TOR), the SAME areas (FIPS 040109 = Oklahoma County), the validity and the polygon centre.\n'+
+  'The records go on as rec: filter by areas / events right in NWS Alerts (OK, 40109, TOR *W, !RWT) and wire rec into Alert → APRS or a log. The generator is a test source only: it must not be sent into real alerting systems.'});
+nt.size.w=880; nt.size.h=130; applySize(nt);
+const tx=addNode('wxAlertTx',40,230,{});
+tx.size.w=340; tx.size.h=360; applySize(tx);
+const rx=addNode('wxAlerts',430,230,{fips:'OK',events:'!RWT !RMT'});
+rx.size.w=380; rx.size.h=340; applySize(rx);
+const log=addNode('recLog',860,230,{});
+log.size.w=420; applySize(log);
+addEdge(tx.id,'doc',rx.id,'doc'); addEdge(rx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('NWS Alerts: Active Alerts for Oklahoma (Online)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Active alerts of the NWS (api.weather.gov, no key) for Oklahoma, refreshed every 2 minutes. The last good answer is kept and shown as «stale» when the network is gone. Filter counties with FIPS (40109 Oklahoma, 40143 Tulsa…) and events (TOR SVR FFW *W). Other sources: a forecast zone (OKZ025), your position (tick «by point»), your own CAP / Atom address (IPAWS, the NWS .atom feeds).\n'+
+  'rec goes to the log and, if you like, to Alert → APRS (see the APRS relay preset). The same events come over the air as SAME on NOAA Weather Radio 162.400–162.550 MHz — the SAME / EAS presets.'});
+nt.size.w=880; nt.size.h=130; applySize(nt);
+const rx=addNode('wxAlerts',40,230,{area:'OK',events:'*W',first:true});
+rx.size.w=380; rx.size.h=340; applySize(rx);
+const log=addNode('recLog',470,230,{});
+log.size.w=440; applySize(log);
+addEdge(rx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('SAME Filter by County and Event (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'SAME / EAS Decoder passes only the alerts for your areas and events: «only these areas» takes states (OK), counties (40109) or full PSSCCC codes, «only these events» — TOR SVR, wildcards (*W = all warnings) and exclusions (!RWT !RMT). The end-of-message NNNN is always passed. Here a tornado warning for Oklahoma County (040109) goes through the filter «OK»; set the generator to 048453 (Travis, TX) and it is dropped: the decoder says «filtered out».\n'+
+  'The test signal is for a cable or the sound-card loop only: never put it on the air or into an alerting system.'});
+nt.size.w=880; nt.size.h=130; applySize(nt);
+const tx=addNode('sameTx',40,230,{event:'TOR',loc:'040109',call:'KTEST/NW'});
+tx.size.w=340; tx.size.h=320; applySize(tx);
+const rx=addNode('sameRx',430,230,{fips:'OK',events:'TOR SVR FFW'});
+rx.size.w=520; rx.size.h=320; applySize(rx);
+const log=addNode('recLog',430,590,{});
+log.size.w=520; applySize(log);
+addEdge(tx.id,'out',rx.id,'in'); addEdge(rx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Weather Alert → APRS Bulletin and Object (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The relay chain of a ham weather net without a radio: a SAME alert (sound-card loop) → SAME / EAS Decoder with a filter «OK» → Alert → APRS builds a bulletin «:BLN1WX   :Tornado Warning 040109 til HHMMZ» (and an object with coordinates when the alert has them or a station position is set) → Transmit AX.25/APRS → Bell202 → Receive AX.25 shows the frame back. Tests are skipped (!RWT…).\n'+
+  'Mirror of the chain: NWS Alerts gives the same records with the polygon centre, so the object lands on the map exactly. Test only — do not transmit this loop on 144.390 MHz with a test alert.'});
+nt.size.w=1000; nt.size.h=140; applySize(nt);
+const sx=addNode('sameTx',40,240,{event:'TOR',loc:'040109',call:'KTEST/NW',eom:false});
+sx.size.w=300; sx.size.h=320; applySize(sx);
+const sr=addNode('sameRx',380,240,{fips:'OK'});
+sr.size.w=420; sr.size.h=280; applySize(sr);
+const ap=addNode('wxAprs',840,240,{mode:'both',lat:35.47,lon:-97.52});
+ap.size.w=320; ap.size.h=300; applySize(ap);
+const tx=addNode('ax25Tx',40,620,{src:'N0CALL-1',dst:'APRS',path:'WIDE1-1,WIDE2-1',baud:1200});
+tx.size.w=380; tx.size.h=300; applySize(tx);
+const md=addNode('mod',460,620,{mode:'FSK',f0:1200,shift:1000,amp:.3,rise:.5});
+const dm=addNode('fsk',700,620,{f0:1200,shift:1000,bw:600,center:false});
+const hd=addNode('ax25Rx',940,620,{baud:1200,nrzi:true,ax25:true});
+hd.size.w=440; hd.size.h=280; applySize(hd);
+addEdge(sx.id,'out',sr.id,'in'); addEdge(sr.id,'rec',ap.id,'rec');
+addEdge(ap.id,'text',tx.id,'text'); addEdge(ap.id,'go',tx.id,'go');
+addEdge(tx.id,'bit',md.id,'bit'); addEdge(md.id,'out',dm.id,'in'); addEdge(dm.id,'soft',hd.id,'in');
 markWiresDirty();
 });
 preset('SELCAL: Test Signal (Loopback)', function(){
