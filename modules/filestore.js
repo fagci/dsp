@@ -146,11 +146,12 @@ const FileStore = (() => {
     async copy(id,folderId=null){                      // копия файла; в той же папке — с пометкой в имени
       const r=await this.get(id); if(!r) return;
       const {id:_,uid:__,...rest}=r, same=key(folderId)===r.folderId;
-      return this.put({...rest,folderId,name:same ? r.name+' copy' : r.name,created:Date.now()});
+      const name=same ? fsDedupName(r.name,new Set((await this.list(r.space,r.folderId)).map(x=>x.name))) : r.name;
+      return this.put({...rest,folderId,name,created:Date.now()});
     },
     async copyFolder(id,parentId=null){                // папка со всем содержимым; возвращает id копии
       const f=await this.getFolder(id); if(!f) return;
-      const same=key(parentId)===f.parentId, nid=await this.addFolder(f.space,same ? f.name+' copy' : f.name,parentId);
+      const same=key(parentId)===f.parentId, nid=await this.addFolder(f.space,same ? fsDedupName(f.name,new Set((await this.listFolders(f.space,f.parentId)).map(x=>x.name)),true) : f.name,parentId);
       for(const sub of await this.listFolders(f.space,id)) await this.copyFolder(sub.id,nid);
       for(const x of await this.list(f.space,id)) await this.copy(x.id,nid);
       return nid;
@@ -371,8 +372,7 @@ const TableStore = (() => {
     return [...set].filter(d=>d!=='presets' && !d.startsWith('presets/'));
   }
   async function uniq(name){
-    const have=new Set(await ListDB.listNames()); if(!have.has(name)) return name;
-    for(let i=1;;i++){ const c=name+(i===1 ? ' copy' : ' copy '+i); if(!have.has(c)) return c; }
+    return fsDedupName(name,new Set(await ListDB.listNames()));
   }
   async function free(name){ if((await ListDB.listNames()).includes(name)) throw new Error('"'+name+'" already exists'); }
   async function renamePrefix(from,to){
@@ -424,7 +424,7 @@ const TableStore = (() => {
     async copyFolder(id,parentId=null){
       const base=join(fid(parentId),leafOf(id)), dirs=new Set(await allDirs());
       let to=base;
-      for(let i=1;dirs.has(to);i++) to=base+(i===1 ? ' copy' : ' copy '+i);
+      to=fsDedupName(base,dirs,true);
       await setSaved([...await saved(),to]);
       for(const [n] of await sum()) if(n.startsWith(id+'/')) await this.copy(n,dirOf(to+n.slice(id.length)));
       return to;
@@ -742,6 +742,13 @@ let fmDrag=null;
    Узел заменил Sample Library и Bytes → File (старые патчи открываются как Files). */
 const FS_REC_AUDIO=['audio/webm;codecs=opus','audio/ogg;codecs=opus','audio/mp4'];
 const FS_REC_VIDEO=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4'];
+// имя для копии/дубликата: «a.csv» → «a (1).csv», «a (2).csv»… — расширение остаётся в конце; have — Set занятых имён
+function fsDedupName(name,have,noExt){
+  name=String(name); if(!have.has(name)) return name;
+  const m=!noExt && /^(.+?)(\.[A-Za-z0-9]{1,8})$/.exec(name), base=m ? m[1] : name, ext=m ? m[2] : '';
+  const b=base.replace(/ \(\d+\)$/,'');
+  for(let i=1;;i++){ const c=b+' ('+i+')'+ext; if(!have.has(c)) return c; }
+}
 const fsStamp=()=>{ const d=new Date(), z=k=>String(k).padStart(2,'0');       // без точек: «.46» принимали за расширение
   return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate())+'_'+z(d.getHours())+'-'+z(d.getMinutes())+'-'+z(d.getSeconds()); };
 const fsExt=m=>m.includes('mp4') ? 'mp4' : m.includes('ogg') ? 'ogg' : 'webm';
