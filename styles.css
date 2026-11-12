@@ -500,6 +500,22 @@ body.noedit #bar .ed{display:none}
   #content .node.lod-dot .nhead .more{display:none}
 }
 .dash-menu button.danger{color:#e05c5c}
+.knob-old{width:48px;height:48px;border-radius:50%;background:#1a2024;border:1px solid #333;position:relative;touch-action:none;cursor:grab;margin:2px auto}
+.knob-old.grab{cursor:grabbing}
+.knob-needle{position:absolute;left:50%;top:3px;width:2px;height:18px;background:var(--acc,#e0b23c);transform-origin:50% 21px;pointer-events:none}
+.knob-val{text-align:center;font-size:10px;margin-top:2px}
+@media (pointer:coarse){ .knob-old{width:60px;height:60px} .knob-needle{top:4px;height:23px;transform-origin:50% 26px} .knob-val{font-size:12px} }
+/* мини-панель числа (тач) и подсказка параметра */
+.dash-menu .np-head{padding:4px 10px 6px;font-size:11px;color:var(--dim);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.numpad{min-width:230px;gap:6px}
+.numpad .np-row{display:flex;gap:6px}
+.numpad .np-row button{flex:1 1 0;min-width:0;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:9px 0;font-size:15px;text-align:center}
+.numpad .np-row button.ok{background:var(--acc);border-color:var(--acc);color:#111;font-weight:600}
+.numpad .np-row input{flex:2 1 0;min-width:0;height:40px;text-align:center;font:16px var(--mono);background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:6px}
+.numpad .np-row input:focus{outline:none;border-color:var(--acc)}
+.ptip{position:fixed;z-index:31;max-width:min(280px,86vw);padding:8px 10px;background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:6px;font-size:12px;line-height:1.4;box-shadow:0 2px 10px #0006;pointer-events:none}
+.ptip b{display:block;margin-bottom:2px}
+.ptip .ptip-r{margin-top:4px;color:var(--dim);font-size:11px}
 .nhead .ren:hover,.nhead .rst:hover,.nhead .xpd:hover,.nhead .hlp:hover{color:var(--acc);opacity:1}
 .nhead .x:hover{color:#e05c5c}
 .nbody{padding:0}

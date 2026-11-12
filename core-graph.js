@@ -763,6 +763,58 @@ out+=`<span class="hl-${c}">${esc(m[0])}</span>`; i=m.index+m[0].length;
 if(m[0]==='') JS_TOK.lastIndex++; }
 return out+esc(src.slice(i));
 }
+/* ---- тач-управление числами ----
+   Тап по числу на тач-экране открывает мини-панель (−/+, ×2/÷2 или ±10 шагов, ↺, поле с цифровой клавиатурой): клавиатура не вылезает
+   от случайного касания и не закрывает узел. Долгое нажатие на строку-ползунок — подсказка (полная подпись, описание, диапазон).
+   Привязанный проводом параметр: тап по строке — откуда значение, «перейти к источнику», «отвязать». */
+let numPadEl=null;
+function closeNumPad(){ numPadEl?.remove(); numPadEl=null; }
+function openNumPad(anchor,c){
+  closeNumPad(); closeDashMenu();
+  const m=document.createElement('div'); m.className='dash-menu numpad';
+  const rng=(c.max-c.min)||1, st=c.step||(c.log ? 0 : rng/100);
+  const shown=v=>String(Math.round(v*1000)/1000);
+  const head=document.createElement('div'); head.className='np-head'; head.textContent=c.label; m.append(head);
+  const row=document.createElement('div'); row.className='np-row';
+  const inp=document.createElement('input'); inp.type='text'; inp.inputMode='decimal'; inp.value=shown(c.get());
+  const apply=v=>{ if(!isFinite(v)) return; c.set(clamp(v,c.min,c.max)); inp.value=shown(c.get()); };
+  const btn=(t,fn,cls)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=t; if(cls) b.className=cls;
+    b.addEventListener('click',()=>{ fn(); buzz(6); }); return b; };
+  const step=k=>()=>{ const v=c.get(); apply(c.log ? v*(1+.05*k) : v+k*st); };
+  row.append(btn('−',step(-1)),inp,btn('+',step(1)));
+  const row2=document.createElement('div'); row2.className='np-row';
+  row2.append(c.log ? btn('÷2',()=>apply(c.get()/2)) : btn('−10',step(-10)),
+    c.log ? btn('×2',()=>apply(c.get()*2)) : btn('+10',step(10)));
+  const row3=document.createElement('div'); row3.className='np-row';
+  row3.append(btn('↺ '+shown(c.def),()=>apply(c.def)),btn('OK',closeNumPad,'ok'));
+  inp.addEventListener('input',()=>apply(parseFloat(inp.value.replace(',','.'))));
+  inp.addEventListener('keydown',e=>{ e.stopPropagation(); if(e.key==='Enter'||e.key==='Escape') closeNumPad(); });
+  m.append(row,row2,row3);
+  document.body.append(m); numPadEl=m; placeMenu(m,anchor);
+}
+addEventListener('pointerdown',e=>{ if(numPadEl && !numPadEl.contains(e.target)) closeNumPad(); },true);
+let ptipEl=null, ptipTimer=0;
+function paramTip(anchor,s){
+  ptipEl?.remove(); clearTimeout(ptipTimer);
+  const m=document.createElement('div'); m.className='ptip';
+  const b=document.createElement('b'); b.textContent=s.label||s.n; m.append(b);
+  if(s.tip){ const t=document.createElement('div'); t.textContent=s.tip; m.append(t); }
+  if(typeof s.min==='number' && typeof s.max==='number'){ const r=document.createElement('div'); r.className='ptip-r';
+    r.textContent=fmt(s.min)+' … '+fmt(s.max)+(s.log?' (log)':'')+(s.d!==undefined && !Array.isArray(s.d) ? ' · default '+fmt(s.d) : ''); m.append(r); }
+  document.body.append(m); ptipEl=m; placeMenu(m,anchor);
+  const off=()=>{ m.remove(); if(ptipEl===m) ptipEl=null; removeEventListener('pointerdown',off,true); };
+  addEventListener('pointerdown',off,true); ptipTimer=setTimeout(off,6000);
+}
+function linkedParamMenu(n,key,anchor){
+  const e=Graph.edges.find(x=>x.to===n.id && x.tp===key), src=e && Graph.map[e.from]; if(!src) return;
+  closeDashMenu();
+  const m=document.createElement('div'); m.className='dash-menu';
+  const info=document.createElement('div'); info.className='np-head'; info.textContent='← '+nodeTitle(src)+' · '+e.fp; m.append(info);
+  const item=(t,fn,cls)=>{ const b=document.createElement('button'); b.textContent=t; if(cls) b.className=cls; b.onclick=()=>{ closeDashMenu(); fn(); }; m.append(b); };
+  item('Go to source',()=>{ selSet(src.id,false); view.x=cv.clientWidth/2/view.k-(src.x+src.el.offsetWidth/2); view.y=cv.clientHeight/2/view.k-(src.y+src.el.offsetHeight/2); applyView(); drawWiresSoon?.(); });
+  item('Disconnect',()=>{ delEdge(e); syncLinkedParams(n); Undo.push(); },'danger');
+  document.body.append(m); dashMenuEl=m; placeMenu(m,anchor);
+}
 function paramEl(n,s){
 const row=document.createElement('div'); row.className='prm'; row.dataset.param=s.n; row.dataset.node=n.id;
 const lab=document.createElement('label'); lab.textContent=s.label||s.n;
@@ -774,6 +826,7 @@ row.append(paramBtn(n,s)); return row;
 if(s.t==='file'){ row.className='prm wide';
 const f=document.createElement('input'); f.type='file'; f.accept=s.accept||'';
 f.addEventListener('change',()=>{ if(f.files[0]) s.fn(n,f.files[0]); }); row.append(f); return row; }
+row.addEventListener('click',()=>{ if(row.classList.contains('linked')) linkedParamMenu(n,s.n,row); });   // параметр ведёт провод — откуда, перейти, отвязать
 if(s.t!=='range2') bindPendingComplete(row,n,s.n);   // второй тап (клик-клик) — довязать провод прямо на строку контрола
 row.append(lab);
 if(s.t==='range'){
@@ -807,31 +860,41 @@ valEl.textContent=disp(v); };
 const setV=v=>{ v=clamp(v,smin,smax); n.p[s.n]=v; render(v); };
 render(n.p[s.n]);
 (n.set||(n.set={}))[s.n]=setV;
-let dragging=false, sx=0, sy=0, sv=0, moved=false, pid=null;
+let dragging=false, sx=0, sy=0, sv=0, moved=false, pid=null, ptype='', slowK=1, hold=0;
+const holdClear=()=>{ clearTimeout(hold); hold=0; };
 box.addEventListener('pointerdown',e=>{
 if(e.target.closest('input')) return;             // не мешать текстовому вводу
 e.stopPropagation(); pid=e.pointerId; box.setPointerCapture(pid);
-dragging=true; moved=false; sx=e.clientX; sy=e.clientY; sv=n.p[s.n];
+dragging=true; moved=false; sx=e.clientX; sy=e.clientY; sv=n.p[s.n]; ptype=e.pointerType; slowK=1; holdClear();
+if(ptype==='touch') hold=setTimeout(()=>{ hold=0; dragging=false; try{ box.releasePointerCapture(pid); }catch(_){} paramTip(box,s); buzz(10); },600);   // долгое нажатие без сдвига — подсказка
 });
 box.addEventListener('pointermove',e=>{
 if(!dragging) return;
+if(hold && (Math.abs(e.clientX-sx)>8 || Math.abs(e.clientY-sy)>8)) holdClear();
 const dx=s.knob ? (e.clientX-sx)-(e.clientY-sy) : e.clientX-sx;
 if(!s.knob && !moved && e.pointerType==='touch'){          // палец: меняем значение только явным горизонтальным движением, вертикальное — отмена
 if(Math.abs(e.clientY-sy)>8 && Math.abs(e.clientY-sy)>Math.abs(dx)){ dragging=false; if(pid!=null) box.releasePointerCapture(pid); return; }
 if(Math.abs(dx)<=8) return; }
 if(Math.abs(dx)>3) moved=true;
 if(!moved) return;
-const slow=e.shiftKey?8:1, w=s.knob ? 200 : Math.max(60,box.offsetWidth);
-let v = s.log ? sv*Math.exp(dx*Math.log(smax/smin)/w/slow)
-: sv+dx*(smax-smin)/w/slow;
+let dxx=dx;
+if(!s.knob && e.pointerType==='touch'){                // палец ушёл вверх/вниз от точки нажатия — тонкая подстройка: каждые 36px ход ещё в раз медленнее
+const k=1+Math.min(15,Math.floor(Math.abs(e.clientY-sy)/36));
+if(k!==slowK){ slowK=k; sv=n.p[s.n]; sx=e.clientX; stat.textContent=k>1 ? 'fine adjust: ×1/'+k : ''; }
+dxx=e.clientX-sx; }
+const slow=(e.shiftKey?8:1)*slowK, w=s.knob ? 200 : Math.max(60,box.offsetWidth);
+let v = s.log ? sv*Math.exp(dxx*Math.log(smax/smin)/w/slow)
+: sv+dxx*(smax-smin)/w/slow;
 if(s.step) v=Math.round(v/s.step)*s.step;         // не тащить хвост из десятков знаков
 setV(v);
 });
 const endDrag=e=>{
-if(!dragging) return; dragging=false;
+holdClear(); if(!dragging) return; dragging=false;
 if(pid!=null) box.releasePointerCapture(pid);
-if(!moved) openEdit();
+if(slowK>1){ slowK=1; stat.textContent=''; }
+if(!moved) (ptype==='touch'||ptype==='pen') ? openPad() : openEdit();
 };
+function openPad(){ openNumPad(box,{label:s.label||s.n,get:()=>n.p[s.n],set:setV,min:smin,max:smax,step:s.step,log:s.log,def:s.d}); }
 box.addEventListener('pointerup',endDrag);
 box.addEventListener('pointercancel',endDrag);
 function openEdit(){
@@ -879,14 +942,12 @@ row.append(box);
 } else if(s.t==='knob'){
 row.className='prm wide';
 const box=document.createElement('div'); box.className='knob'; box.tabIndex=0;
-box.style.cssText='width:48px;height:48px;border-radius:50%;background:#1a2024;'+
-'border:1px solid #333;position:relative;touch-action:none;cursor:grab;margin:2px auto';
+box.classList.add('knob-old');         // вид — styles.css (на тач-экране крупнее)
 box.title='Drag up/down to change, Shift for fine control, wheel to step ×10';
 const needle=document.createElement('div');
-needle.style.cssText='position:absolute;left:50%;top:3px;width:2px;height:18px;'+
-'background:var(--acc,#e0b23c);transform-origin:50% 21px;pointer-events:none';
+needle.className='knob-needle';
 const valEl=document.createElement('div'); valEl.className='sn-val';
-valEl.style.cssText='text-align:center;font-size:10px;margin-top:2px';
+valEl.classList.add('knob-val');
 box.append(needle);
 // get/set — необязательные переопределения: по умолчанию читаем/пишем n.p[s.n],
 // но крутилке иногда нужно управлять внешним полем узла, не обычным параметром (см. rtlsdr.tuneKnob)
@@ -899,13 +960,13 @@ render();
 if(!s.get) (n.set||(n.set={}))[s.n]=setV;           // программная установка — только для обычных n.p-параметров
 let sy=0, pid=null, ang=0;
 box.addEventListener('pointerdown',e=>{ e.stopPropagation(); pid=e.pointerId;
-box.setPointerCapture(pid); sy=e.clientY; box.style.cursor='grabbing'; });
+box.setPointerCapture(pid); sy=e.clientY; box.classList.add('grab'); });
 box.addEventListener('pointermove',e=>{
 if(pid==null) return;
 const dy=sy-e.clientY; sy=e.clientY;
 ang=(ang+dy*6)%360; needle.style.transform=`rotate(${ang}deg)`;
 setV(getV()+dy*(e.shiftKey?s.step/10:s.step)); });
-const end=()=>{ pid=null; box.style.cursor='grab'; };
+const end=()=>{ pid=null; box.classList.remove('grab'); };
 box.addEventListener('pointerup',end); box.addEventListener('pointercancel',end);
 box.addEventListener('wheel',e=>{ e.preventDefault(); e.stopPropagation();
 // тот же троттлинг, что и у 'range'/'range2' — трекпад может прислать десятки событий на
@@ -955,25 +1016,36 @@ v=isLo? Math.min(v,other-(step||1)) : Math.max(v,other+(step||1));
 n.p[key]=v; render(v); };
 render(n.p[key]); (n.set||(n.set={}))[key]=setV;
 box.addEventListener('dblclick',()=>{ box.querySelector('input')?.blur(); setV(s.d[isLo?0:1]); });   // сброс к умолчанию
-let dragging=false,sx=0,sy=0,sv=0,moved=false,pid=null;
+let dragging=false,sx=0,sy=0,sv=0,moved=false,pid=null,ptype='',slowK=1,hold=0;
+const holdClear=()=>{ clearTimeout(hold); hold=0; };
 box.addEventListener('pointerdown',e=>{
 if(e.target!==box  && e.target!==fillEl  && e.target!==valEl) return;
 e.stopPropagation(); pid=e.pointerId; box.setPointerCapture(pid);
-dragging=true; moved=false; sx=e.clientX; sy=e.clientY; sv=n.p[key]; });
+dragging=true; moved=false; sx=e.clientX; sy=e.clientY; sv=n.p[key]; ptype=e.pointerType; slowK=1; holdClear();
+if(ptype==='touch') hold=setTimeout(()=>{ hold=0; dragging=false; try{ box.releasePointerCapture(pid); }catch(_){} paramTip(box,s); buzz(10); },600); });
 box.addEventListener('pointermove',e=>{
 if(!dragging) return;
+if(hold && (Math.abs(e.clientX-sx)>8 || Math.abs(e.clientY-sy)>8)) holdClear();
 const dx=e.clientX-sx;
 if(!moved && e.pointerType==='touch'){                    // палец: только горизонтальное движение меняет значение
 if(Math.abs(e.clientY-sy)>8 && Math.abs(e.clientY-sy)>Math.abs(dx)){ dragging=false; if(pid!=null) box.releasePointerCapture(pid); return; }
 if(Math.abs(dx)<=8) return; }
 if(Math.abs(dx) >3) moved=true;
 if(!moved) return;
-const slow=e.shiftKey?8:1, w=Math.max(60,box.offsetWidth);
-let v=log? sv*Math.exp(dx*Math.log(max/min)/w/slow) : sv+dx*(max-min)/w/slow;
+let dxx=dx;
+if(e.pointerType==='touch'){                              // тонкая подстройка уводом пальца вверх/вниз, как у одиночного слайдера
+const k=1+Math.min(15,Math.floor(Math.abs(e.clientY-sy)/36));
+if(k!==slowK){ slowK=k; sv=n.p[key]; sx=e.clientX; stat.textContent=k>1 ? 'fine adjust: ×1/'+k : ''; }
+dxx=e.clientX-sx; }
+const slow=(e.shiftKey?8:1)*slowK, w=Math.max(60,box.offsetWidth);
+let v=log? sv*Math.exp(dxx*Math.log(max/min)/w/slow) : sv+dxx*(max-min)/w/slow;
 if(step) v=Math.round(v/step)*step;
 setV(v); });
-const endDrag=()=>{ if(!dragging) return; dragging=false;
-if(pid!=null) box.releasePointerCapture(pid); if(!moved) openEdit(); };
+const endDrag=()=>{ holdClear(); if(!dragging) return; dragging=false;
+if(pid!=null) box.releasePointerCapture(pid);
+if(slowK>1){ slowK=1; stat.textContent=''; }
+if(!moved) (ptype==='touch'||ptype==='pen') ? openPad() : openEdit(); };
+function openPad(){ openNumPad(box,{label:(s.label||s.n)+(isLo?' (from)':' (to)'),get:()=>n.p[key],set:setV,min:s.min,max:s.max,step:s.step,log:s.log,def:s.d[isLo?0:1]}); }
 box.addEventListener('pointerup',endDrag);
 box.addEventListener('pointercancel',endDrag);
 function openEdit(){
