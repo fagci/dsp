@@ -657,6 +657,8 @@ const PRESET_CATS={
   'Chirp Modem: Noise and Reflection':'Modems & Data Links',
   'APRS: Transmit and Receive (Loop)':'Modems & Data Links',
   'DTMF: Encoder + Decoder':'Modems & Data Links',
+  'Winlink Packet: Client ↔ Gateway by Frames (Loopback)':'Modems & Data Links',
+  'Winlink Packet: over Bell 202 Modems (Loopback)':'Modems & Data Links',
   'Repeater Controller: DTMF Commands, PTT and ID (Loopback)':'Modems & Data Links',
   'Sub-tones: CTCSS Tone → Decoder with Voice (Loopback)':'Modems & Data Links',
   'Sub-tones: DCS Code → Decoder with Voice (Loopback)':'Modems & Data Links',
@@ -7278,6 +7280,45 @@ addEdge(cm.id,'text',tx.id,'text'); addEdge(cm.id,'go',tx.id,'go');
 addEdge(tx.id,'out',rx.id,'in');
 addEdge(rx.id,'digit',rc.id,'digit'); addEdge(rx.id,'gate',rc.id,'cos');
 addEdge(rc.id,'ptt',pt.id,'in'); addEdge(rc.id,'emergency',em.id,'in'); addEdge(rc.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Winlink Packet: Client ↔ Gateway by Frames (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Winlink e-mail over packet radio without a radio: two Winlink Packet stations — a client that dials and a gateway that answers — talk AX.25 in connected mode (SABM / UA, numbered I-frames, RR / REJ, retries by T1) and run the B2F mail exchange on top: SIDs, proposals (FC … F> checksum), answers (FS +-=), the message compressed with LZHUF + CRC, FF / FQ. Frames pass from one node to the other as they are (the `frame` output → `blk`).\n'+
+  'The client dials a second after the start and sends one message, the gateway has a reply waiting; both arrive in `rec` (the log) and in the node. Raise «drop frames %» on an output to see REJ and repeats keep the mail exact. Queue another message with the button or wire `msg`. VARA and Pactor (proprietary) are not here; the framing details were not checked against a live RMS / CMS gateway. Not for the air with a real callsign unless you mean it.'});
+nt.size.w=980; nt.size.h=190; applySize(nt);
+const cl=addNode('winlinkPkt',40,280,{role:'client',mycall:'N0CALL-1',peer:'W1AW-10',to:'W1AW@winlink.org',subject:'Status report',body:'All stations checked in. Test message from DSP workbench.',autoMsg:true,autoDial:true,baud:0});
+cl.size.w=400; cl.size.h=480; applySize(cl);
+const gw=addNode('winlinkPkt',480,280,{role:'gateway',mycall:'W1AW-10',to:'N0CALL@winlink.org',subject:'Re: Status report',body:'Received, thanks. 73.',autoMsg:true,baud:0});
+gw.size.w=400; gw.size.h=480; applySize(gw);
+const log=addNode('recLog',920,280,{});
+log.size.w=480; applySize(log);
+addEdge(cl.id,'frame',gw.id,'blk'); addEdge(gw.id,'frame',cl.id,'blk');
+addEdge(cl.id,'rec',log.id,'rec'); addEdge(gw.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Winlink Packet: over Bell 202 Modems (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The same Winlink exchange through the sound: each station`s `bit` output (HDLC + NRZI) → FSK modulator (Bell 202, 1200 / 2200 Hz) → FSK demodulator → Receive AX.25 → `blk` of the other station. A short message takes about half a minute at 1200 baud — this is real air time. On the air the two modulators go to two radios.\n'+
+  'Not for the air with a real callsign unless you mean it; Winlink gateways are also on HF and VHF with other modems (VARA, Pactor — not here).'});
+nt.size.w=980; nt.size.h=130; applySize(nt);
+const cl=addNode('winlinkPkt',40,200,{role:'client',mycall:'N0CALL-1',peer:'W1AW-10',to:'W1AW@winlink.org',subject:'Hi',body:'Test over Bell 202.',autoMsg:true,autoDial:true,baud:1200,t1:8});
+cl.size.w=380; cl.size.h=460; applySize(cl);
+const gw=addNode('winlinkPkt',40,700,{role:'gateway',mycall:'W1AW-10',to:'N0CALL@winlink.org',subject:'Re: Hi',body:'73.',autoMsg:true,baud:1200,t1:8});
+gw.size.w=380; gw.size.h=460; applySize(gw);
+const m1=addNode('mod',460,200,{mode:'FSK',f0:1200,shift:1000,amp:.3,rise:.5});
+const d1=addNode('fsk',700,200,{f0:1200,shift:1000,bw:600,center:false});
+const r1=addNode('ax25Rx',940,200,{baud:1200,nrzi:true,ax25:true});
+r1.size.w=420; r1.size.h=240; applySize(r1);
+const m2=addNode('mod',460,700,{mode:'FSK',f0:1200,shift:1000,amp:.3,rise:.5});
+const d2=addNode('fsk',700,700,{f0:1200,shift:1000,bw:600,center:false});
+const r2=addNode('ax25Rx',940,700,{baud:1200,nrzi:true,ax25:true});
+r2.size.w=420; r2.size.h=240; applySize(r2);
+const log=addNode('recLog',1420,200,{});
+log.size.w=420; applySize(log);
+addEdge(cl.id,'bit',m1.id,'bit'); addEdge(m1.id,'out',d1.id,'in'); addEdge(d1.id,'soft',r1.id,'in'); addEdge(r1.id,'blk',gw.id,'blk');
+addEdge(gw.id,'bit',m2.id,'bit'); addEdge(m2.id,'out',d2.id,'in'); addEdge(d2.id,'soft',r2.id,'in'); addEdge(r2.id,'blk',cl.id,'blk');
+addEdge(cl.id,'rec',log.id,'rec'); addEdge(gw.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 preset('Text → Bits → Text (Encodings)', function(){
