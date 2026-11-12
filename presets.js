@@ -662,6 +662,7 @@ const PRESET_CATS={
   'Winlink Packet: over Bell 202 Modems (Loopback)':'Modems & Data Links',
   'Dial-Up Modem: Handshake and Connect (Loopback)':'Modems & Data Links',
   'Dial-Up Modem: Noisy Narrow Line, Slow Connect (Loopback)':'Modems & Data Links',
+  'Dial-Up Modem: V.22bis 2400 (Loopback)':'Modems & Data Links',
   'Repeater Controller: DTMF Commands, PTT and ID (Loopback)':'Modems & Data Links',
   'Sub-tones: CTCSS Tone → Decoder with Voice (Loopback)':'Modems & Data Links',
   'Sub-tones: DCS Code → Decoder with Voice (Loopback)':'Modems & Data Links',
@@ -7342,13 +7343,13 @@ addEdge(cl.id,'rec',log.id,'rec'); addEdge(gw.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 // две стороны модема через две линии: звонящий слышен в динамике до CONNECT; созвездие и скорость — приём звонящего
-function mdmPresetBuild(note,lineP){
+function mdmPresetBuild(note,lineP,proto,greetA){
 clearAll();
 const nt=addNode('note',40,40,{text:note});
 nt.size.w=1000; nt.size.h=170; applySize(nt);
-const cl=addNode('modem',40,240,{role:'caller',number:'5551234',ringS:3,pace:3,autoDial:true,spk:'until connect',vol:2,greet:'Hello from the caller! 0123456789\r\n'});
+const cl=addNode('modem',40,240,{role:'caller',number:'5551234',ringS:3,pace:3,autoDial:true,spk:'until connect',vol:2,proto:proto||'auto',greet:greetA||'Hello from the caller! 0123456789\r\n'});
 cl.size.w=380; cl.size.h=420; applySize(cl);
-const an=addNode('modem',40,700,{role:'answerer',ringS:3,pace:3,spk:'off',greet:'Hello from the answering modem!\r\n'});
+const an=addNode('modem',40,700,{role:'answerer',ringS:3,pace:3,spk:'off',proto:proto||'auto',greet:'Hello from the answering modem!\r\n'});
 an.size.w=380; an.size.h=420; applySize(an);
 const l1=addNode('phoneline',480,240,lineP);
 const l2=addNode('phoneline',480,700,lineP);
@@ -7362,6 +7363,11 @@ addEdge(cl.id,'line',l1.id,'in'); addEdge(l1.id,'out',an.id,'line');
 addEdge(an.id,'line',l2.id,'in'); addEdge(l2.id,'out',cl.id,'line');
 addEdge(cl.id,'spk',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec'); addEdge(cl.id,'spk',dc.id,'L');
 addEdge(cl.id,'iq',cs.id,'iq'); addEdge(cl.id,'rate',nv.id,'in');
+// чат по линии: набранное в Chat идёт в tx модема, принятое (rx) — в Chat другой стороны
+const ca=addNode('chat',1360,560,{}); ca.size.w=340; ca.size.h=300; applySize(ca);
+const cb=addNode('chat',1360,900,{}); cb.size.w=340; cb.size.h=300; applySize(cb);
+addEdge(ca.id,'text',cl.id,'tx'); addEdge(cl.id,'rx',ca.id,'text');
+addEdge(cb.id,'text',an.id,'tx'); addEdge(an.id,'rx',cb.id,'text');
 markWiresDirty();
 }
 preset('Dial-Up Modem: Handshake and Connect (Loopback)', function(){
@@ -7373,6 +7379,11 @@ mdmPresetBuild('Dial-up modem on the sound card: two Modem nodes (caller and ans
 preset('Dial-Up Modem: Noisy Narrow Line, Slow Connect (Loopback)', function(){
 mdmPresetBuild('The same two modems on a bad line: band 500–2700 Hz, SNR 29 dB, 60 ms delay. The probing finds the narrow band and picks 2400 baud; the training measures the SNR and picks fewer bits per symbol, so the connection is slow (the old «CONNECT 9600» sound). '+
   'If the training fails (try SNR 20 dB or a stronger noise) the modems retrain up to three times and then hang up with NO CARRIER. Change the line in the two Telephone Line nodes and restart (Hang up + Dial). Not for a real telephone line.',{lo:500,hi:2700,snr:29,delayMs:60,gainDb:-12,law:true});
+});
+preset('Dial-Up Modem: V.22bis 2400 (Loopback)', function(){
+mdmPresetBuild('The 90s 2400 bit/s modem: V.22bis, then V.22 (1200 bit/s) if the other end cannot do 2400. The answerer plays the plain answer tone ANS (2100 Hz, no AM: this is how the caller tells it from a V.8 modem), then unscrambled ones; the caller waits 155 + 456 ms and sends S1 (the double dibit 00 11, 100 ms), both go on with scrambled ones at 1200 bit/s and 600 ms after S1 — at 2400 (16-QAM at 600 baud, carriers 1200 / 2400 Hz). Data is asynchronous 8N1. '+
+  'Type in a Chat node and the other Chat gets it through the sound line. Set one modem to a maxRate of 1200 to hear the fallback. '+
+  'Built from the recommendation as described by the open-source spandsp, NOT checked against a real modem (no reference to run, no hardware): treat it as a V.22bis-style modem for the workbench. Not for a real telephone line.',{lo:300,hi:3400,snr:38,delayMs:15,gainDb:-8,law:true},'V.22bis','Hello over V.22bis!\r\n');
 });
 preset('Text → Bits → Text (Encodings)', function(){
 clearAll();

@@ -100,7 +100,7 @@ function mdmInfoBits(d){ const p=[d.length].concat(d), c=mdmCrc16(p); return mdm
 
 // ---------- автомат модема ----------
 function mdmNew(o){
-  o=Object.assign({role:'call',digits:'5551212',seed:1,pace:1,maxRate:33600,ringS:2.2,toneMs:100,gapMs:70,dialToneMs:900,ansTimeout:30,bmask:31,rtn:3},o);
+  o=Object.assign({role:'call',digits:'5551212',seed:1,pace:1,maxRate:33600,ringS:2.2,toneMs:100,gapMs:70,dialToneMs:900,ansTimeout:30,bmask:31,rtn:3,proto:'auto'},o);
   const m={o,role:o.role,pace:Math.max(0.5,o.pace),ph:'idle',pt:0,q:[],cur:null,logs:[],rnd:mdmRng(o.seed),txq:[],rxq:[],rxText:'',
     bank:mdmBankNew(MDM_ROWS.concat(MDM_COLS,[2100,1200,2400]),240),
     ch:o.role==='call'?1:2, fsk:null, probe:null, qrx:null, qtx:null, connected:false, rate:{tx:0,rx:0}, ev:{}, status:'idle', nowMs:0,
@@ -112,7 +112,7 @@ const mdmPush=(m,s)=>{ m.q.push(s); return s; };
 function mdmHang(m,why){
   m.q.length=0; m.cur=null; m.qtx=null; m.qrx=null; m.probe=null;
   const was=m.ph!=='idle'; m.ph='idle'; m.pt=0; m.connected=false; m.rate={tx:0,rx:0}; m.ev={}; m.dt={digits:'',cur:-1,run:0,gap:1e4,last:-1}; m.stopRep=false;
-  m.verdict=null; m.peerB1=null; m.peer0=null; m.peer1=null; m.res=null; m.sent0=false; m.sent1=false; m.b1sent=false; m.meSent=false; m.rxData=false; m.try=0; m.lastMsg=null; m.cmLock=false; m.info0Q=false; m.info1Bits=null; m.eRef=0;
+  m.verdict=null; m.peerB1=null; m.peer0=null; m.peer1=null; m.res=null; m.sent0=false; m.sent1=false; m.b1sent=false; m.meSent=false; m.rxData=false; m.try=0; m.lastMsg=null; m.cmLock=false; m.info0Q=false; m.info1Bits=null; m.eRef=0; m.v22=null; m.amv=[]; m.amMiss=0; m.amN=0; m.amN=0;
   if(why && was) mlog(m,why); }
 function mdmSend(m,bytes){ for(const b of bytes) m.txq.push(b&255); }
 function mdmFskEv(m,e){
@@ -170,6 +170,7 @@ function mdmBankFrame(m){
     if(d.run===2 && d.last!==dig){ d.digits+=MDM_KEYS[dig]; d.last=dig; d.gap=0; } }
   else { d.cur=-1; d.run=0; d.gap+=20; if(d.gap>=40) d.last=-1; }
   m.ansN=(e>1e-5 && p[8]/e>0.6)?m.ansN+1:0;
+  if(e>1e-5 && p[8]/e>0.5){ (m.amv||(m.amv=[])).push(Math.sqrt(p[8])); if(m.amv.length>25) m.amv.shift(); m.amMiss=0; m.amN=(m.amN||0)+1; } else if((m.amMiss=(m.amMiss||0)+1)>6){ m.amv=[]; m.amN=0; }
   const mk=m.role==='call'?9:10; m.mkN=(e>1e-6 && p[mk]/e>0.5)?m.mkN+1:0;
   m.e=e; m.eRef=Math.max(m.eRef*0.9995||0,e); m.eLow=(e<1e-7||e<0.002*m.eRef)?m.eLow+20:0; }
 
@@ -177,7 +178,7 @@ function mdmRun(m,x,n,y,mon){
   const dtMs=n*1000/MDM_FS; m.nowMs+=dtMs; m.pt+=dtMs;
   // 1. приём
   for(let i=0;i<n;i++){ const v=x[i]; if(m.bank.push(v)) mdmBankFrame(m); m.fsk.push(v);
-    if(m.probe) m.probe.push(v); if(m.qrx) m.qrx.push(v); }
+    if(m.probe) m.probe.push(v); if(m.qrx) m.qrx.push(v); if(m.v22) m.v22.rx.push(v); }
   mdmTick(m);
   // 2. передача
   let o=0;
@@ -213,8 +214,12 @@ function mdmTick(m){
   if(ph==='idle'){
     if(m.role==='ans' && m.dt.digits.length>0 && m.dt.gap>=600){ mlog(m,'Входящий вызов ('+m.dt.digits.length+' цифр), звонок'); m.ph='ring'; m.pt=0; } }
   else if(ph==='ring'){
-    if(m.pt>=m.o.ringS*1000){ mlog(m,'Снята трубка, отправляю ANSam'); m.ph='ansam'; m.pt=0; m.cmLock=false;
-      mdmPush(m,mdmSil(200)); mdmPush(m,mdmAnsam(5000,0.21,{until:()=>m.cmLock,onEnd:()=>{ if(!m.cmLock){ mdmFail(m,'NO CARRIER: нет ответа на ANSam'); return; } mdmPush(m,mdmSil(75)); m.ph='v8a'; m.pt=0; }})); } }
+    if(m.pt>=m.o.ringS*1000){
+      if(m.o.proto==='v22'){ mlog(m,'Снята трубка, ответный тон ANS (2100 Гц), V.22bis'); m.ph='v22'; m.pt=0; mdmPush(m,mdmSil(200)); mdmPush(m,mdmTones([2100],[0.2],3300,{onEnd:()=>mdmV22Start(m,false)})); return; }
+      mlog(m,'Снята трубка, отправляю ANSam'); m.ph='ansam'; m.pt=0; m.cmLock=false;
+      mdmPush(m,mdmSil(200)); mdmPush(m,mdmAnsam(5000,0.21,{until:()=>m.cmLock,onEnd:()=>{
+        if(!m.cmLock){ if(m.o.proto==='auto'){ mlog(m,'На ANSam нет CM — звонящий без V.8, перехожу на V.22bis'); mdmV22Start(m,false); return; } mdmFail(m,'NO CARRIER: нет ответа на ANSam'); return; }
+        mdmPush(m,mdmSil(75)); m.ph='v8a'; m.pt=0; }})); } }
   else if(ph==='ansam'){ /* ждём CM; сегмент ANSam сам заканчивается по cmLock */ }
   else if(ph==='v8a'){
     if(m.ev.v8two){ m.ev.v8two=false; m.ph='jm'; m.pt=0; mlog(m,'V.8: CM принят дважды, отвечаю JM (V.34)'); m.stopRep=false;
@@ -225,7 +230,10 @@ function mdmTick(m){
       mdmPush(m,mdmSil(75,{onEnd:()=>mdmAfterCj(m)})); m.ph='cj'; }
     else if(m.pt>8000) mdmFail(m,'NO CARRIER: нет CJ'); }
   else if(ph==='waitans'){
-    if(m.ansN>=8){ mlog(m,'Принят ANSam (2100 Гц), V.8: отправляю CM'); m.ph='cm'; m.pt=0; m.stopRep=false; m.ev.v8two=false; m.lastMsg=null;
+    const ams=(()=>{ const a=m.amv||[]; if(a.length<25 || (m.amN||0)<31) return null; const mu=a.reduce((x,y)=>x+y,0)/a.length; return Math.sqrt(a.reduce((x,y)=>x+(y-mu)*(y-mu),0)/a.length)/(mu+1e-12); })();
+    if(m.o.proto==='v22' && m.ansN>=8){ mlog(m,'Принят ответный тон 2100 Гц, V.22bis: жду единицы отвечающего'); mdmV22Start(m,true); return; }
+    if(m.o.proto==='auto' && ams!==null && ams<0.07){ mlog(m,'Принят простой ANS (без АМ 15 Гц) — модем без V.8, перехожу на V.22bis'); mdmV22Start(m,true); return; }
+    if((m.o.proto==='v34' && m.ansN>=8) || (m.o.proto==='auto' && ams!==null && ams>=0.07)){ mlog(m,'Принят ANSam (2100 Гц), V.8: отправляю CM'); m.ph='cm'; m.pt=0; m.stopRep=false; m.ev.v8two=false; m.lastMsg=null;
       mdmPush(m,mdmSil(500,{onEnd:()=>{ const rep=()=>{ if(m.stopRep){ return; } mdmPush(m,mdmFskSeg(mdmCmBits(0x45,true),1,0.21,{onEnd:rep})); }; rep(); }})); }
     else if(m.pt>m.o.ansTimeout*1000) mdmFail(m,'NO ANSWER'); }
   else if(ph==='cm'){
@@ -282,4 +290,17 @@ function mdmTick(m){
     else if(m.pt>6000) mdmFail(m,'NO CARRIER: нет маркера данных'); }
   else if(ph==='data'){
     if(m.eLow>600){ mdmHang(m,'NO CARRIER: несущая пропала'); } }
+  else if(ph==='v22'){
+    const S=m.v22;
+    if(S && S.connected && !m.connected){ m.connected=true; m.rate={tx:S.neg,rx:S.neg}; mlog(m,'CONNECT '+S.neg+' (V.22'+(S.neg===2400?'bis':'')+', '+(S.calling?'звонящий':'отвечающий')+')'); m.pt=0; }
+    else if(m.connected && m.eLow>600) mdmHang(m,'NO CARRIER: несущая пропала');
+    else if(!m.connected && S && m.pt>35000) mdmFail(m,'NO CARRIER: V.22 не договорились'); }
 }
+// V.22bis / V.22: один QAM-сегмент на всё соединение; байты — асинхронно 8N1 (старт 0, 8 бит от младшего, стоп 1), пауза — единицы
+function mdmV22Start(m,calling){
+  let bq=[], os=0, ov=0;
+  m.v22=v22New({calling,rate:m.o.maxRate>=2400?2400:1200,log:t=>mlog(m,t),
+    getBit:()=>{ if(!bq.length){ if(!m.txq.length) return 1; const v=m.txq.shift(); bq=[0]; for(let k=0;k<8;k++) bq.push((v>>k)&1); bq.push(1); } return bq.shift(); },
+    putBit:b=>{ if(os===0){ if(b===0){ os=1; ov=0; } } else if(os<=8){ ov|=b<<(os-1); os++; } else { if(b===1){ m.rxq.push(ov); m.rxText+=(ov>=32&&ov<127)||ov===10||ov===13?String.fromCharCode(ov):'·'; if(m.rxText.length>4000) m.rxText=m.rxText.slice(-3000); } os=0; } }});
+  m.ph='v22'; m.pt=0; m.v22.start();
+  mdmPush(m,mdmQamTxSeg({B:600,fc:calling?1200:2400,beta:V22_BETA},MDM_LVL,m.v22.tx.next,{})); }

@@ -1,6 +1,6 @@
 "use strict";
 /* ============================ Модем (V.8 / V.34-подобный) и телефонная линия ============================
-   Modem — одна сторона дозвона: звонящий набирает номер (DTMF) и проходит V.8, обмен INFO, зондирование линии, обучение QAM и
+   Modem — одна сторона дозвона (V.8 + V.34-подобный режим или V.22bis / V.22 по спецификации): звонящий набирает номер (DTMF) и проходит V.8, обмен INFO, зондирование линии, обучение QAM и
    выходит на данные; отвечающий слышит набор, «звонит» ringS секунд, берёт трубку тоном ANSam и ведёт ту же последовательность.
    Две стороны соединяются через блок Telephone Line (полоса 300–3400 Гц, шум, задержка, µ-law): скорость подключения
    зависит от линии, как у настоящего модема. spk — то, что слышно в динамике модема (гудок, набор, свисты, шипение; после
@@ -8,7 +8,8 @@
    (PCM вниз требует цифрового конца) и не совместим по проводу с настоящими модемами. Не излучать в эфир. */
 
 const mdmUiShow=(n,t)=>{ const r=n.el && n.el.querySelector('.readout'); if(r && r.textContent!==t) r.textContent=t; };
-const mdmUiRates=['33600','31200','28800','26400','24000','21600','19200','14400','9600','4800','2400'];
+const mdmUiRates=['33600','31200','28800','26400','24000','21600','19200','14400','9600','4800','2400','1200'];
+const mdmUiProto={'auto':'auto','V.34-like':'v34','V.22bis':'v22'};
 function mdmUiIo(n){                                  // ресемплеры и очереди на текущую частоту движка
   if(n.sr!==Eng.sr){ n.sr=Eng.sr; n.rin=mdmResamp(Eng.sr,MDM_FS); n.rup=mdmResamp(MDM_FS,Eng.sr); n.rupM=mdmResamp(MDM_FS,Eng.sr);
     n.oq=new Array(BLOCK).fill(0); n.mq=new Array(BLOCK).fill(0); n.xb=new Float32Array(512); n.yb=new Float32Array(512); n.mb=new Float32Array(512); }
@@ -20,6 +21,7 @@ def({ id:'modem', title:'Modem (V.8 / V.34-like)', cat:'Protocols', readout:true
   ins:[{n:'line',t:'sig'},{n:'dial',t:'num'},{n:'hang',t:'num'},{n:'tx',t:'txt'}],
   outs:[{n:'line',t:'sig'},{n:'spk',t:'sig'},{n:'rx',t:'txt'},{n:'iq',t:'iq',pair:['cI','cQ']},{n:'cI',t:'sig',hide:true},{n:'cQ',t:'sig',hide:true},{n:'connected',t:'num'},{n:'rate',t:'num'}],
   params:[{n:'role',t:'select',opts:['caller','answerer'],d:'caller',label:'caller dials and starts V.8; answerer picks up after the ring'},
+          {n:'proto',t:'select',opts:['auto','V.34-like','V.22bis'],d:'auto',label:'auto: V.8 → V.34-like if the other end answers with ANSam, else V.22bis / V.22 (the 90s 2400 / 1200 bit/s); the other two force one'},
           {n:'number',t:'text',d:'5551234',label:'number to dial (digits, * # A–D)'},
           {n:'ringS',t:'range',min:0,max:8,step:.1,d:3,label:'answerer: ring time before it picks up, s'},
           {n:'pace',t:'range',min:.5,max:8,step:.5,d:3,label:'time scale of the probing and training (1 ≈ 8 s in all, 3 ≈ a real modem, ~15 s)'},
@@ -34,8 +36,8 @@ def({ id:'modem', title:'Modem (V.8 / V.34-like)', cat:'Protocols', readout:true
   init:n=>{ n.m=null; n.role=''; n.t0=0; n.auto=false; n.wantDial=false; n.wantHang=false; n.wantSend=false; n.prevD=0; n.prevH=0; n.lastTx=''; n.greeted=false; n.sr=0; n.cI=0; n.cQ=0; n.fade=1; n.rxN=0; n.show=''; },
   process(n,I){
     const p=n.p; mdmUiIo(n);
-    if(!n.m || n.role!==p.role){ n.role=p.role; n.m=mdmNew({role:p.role==='answerer'?'ans':'call',digits:p.number,pace:+p.pace,maxRate:+p.maxRate,ringS:+p.ringS,dialToneMs:1000}); n.greeted=false; n.auto=false; n.t0=0; }
-    const m=n.m, o=m.o; o.digits=String(p.number); o.ringS=+p.ringS; o.maxRate=+p.maxRate; m.pace=Math.max(.5,+p.pace);
+    if(!n.m || n.role!==p.role){ n.role=p.role; n.m=mdmNew({role:p.role==='answerer'?'ans':'call',digits:p.number,pace:+p.pace,maxRate:+p.maxRate,ringS:+p.ringS,dialToneMs:1000,proto:mdmUiProto[p.proto]||'auto'}); n.greeted=false; n.auto=false; n.t0=0; }
+    const m=n.m, o=m.o; o.proto=mdmUiProto[p.proto]||'auto'; o.digits=String(p.number); o.ringS=+p.ringS; o.maxRate=+p.maxRate; m.pace=Math.max(.5,+p.pace);
     n.t0+=BLOCK/Eng.sr;
     if(!n.auto){ n.auto=true; }
     if(p.autoDial && p.role==='caller' && !n.dialed && n.t0>1){ n.dialed=true; n.wantDial=true; }
@@ -62,14 +64,14 @@ def({ id:'modem', title:'Modem (V.8 / V.34-like)', cat:'Protocols', readout:true
     // новые принятые байты → текст
     let rx=null; if(m.rxq.length){ const bytes=Uint8Array.from(m.rxq.splice(0)); try{ rx=new TextDecoder('utf-8',{fatal:false}).decode(bytes); }catch(e){ rx=String.fromCharCode(...bytes); } n.rxN+=bytes.length; }
     // созвездие эквалайзера
-    const cI=new Float32Array(BLOCK), cQ=new Float32Array(BLOCK), q=m.qrx;
+    const cI=new Float32Array(BLOCK), cQ=new Float32Array(BLOCK), q=m.v22||m.qrx;
     if(q && q.pts.length){ const pts=q.pts.splice(0), k=pts.length>>1; if(k>0){ for(let i=0;i<BLOCK;i++){ const j=Math.min(k-1,Math.floor(i*k/BLOCK)); cI[i]=pts[2*j]; cQ[i]=pts[2*j+1]; } n.cI=cI[BLOCK-1]; n.cQ=cQ[BLOCK-1]; } }
     else { cI.fill(n.cI); cQ.fill(n.cQ); }
     return {line, spk, rx, cI, cQ, connected:m.connected?1:0, rate:m.connected?m.rate.rx:0}; },
   drawKey:n=>{ const m=n.m; return m ? m.logs.length+'|'+m.ph+'|'+m.connected+'|'+n.rxN+'|'+(m.qrx&&m.qrx.st) : ''; },
   draw(n){ const m=n.m; if(!m) return;
-    const ph={idle:'idle',dialtone:'dial tone',dial:'dialing',waitans:'ringing',ring:'ringing',ansam:'ANSam',v8a:'V.8',jm:'V.8',cm:'V.8',cj:'V.8',info0:'INFO0',probe:'probing',info1:'INFO1',train:'training',data0:'start',data:'DATA'}[m.ph]||m.ph;
-    const head=(m.role==='call'?'CALLER ':'ANSWERER ')+(m.role==='call'?m.o.digits:'')+' · '+ph+(m.connected?' · '+m.rate.tx+' / '+m.rate.rx+' bit/s':'')+(m.qrx&&m.qrx.evm?' · EVM '+m.qrx.evm.toFixed(0)+' dB':'');
+    const ph={idle:'idle',dialtone:'dial tone',dial:'dialing',waitans:'ringing',ring:'ringing',ansam:'ANSam',v8a:'V.8',jm:'V.8',cm:'V.8',cj:'V.8',info0:'INFO0',probe:'probing',info1:'INFO1',train:'training',data0:'start',data:'DATA',v22:'V.22bis'}[m.ph]||m.ph;
+    const head=(m.role==='call'?'CALLER ':'ANSWERER ')+(m.role==='call'?m.o.digits:'')+' · '+ph+(m.connected?' · '+m.rate.tx+' / '+m.rate.rx+' bit/s':'')+((m.v22&&m.v22.rx.evm)||(m.qrx&&m.qrx.evm)?' · EVM '+(((m.v22&&m.v22.rx.evm)||m.qrx.evm)).toFixed(0)+' dB':'');
     const lg=m.logs.slice(-9).map(l=>'['+(l.ms/1000).toFixed(1)+'] '+l.t).join('\n');
     mdmUiShow(n,head+'\n'+lg+(m.rxText?'\n⇐ '+m.rxText.slice(-120).replace(/\r?\n/g,' ⏎ '):'')); }});
 
