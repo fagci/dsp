@@ -56,7 +56,7 @@ def({ id:'sameRx', title:'SAME / EAS Decoder', cat:'Decoders', readout:true, tal
   kw:'same eas noaa weather radio alert tornado warning nwr',
   ins:[{n:'in',t:'sig'}], outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'new',t:'num'}],
   params:[{n:'wait',t:'range',min:2,max:10,step:.5,d:4,label:'close a message after this silence, s (the 3 repeats are voted)'},
-          {n:'fips',t:'text',d:'',label:'only these areas: OK, 40109, 040109… (empty — all)'},
+          {n:'fips',t:'text',d:'',label:'only these areas: a state, a county (SSCCC) or PSSCCC, several with spaces (empty — all)'},
           {n:'events',t:'text',d:'',label:'only these events: TOR SVR *W, !RWT (empty — all)'}],
   init:n=>{ n.key=''; n.msgs=0; n.recent=[]; n.last=''; n.samp=0; n.sx=new Float32Array(0); n.xb=0; n.tNext=0; n.jj=0; n.ph=[]; n.cand=[]; n.group=null; n.bursts=0; n.lvl=0; },
   process(n,I){
