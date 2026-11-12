@@ -494,6 +494,7 @@ if(!Sel.has(n.id)||ev.shiftKey) selSet(n.id,ev.shiftKey); });
 // ввод по узлу (наведение, клик, колесо, правка поля) — lazy-узлу перерисоваться
 for(const ev of ['pointerdown','pointermove','pointerup','pointerleave','wheel','click','dblclick','input','change','keydown'])
 el.addEventListener(ev,()=>{ n._dirty=true; },{capture:true,passive:true});
+bindFocusTap(n,el);
 el._node=n; n._vis=undefined; visIO.observe(el);
 n.el=el; content.append(el); el.style.zIndex=++zCounter; posNode(n); applySize(n); // новый узел сразу поверх остальных
 cvArm(n);
@@ -1709,8 +1710,42 @@ window.addEventListener('pointercancel',endPointer);
 // подписи пинов сворачиваются в точки, когда узел мелкий (холст отдалён; на тач-экране порог выше): иначе подписи соседних узлов наезжают друг на друга.
 // Подписи остаются у выделенного узла, у подходящих пинов при связывании и у выбранного пина (стили — #content.pdots в styles.css)
 function pinDotsSync(){
+focusBarCheck();
 const on=view.k<(matchMedia('(pointer:coarse)').matches ? .9 : .6);
 if(content.classList.contains('pdots')!==on){ content.classList.toggle('pdots',on); markWiresDirty(); }
+}
+/* ---- фокус на узле (тач) ----
+   При мелком масштабе (k<0.7) тап по телу узла не крутит параметры (они мельче пальца), а приближает узел на всю ширину экрана;
+   плашка «Back» возвращает прежний вид. Пины, провода и холст те же — узел не переносится. */
+const FOCUS_K=.7;
+let focusPrev=null, focusK=0, focusBarEl=null;
+function focusBarHide(){ if(focusBarEl) focusBarEl.hidden=true; focusPrev=null; }
+function focusNode(n){
+  const w=n.el.offsetWidth||n.size.w, k=clamp((cv.clientWidth-76)/(w+16),.8,1.6);
+  if(!focusPrev) focusPrev={x:view.x,y:view.y,k:view.k};           // «назад» — вид до первого приближения, а не до предыдущего узла
+  view.k=k; focusK=k;
+  view.x=cv.clientWidth/2/k-(n.x+w/2); view.y=14/k-n.y;            // по центру, верхом к верху экрана (длинный узел — листается панорамой)
+  applyView(); selSet(n.id,false); drawWiresSoon?.();
+  if(!focusBarEl){ focusBarEl=document.createElement('div'); focusBarEl.id='focusBar';
+    focusBarEl.innerHTML='<button type="button">◂ Back to overview</button>';
+    focusBarEl.firstChild.addEventListener('click',()=>{ const p=focusPrev; focusBarHide(); if(p){ view.x=p.x; view.y=p.y; view.k=p.k; applyView(); drawWiresSoon?.(); } });
+    focusBarEl.addEventListener('pointerdown',e=>e.stopPropagation()); document.body.append(focusBarEl); }
+  focusBarEl.hidden=false; buzz(8);
+}
+function focusBarCheck(){ if(focusPrev && Math.abs(view.k-focusK)>focusK*.08) focusBarHide(); }   // щипком ушли от приближения — плашка не нужна
+function bindFocusTap(n,el){
+  let d=null;
+  const low=()=>view.k<FOCUS_K && matchMedia('(pointer:coarse)').matches && el.parentNode===content && !n.lod;
+  el.addEventListener('pointerdown',ev=>{
+    d=null; if(!low() || !ev.target.closest('.mid')) return;
+    d={x:ev.clientX,y:ev.clientY,t:ev.timeStamp};
+    ev.stopPropagation(); ev.preventDefault();                      // мелкие контролы не срабатывают от тапа «на приближение»
+  },true);
+  el.addEventListener('pointerup',ev=>{
+    const f=d; d=null; if(!f) return;
+    if(ev.timeStamp-f.t<500 && Math.hypot(ev.clientX-f.x,ev.clientY-f.y)<8) focusNode(n);
+  },true);
+  el.addEventListener('click',ev=>{ if(low() && ev.target.closest('.mid')){ ev.stopPropagation(); ev.preventDefault(); } },true);
 }
 function applyView(){                                 // программная установка вида (fitView и т.п.)
 panzoom.zoom(view.k,{animate:false}); pinDotsSync();
