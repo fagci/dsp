@@ -528,33 +528,71 @@ function entApply(rule,r,st){
   return res;
 }
 const entOutNames=text=>{ const set=new Set(); for(const r of entParse(text).rules) if(r.out!=='rec') set.add(r.out); return [...set]; };
+// «интересные устройства»: список строк (Follow Detector rows, Table rows…) → множество ключей; ключ — id / addr / bssid / dev / mac
+// без префикса типа («ble:», «bt:», «wifi:») и в нижнем регистре. Запись подходит, если любое из её полей по topBy в множестве.
+const entKey=v=>{ const t=String(v??'').trim().toLowerCase(); return t.replace(/^(ble|bt|wifi|cell):/,''); };
+function entTopSet(rows,max){
+  const set=new Set(); let n=0;
+  for(const r of Array.isArray(rows) ? rows : []){
+    if(!r || typeof r!=='object' || r.status==='seen') continue;     // status «seen» — строка Follow Detector, где устройство видели в одном месте: не интересно
+    let k=''; for(const f of ['id','addr','bssid','dev','mac']) if(r[f]!=null && r[f]!==''){ k=entKey(r[f]); break; }
+    if(!k) continue;
+    set.add(k); if(++n>=(max>0 ? max : 1e9)) break;
+  }
+  return set;
+}
+function entTopHit(set,r,fields){
+  for(const f of String(fields||'addr|bssid|dev|id').split('|')){ const v=r[f.trim()]; if(v!=null && v!=='' && set.has(entKey(v))) return true; }
+  return false;
+}
+// срок жизни: сущность (порт|id), которую не обновляли дольше keepMs, → запись {id,_delete:1} в тот же порт (Table по key=id убирает строку, Graph следом)
+function entExpire(seen,now,keepMs){
+  const out=[];
+  if(!(keepMs>0)) return out;
+  for(const [k,t] of seen) if(now-t>keepMs){ seen.delete(k); const i=k.indexOf('\u0001'); out.push({port:k.slice(0,i),id:k.slice(i+1)}); }
+  return out;
+}
 def({ id:'recEnt', title:'Rec → Entities', cat:'Data', kw:'entity entities link graph table rules map extract card',
   // Правила превращают одну запись декодера в сущности и связи: вышка, оператор, абонент, группа…
   // Выходы-таблицы по именам из правил; всё вместе — на rec. На Table (upsert key=id) дубли схлопываются.
-  ins:[{n:'rec',t:'rec'}],
+  ins:[{n:'rec',t:'rec'},{n:'top',t:'bands'}],           // top — «интересные устройства» (Follow Detector rows, Table rows): с topMode «only top devices» правила видят только их записи
   outs:n=>[{n:'rec',t:'rec'},...entOutNames(n.p.rules).map(o=>({n:o,t:'rec'})),{n:'count',t:'num'}],
   readout:true, tall:true,
   params:[{n:'rules',t:'code',plain:true,d:'',label:'rules: [out:] conditions | fields'},
           {n:'apply',t:'button',label:'Apply outputs',fn:n=>{ rebuildNode(n); markTopoDirty(); }},
+          {n:'keep',t:'range',min:0,max:240,step:1,d:0,label:'show an entity for, min after its last record (0 — forever; then {id,_delete} goes to the same output, Table key=id drops the row)'},
+          {n:'topMode',t:'select',opts:['all records','only top devices'],d:'all records',label:'records: wire «top» (Follow Detector rows, Table rows) and pass only those devices'},
+          {n:'topN',t:'range',min:1,max:100,step:1,d:10,label:'top: first N rows of the list',adv:true},
+          {n:'topBy',t:'text',d:'addr|bssid|dev|id',label:'top: record field(s) matched to the list id (a|b)',adv:true},
           {n:'tpl',t:'select',opts:['—','GSM cells','Digital voice (DMR / P25 / NXDN)','Radio (Wi-Fi / BLE / Zigbee)','Wi-Fi map (nodes · links · packets)','Phone radios (Wi-Fi · BLE · Bluetooth)','Network scan (hosts · ports · devices)','Traceroute (path to a host)'],d:'—',label:'insert rules',
            fn:n=>{ const t=ENT_TEMPLATES[n.p.tpl]; if(t){ n.p.rules=(n.p.rules?n.p.rules.trimEnd()+'\n':'')+t; } n.p.tpl='—'; rebuildNode(n); markTopoDirty(); }}],
   init:n=>{ n.in=0; n.outN=0; n.err=''; },
   process(n,I){
-    const recs=recList(I.rec);
+    let recs=recList(I.rec);
     if(!n._c || n._c.src!==n.p.rules){ const c=entParse(n.p.rules); c.src=n.p.rules; n._c=c; n.err=c.errs.join('; '); }
-    if(!recs.length) return {rec:null,count:n.outN};
+    const now=Date.now(), seen=n.seenE||(n.seenE=new Map()), tsrc=Array.isArray(I.top) ? I.top : null, tkey=(+n.p.topN||10);
+    if(tsrc!==n.topSrc || tkey!==n.topKey){ n.topSrc=tsrc; n.topKey=tkey; n.topSet=entTopSet(tsrc,tkey); }
+    if(n.p.topMode==='only top devices') recs=recs.filter(r=>r && typeof r==='object' && entTopHit(n.topSet,r,n.p.topBy));
+    const exp=entExpire(seen,now,(+n.p.keep||0)*60000);
+    if(!recs.length && !exp.length) return {rec:null,count:n.outN};
     const all=[], by={};
     for(const r of recs) for(const rule of n._c.rules){
       const res=entApply(rule,r,n.stats||(n.stats=new Map())); if(!res.length) continue;
       if(!rule.only) all.push(...res);
       if(rule.out!=='rec') (by[rule.out]||(by[rule.out]=[])).push(...res);
+      if(n.p.keep>0) for(const e of res) if(e.id!=null){
+        if(!rule.only) seen.set('rec\u0001'+e.id,now);
+        if(rule.out!=='rec') seen.set(rule.out+'\u0001'+e.id,now);
+        if(seen.size>50000) seen.delete(seen.keys().next().value);
+      }
     }
+    for(const x of exp){ const d={id:x.id,_delete:1}; if(x.port==='rec') all.push(d); else (by[x.port]||(by[x.port]=[])).push(d); }
     n.in+=recs.length; n.outN+=all.length;
     const o={rec:all.length?all:null,count:n.outN};
     for(const k of entOutNames(n.p.rules)) o[k]=by[k]||null;
     return o;
   },
-  draw(n){ n.el.querySelector('.readout').textContent=(n.err?'error: '+n.err+'\n':'')+'in '+n.in+' · out '+n.outN; }});
+  draw(n){ n.el.querySelector('.readout').textContent=(n.err?'error: '+n.err+'\n':'')+'in '+n.in+' · out '+n.outN+(n.p.topMode==='only top devices' ? ' · top '+(n.topSet?n.topSet.size:0) : '')+(n.p.keep>0 ? ' · alive '+(n.seenE?n.seenE.size:0) : ''); }});
 const ENT_TEMPLATES={
   'GSM cells':
 `# сота, оператор и связь «сота → оператор», каналы ARFCN; подписи ставят только правила с известным оператором
