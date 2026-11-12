@@ -50,11 +50,15 @@ const mA=enc('Hello caller 0123456789 ~!'), mB=enc('Reply from the answerer');
   ok('скремблированные единицы 2400 длятся 200 мс (120 символов ±1)',Math.abs(dur('A','S1111')-120)<=1 && Math.abs(dur('B','S1111')-120)<=1);
   ok('отвечающий: 75 мс тишины, затем единицы (U11)',Math.abs(dur('B','SIL')-45)<=1 && r.stages.B[1][0]==='U11');
   const st=(who)=>r.stages[who]; const s11=(who)=>st(who).find(e=>e[0]==='S11');
-  ok('отвечающий: S1 → 500 мс единиц 1200 (до 600 мс от конца S1 звонящего) → 2400',s11('B')&&Math.abs(s11('B')[1]-300)<=1,JSON.stringify(st('B')));
+  ok('отвечающий: 2400 начинается через 600 мс (+ 8 мс линии, ±10) после конца S1 звонящего',(()=>{ const a1=st('A').find(e=>e[0]==='S1'), b2=st('B').find(e=>e[0]==='S1111'); if(!a1||!b2) return false; const endA=a1[2]+a1[1], dt=(b2[2]-endA)/0.6; return Math.abs(dt-608)<=10; })(),JSON.stringify(st('B')));
+  ok('звонящий: 2400 начинается через 600 мс (+ 8 мс линии, ±10) после конца S1 отвечающего',(()=>{ const b1=st('B').find(e=>e[0]==='S1'), a2=st('A').find(e=>e[0]==='S1111'); if(!b1||!a2) return false; const endB=b1[2]+b1[1], dt=(a2[2]-endB)/0.6; return Math.abs(dt-608)<=10; })(),JSON.stringify(st('A')));
   ok('звонящий: 456 мс тишины после 150 мс единиц, S1, затем единицы 1200 до S1 отвечающего + 600 мс',(()=>{ const sil=st('A')[0]; return sil[0]==='SIL' && sil[1]>=270; })(),JSON.stringify(st('A'))); }
 for(const [name,line] of [['SNR 30',{snr:30,delayMs:8}],['SNR 24',{snr:24,delayMs:8}],['задержка 120 мс',{snr:40,delayMs:120}],['слабый −25 дБ',{snr:45,delayMs:8,gainDb:-25}],['µ-law',{snr:60,delayMs:8,law:true}]]){
   const r=pair(2400,2400,line,14,mA,mB);
   ok('V.22bis, '+name+': 2400, обе стороны получили текст',r.A.connected&&r.B.connected&&String.fromCharCode(...r.rb)===String.fromCharCode(...mA)&&String.fromCharCode(...r.ra)===String.fromCharCode(...mB),r.logs.join(' / ')); }
+for(const [name,line] of [['разные такты звуковых карт +1000 ppm',{snr:45,delayMs:200,ppm:1000}],['разные такты −1000 ppm',{snr:45,delayMs:200,ppm:-1000}],['комнатное эхо (3 отражения, 0,3)',{snr:35,delayMs:8,echo:0.3}],['эхо 0,3 + SNR 30 дБ',{snr:30,delayMs:8,echo:0.3}],['эхо 0,2 + 200 ppm + SNR 30 дБ',{snr:30,delayMs:200,echo:0.2,ppm:200}]]){
+  const r=pair(2400,2400,line,18,mA,mB);
+  ok('V.22bis, '+name+': 2400, обе стороны получили текст (динамик → микрофон в комнате)',r.A.connected&&r.B.connected&&String.fromCharCode(...r.rb)===String.fromCharCode(...mA)&&String.fromCharCode(...r.ra)===String.fromCharCode(...mB),r.logs.join(' / ')); }
 for(const [a,b,exp] of [[1200,2400,1200],[2400,1200,1200],[1200,1200,1200]]){
   const r=pair(a,b,{snr:45,delayMs:8},14,mA,mB);
   ok('V.22 откат: звонящий ≤'+a+', отвечающий ≤'+b+' → '+exp+', текст в обе стороны',r.A.connected&&r.B.connected&&r.A.neg===exp&&r.B.neg===exp&&String.fromCharCode(...r.rb)===String.fromCharCode(...mA)&&String.fromCharCode(...r.ra)===String.fromCharCode(...mB),r.logs.join(' / ')); }

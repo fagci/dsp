@@ -82,12 +82,14 @@ def({ id:'phoneline', title:'Telephone Line (band, noise, delay)', cat:'Processi
           {n:'snr',t:'range',min:10,max:60,step:1,d:42,label:'SNR of a nominal modem signal, dB (60 — almost clean)'},
           {n:'delayMs',t:'range',min:0,max:300,step:1,d:12,label:'one-way delay, ms'},
           {n:'gainDb',t:'range',min:-40,max:6,step:1,d:-6,label:'line loss, dB'},
-          {n:'law',t:'check',d:true,label:'µ-law codec (8-bit companding, as on digital trunks)'}],
+          {n:'law',t:'check',d:true,label:'µ-law codec (8-bit companding, as on digital trunks)'},
+          {n:'ppm',t:'range',min:-3000,max:3000,step:50,d:0,label:'difference of the sound-card clocks of the two ends, ppm (real cards: tens to ~200)'},
+          {n:'echo',t:'range',min:0,max:1,step:.05,d:0,label:'room echo: 3 reflections at 7, 19 and 43 ms (a speaker and a microphone in a room), 0 — none'}],
   init:n=>{ n.ln=null; n.key=''; n.sr=0; },
   process(n,I){
     const p=n.p; mdmUiIo(n);
-    const key=[p.lo,p.hi,p.snr,p.delayMs,p.gainDb,p.law].join('|');
-    if(n.key!==key || !n.ln){ n.key=key; n.ln=mdmLineNew({lo:+p.lo,hi:+p.hi,snr:+p.snr,delayMs:+p.delayMs,gainDb:+p.gainDb,law:!!p.law,seed:5}); }
+    const key=[p.lo,p.hi,p.snr,p.delayMs,p.gainDb,p.law,p.ppm,p.echo].join('|');
+    if(n.key!==key || !n.ln){ n.key=key; n.ln=mdmLineNew({lo:+p.lo,hi:+p.hi,snr:+p.snr,delayMs:+p.delayMs,gainDb:+p.gainDb,law:!!p.law,ppm:+p.ppm,echo:+p.echo,seed:5}); }
     const x12=n.rin.run(I.in||new Float32Array(BLOCK),BLOCK), len=x12.length, y12=new Float32Array(len);
     n.ln.run(x12,len,y12); n.rup.run(y12,len,n.oq);
     return {out:mdmUiPop(n.oq,BLOCK)}; }});
