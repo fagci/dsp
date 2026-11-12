@@ -1917,3 +1917,6 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
 .cmdk-del{margin-left:auto;padding:0 6px;opacity:.5;cursor:pointer} .cmdk-del:hover{opacity:1;color:var(--acc)}
 
 .pitem .pwhy{display:block;font-size:10px;font-weight:400;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px}
+/* пробник провода (modules/wireprobe.js) */
+.wprobe{position:fixed;z-index:90;pointer-events:none;max-width:min(380px,90vw);background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:4px;padding:5px 8px;font:11px/1.45 ui-monospace,monospace;box-shadow:0 2px 8px #0006;overflow-wrap:anywhere}
+.wprobe i{opacity:.6}.wprobe .werr{color:var(--err)}

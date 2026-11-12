@@ -8,6 +8,9 @@
 - **Chains in the command palette** (**Ctrl+K**, **/** or **>**): `usb>(dac,sa)` builds modules and wires with a live preview. After a module name `[A>B, A<B]` chooses the pins to join with the previous module (the palette lists which pins were connected and why a pin was not found), `{sr:2.4M}` sets parameters, and a **chunk** is a named chain: `mysdr = usb*>sa[spec>spec, steerFreq<centerFreq]` saves it (or `mysdr =` with modules selected), `mysdr>demod` expands it. Chunks are kept in the browser, listed in the palette and included in the backup. A wire that joins two inputs cannot be written in a chain: it is left out when saving the selection (the palette says so). Preset «Chain: SDR with Spectrum Steering (Pins and Chunks)». Logic: `modules/chain-kernels.js`, `node tools/test-chain.mjs`.
 - Patches can be dragged from the list onto the canvas: they are *added* to the current graph.
 
+## Looking at a wire
+- **Hover a wire** (do not click: a click deletes it): the tip shows `source.pin → target.pin`, the type, the last value (a number, a block's range and rms, the keys of a record), **blocks per second** and the **age** of the last block (`now`, `300 ms ago`; «source is not producing» after 1.5 s of silence; «engine stopped»). Only the source of that wire is counted, so there is no cost without a hover. Logic: `modules/wireprobe-kernels.js`, `node tools/test-wireprobe.mjs`. Preset «Help: Wire Probe (Value, Rate, Age on a Wire)».
+
 ## On a phone
 - The toolbar is at the bottom and scrolls sideways: menu, run, tiles, fit, undo / redo and quick chain come first, files and clear are at the end.
 - A preset opens fitted to the screen. Select a module and press **tiles**: it fills the screen — the picture on top, the parameters under it (scroll), the corner-arrows button leaves the picture alone. Plan Studio keeps its tabs in every mode.

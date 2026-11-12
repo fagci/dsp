@@ -342,7 +342,12 @@ const OfflineData = (() => {
     el.append(head,list,go,st);
   }
   if(typeof addEventListener==='function') addEventListener('load',()=>setTimeout(warm,20000));
-  return {blob,has,save,item,fileItem,warm,draw};
+  // всё скачанное: [{name,size,blob}] — для пакета «граф + данные»
+  async function list(){
+    const id=await dirId(false); if(id==null) return [];
+    return (await FileStore.list('files',id)).filter(f=>f.blob && f.blob.size).map(f=>({name:f.name,size:f.blob.size,blob:f.blob}));
+  }
+  return {blob,has,save,list,item,fileItem,warm,draw};
 })();
 
 /* ---- таблицы Table как пространство 'tables' ----

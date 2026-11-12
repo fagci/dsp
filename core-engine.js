@@ -605,6 +605,8 @@ function mergeIn(g,es){
   }
   return out;
 }
+let probeNode=null; const probeSt={n:0,t0:0,last:0};
+function probeSet(n){ probeNode=n||null; probeSt.n=0; probeSt.t0=probeSt.last=performance.now(); }
 function evalNode(n, ctx){
   const d = MOD[n.type]; if(!d) return;
   const g = ctx || Graph;
@@ -628,6 +630,7 @@ function evalNode(n, ctx){
   if(d._pair) for(const p of portsOf(n,'outs')) if(p.pair) pairOut(n,p);
   if(d.audioOut && (!g.outUsed || g.outUsed.has(n.id+'\u0001'+d.audioOut.pin))) iqToAudio(n,d.audioOut);   // звук — только если на выходе есть провод
   fillControlOuts(n);
+  if(n===probeNode){ probeSt.n++; probeSt.last=performance.now(); }     // пробник провода (wireprobe.js): считает блоки источника под курсором
   if(d.lazy==='proc') n._dirty=true; else if(d.lazy===true) markInputs(n,I);
 }
 /* ---- ленивая отрисовка ----
