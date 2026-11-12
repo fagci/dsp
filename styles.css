@@ -389,6 +389,11 @@ body.noedit #bar .ed{display:none}
 .port:not(.wired) .pin{opacity:.7}
 .port.lit .pin,.port:hover .pin{opacity:1}
 .port.hot .pin{box-shadow:0 0 0 3px var(--acc)}
+/* тип пина — не только цветом: числа/значения — пунктир внутри, данные-объекты (текст, записи, файлы, картинки, видео, треки) — почти прямоугольные */
+.port .pin[data-t="num"],.port .pin[data-t="val"]{outline:1px dashed #0007;outline-offset:-3px}
+.col:not(.o) .port .pin:is([data-t="txt"],[data-t="rec"],[data-t="bin"],[data-t="img"],[data-t="vid"],[data-t="trk"],[data-t="song"]){border-radius:3px 0 0 3px}
+.col.o .port .pin:is([data-t="txt"],[data-t="rec"],[data-t="bin"],[data-t="img"],[data-t="vid"],[data-t="trk"],[data-t="song"]){border-radius:0 3px 3px 0}
+.dash-menu .np-tip{white-space:normal;padding-top:0;color:var(--txt)}
 /* режим связывания: подходящие пины ярче и крупнее, остальные притушены, скрытые лишние подходящие раскрыты, параметры-мишени обведены */
 /* отдалённый холст / тач: подписи пинов свёрнуты в точки, пока узел не выделен и пин не нужен для связывания */
 #content.pdots .node:not(.sel) .port:not(.lk-ok):not(.lit) .pin{font-size:0;padding:0}

@@ -747,7 +747,7 @@ markWiresDirty();
 }
 function portEl(p,dir){
 const e=document.createElement('div'); e.className='port'; e.dataset.dir=dir;
-e.innerHTML= `<span class="pin" data-n="${p.n}" title="${(p.n===p.t ? p.n : p.n+' ('+p.t+')')+(p.tip ? ' — '+p.tip.replace(/"/g,'&quot;') : '')}" style="background:${TYPE_COLOR[p.t]}">${p.n}</span>` ;
+e.innerHTML= `<span class="pin" data-n="${p.n}" data-t="${p.t}" title="${(p.n===p.t ? p.n : p.n+' ('+p.t+')')+(p.tip ? ' — '+p.tip.replace(/"/g,'&quot;') : '')}" style="background:${TYPE_COLOR[p.t]}">${p.n}</span>` ;
 return e;
 }
 function paramBtn(n,s){
@@ -808,13 +808,34 @@ function paramTip(anchor,s){
   const off=()=>{ m.remove(); if(ptipEl===m) ptipEl=null; removeEventListener('pointerdown',off,true); };
   addEventListener('pointerdown',off,true); ptipTimer=setTimeout(off,6000);
 }
+function centerOnNode(m){                            // выделить узел и поставить в центр экрана
+  selSet(m.id,false); view.x=cv.clientWidth/2/view.k-(m.x+m.el.offsetWidth/2); view.y=cv.clientHeight/2/view.k-(m.y+m.el.offsetHeight/2); applyView(); drawWiresSoon?.();
+}
+// долгое нажатие на пин (тач/перо): имя, тип, описание и связи — «перейти к другому концу», «отключить»
+function pinInfoMenu(n,port,dir,anchor){
+  closeDashMenu();
+  const ps=portsOf(n,dir==='o'?'outs':'ins').find(q=>q.n===port); if(!ps) return;
+  const m=document.createElement('div'); m.className='dash-menu';
+  const head=document.createElement('div'); head.className='np-head'; head.textContent=port+' · '+ps.t+(dir==='o'?' (out)':' (in)'); m.append(head);
+  if(ps.tip){ const t=document.createElement('div'); t.className='np-head np-tip'; t.textContent=ps.tip; m.append(t); }
+  const item=(t,fn,cls)=>{ const b=document.createElement('button'); b.textContent=t; if(cls) b.className=cls; b.onclick=()=>{ closeDashMenu(); fn(); }; m.append(b); };
+  const es=Graph.edges.filter(e=>dir==='o' ? e.from===n.id && e.fp===port : e.to===n.id && e.tp===port).slice(0,4);
+  for(const e of es){
+    const o=Graph.map[dir==='o'?e.to:e.from], op=dir==='o'?e.tp:e.fp; if(!o) continue;
+    const lbl=nodeTitle(o)+' · '+op;
+    item('Go to '+lbl,()=>centerOnNode(o));
+    item('Disconnect '+lbl,()=>{ delEdge(e); syncLinkedParams(n); syncLinkedParams(o); Undo.push(); },'danger');
+  }
+  if(!es.length){ const e=document.createElement('div'); e.className='np-head'; e.textContent='not connected'; m.append(e); }
+  document.body.append(m); dashMenuEl=m; placeMenu(m,anchor);
+}
 function linkedParamMenu(n,key,anchor){
   const e=Graph.edges.find(x=>x.to===n.id && x.tp===key), src=e && Graph.map[e.from]; if(!src) return;
   closeDashMenu();
   const m=document.createElement('div'); m.className='dash-menu';
   const info=document.createElement('div'); info.className='np-head'; info.textContent='← '+nodeTitle(src)+' · '+e.fp; m.append(info);
   const item=(t,fn,cls)=>{ const b=document.createElement('button'); b.textContent=t; if(cls) b.className=cls; b.onclick=()=>{ closeDashMenu(); fn(); }; m.append(b); };
-  item('Go to source',()=>{ selSet(src.id,false); view.x=cv.clientWidth/2/view.k-(src.x+src.el.offsetWidth/2); view.y=cv.clientHeight/2/view.k-(src.y+src.el.offsetHeight/2); applyView(); drawWiresSoon?.(); });
+  item('Go to source',()=>centerOnNode(src));
   item('Disconnect',()=>{ delEdge(e); syncLinkedParams(n); Undo.push(); },'danger');
   document.body.append(m); dashMenuEl=m; placeMenu(m,anchor);
 }
@@ -1574,6 +1595,9 @@ stat.textContent='connection created'; }
 clearPending(); return; }
 const el=nodePorts(n)[dir][port]; el.classList.add('lit'); buzz(8);
 link={n,port,dir,el,x0:ev.clientX,y0:ev.clientY}; linkMarkOn(n,port,dir);
+if(ev.pointerType!=='mouse'){ const me=link; me.hold=setTimeout(()=>{      // удержание без сдвига — сведения о пине и его связях
+if(link!==me || me.moved || pending) return;
+cancelLink(); buzz(12); pinInfoMenu(n,port,dir,el.firstElementChild||el); },550); }
 const t=document.createElementNS('http://www.w3.org/2000/svg','path');
 t.setAttribute('fill','none'); t.setAttribute('stroke','var(--acc)');
 t.setAttribute('vector-effect','non-scaling-stroke');
@@ -1641,6 +1665,7 @@ clearPending();
 },true);
 }
 function cancelLink(){ if(!link) return;
+clearTimeout(link.hold);
 if(link.el!==(pending &&pending.el)) link.el.classList.remove('lit');
 link.tmp.remove(); link=null; linkSync(); }
 function controlPortEl(el){                          // бросили провод не на пин, а прямо на контрол — свой ли это узел
@@ -1661,7 +1686,7 @@ if(!el || el.dataset.dir===link.dir){
 const alt=controlPortEl(hit?.closest?.('.prm[data-param],.slidernum[data-param]'));
 if(alt) el=alt;
 }
-if(!el || !el.classList.contains('lk-ok')){ const mg=linkNearest(ev.clientX,ev.clientY); if(mg) el=mg; }   // примагничивание к ближайшему подходящему
+if(moved>=8 && (!el || !el.classList.contains('lk-ok'))){ const mg=linkNearest(ev.clientX,ev.clientY); if(mg) el=mg; }   // магнит — только после протяжки: простой тап по пину остаётся выбором пина   // примагничивание к ближайшему подходящему
 if(el  && el.dataset.dir  && el.dataset.dir!==link.dir){
 if(link.dir==='o') connect(link.n.id,link.port,el.dataset.node,el.dataset.port);
 else connect(el.dataset.node,el.dataset.port,link.n.id,link.port);
@@ -1699,7 +1724,8 @@ if(t) openModPicker(ev.clientX,ev.clientY,toCanvas(ev),{n:f.n,port:f.port,dir:f.
 });                                              // capture — отработать раньше Panzoom
 window.addEventListener('pointermove',ev=>{
 if(uiLocked()) return;
-if(link){ const p=toCanvas(ev), a=portPos(link.n,link.el,link.dir);
+if(link){ if(!link.moved && Math.hypot(ev.clientX-link.x0,ev.clientY-link.y0)>8) link.moved=true;
+const p=toCanvas(ev), a=portPos(link.n,link.el,link.dir);
 link.tmp.setAttribute('d', link.dir==='o'?curve(a,p):curve(p,a)); }
 },{passive:false});
 function endPointer(ev){
