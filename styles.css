@@ -697,8 +697,10 @@ body.noedit #bar .ed{display:none}
 .prm.linked .slidernum.kn{opacity:.45}
 /* строки «подпись — значение» (renderParamRows): подпись слева, значение справа, у чисел — заливка
    положения во всю строку; сетка до 4 колонок, каждая не уже 140px */
-.prm.wide.prmrows{display:grid;grid-template-columns:repeat(auto-fill,minmax(max(140px,calc((100% - 36px)/4)),1fr));
-  gap:2px 12px}
+/* строки — flex с переносом, а не сетка: ячейка не уже --prc, ряд всегда заполнен до края (в сетке длинная строка на 2 ячейки
+   оставляла дыру справа, а одиночная короткая — пустую половину ряда); длинная растёт вдвое, поэтому границы ячеек совпадают по рядам */
+.prm.wide.prmrows{display:flex;flex-direction:row;flex-wrap:wrap;align-items:stretch;gap:2px 12px;--prc:max(140px,calc((100% - 36px)/4))}
+.prmrows>.prm.pr{flex:1 1 var(--prc);max-width:100%}
 .prmrows>.prm.pr{position:relative;display:flex;flex-direction:row;align-items:center;gap:6px;height:22px;
   min-height:0;margin:0;padding:0 6px;border:0;border-radius:3px;background:var(--bg);overflow:hidden}
 .prmrows>.prm.pr:hover{box-shadow:inset 0 0 0 1px var(--line)}
@@ -737,7 +739,7 @@ body.noedit #bar .ed{display:none}
 .prmrows>.pr-range2 .slidernum input[type=number]{text-align:right;font-size:11px}
 .prmrows>.pr-range2 .r2dash{padding:0 2px;font-size:10px}
 /* при 2+ колонках, пока ячейки уже ~220px, длинной строке (подпись + значение, см. pr-long) — 2 ячейки */
-@container nio (min-width:320px) and (max-width:943px){ .prmrows>.pr-long{grid-column:span 2} }
+@container nio (min-width:320px) and (max-width:943px){ .prmrows>.prm.pr-long{flex:2 1 calc(2*var(--prc) + 12px)} }
 /* единица (хвост подписи «…, Hz») — тусклым текстом после значения */
 .prmrows .pr-unit{position:relative;z-index:1;flex:none;margin-left:-3px;font-size:10px;color:var(--dim);pointer-events:none}
 /* выбор из двух переключается кликом */
@@ -746,8 +748,10 @@ body.noedit #bar .ed{display:none}
 .prmrows>.prm.pr.linked{box-shadow:inset 3px 0 0 var(--acc2)}
 .prmrows>.pr-range2 .slidernum.linked{box-shadow:inset 0 0 0 1px var(--acc2)}
 /* поля ввода — справа, без рамки */
-.prmrows>:is(.pr-num,.pr-text) input{flex:1 1 50%;width:auto;min-width:0;height:20px;padding:0;border:0;
+.prmrows>:is(.pr-num,.pr-text) input{flex:1 1 48px;width:auto;min-width:48px;height:20px;padding:0;border:0;
   background:none;text-align:right;font-size:11px;color:var(--txt)}
+/* текст/число: подпись занимает свою ширину, поле — остаток (в секциях подпись делила строку с пустым полем пополам и обрезалась) */
+#canvas #content .node .io3>.mid .prmrows>:is(.pr-num,.pr-text)>label{flex:0 1 auto}
 .prm.wide.pr-btns{display:flex;flex-direction:row;flex-wrap:wrap;gap:3px}
 .pr-btns button{flex:1 1 auto;width:auto;min-width:0;height:22px;padding:0 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* строки идут плотнее обычных полей (у тех подпись висит над полем) */
@@ -784,7 +788,7 @@ body.noedit #bar .ed{display:none}
 .pgb{display:flex;flex-direction:column;gap:3px;padding-top:5px}
 .pgb[hidden]{display:none}
 .pgb>.prm.wide{margin:0;align-self:stretch}
-.pgb>.prm.wide.prmrows{grid-template-columns:repeat(auto-fill,minmax(max(168px,calc((100% - 36px)/4)),1fr))}
+.pgb>.prm.wide.prmrows{--prc:max(168px,calc((100% - 36px)/4))}
 .pgrp.closed .pgh{border-bottom-color:transparent}
 .dash-body .node .io3>.mid>.prm.wide.pgrp{flex:1 1 100%}
 @media (pointer:coarse){ .pgh{min-height:30px} }
@@ -913,7 +917,7 @@ canvas.view.fs-fb{position:fixed!important;inset:0;width:100vw!important;height:
 .devpick input[hidden],.devpick select[hidden]{display:none}
 .devpick select.warn{outline:1px solid #d9822b}
 /* в строках параметров узла: подпись слева, выбор устройства справа в той же строке; свой адрес — поле рядом, во всю ширину строки */
-.prmrows>.prm.pr.pr-dev{grid-column:1/-1;height:auto;min-height:22px;overflow:visible}
+.prmrows>.prm.pr.pr-dev{flex-basis:100%;height:auto;min-height:22px;overflow:visible}
 .prmrows>.pr-dev .devpick{flex-direction:row;align-items:center;gap:6px}
 .prmrows>.pr-dev .devpick select{flex:1 1 auto;width:auto;height:22px;margin:0;padding:0 12px 0 0;border:0;border-radius:3px;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0h8L4 5z' fill='%23888'/%3E%3C/svg%3E") no-repeat right 1px center;
   appearance:none;-webkit-appearance:none;color:var(--txt);font-size:11px;text-align:right;text-align-last:right;cursor:pointer}
@@ -2019,3 +2023,8 @@ body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages
   #powerPanel .pp-s button{min-height:36px;padding:1px 14px} #powerPanel input[type=checkbox]{width:22px;height:22px}
   #powerPanel .pp-r{min-height:32px} #powerPanel .pp-z{padding:6px 10px;font-size:14px}
 }
+
+/* выбор файла в узле: кнопка — как остальные кнопки узла, а не системная */
+#content .node input[type=file]{max-width:100%;font:inherit;font-size:11px;color:var(--dim)}
+#content .node input[type=file]::file-selector-button{margin-right:8px;padding:3px 10px;border:1px solid var(--line);border-radius:3px;background:var(--panel2);color:var(--txt);font:inherit;cursor:pointer}
+@media (pointer:coarse){ #content .node input[type=file]::file-selector-button{padding:7px 12px;font-size:12px} }

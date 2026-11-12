@@ -88,5 +88,14 @@ ok('screenrec.start: only what is set', (c => c.cmd === 'screenrec.start' && c.f
   (c => !('fps' in c) && !('maxSide' in c) && !('kbps' in c) && c.audio === false)(K.phoneCmd({ action: 'screenrec.start', screenFps: 0, screenSide: '0', screenKbps: 0 })) && K.phoneCmd({ action: 'screenrec.stop' }).cmd === 'screenrec.stop' && K.phoneCmd({ action: 'screenrec.status' }).cmd === 'screenrec.status');
 ok('screenrec lines', K.phoneLine({ src: 'screenrec', on: true, file: 'screen-1.mp4', sec: 12, w: 576, h: 1280 }) === 'screen recording ON · screen-1.mp4 · 12 s · 576×1280' && K.phoneLine({ src: 'screenrec', on: false }) === 'screen recording off' &&
   K.phoneLine({ src: 'sys', ev: 'screenrec.stop', file: 'screen-1.mp4' }) === 'screenrec.stop screen-1.mp4');
+{ // секции полей: у каждого действия секции существуют в описании узла; действиям без полей секции не нужны
+  const src = fs.readFileSync(new URL('../modules/phoneact.js', import.meta.url), 'utf8');
+  const names = new Set([...src.matchAll(/\{n:'([^']+)'(?:,open:false)?\}/g)].map(m => m[1]));
+  const { acts, groups } = vm.runInContext('({acts:PHONE_ACTIONS,groups:phoneActGroups})', ctx);
+  const none = acts.filter(a => !groups(a).length), wrong = acts.flatMap(a => [...groups(a)]).filter(g => !names.has(g));
+  ok('field sections: every action maps to existing sections', !wrong.length && none.join() === 'ir.info,crash.last', none.join() + ' / ' + wrong.join());
+  ok('field sections: sms.send also opens the text, media.save the file fields', groups('sms.send').join() === 'SMS / contacts,Notify / vibrate / torch' && groups('media.save').join() === 'Gallery,Folders / files');
+  ok('field sections: every grouped param names a declared section', [...src.matchAll(/,g:'([^']+)'\}/g)].every(m => names.has(m[1])));
+}
 console.log(bad ? bad + ' FAILED' : 'all ok');
 process.exit(bad ? 1 : 0);
