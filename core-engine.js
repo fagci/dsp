@@ -626,7 +626,8 @@ function evalNode(n, ctx){
   applyControlWires(n,I);
   if(d.audioIn && I[d.audioIn.pin] && !I[d.audioIn.to]) I[d.audioIn.to]=audioToIq(n,I[d.audioIn.pin],d.audioIn);
   // узел острова (core-islands.js) считается в воркере — здесь только прокси
-  try{ n.out = (n._isl && g===Graph ? islProcess(n,I) : d.process(n, I, g)) || {}; }catch(err){ n.err = err; }
+  try{ n.out = (n._isl && g===Graph ? islProcess(n,I) : d.process(n, I, g)) || {}; if(n._perr){ n._perr=0; n.el?.classList.remove('has-err'); } }
+  catch(err){ n.err = err; n._perr=1; n.el?.classList.add('has-err'); }   // красная точка в шапке, пока process() падает (n.err модули используют по-своему — не трогаем)
   if(d._pair) for(const p of portsOf(n,'outs')) if(p.pair) pairOut(n,p);
   if(d.audioOut && (!g.outUsed || g.outUsed.has(n.id+'\u0001'+d.audioOut.pin))) iqToAudio(n,d.audioOut);   // звук — только если на выходе есть провод
   fillControlOuts(n);

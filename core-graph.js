@@ -393,10 +393,11 @@ const el=document.createElement('div'); el.className='node panzoom-exclude'+(n.t
 const title=nodeTitle(n);
 el.style.setProperty('--cat',catColor(d.cat)); el.dataset.title=title;
 if(d.viewTop) el.classList.add('vtop');                 // холст над параметрами (Plan Studio)
-el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span>${d.view||d.bare||d.vidEl?'<span class="xpd" title="Expand canvas (hide parameters)">'+ico('expand')+'</span>':''}${d.fs||d.vidEl?'<span class="fsb" title="Fullscreen (double-click the picture)">'+ico('full')+'</span>':''}${(d.view||d.fs||d.vidEl)&&pipSupported()?'<span class="pipb" title="Picture in picture (floating window)">'+ico('pip')+'</span>':''}${(d.view||d.fs)&&wallpaperSupported()?'<span class="wpb" title="Set as live wallpaper (phone app)">'+ico('wall')+'</span>':''}${(d.view||d.fs||d.vidEl)&&floatSupported()?'<span class="flb" title="Float over other apps (phone app)">'+ico('float')+'</span>':''}<span class="hlp" title="Help for this module (F1)">${ico('help')}</span><span class="rst" title="Reset all parameters">${ico('reset')}</span><span class="ren" title="Rename">${ico('edit')}</span><span class="x">${ico('close')}</span></div> <div class="nbody"></div>`;
+el.innerHTML=`<div class="nhead" title="Double-tap to fold" style="--cat:${catColor(d.cat)}"><span class="ttl" data-ini="${nodeInitials(title)}" title="${d.cat||''}"></span>${d.view||d.bare||d.vidEl?'<span class="xpd" title="Expand canvas (hide parameters)">'+ico('expand')+'</span>':''}${d.fs||d.vidEl?'<span class="fsb" title="Fullscreen (double-click the picture)">'+ico('full')+'</span>':''}${(d.view||d.fs||d.vidEl)&&pipSupported()?'<span class="pipb" title="Picture in picture (floating window)">'+ico('pip')+'</span>':''}${(d.view||d.fs)&&wallpaperSupported()?'<span class="wpb" title="Set as live wallpaper (phone app)">'+ico('wall')+'</span>':''}${(d.view||d.fs||d.vidEl)&&floatSupported()?'<span class="flb" title="Float over other apps (phone app)">'+ico('float')+'</span>':''}<span class="hlp" title="Help for this module (F1)">${ico('help')}</span><span class="rst" title="Reset all parameters">${ico('reset')}</span><span class="ren" title="Rename">${ico('edit')}</span><span class="more" title="More actions">${ico('more')}</span><span class="x">${ico('close')}</span></div> <div class="nbody"></div>`;
 el.querySelector('.ttl').textContent=title;
 el.querySelector('.ren').addEventListener('click',e=>{ e.stopPropagation(); renameNode(n); });
 el.querySelector('.hlp').addEventListener('click',e=>{ e.stopPropagation(); hpForNode(n); });
+el.querySelector('.more').addEventListener('click',e=>{ e.stopPropagation(); openNodeMenu(n,e.currentTarget); });
 el.querySelector('.xpd')?.addEventListener('click',e=>{ e.stopPropagation(); xpandNode(n); });
 el.querySelector('.fsb')?.addEventListener('click',e=>{ e.stopPropagation(); nodeFullscreen(n); });
 el.querySelector('.pipb')?.addEventListener('click',e=>{ e.stopPropagation(); nodePip(n); });
@@ -483,7 +484,7 @@ delNode(n); Sel.delete(n.id); Undo.push();});
 { const head=el.querySelector('.nhead'); let t0=0,x0=0,y0=0;
 head.addEventListener('pointerdown',e=>{ x0=e.clientX; y0=e.clientY; });
 head.addEventListener('pointerup',e=>{
-if(e.target.closest('.x,.xpd') || Math.hypot(e.clientX-x0,e.clientY-y0)>5){ t0=0; return; }
+if(e.target.closest('.x,.xpd,.more') || Math.hypot(e.clientX-x0,e.clientY-y0)>5){ t0=0; return; }
 if(e.timeStamp-t0<350){ t0=0; setLod(n,n.lod ? 0 : collapsedLod(n)); Undo.push(); } else t0=e.timeStamp; }); }
 if(n.lod) setLod(n,n.lod);
 bindDrag(el.querySelector('.nhead'),n);
@@ -2267,6 +2268,24 @@ function dashPagesRender(){
 }
 let dashMenuEl=null;
 function closeDashMenu(){ dashMenuEl?.remove(); dashMenuEl=null; }
+function placeMenu(m,btn){                          // у кнопки; панель снизу (телефон) — меню над ней
+  const r=btn.getBoundingClientRect(), W=m.offsetWidth, H=m.offsetHeight;
+  m.style.left=clamp(r.left,8,innerWidth-W-8)+'px';
+  m.style.top=clamp(r.bottom+H+8>innerHeight ? r.top-H-4 : r.bottom+4,8,Math.max(8,innerHeight-H-8))+'px';
+}
+// меню «⋯» в шапке узла: на тач-экране вторичные кнопки шапки (справка, сброс, имя, окно, удаление…) убраны сюда, заголовку остаётся место
+function openNodeMenu(n,btn){
+  closeDashMenu();
+  const m=document.createElement('div'); m.className='dash-menu';
+  const item=(txt,fn,cls)=>{ const b=document.createElement('button'); b.textContent=txt; if(cls) b.className=cls;
+    b.onclick=()=>{ closeDashMenu(); fn(); }; m.append(b); };
+  const via=(txt,sel,cls)=>{ const e=n.el.querySelector('.nhead '+sel); if(e) item(txt,()=>e.click(),cls); };   // существующий обработчик кнопки шапки
+  via('Help','.hlp'); via('Reset parameters','.rst'); item('Rename…',()=>renameNode(n));
+  item(n.lod?'Unfold':'Fold',()=>{ setLod(n,n.lod ? 0 : collapsedLod(n)); Undo.push(); });
+  via('Fullscreen','.fsb'); via('Picture in picture','.pipb'); via('Live wallpaper','.wpb'); via('Float over apps','.flb');
+  via('Delete module','.x','danger');
+  document.body.append(m); dashMenuEl=m; placeMenu(m,btn);
+}
 function openDashMenu(btn){
   closeDashMenu();
   const m=document.createElement('div'); m.className='dash-menu';
@@ -2284,10 +2303,7 @@ function openDashMenu(btn){
     Graph.dashPages.splice(i,1); Graph.dashPage=Math.min(i,Graph.dashPages.length-1);
     dashEnsureTree(); dashRenderRoot(); Undo.push(); },single);
   document.body.append(m); dashMenuEl=m;
-  const r=btn.getBoundingClientRect(), W=m.offsetWidth, H=m.offsetHeight;
-  m.style.left=clamp(r.left,8,innerWidth-W-8)+'px';
-  // панель снизу (телефон) — меню над кнопкой
-  m.style.top=(r.bottom+H+8>innerHeight? r.top-H-4 : r.bottom+4)+'px';
+  placeMenu(m,btn);
 }
 function dashPageMove(d){
   const i=Graph.dashPage, j=i+d, P=Graph.dashPages;
