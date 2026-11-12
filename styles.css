@@ -377,6 +377,14 @@ body.noedit #bar .ed{display:none}
 #wires path.hl{opacity:1;stroke-width:2.2}
 #wires.hasSel path:not(.hl):not(.hv):not(.whit){opacity:.3}
 @media (pointer:coarse){ #wires path.whit{stroke-width:20px} }   /* палец шире курсора */
+/* тач: зона касания пина тянется наружу (к соседним узлам), а не вверх-вниз — зоны соседних пинов не перекрываются (шаг 27px) */
+@media (pointer:coarse){
+  .port .pin::before{inset:-4px -4px -4px -4px}
+  .col:not(.o) .port .pin::before{inset:-4px 0 -4px -14px}
+  .col.o .port .pin::before{inset:-4px -14px -4px 0}
+  /* рамка пина получает больше места под подпись: подключённые видны ярче */
+  .port.wired .pin{opacity:1}
+}
 /* свободный пин притушен; концы наведённого провода — в кольце */
 .port:not(.wired) .pin{opacity:.7}
 .port.lit .pin,.port:hover .pin{opacity:1}
@@ -691,6 +699,20 @@ body.noedit #bar .ed{display:none}
 #canvas #content .node .io3>.mid>:is(.pr-btns,.prmrows)+:is(.pr-btns,.prmrows,.advToggle){margin-top:-6px}
 @media (pointer:coarse){
   .prmrows>.prm.pr,.prmrows>.pr-range .slidernum,.pr-btns button{height:32px}
+  /* читаемость под палец: подписи и значения 12px */
+  .prmrows>.prm.pr label,.prmrows>.pr-range .sn-val,.prmrows>.pr-select select,.prmrows>.pr-check::after,
+  .prmrows>:is(.pr-num,.pr-text) input,.prmrows>.pr-range .slidernum input[type=number],.prmrows>.pr-range2 .sn-val{font-size:12px}
+  .pr-btns button{font-size:12px}
+  .prmrows .pr-unit{font-size:11px}
+  .prmrows>.pr-check::before{width:9px;height:9px}
+  .pgh{font-size:11px}
+  /* размер меняется только у выделенного узла: чужой узел не растягивается случайным касанием у края */
+  .node:not(.sel) .rz{pointer-events:none}
+  /* видимый уголок у выделенного узла */
+  .node.sel .rz-br::after,.node.sel .rz-bl::after{content:'';position:absolute;bottom:9px;width:10px;height:10px;
+    border:solid var(--acc);border-width:0 2px 2px 0;opacity:.8;pointer-events:none}
+  .node.sel .rz-br::after{right:9px}
+  .node.sel .rz-bl::after{left:9px;transform:scaleX(-1)}
 }
 .advToggle{white-space:nowrap;cursor:pointer;color:var(--dim);font-size:10px;user-select:none;margin-top:2px}
 .advToggle:hover{color:var(--txt)}
