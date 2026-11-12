@@ -34,7 +34,8 @@ class AiHub(private val ctx: Context, private val emit: Emit,
     /** Потоков по умолчанию: «большие» ядра по cpuinfo_max_freq (без энергосберегающих). */
     private val fastThreads by lazy {
         val f = (0 until cpu.cores).mapNotNull { i -> try { File("/sys/devices/system/cpu/cpu$i/cpufreq/cpuinfo_max_freq").readText().trim().toLong() } catch (e: Exception) { null } }
-        AiArgs.bigCores(f, cpu.cores)
+        val cap = (0 until cpu.cores).mapNotNull { i -> try { File("/sys/devices/system/cpu/cpu$i/cpu_capacity").readText().trim().toLong() } catch (e: Exception) { null } }
+        AiArgs.bigCores(f, cpu.cores, cap)
     }
     private val arm64 get() = Build.SUPPORTED_64_BIT_ABIS.contains("arm64-v8a")
     private val openCl get() = AiArgs.OPENCL_PATHS.any { File(it).exists() }

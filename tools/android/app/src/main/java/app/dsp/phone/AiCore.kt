@@ -47,7 +47,10 @@ object AiArgs {
     /** Потоков для Whisper по умолчанию: на 8 потоках фразы шли по 97 с, больше 4 не берём (остальным потокам не хватает ядер вместе с фоном). */
     fun asrThreads(big: Int): Int = big.coerceIn(2, 4)
 
-    fun bigCores(maxFreqs: List<Long>, fallbackCores: Int): Int {
+    fun bigCores(maxFreqs: List<Long>, fallbackCores: Int, capacities: List<Long> = emptyList()): Int {
+        // cpu_capacity различает ядра при одинаковой частоте (Dimensity 720: 2×A76 и 6×A55, все 2.0 ГГц); частота этого не видит
+        val c = capacities.filter { it > 0 }
+        if (c.size >= 2 && c.distinct().size > 1) { val t = c.max(); return c.count { it * 10 >= t * 7 }.coerceIn(2, 8) }
         val f = maxFreqs.filter { it > 0 }
         if (f.isEmpty()) return (fallbackCores / 2).coerceIn(2, 6)
         val top = f.max()

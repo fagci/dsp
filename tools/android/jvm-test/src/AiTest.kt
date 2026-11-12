@@ -246,6 +246,10 @@ fun main() {
     val k8b = listOf(1_800_000L, 1_800_000L, 1_800_000L, 1_800_000L, 2_900_000L, 2_900_000L, 2_900_000L, 3_300_000L)
     ok("big cores: 4 little cores at 55 % are not counted", AiArgs.bigCores(k8b, 8) == 4)
     ok("big cores: all equal → all, clamped to 8; unknown frequencies → half of the cores", AiArgs.bigCores(List(4) { 2_000_000L }, 4) == 4 && AiArgs.bigCores(List(12) { 2_000_000L }, 12) == 8 && AiArgs.bigCores(emptyList(), 8) == 4 && AiArgs.bigCores(listOf(0L, 0L), 6) == 3)
+    val d720 = List(8) { 2_000_000L }                                                         // Dimensity 720: частоты равны, а ядра разные
+    val cap720 = listOf(1024L, 1024L, 410L, 410L, 410L, 410L, 410L, 410L)
+    ok("big cores: equal frequencies, capacity tells 2 big from 6 little (Dimensity 720)", AiArgs.bigCores(d720, 8, cap720) == 2 && AiArgs.bigCores(d720, 8) == 8)
+    ok("big cores: equal capacities → by frequency; broken capacity → by frequency", AiArgs.bigCores(k8, 8, List(8) { 1024L }) == 4 && AiArgs.bigCores(k8, 8, listOf(0L, 0L)) == 4)
     ok("asr threads: default 2…4", AiArgs.asrThreads(8) == 4 && AiArgs.asrThreads(1) == 2)
     ok("llm threads: default 2…4, never all the big cores", AiArgs.llmThreads(8) == 4 && AiArgs.llmThreads(3) == 3 && AiArgs.llmThreads(1) == 2)
     ok("big cores: at least 2", AiArgs.bigCores(listOf(3_000_000L, 1_000_000L, 1_000_000L, 1_000_000L), 4) == 2)
