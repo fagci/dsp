@@ -148,7 +148,7 @@ catch(e){ prompt('Copy link',url); }
 function makePatchItem(name,count,label){
 const b=document.createElement('button'); b.className='pitem'+(name===currentPatchName?' on':'');
 b.title=count<0 ? name : name+' · '+count+' nodes';
-b.innerHTML= `<span class="ptxt"><b>${(label||name).replace(/[&<>"]/g,c=>'&#'+c.charCodeAt(0)+';')}</b></span><span class="pstar${favNow.has(name) ? ' on' : ''}" title="${favNow.has(name) ? 'Favorite — click to remove' : 'Add to favorites'}${favNow.has(name) ? '' : ' (in the Android app the first ones appear on a long press of the app icon)'}">${favNow.has(name) ? '★' : '☆'}</span><span class="pins" title="Insert into the current graph">＋</span><span class="pdel" title="Delete patch">✕</span>` ;
+b.innerHTML= `<span class="ptxt"><b>${(label||name).replace(/[&<>"]/g,c=>'&#'+c.charCodeAt(0)+';')}</b></span><span class="pstar${favNow.has(name) ? ' on' : ''}" title="${favNow.has(name) ? 'Favorite — click to remove' : 'Add to favorites'}${favNow.has(name) ? '' : ' (in the Android app the first ones appear on a long press of the app icon)'}">${favNow.has(name) ? '★' : '☆'}</span><span class="pins" title="Insert into the current graph">＋</span>${count<0 ? '' : '<span class="pdel" title="Delete patch">✕</span>'}` ;     // встроенный пресет — код, удалять нечего: крестика нет
 b.draggable=true;
 b.addEventListener('dragstart',e=>{ e.dataTransfer.setData('text/x-dsp-patch',name); e.dataTransfer.effectAllowed='copy'; });
 const doDelete=e=>{ e.preventDefault(); e.stopPropagation();
@@ -156,8 +156,8 @@ if(confirm('Delete patch «'+name+'»?')){ const p=readP(); delete p[name]; writ
 if(currentPatchName===name){ currentPatchName=''; syncHash(); }
 buildPatchList(); syncShortcuts(); stat.textContent='patch deleted'; } };
 b.addEventListener('click',e=>{ if(e.target.closest('.pdel')) return; if(e.target.closest('.pstar')){ e.stopPropagation(); favSave(favToggle(favRaw(),name,50)); buildPatchList(); return; } if(e.target.closest('.pins')){ insertPatch(name); return; } openPatch(name); });
-b.querySelector('.pdel').addEventListener('click',doDelete);      // тап/клик по крестику — работает и на мобиле
-b.addEventListener('contextmenu',doDelete);                       // на десктопе правый клик — тоже как раньше
+b.querySelector('.pdel')?.addEventListener('click',doDelete);      // тап/клик по крестику — работает и на мобиле
+if(count>=0) b.addEventListener('contextmenu',doDelete);                       // на десктопе правый клик — тоже как раньше
 return b;
 }
 function makePatchDetails(key,label,open){
