@@ -1658,7 +1658,7 @@ const r=pin.getBoundingClientRect(); if(!r.width) continue;
 const d=Math.hypot(x-(r.left+r.right)/2,y-(r.top+r.bottom)/2); if(d<bd){ bd=d; best=el; } }
 return best;
 }
-function clearPending(){ if(pending){ pending.el.classList.remove('lit'); pending=null; } linkSync(); }
+function clearPending(){ if(pending){ pending.el.classList.remove('lit'); pending=null; if(stat.textContent.startsWith('port selected')) stat.textContent=''; } linkSync(); }
 function bindPendingComplete(el,n,param){            // второй тап (клик-клик, без удержания) — довязать провод прямо
 el.addEventListener('pointerdown',ev=>{              // на контрол; ловим в capture — раньше, чем свой драг поля у box
 if(!pending) return;
