@@ -88,6 +88,42 @@ await tsrv.stop();
 const ro = new K.TftpServer(ns, vfs, { write: false }); const rp = await ro.start(0);
 ok('tftp server read-only refuses WRQ', await K.tftpPut(ns, '127.0.0.1', rp, 'x', 'x').then(() => false, (e) => /read only/.test(e.message))); await ro.stop();
 
+// --- TFTP для сетевой загрузки: windowsize, timeout, обёртка блоков, потери, пути PXE ---
+{
+  const img = Buffer.from(Array.from({ length: 300000 }, (_, i) => (i * 7 + (i >> 8)) & 255));
+  const bvfs = new K.VfsMem(); await bvfs.write('/pxelinux.0', img); await bvfs.write('/boot/vmlinuz', img.subarray(0, 123457)); await bvfs.write('/boot/exact', img.subarray(0, 8192));
+  const reads = []; const rv = Object.create(bvfs); rv.read = (p, a, b) => { reads.push([a, b]); return bvfs.read(p, a, b); };
+  const bs = new K.TftpServer(ns, rv, { write: false }); const bp = await bs.start(0);
+  ok('netboot: windowsize 8 + blksize 1456', Buffer.from(await K.tftpGet(ns, '127.0.0.1', bp, 'pxelinux.0', { blksize: 1456, windowsize: 8 })).equals(img));
+  ok('netboot: file is read from the vfs in pieces, not at once', reads.length > 1 && reads.every(([a, b]) => b - a <= 1456 * 32), JSON.stringify(reads.slice(0, 3)));
+  ok('netboot: windowsize 64 and a size that is a multiple of the block', Buffer.from(await K.tftpGet(ns, '127.0.0.1', bp, 'boot/exact', { blksize: 1024, windowsize: 64 })).equals(img.subarray(0, 8192)));
+  ok('netboot: plain RFC 1350 client (no options)', Buffer.from(await K.tftpGet(ns, '127.0.0.1', bp, 'boot/vmlinuz')).equals(img.subarray(0, 123457)));
+  ok('netboot: backslashes and a leading slash in the name (WDS / PXE ROMs)', Buffer.from(await K.tftpGet(ns, '127.0.0.1', bp, '\\boot\\vmlinuz', { blksize: 1428 })).equals(img.subarray(0, 123457)));
+  ok('netboot: «..» does not leave the root', await K.tftpGet(ns, '127.0.0.1', bp, '../../etc/passwd').then(() => false, (e) => /not found/i.test(e.message)));
+  ok('netboot: missing pxelinux.cfg/… answers fast with error 1', await K.tftpGet(ns, '127.0.0.1', bp, 'pxelinux.cfg/01-aa-bb-cc-dd-ee-ff', { timeout: 500 }).then(() => false, (e) => /not found/i.test(e.message)));
+  // сырой обмен: что ответит сервер на опции
+  const raw = await ns.udpOpen(0, false); await raw.send('127.0.0.1', bp, K.tftpReq(1, 'boot/exact', 'octet', { blksize: '1024', tsize: '0', windowsize: '4', timeout: '3', bogus: '1' }));
+  const oa = K.tftpParse((await raw.recv(2000)).bytes); await raw.close();
+  ok('netboot: OACK has blksize, tsize, windowsize, timeout and no unknown options', oa.op === 6 && oa.opts.blksize === '1024' && oa.opts.tsize === '8192' && oa.opts.windowsize === '4' && oa.opts.timeout === '3' && !('bogus' in oa.opts), JSON.stringify(oa));
+  // блоков больше 65535: номер блока на проводе идёт по кругу
+  const huge = Buffer.from(Array.from({ length: 540000 }, (_, i) => (i * 31) & 255)); await bvfs.write('/huge.bin', huge);
+  ok('netboot: more than 65535 blocks (block number wraps)', Buffer.from(await K.tftpGet(ns, '127.0.0.1', bp, 'huge.bin', { blksize: 8, windowsize: 64 })).equals(huge));
+  const cl = []; const many = await Promise.all([1, 2, 3, 4].map((i) => K.tftpGet(ns, '127.0.0.1', bp, 'pxelinux.0', { blksize: 1400, windowsize: i * 2 })));
+  ok('netboot: four clients at once', many.every((m) => Buffer.from(m).equals(img)) && bs.stats.reads >= 8);
+  await bs.stop();
+  // потери: каждый пакет данных сервера пропадает с вероятностью 12 %, каждый ACK клиента — 12 % (псевдослучайно, зерно фиксировано)
+  const lossy = (seed, op) => ({ ...ns, udpOpen: async (...a) => { const s = await ns.udpOpen(...a); const send = s.send.bind(s); let x = seed; s.send = (h, p, b, o) => { x = (x * 1103515245 + 12345) >>> 0; return (b[1] === op && (x >>> 16) % 100 < 12) ? Promise.resolve() : send(h, p, b, o); }; return s; } });
+  const ls = new K.TftpServer(lossy(7, 3), bvfs, { timeout: 150, retries: 40 }); const lp = await ls.start(0);
+  ok('netboot: lost data packets are resent (window 8)', Buffer.from(await K.tftpGet(lossy(5, 4), '127.0.0.1', lp, 'boot/vmlinuz', { blksize: 1000, windowsize: 8, timeout: 150, retries: 40 })).equals(img.subarray(0, 123457)));
+  ok('netboot: lost data packets are resent (no window)', Buffer.from(await K.tftpGet(ns, '127.0.0.1', lp, 'boot/exact', { blksize: 512, timeout: 150, retries: 30 })).equals(img.subarray(0, 8192)));
+  await ls.stop();
+  // запись с окном
+  const wv = new K.VfsMem(); const ws = new K.TftpServer(ns, wv, { write: true }); const wp = await ws.start(0);
+  await K.tftpPut(ns, '127.0.0.1', wp, 'up/img.bin', img, { blksize: 1400, windowsize: 16 });
+  ok('netboot: upload with windowsize', Buffer.from(await wv.read('/up/img.bin')).equals(img));
+  await ws.stop();
+}
+
 // --- Telnet ---
 const tc = new K.TelnetCodec();
 let r = tc.feed(Uint8Array.from([255, 253, 24, 255, 251, 1, 255, 251, 31, ...Buffer.from('login: '), 255, 250, 31, 0, 80, 0, 24, 255, 240, 255, 255]));

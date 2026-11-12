@@ -740,6 +740,10 @@ const PRESET_CATS={
   'Network: Cast to a TV or Speaker — Find the Player, Send a File or a Stream (Phone App)':'Network & IoT',
   'Network: Wake-on-LAN, NTP Clock Check and Syslog (Phone App)':'Network & IoT',
   'Network: Syslog and TFTP Servers on the Phone (Phone App)':'Network & IoT',
+  'Network: TFTP Netboot Server — PXE, iPXE and U-Boot Images (Phone App)':'Network & IoT',
+  'Network: SMB Client — Browse and Fetch Files from a Windows Share (Phone App)':'Network & IoT',
+  'Network: Bridge — a Windows Share over FTP, HTTP and TFTP (Phone App)':'Network & IoT',
+  'Network: File Copy — SMB, FTP, TFTP, HTTP and Files in Any Direction (Phone App)':'Network & IoT',
   'Network: Telnet Terminal and a Mail Alert (Phone App)':'Network & IoT',
   'Network: Scan the LAN — Hosts, Ports and Devices as a Graph (Phone App)':'Network & IoT',
   'Network: Traceroute and MTR — the Path to a Host as a Graph (Phone App)':'Network & IoT',
@@ -2292,6 +2296,66 @@ tb.size.w=520; tb.size.h=300; applySize(tb);
 const tk=addNode('ticker',980,200,{});
 tk.size.w=420; tk.size.h=120; applySize(tk);
 addEdge(sl.id,'rec',lg.id,'rec'); addEdge(sl.id,'text',tk.id,'text'); addEdge(tf.id,'rec',tb.id,'rec');
+markWiresDirty();
+});
+preset('Network: TFTP Netboot Server — PXE, iPXE and U-Boot Images (Phone App)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Network boot from the phone: TFTP Server over the folder Files › Boot (put pxelinux.0 / ipxe.efi / kernel / initrd / u-boot images there). The server speaks what boot ROMs ask for: blksize (up to 1456), tsize, timeout and windowsize — iPXE and U-Boot get a whole window of blocks before an ACK, which is several times faster than classic lock-step; files are read from the folder in pieces, so a 500 MB initrd does not sit in memory; \\ and a leading / in names (WDS-style ROMs) are fine; pxelinux.cfg/01-<mac> probes get an instant «not found» (shown as notfound in the log, not counted).\n'+
+  'Port: a boot ROM always asks for UDP 69, and an Android app cannot listen below 1024. Run the same node on a bridge that may (Node bridge as root, Termux with root) and set port 69, or redirect 69 → 6969 on the host. The DHCP server of your network must hand out «next-server» (this address) and the boot file name — this node does not answer DHCP. UEFI HTTP Boot does not need port 69: use the HTTP Server on the same folder.\n'+
+  'Test without a PC: Network Tools (tftp get) or  curl tftp://PHONE_IP:6969/pxelinux.0  . Upload stays off unless «write» is on. TFTP has no login: use it on your own network.'});
+nt.size.w=980; nt.size.h=190; applySize(nt);
+const tf=addNode('netlisten',40,260,{mode:'tftp server',port:6969,folder:'Boot',write:false,window:64,maxBlk:1456});
+tf.size.w=380; tf.size.h=420; applySize(tf);
+const tb=addNode('table',460,260,{list:'@patch',initial:false,follow:true});
+tb.size.w=560; tb.size.h=330; applySize(tb);
+const lg=addNode('recLog',460,620,{});
+lg.size.w=560; lg.size.h=240; applySize(lg);
+addEdge(tf.id,'rec',tb.id,'rec'); addEdge(tf.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Network: SMB Client — Browse and Fetch Files from a Windows Share (Phone App)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'SMB Client: a share of Windows, Samba, a NAS or a router with a USB disk. Fill host, share (the shared folder name: Users, Public, Media…), user and password and press Run — «list» gives one record per entry (wire it to a Table), «download» puts the file on «bin», «upload» sends what is on «bin» / «text», «delete», «mkdir», «rmdir», «rename», «size». The login is NTLMv2 (empty user — guest); messages are signed when the server demands it.\n'+
+  'SMB 2.0.2 / 2.1 only (Windows and Samba keep them on by default); SMB1-only old NAS boxes and servers that insist on SMB 3 encryption are not reachable. Names are case-insensitive on Windows servers.'});
+nt.size.w=900; nt.size.h=150; applySize(nt);
+const sc=addNode('smbcli',40,230,{host:'192.168.0.10',share:'Public',user:'guest',action:'list',path:'/'});
+sc.size.w=380; sc.size.h=420; applySize(sc);
+const tb=addNode('table',460,230,{list:'@patch',initial:false});
+tb.size.w=600; tb.size.h=330; applySize(tb);
+const tk=addNode('ticker',460,590,{});
+tk.size.w=600; tk.size.h=80; applySize(tk);
+addEdge(sc.id,'rec',tb.id,'rec'); addEdge(sc.id,'text',tk.id,'text');
+markWiresDirty();
+});
+preset('Network: Bridge — a Windows Share over FTP, HTTP and TFTP (Phone App)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A bridge: one SMB share, three protocols. Each server has a «source» field — instead of a folder in Files it serves another share, and every request goes through to it (a login and a reconnect on a dropped link are handled). Here the three servers sit in front of smb://user:password@192.168.0.10/Public: an old FTP-only camera or printer, a browser and a TFTP boot ROM all see the same files; with «write» on, uploads land on the share.\n'+
+  'Change the address in «source»: ftp://user:pass@host/dir to put HTTP or TFTP in front of an FTP box, http://host/dir (a directory index or another DSP) to put FTP in front of a web server, files://Share/dir for a folder in Files. TFTP has no folders or listing, so as a source it can only read and write files by name. The share is read-only until you tick «write».'});
+nt.size.w=980; nt.size.h=170; applySize(nt);
+const src='smb://user:password@192.168.0.10/Public';
+const fs_=addNode('ftpsrv',40,240,{port:2121,lan:true,write:false,source:src});
+fs_.size.w=360; fs_.size.h=380; applySize(fs_);
+const hs=addNode('httpsrv',440,240,{port:8080,lan:true,write:false,source:src});
+hs.size.w=360; hs.size.h=380; applySize(hs);
+const tf=addNode('netlisten',840,240,{mode:'tftp server',port:6969,write:false,source:src});
+tf.size.w=360; tf.size.h=380; applySize(tf);
+const lg=addNode('recLog',40,650,{});
+lg.size.w=1160; lg.size.h=240; applySize(lg);
+addEdge(fs_.id,'rec',lg.id,'rec'); addEdge(hs.id,'rec',lg.id,'rec'); addEdge(tf.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Network: File Copy — SMB, FTP, TFTP, HTTP and Files in Any Direction (Phone App)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'File Copy / Bridge copies a file or a whole folder between any two places: a folder in Files (files://Share/dir), ftp://user:pass@host/dir, smb://[DOMAIN;]user:pass@host/SHARE/dir, tftp://host/file, http://host/dir. A trailing / in «to» means a folder. Press Copy: one record per file goes to the log, the progress pin shows how far it is, «ok» drops to 0 if any file failed (the others still go on), Stop ends the run after the current file.\n'+
+  '«move» deletes the source after a copy without errors; «overwrite» off skips files that exist. A file is held in memory while it is copied (limit in «maxMb»). Typical jobs: pull a router backup over TFTP/FTP into Files, push a firmware from Files to a device, mirror a Windows share onto an FTP box. The addresses can also come from the «from» and «to» pins (a Text Source, a Table cell…).'});
+nt.size.w=940; nt.size.h=170; applySize(nt);
+const fc=addNode('filecopy',40,240,{from:'smb://user:password@192.168.0.10/Public/photos',to:'files://Share/photos/',overwrite:true});
+fc.size.w=420; fc.size.h=400; applySize(fc);
+const lg=addNode('recLog',500,240,{});
+lg.size.w=560; lg.size.h=320; applySize(lg);
+const tk=addNode('ticker',500,590,{});
+tk.size.w=560; tk.size.h=80; applySize(tk);
+addEdge(fc.id,'rec',lg.id,'rec'); addEdge(fc.id,'text',tk.id,'text');
 markWiresDirty();
 });
 preset('Network: Telnet Terminal and a Mail Alert (Phone App)', function(){

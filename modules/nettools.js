@@ -97,32 +97,39 @@ async function netlistenStart(n){
       n.srv=await syslogListen(ns,port,r=>{ n.count++; nsvPush(n,{...r,id:undefined}); n.upText=r.msg||r.raw; n.last=(r.severity ? r.severity+' ' : '')+(r.host ? r.host+' ' : r.from+' ')+(r.app ? r.app+': ' : '')+(r.msg||r.raw); n.lines.push(n.last); if(n.lines.length>12) n.lines.shift(); n.pulse=2; });
       n.urls=ips.map(ip=>'udp://'+ip+':'+n.srv.port); n.status='receiving syslog on UDP '+n.srv.port;
     } else {
-      n.vfs=new VfsFiles(n.p.folder,new Map());
-      const t=new TftpServer(ns,n.vfs,{write:!!n.p.write,onLog:r=>{ n.count++; nsvPush(n,{src:'tftp',...r}); },onUpload:(path,bytes)=>{ n.upQ.push({path,name:vfsSplit(path)[1],bytes,mime:httpMime(path)}); }});
+      n.vfs=await nsvVfs(n,ns);                                              // папка в Files или чужая шара (поле source) — мост
+      const t=new TftpServer(ns,n.vfs,{write:!!n.p.write,maxWin:+n.p.window||64,maxBlk:+n.p.maxBlk||65464,timeout:+n.p.timeout||2000,maxBytes:(+n.p.maxMb||64)<<20,
+        onLog:r=>{ if(r.ev!=='notfound') n.count++; n.last=r.ev+' '+r.path+(r.bytes ? ' · '+fmSize(r.bytes) : '')+(r.msg ? ' · '+r.msg : ''); nsvPush(n,{src:'tftp',...r}); },
+        onUpload:(path,bytes)=>{ n.upQ.push({path,name:vfsSplit(path)[1],bytes,mime:httpMime(path)}); }});
       const port=await t.start(+n.p.port||6969); n.srv={port,close:()=>t.stop(),tftp:t};
-      n.urls=ips.map(ip=>'tftp://'+ip+':'+port); n.status='TFTP server on UDP '+port;
+      n.urls=ips.map(ip=>'tftp://'+ip+(port===69 ? '' : ':'+port)); n.status='TFTP server on UDP '+port;
     }
     n.running=true;
-  }catch(e){ n.status='error: '+(e.message||e); n.running=false; try{ await n.srv?.close(); }catch(x){} n.srv=null; }
+  }catch(e){ n.status='error: '+(e.message||e); n.running=false; try{ await n.srv?.close(); }catch(x){} n.srv=null; await nsvVfsClose(n); }
   n.starting=false;
 }
-async function netlistenStop(n){ n.running=false; n.urls=null; try{ await n.srv?.close(); }catch(e){} n.srv=null; n.status='stopped'; }
-def({ id:'netlisten', title:'Syslog / TFTP Server (DSP app)', cat:'Sources', kw:'syslog receiver collector logs tftp server firmware router camera upload phone lan udp',
+async function netlistenStop(n){ n.running=false; n.urls=null; try{ await n.srv?.close(); }catch(e){} n.srv=null; await nsvVfsClose(n); n.status='stopped'; }
+def({ id:'netlisten', title:'Syslog / TFTP Server (DSP app)', cat:'Sources', kw:'syslog receiver collector logs tftp server firmware router camera upload phone lan udp netboot pxe ipxe network boot image u-boot bridge',
   ins:[{n:'start',t:'num'}], outs:NSV_SRV_OUTS, readout:true, tall:true,
   params:[
     {n:'url',t:'text',d:NSV_URL,label:'bridge of the DSP app'},
     {n:'mode',t:'select',opts:NLISTEN_MODES,d:NLISTEN_MODES[0],label:'what to run'},
-    {n:'port',t:'range',min:1024,max:65535,step:1,d:5514,label:'UDP port (below 1024 an app cannot listen: syslog 514 → 5514, tftp 69 → 6969; point the device at that port)'},
-    {n:'folder',t:'text',d:'Share',label:'tftp: folder in Files (empty — the whole Files)'},
+    {n:'port',t:'range',min:1,max:65535,step:1,d:5514,label:'UDP port. The Android app cannot take ports below 1024 (syslog 514 → 5514, tftp 69 → 6969: point the device at that port). Network boot (PXE, U-Boot, routers) asks for port 69 only: use a bridge with the right to listen on it (Node bridge as root, Termux with root) or redirect 69 → 6969 on the host'},
+    {n:'folder',t:'text',d:'Share',label:'tftp: folder in Files with the images (empty — the whole Files)'},
+    {n:'source',t:'text',d:'',label:'tftp: instead of the folder — another share to serve (a bridge): smb://user:pass@host/SHARE/boot · ftp://user:pass@host/dir · http://host/dir · files://Share/dir'},
     {n:'write',t:'check',d:false,label:'tftp: allow clients to upload files'},
+    {n:'window',t:'range',min:1,max:64,step:1,d:64,label:'tftp: largest «windowsize» the server agrees to (blocks sent before waiting for an ACK; iPXE / U-Boot ask for it and boot several times faster; 1 — classic lock-step)',adv:true},
+    {n:'maxBlk',t:'range',min:512,max:65464,step:8,d:65464,label:'tftp: largest «blksize» (1468 — safe for a path with a 1500 MTU; clients ask for 1456 or less themselves)',adv:true},
+    {n:'timeout',t:'range',min:200,max:10000,step:100,d:2000,label:'tftp: resend a block after this much silence, ms',adv:true},
+    {n:'maxMb',t:'range',min:1,max:512,step:1,d:64,label:'tftp: largest uploaded file, MB',adv:true},
     {n:'startBtn',t:'button',label:'Start',fn:n=>netlistenStart(n)},
     {n:'stopBtn',t:'button',label:'Stop',fn:n=>netlistenStop(n)}],
-  init:n=>{ n.nsP=null; n.ns=null; n.ws=null; n.srv=null; n.vfs=null; n.running=false; n.starting=false; n.status='stopped'; n.urls=null; n.warn='';
-            n.recQ=[]; n.upQ=[]; n.count=0; n.pulse=0; n.lastUp=null; n.upText=null; n.upName=''; n.prevStart=0; n.lines=[]; n.last=''; },
+  init:n=>{ n.nsP=null; n.ns=null; n.ws=null; n.srv=null; n.vfs=null; n.remote=null; n.bridge=''; n.running=false; n.starting=false; n.status='stopped'; n.urls=null; n.warn='';
+            n.recQ=[]; n.upQ=[]; n.mem=new Map(); n.count=0; n.pulse=0; n.lastUp=null; n.upText=null; n.upName=''; n.prevStart=0; n.lines=[]; n.last=''; },
   dispose:n=>{ netlistenStop(n); nsvDrop(n); },
   process(n,I){
     const st=(I.start||0)>.5; if(st && !n.prevStart) netlistenStart(n); n.prevStart=st;
-    n.stat=n.srv?.tftp ? 'reads '+n.srv.tftp.stats.reads+' · writes '+n.srv.tftp.stats.writes : n.lines.join('\n');
+    n.stat=n.srv?.tftp ? 'reads '+n.srv.tftp.stats.reads+' ('+fmSize(n.srv.tftp.stats.tx)+') · writes '+n.srv.tftp.stats.writes+' · active '+n.srv.tftp.active+(n.last ? '\n'+n.last : '') : n.lines.join('\n');
     return nsvServerOutputs(n); },
   draw:nsvDrawSrv });
 
