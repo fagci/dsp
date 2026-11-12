@@ -24,7 +24,7 @@ A browser-based modular DSP lab: build signal chains by wiring nodes on a canvas
 - **Out to the world** — serial (incl. Android OTG, and a port on a router / another PC through the Node bridge), Bluetooth LE, MQTT, messengers (Nostr, Matrix, Telegram, e-mail, IRC… with one address book of people and addresses kept in Tables), network text and bytes, WebRTC between browsers, firmware flashers: [Protocols](help/protocols.md)
 - **Agents** — the Agent node lets a language model (an Ollama server or the model on the phone) act through any pin: you list what it may read, set and do in a few lines — every line makes a pin on the node, wired to anything (an oscillator, a ticker, a phone action, MQTT…); an action can return the answer of the graph, and by default asks your approval first; with a step limit, loop guard and clamped values: [Agent](help/sources.md)
 - **Online data without keys** — weather and elevation (Open-Meteo), aircraft around a point (adsb.lol / OpenSky) next to your own ADS-B, OpenStreetMap objects (masts, towers, peaks) by tag, and a chat with a local model through Ollama that takes any text of the graph as context; the last answer is kept for offline and marked stale: [Sources](help/sources.md)
-- Around it all: dashboards and tiles, undo, patches saved and shared by link, 160+ presets, installable offline app. **The full story — [the manual](help/README.md).**
+- Around it all: a power profiler (the ⚡ button: bars of processing / drawing per module, a one-minute graph, peaks, heat outlines on the canvas), dashboards and tiles, undo, patches saved and shared by link, 160+ presets, installable offline app. **The full story — [the manual](help/README.md).**
 
 ## Manual
 

@@ -1225,10 +1225,26 @@ select.aed-b{padding:0 6px}
 .rds-ui[data-h=s] .rds-rt{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #power.on{color:var(--acc)}
 #powerPanel{position:fixed;right:8px;bottom:8px;z-index:60;width:230px;padding:8px;background:var(--panel,#1b1d22);border:1px solid var(--line,#333);border-radius:6px;font-size:11px;color:var(--dim)}
-#powerPanel .pp-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;color:var(--text,#ddd)}
-#powerPanel .pp-r{display:flex;justify-content:space-between;gap:8px;padding:1px 0;cursor:pointer}
-#powerPanel .pp-r.off{opacity:.45;text-decoration:line-through}
+#powerPanel .pp-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;color:var(--txt)}
+#powerPanel .pp-r{position:relative;display:flex;align-items:center;gap:6px;padding:2px 0;cursor:pointer;min-height:18px}
+#powerPanel .pp-r.off{opacity:.45}
+#powerPanel .pp-r.off .pp-n{text-decoration:line-through}
+#powerPanel .pp-r:hover{background:#ffffff0d}
+#powerPanel .pp-b{position:absolute;left:0;top:1px;bottom:1px;right:0;display:flex;pointer-events:none;opacity:.55}
+#powerPanel .pp-pc,#powerPanel .pp-dc{display:inline-block;height:100%}
+#powerPanel .pp-pc{background:var(--acc,#4da3ff)} #powerPanel .pp-dc{background:#e8a33d}
+#powerPanel i.pp-pc,#powerPanel i.pp-dc{width:8px;height:8px;margin:0 3px 0 6px;vertical-align:-1px}
+#powerPanel .pp-n{position:relative;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt);padding-left:3px}
+#powerPanel .pp-v{position:relative;font-variant-numeric:tabular-nums;color:var(--txt)}
+#powerPanel .pp-z{position:relative;border:0;background:none;color:var(--dim);cursor:pointer;padding:0 2px;font-size:11px;opacity:.6} #powerPanel .pp-z:hover{opacity:1}
+#powerPanel #ppSpark{display:block;width:100%;height:34px;margin:4px 0}
+#powerPanel .pp-s{display:flex;align-items:center;gap:4px;margin:2px 0 4px} #powerPanel .pp-s label{margin-left:auto}
+#powerPanel .pp-s button{border:1px solid var(--line,#333);background:none;color:var(--dim);border-radius:4px;padding:1px 7px;font-size:11px;cursor:pointer}
+#powerPanel .pp-s button.on{color:var(--acc);border-color:var(--acc)}
 #powerPanel .pp-f{margin-top:4px;opacity:.7}
+.node.pheat1{outline:1px solid #e8a33d66;outline-offset:1px} .node.pheat2{outline:2px solid #e8a33d;outline-offset:1px} .node.pheat3{outline:2px solid #ee5555;outline-offset:1px;box-shadow:0 0 10px #ee555588}
+.node.pflash{animation:pflash 1.6s ease-out}
+@keyframes pflash{0%,40%{outline:3px solid var(--acc,#4da3ff);outline-offset:3px}100%{outline-color:transparent}}
 .pbadge{position:absolute;right:4px;top:-14px;font-size:10px;color:var(--acc);pointer-events:none}
 .pbadge:empty{display:none}
 .ng{display:flex;flex-direction:column;gap:6px;width:100%;min-height:0}

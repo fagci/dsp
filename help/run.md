@@ -16,8 +16,9 @@
 
 Changing the block size restarts the engine; inputs (microphone, SDR) have to be switched on again.
 
-## Power profile
-The ⚡ button shows how much CPU every module takes and how fast the battery drains. Click a row to freeze a module.
-
 ## Errors
 A red badge in the toolbar appears when something fails in the session; click it to see the list and to send a report.
+
+## Power profile (the ⚡ button)
+
+Shows what eats the processor: the total (processing + drawing, % of one core), a graph of the last minute and the top modules. A row is a bar split into **processing** and **drawing**; **now / peak** switches the sort between the current load and the maximum since the panel was opened. A click on a row centres the canvas on that module and makes it flash; **❄** freezes / resumes the module. With **heat** on, busy modules are outlined on the canvas (amber from 4 %, thick from 15 %, red from 40 % of a core), so a heavy node can be found without opening the list. The battery drain is shown too. **skip unused** does not compute modules whose result nobody uses. Kernel: `modules/power-kernels.js`, `node tools/test-power.mjs`.

@@ -1,0 +1,26 @@
+// modules/power-kernels.js: подсветка, кольцо истории, ранжирование, спарклайн (без DOM)
+import fs from 'fs';
+import vm from 'vm';
+const g={module:{exports:{}}}; vm.createContext(g);
+vm.runInContext(fs.readFileSync(new URL('../modules/power-kernels.js',import.meta.url),'utf8'),g);
+const K=g.module.exports; let bad=0;
+const check=(n,ok)=>{ console.log((ok?'ok   ':'FAIL ')+n); if(!ok) bad++; };
+check('heat: пороги',K.pwrHeat(0)===0 && K.pwrHeat(3.9)===0 && K.pwrHeat(4)===1 && K.pwrHeat(15)===2 && K.pwrHeat(80)===3);
+const h=[]; for(let i=0;i<70;i++) K.pwrPush(h,i,60);
+check('кольцо держит последние 60',h.length===60 && h[0]===10 && h[59]===69);
+const rows=[{key:'a',name:'A',p:5,d:1},{key:'b',name:'B',p:20,d:10},{key:'c',name:'C',p:.01,d:0}];
+const r=K.pwrRank(rows,{});
+check('ранг: по убыванию, тихие отсеяны',r.rows.map(x=>x.key).join()==='b,a');
+check('ранг: доли от общей суммы',Math.abs(r.sum-36.01)<1e-9 && Math.abs(r.rows[0].share-30/36.01)<1e-9);
+check('heat в строке',r.rows[0].heat===2 && r.rows[1].heat===1);
+const peak=K.pwrPeak({},rows); K.pwrPeak(peak,[{key:'a',p:50,d:0}]); K.pwrPeak(peak,[{key:'a',p:1,d:0}]);
+check('пик не падает',peak.a===50 && peak.b===30);
+const rp=K.pwrRank([{key:'a',name:'A',p:0,d:0},{key:'b',name:'B',p:1,d:0}],{by:'peak',peak:{a:50,b:2}});
+check('сортировка по пику, узел с нулём сейчас остаётся',rp.rows[0].key==='a' && rp.rows.length===2);
+check('top ограничивает',K.pwrRank(Array.from({length:30},(_,i)=>({key:'k'+i,name:'n',p:i+1,d:0})),{top:5}).rows.length===5);
+const sp=K.pwrSpark([0,5,10],100,20,10);
+check('спарклайн: x от 0 до w-1, большее значение выше',sp[0][0]===0 && sp[2][0]===99 && sp[2][1]<sp[1][1] && sp[1][1]<sp[0][1]);
+check('спарклайн: пустой и из одной точки',K.pwrSpark([],10,10).length===0 && K.pwrSpark([3],10,10)[0][0]===9);
+const b=K.pwrBar({p:30,d:80},100);
+check('полоса: сумма не выше 1',b.p===.3 && Math.abs(b.d-.7)<1e-9);
+console.log(bad?'FAILED':'all ok'); process.exit(bad?1:0);
