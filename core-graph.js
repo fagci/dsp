@@ -1495,7 +1495,7 @@ else connect(n.id,port,pending.n.id,pending.port);
 stat.textContent='connection created'; }
 clearPending(); return; }
 const el=nodePorts(n)[dir][port]; el.classList.add('lit'); buzz(8);
-link={n,port,dir,el,x0:ev.clientX,y0:ev.clientY};
+link={n,port,dir,el,x0:ev.clientX,y0:ev.clientY}; linkMarkOn(n,port,dir);
 const t=document.createElementNS('http://www.w3.org/2000/svg','path');
 t.setAttribute('fill','none'); t.setAttribute('stroke','var(--acc)');
 t.setAttribute('vector-effect','non-scaling-stroke');
@@ -1509,7 +1509,47 @@ const at=toCanvas(ev);
 openModPicker(ev.clientX,ev.clientY,{x:at.x+(dir==='o'?70:0),y:at.y},{n,port,dir,type:t});
 }
 let pending=null;
-function clearPending(){ if(pending){ pending.el.classList.remove('lit'); pending=null; } }
+// ---- подсветка совместимых пинов на время протяжки провода / выбранного пина (lk-ok — подходит, lk-no — нет, lk-tgt — строка-параметр с гнездом) ----
+const linkCompatT=(ft,tt)=> ft===tt || ft==='val' || tt==='val' || (ft==='iq' && tt==='sig') || (ft==='sig' && tt==='iq');
+function linkMarkOn(n,port,dir){
+const t=portT(n,dir==='o'?'outs':'ins',port); if(!t) return;
+content.classList.add('linking');
+for(const m of Graph.nodes){ if(!m.ports) continue;
+for(const d of ['i','o']) for(const [name,el] of Object.entries(m.ports[d]||{})){
+const ok= m!==n && d!==dir && (()=>{ const pt=portT(m,d==='i'?'ins':'outs',name); return pt && (dir==='o' ? linkCompatT(t,pt) : linkCompatT(pt,t)); })();
+el.classList.toggle('lk-ok',!!ok); el.classList.toggle('lk-no',!ok); } }
+for(const row of content.querySelectorAll('.prm[data-param],.slidernum[data-param]')){      // параметр, у которого есть пин-гнездо, — мишень
+const m=Graph.map[row.dataset.node], pe=m && m.ports?.[dir==='o'?'i':'o']?.[row.dataset.param];
+row.classList.toggle('lk-tgt',!!(pe && pe.classList.contains('lk-ok'))); }
+markWiresDirty();
+}
+function linkMarkOff(){
+if(!content.classList.contains('linking')) return;
+content.classList.remove('linking');
+for(const e of content.querySelectorAll('.lk-ok,.lk-no,.lk-tgt')) e.classList.remove('lk-ok','lk-no','lk-tgt');
+markWiresDirty();
+}
+function linkSync(){ if(!link && !pending){ linkMarkOff(); linkBarHide(); } }
+// пилюля «выбран пин — тапните второй» с кнопкой отмены: на тач-экране строка статуса (20px) слишком мала
+let linkBarEl=null;
+function linkBarShow(text){
+if(!linkBarEl){ linkBarEl=document.createElement('div'); linkBarEl.id='linkBar';
+linkBarEl.innerHTML='<span></span><button type="button">Cancel</button>';
+linkBarEl.querySelector('button').addEventListener('click',()=>{ clearPending(); });
+linkBarEl.addEventListener('pointerdown',e=>e.stopPropagation());
+document.body.append(linkBarEl); }
+linkBarEl.firstChild.textContent=text; linkBarEl.hidden=false;
+}
+function linkBarHide(){ if(linkBarEl) linkBarEl.hidden=true; }
+// ближайший подходящий пин к точке касания (палец закрывает цель и не попадает в 17px): радиус на тач-экране больше
+function linkNearest(x,y){
+const R=isCoarse?36:18; let best=null, bd=R;
+for(const el of content.querySelectorAll('.port.lk-ok')){ const pin=el.firstElementChild; if(!pin) continue;
+const r=pin.getBoundingClientRect(); if(!r.width) continue;
+const d=Math.hypot(x-(r.left+r.right)/2,y-(r.top+r.bottom)/2); if(d<bd){ bd=d; best=el; } }
+return best;
+}
+function clearPending(){ if(pending){ pending.el.classList.remove('lit'); pending=null; } linkSync(); }
 function bindPendingComplete(el,n,param){            // второй тап (клик-клик, без удержания) — довязать провод прямо
 el.addEventListener('pointerdown',ev=>{              // на контрол; ловим в capture — раньше, чем свой драг поля у box
 if(!pending) return;
@@ -1524,7 +1564,7 @@ clearPending();
 }
 function cancelLink(){ if(!link) return;
 if(link.el!==(pending &&pending.el)) link.el.classList.remove('lit');
-link.tmp.remove(); link=null; }
+link.tmp.remove(); link=null; linkSync(); }
 function controlPortEl(el){                          // бросили провод не на пин, а прямо на контрол — свой ли это узел
 if(!el) return null;
 const nodeId=el.dataset.node, param=el.dataset.param; if(!nodeId||!param) return null;
@@ -1543,6 +1583,7 @@ if(!el || el.dataset.dir===link.dir){
 const alt=controlPortEl(hit?.closest?.('.prm[data-param],.slidernum[data-param]'));
 if(alt) el=alt;
 }
+if(!el || !el.classList.contains('lk-ok')){ const mg=linkNearest(ev.clientX,ev.clientY); if(mg) el=mg; }   // примагничивание к ближайшему подходящему
 if(el  && el.dataset.dir  && el.dataset.dir!==link.dir){
 if(link.dir==='o') connect(link.n.id,link.port,el.dataset.node,el.dataset.port);
 else connect(el.dataset.node,el.dataset.port,link.n.id,link.port);
@@ -1552,6 +1593,7 @@ clearPending();
 pending={n:link.n,port:link.port,dir:link.dir,el:link.el};
 link.el.classList.add('lit');
 stat.textContent='port selected: '+link.port+' — tap the second one, or an empty spot to pick a module';
+linkBarShow('Pin «'+link.port+'» — tap the second pin, or empty space for a module');
 } else if(moved>=8 && (hit===cv || hit===content)){   // провод отпущен на пустом месте — модули, подходящие этому порту
 const t=portT(link.n,link.dir==='o'?'outs':'ins',link.port);
 if(t) openModPicker(ev.clientX,ev.clientY,toCanvas(ev),{n:link.n,port:link.port,dir:link.dir,type:t});
@@ -1561,6 +1603,10 @@ cancelLink();
 cv.addEventListener('pointerdown',ev=>{
 if(uiLocked()) return;
 if(ev.target===cv||ev.target===content){
+if(pending){ const mg=linkNearest(ev.clientX,ev.clientY);        // тап рядом с подходящим пином — это попадание в него
+if(mg){ const pn=pending; ev.stopPropagation(); ev.preventDefault();
+if(pn.dir==='o') connect(pn.n.id,pn.port,mg.dataset.node,mg.dataset.port); else connect(mg.dataset.node,mg.dataset.port,pn.n.id,pn.port);
+stat.textContent='connection created'; clearPending(); return; } }
 if(!ev.shiftKey &&Sel.size){ Sel.clear(); syncSel(); }
 tapFrom=pending ? {n:pending.n,port:pending.port,dir:pending.dir,x:ev.clientX,y:ev.clientY,t:ev.timeStamp} : null;
 clearPending(); }

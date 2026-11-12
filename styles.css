@@ -389,6 +389,18 @@ body.noedit #bar .ed{display:none}
 .port:not(.wired) .pin{opacity:.7}
 .port.lit .pin,.port:hover .pin{opacity:1}
 .port.hot .pin{box-shadow:0 0 0 3px var(--acc)}
+/* режим связывания: подходящие пины ярче и крупнее, остальные притушены, скрытые лишние подходящие раскрыты, параметры-мишени обведены */
+#content.linking .port.lk-no .pin{opacity:.18}
+#content.linking .port.lk-ok .pin{opacity:1;box-shadow:0 0 0 2px var(--acc);filter:brightness(1.15)}
+#content.linking .col.collapsed:not(.open) .port.extra.lk-ok{display:block}
+#content.linking .prm.lk-tgt:not(.wide),#content.linking .prmrows>.prm.lk-tgt,#content.linking .slidernum.lk-tgt{outline:1px dashed var(--acc);outline-offset:1px}
+@media (pointer:coarse){ #content.linking .port.lk-ok .pin{box-shadow:0 0 0 3px var(--acc)} }
+#linkBar{position:fixed;top:calc(8px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);z-index:95;display:flex;align-items:center;gap:10px;
+  max-width:92vw;padding:6px 8px 6px 12px;background:var(--panel2);color:var(--txt);border:1px solid var(--acc);border-radius:18px;font:12px var(--mono);box-shadow:0 2px 10px #0006}
+#linkBar[hidden]{display:none}
+#linkBar span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+#linkBar button{flex:none;background:var(--acc);color:#111;border:0;border-radius:12px;padding:5px 12px;font:inherit;cursor:pointer}
+@media (pointer:coarse){ #linkBar button{padding:9px 16px} }
 /* длинные колонки пинов: свёрнутые лишние (подключённые видны) и кнопка «+N» */
 .col.collapsed:not(.open) .port.extra:not(.wired){display:none}
 .pmore{position:relative;height:var(--pin);width:var(--pov);flex:none;pointer-events:auto;cursor:pointer}
