@@ -20,6 +20,9 @@ fun main() {
     ok("readPerms: Android 13+ separate, before — one", FsArgs.readPerms("images", 34, false) == listOf("android.permission.READ_MEDIA_IMAGES") && FsArgs.readPerms("video", 33, false) == listOf("android.permission.READ_MEDIA_VIDEO") &&
         FsArgs.readPerms("audio", 33, false) == listOf("android.permission.READ_MEDIA_AUDIO") && FsArgs.readPerms("images", 30, false) == listOf("android.permission.READ_EXTERNAL_STORAGE"))
     ok("readPerms: EXIF position asks for ACCESS_MEDIA_LOCATION on Android 10+", FsArgs.readPerms("images", 34, true).contains("android.permission.ACCESS_MEDIA_LOCATION") && !FsArgs.readPerms("images", 28, true).contains("android.permission.ACCESS_MEDIA_LOCATION"))
+    ok("segs: names kept as they are, traversal dropped", FsArgs.segs("Фото (1)/a b/../c [x].jpg") == listOf("Фото (1)", "a b", "c [x].jpg") && FsArgs.segs("/./..//") == emptyList<String>() && FsArgs.segs(null) == emptyList<String>())
+    ok("segs: control characters removed, depth capped", FsArgs.segs("a\u0000b/c\n") == listOf("ab", "c") && FsArgs.segs((1..40).joinToString("/")).size == 32)
+    ok("leaf: no slash, never empty", FsArgs.leaf("a/b") == "ab" && FsArgs.leaf("  ") == "file" && FsArgs.leaf(null) == "file" && FsArgs.leaf("новое имя (2).txt") == "новое имя (2).txt")
     ok("dataUri", FsArgs.dataUri("image/jpeg", "AAA") == "data:image/jpeg;base64,AAA")
     ok("file commands need the app page", BridgeServer.powerCmd("media.list") && BridgeServer.powerCmd("fs.read") && BridgeServer.powerCmd("fs.pick"))
     println(if (bad == 0) "all ok" else "$bad FAILED")

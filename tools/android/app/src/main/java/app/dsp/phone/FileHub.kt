@@ -26,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap
  * Галерея (MediaStore): media.list {kind, q, from, to, limit, exif, thumbs, thumbSize} / media.thumb {id, kind, size} / media.read {id, kind, offset, limit} /
  *   media.save {name, mime, kind, folder, data (base64) | text}. Читает системная галерея — отдельные разрешения Android 13+ (READ_MEDIA_*), раньше READ_EXTERNAL_STORAGE;
  *   положение снимка (EXIF) — ACCESS_MEDIA_LOCATION. Сохранение в Pictures / Movies / Music / Download (подпапка DSP) — Android 10+, без разрешений.
- * Папки (SAF): fs.pick — системный выбор папки, доступ запоминается; fs.grants / fs.list / fs.read / fs.write / fs.mkdir / fs.delete / fs.revoke по grant и пути внутри папки.
+ * Папки (SAF): fs.pick — системный выбор папки, доступ запоминается; fs.grants / fs.list (offset, limit — страницами) / fs.read / fs.write / fs.mkdir / fs.rename / fs.delete / fs.revoke по grant и пути внутри папки (имена как есть — FsArgs.segs). Страница монтирует такую папку в Files (modules/mount.js).
  */
 class FileHub(private val ctx: Context, private val needs: Needs) {
     private val sp = ctx.getSharedPreferences("fs-grants", Context.MODE_PRIVATE)
@@ -214,12 +214,12 @@ class FileHub(private val ctx: Context, private val needs: Needs) {
             }
             else -> {
                 val tree = treeOf(j.optString("grant")) ?: return Reply.done(c, id, cmd, "grant: an id from fs.pick / fs.grants", "args")
-                val segs = FsArgs.safeSegments(j.optString("path"))
+                val segs = FsArgs.segs(j.optString("path"))
                 when (cmd) {
                     "fs.list" -> {
                         val (pid, d) = if (segs.isEmpty()) DocumentsContract.getTreeDocumentId(tree) to null else walk(tree, segs, false)
                         if (segs.isNotEmpty() && (d == null || !d.dir)) return Reply.done(c, id, cmd, "no such folder", "state")
-                        val rows = children(tree, pid).take(Cmd.limit(j.optInt("limit"), 200, 1000)).map { Json.obj("src" to "\"fs\"", "kind" to Json.str(if (it.dir) "dir" else "file"), "name" to Json.str(it.name), "mime" to Json.str(it.mime), "size" to it.size.toString(), "t" to it.t.toString(), "path" to Json.str((segs + it.name).joinToString("/"))) }
+                        val rows = children(tree, pid).drop(j.optInt("offset").coerceAtLeast(0)).take(Cmd.limit(j.optInt("limit"), 200, 1000)).map { Json.obj("src" to "\"fs\"", "kind" to Json.str(if (it.dir) "dir" else "file"), "name" to Json.str(it.name), "mime" to Json.str(it.mime), "size" to it.size.toString(), "t" to it.t.toString(), "path" to Json.str((segs + it.name).joinToString("/"))) }
                         for (chunk in rows.chunked(50)) c.send(Json.rows(chunk))
                         Reply.done(c, id, cmd, null, extra = arrayOf("n" to rows.size.toString()))
                     }
@@ -245,6 +245,12 @@ class FileHub(private val ctx: Context, private val needs: Needs) {
                         if (children(tree, parent).any { it.name == segs.last() }) return Reply.done(c, id, cmd, null)
                         DocumentsContract.createDocument(ctx.contentResolver, DocumentsContract.buildDocumentUriUsingTree(tree, parent), DocumentsContract.Document.MIME_TYPE_DIR, segs.last()) ?: return Reply.done(c, id, cmd, "cannot create the folder", "state")
                         Reply.done(c, id, cmd, null)
+                    }
+                    "fs.rename" -> {
+                        val d = walk(tree, segs, false).second ?: return Reply.done(c, id, cmd, "no such file", "state")
+                        val nn = FsArgs.leaf(j.optString("name"))
+                        DocumentsContract.renameDocument(ctx.contentResolver, d.uri, nn) ?: return Reply.done(c, id, cmd, "cannot rename", "error")
+                        Reply.done(c, id, cmd, null, extra = arrayOf("name" to Json.str(nn)))
                     }
                     "fs.delete" -> {
                         val d = walk(tree, segs, false).second ?: return Reply.done(c, id, cmd, "no such file", "state")
