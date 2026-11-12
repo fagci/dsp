@@ -93,6 +93,28 @@ class VfsFiles{
   }
 }
 
+/* ---------- источник файлов сервера: папка в Files или чужая шара (мост) ---------- */
+// Поле source пусто — папка из поля folder. Иначе адрес ftp:// smb:// tftp:// http(s):// (или files://папка): сервер отдаёт и принимает файлы с чужой шары.
+// FTP-сервер над SMB-папкой, TFTP-сервер над FTP камеры, HTTP над NAS — одно и то же устройство, три протокола.
+async function nsvVfs(n,ns){
+  await nsvVfsClose(n);
+  const src=String(n.p.source||'').trim();
+  if(!src) return new VfsFiles(n.p.folder,n.mem);
+  const v=rfsOpen(ns,src,{local:p=>new VfsFiles(p,n.mem),onState:s=>{ n.bridge=s; }});
+  n.remote=v.close ? v : null;
+  const sc=rfsParseUrl(src).scheme;
+  if(n.remote && (sc==='ftp' || sc==='smb')) await v.list('/');             // ошибка входа видна сразу при Start, а не на первом запросе
+  return v;
+}
+async function nsvVfsClose(n){ const r=n.remote; n.remote=null; n.bridge=''; if(r) await r.close().catch(()=>{}); }
+// файл с входа bin: в корень папки сервера (в памяти) или записью на чужую шару
+function nsvPublish(n,b,src){
+  const nm=String(b.name||('file-'+b.id)).replace(/[\\/]/g,'_');
+  if(n.remote){ n.remote.write('/'+nm,b.d).catch(e=>{ n.status='error: '+(e.message||e); }); }
+  else { n.mem.set(nm,{d:b.d,mime:b.mime||httpMime(nm),t:Date.now()}); if(n.mem.size>50) n.mem.delete(n.mem.keys().next().value); }
+  nsvPush(n,{src,ev:'publish',name:nm,bytes:b.d.length});
+}
+
 const nsvBin=(d,name,mime)=>({d,name:name||'',mime:mime||'',id:++BIN_SEQ});
 const nsvStr=b=>{ try{ return new TextDecoder('utf-8',{fatal:false}).decode(b); }catch(e){ return ''; } };
 const nsvUrls=(info,scheme,port)=>{ const ips=(info && info.ips && info.ips.length) ? info.ips : ['127.0.0.1']; return ips.map(ip=>scheme+'://'+ip+':'+port); };
@@ -101,6 +123,7 @@ function nsvDrawSrv(n){
   const r=n.el.querySelector('.readout'); if(!r) return;
   let t=(n.warn&&!n.running ? '⚠ '+n.warn+'\n' : '')+n.status;
   if(n.urls) t+='\n'+n.urls.join('\n');
+  if(n.bridge) t+='\n⇄ '+n.bridge;
   if(n.stat) t+='\n'+n.stat;
   if(r.textContent!==t) r.textContent=t;
 }
@@ -120,7 +143,7 @@ async function httpsrvStart(n){
   try{
     const ns=await nsvLink(n);
     const info=await ns.call('net.info').catch(()=>null);
-    n.vfs=new VfsFiles(n.p.folder,n.mem);
+    n.vfs=await nsvVfs(n,ns);
     const files=httpFileHandler(n.vfs,{write:!!n.p.write,index:String(n.p.index||'').trim()||null,
       onUpload:(path,bytes,mime)=>{ n.upQ.push({path,name:vfsSplit(path)[1],bytes,mime}); nsvPush(n,{src:'http',ev:'upload',path,bytes:bytes.length,mime}); }});
     const graphH=req=>new Promise(res=>{
@@ -137,13 +160,13 @@ async function httpsrvStart(n){
     n.srv.onLog=r=>{ if(mode!=='graph' || r.status!==504) nsvPush(n,{src:'http',ev:'response',...r}); if(mode==='files') n.count++; };
     const port=await n.srv.start(+n.p.port||8080,!!n.p.lan);
     n.running=true; n.urls=nsvUrls(info,'http',port); n.status='listening on port '+port;
-  }catch(e){ n.status='error: '+(e.message||e); n.running=false; try{ await n.srv?.stop(); }catch(x){} n.srv=null; }
+  }catch(e){ n.status='error: '+(e.message||e); n.running=false; try{ await n.srv?.stop(); }catch(x){} n.srv=null; await nsvVfsClose(n); }
   n.starting=false;
 }
 async function httpsrvStop(n){
   n.running=false; n.urls=null;
   for(const q of n.pend.values()){ clearTimeout(q.timer); q.res({status:503,text:'stopped'}); } n.pend.clear();
-  try{ await n.srv?.stop(); }catch(e){} n.srv=null; n.status='stopped';
+  try{ await n.srv?.stop(); }catch(e){} n.srv=null; await nsvVfsClose(n); n.status='stopped';
 }
 def({ id:'httpsrv', title:'HTTP Server (DSP app)', cat:'Sources', kw:'http web server share files folder upload download api rest webhook phone lan hotspot browser',
   ins:[{n:'bin',t:'bin'},{n:'reply',t:'rec'},{n:'text',t:'txt'},{n:'start',t:'num'}], outs:NSV_SRV_OUTS, readout:true, tall:true,
@@ -153,6 +176,7 @@ def({ id:'httpsrv', title:'HTTP Server (DSP app)', cat:'Sources', kw:'http web s
     {n:'lan',t:'check',d:true,label:'reachable from other devices on the network (off — only this phone)'},
     {n:'mode',t:'select',opts:['files','graph','files, then graph'],d:'files',label:'who answers: the folder, the graph (requests go to «rec», answers come to «reply»), or the folder first'},
     {n:'folder',t:'text',d:'Share',label:'folder in Files (empty — the whole Files; a/b — nested; created when missing)'},
+    {n:'source',t:'text',d:'',label:'source — instead of the folder: another share to serve (a bridge): ftp://user:pass@host/dir · smb://user:pass@host/SHARE/dir · tftp://host/ · http://host/ · files://Share/dir'},
     {n:'write',t:'check',d:false,label:'allow upload (PUT / POST / form on the page) and delete'},
     {n:'index',t:'text',d:'',label:'file shown at / instead of the list (e.g. index.html)',adv:true},
     {n:'user',t:'text',d:'',label:'login (empty — open)',adv:true},
@@ -164,15 +188,13 @@ def({ id:'httpsrv', title:'HTTP Server (DSP app)', cat:'Sources', kw:'http web s
     {n:'startBtn',t:'button',label:'Start',fn:n=>httpsrvStart(n)},
     {n:'stopBtn',t:'button',label:'Stop',fn:n=>httpsrvStop(n)}],
   init:n=>{ n.nsP=null; n.ns=null; n.ws=null; n.srv=null; n.vfs=null; n.running=false; n.starting=false; n.status='stopped'; n.urls=null; n.warn='';
-            n.recQ=[]; n.upQ=[]; n.mem=new Map(); n.pend=new Map(); n.rid=0; n.count=0; n.pulse=0; n.lastUp=null; n.upText=null; n.upName=''; n.prevStart=0; n.lastBin=null; n.autoDone=false; n.lastReply=null; n.lastText=null; },
+            n.remote=null; n.bridge=''; n.recQ=[]; n.upQ=[]; n.mem=new Map(); n.pend=new Map(); n.rid=0; n.count=0; n.pulse=0; n.lastUp=null; n.upText=null; n.upName=''; n.prevStart=0; n.lastBin=null; n.autoDone=false; n.lastReply=null; n.lastText=null; },
   dispose:n=>{ httpsrvStop(n); nsvDrop(n); },
   process(n,I){
     const st=(I.start||0)>.5; if(st && !n.prevStart) httpsrvStart(n); n.prevStart=st;
     if(n.p.auto && !n.autoDone){ n.autoDone=true; httpsrvStart(n); }
     if(I.bin && I.bin!==n.lastBin){                                  // поданный файл появляется в корне сервера
-      n.lastBin=I.bin; const b=I.bin, nm=String(b.name||('file-'+b.id)).replace(/[\\/]/g,'_');
-      n.mem.set(nm,{d:b.d,mime:b.mime||httpMime(nm),t:Date.now()}); if(n.mem.size>50) n.mem.delete(n.mem.keys().next().value);
-      nsvPush(n,{src:'http',ev:'publish',name:nm,bytes:b.d.length});
+      n.lastBin=I.bin; nsvPublish(n,I.bin,'http');
     }
     // ответы графа: rec {id?, status, text | json, type, headers}; без id — на самый старый ждущий запрос
     const rl=I.reply!==n.lastReply ? recList(I.reply) : []; n.lastReply=I.reply;
@@ -196,17 +218,17 @@ async function ftpsrvStart(n){
   try{
     const ns=await nsvLink(n);
     const info=await ns.call('net.info').catch(()=>null);
-    n.vfs=new VfsFiles(n.p.folder,n.mem);
+    n.vfs=await nsvVfs(n,ns);
     const host=(info && info.ips && info.ips[0]) || '127.0.0.1';
     n.srv=new FtpServer(ns,n.vfs,{user:String(n.p.user||''),pass:String(n.p.pass||''),write:!!n.p.write,host,pasvPort:(+n.p.port||2121)+1,
       onLog:r=>{ nsvPush(n,{src:'ftp',ev:r.ev,path:r.path,bytes:r.bytes,peer:r.peer}); n.count++; },
       onUpload:(path,bytes)=>{ n.upQ.push({path,name:vfsSplit(path)[1],bytes,mime:httpMime(path)}); }});
     const r=await n.srv.start(+n.p.port||2121,!!n.p.lan);
     n.running=true; n.urls=nsvUrls(info,'ftp',r.port).map(u=>u+(n.p.user ? '' : '')); n.status='listening on port '+r.port+' (data: '+r.dataPort+')';
-  }catch(e){ n.status='error: '+(e.message||e); n.running=false; try{ await n.srv?.stop(); }catch(x){} n.srv=null; }
+  }catch(e){ n.status='error: '+(e.message||e); n.running=false; try{ await n.srv?.stop(); }catch(x){} n.srv=null; await nsvVfsClose(n); }
   n.starting=false;
 }
-async function ftpsrvStop(n){ n.running=false; n.urls=null; try{ await n.srv?.stop(); }catch(e){} n.srv=null; n.status='stopped'; }
+async function ftpsrvStop(n){ n.running=false; n.urls=null; try{ await n.srv?.stop(); }catch(e){} n.srv=null; await nsvVfsClose(n); n.status='stopped'; }
 def({ id:'ftpsrv', title:'FTP Server (DSP app)', cat:'Sources', kw:'ftp server share files folder upload download phone lan hotspot transfer',
   ins:[{n:'bin',t:'bin'},{n:'start',t:'num'}], outs:NSV_SRV_OUTS, readout:true, tall:true,
   params:[
@@ -214,17 +236,18 @@ def({ id:'ftpsrv', title:'FTP Server (DSP app)', cat:'Sources', kw:'ftp server s
     {n:'port',t:'range',min:1024,max:65534,step:1,d:2121,label:'control port (the next one is for data; below 1024 an app cannot listen)'},
     {n:'lan',t:'check',d:true,label:'reachable from other devices on the network'},
     {n:'folder',t:'text',d:'Share',label:'folder in Files (empty — the whole Files)'},
+    {n:'source',t:'text',d:'',label:'source — instead of the folder: another share to serve (a bridge): ftp://user:pass@host/dir · smb://user:pass@host/SHARE/dir · tftp://host/ · http://host/ · files://Share/dir'},
     {n:'write',t:'check',d:false,label:'allow upload, delete, rename, new folders'},
     {n:'user',t:'text',d:'',label:'login (empty — anonymous)'},
     {n:'pass',t:'text',d:'',label:'password'},
     {n:'startBtn',t:'button',label:'Start',fn:n=>ftpsrvStart(n)},
     {n:'stopBtn',t:'button',label:'Stop',fn:n=>ftpsrvStop(n)}],
   init:n=>{ n.nsP=null; n.ns=null; n.ws=null; n.srv=null; n.vfs=null; n.running=false; n.starting=false; n.status='stopped'; n.urls=null; n.warn='';
-            n.recQ=[]; n.upQ=[]; n.mem=new Map(); n.count=0; n.pulse=0; n.lastUp=null; n.upText=null; n.upName=''; n.prevStart=0; n.lastBin=null; },
+            n.remote=null; n.bridge=''; n.recQ=[]; n.upQ=[]; n.mem=new Map(); n.count=0; n.pulse=0; n.lastUp=null; n.upText=null; n.upName=''; n.prevStart=0; n.lastBin=null; },
   dispose:n=>{ ftpsrvStop(n); nsvDrop(n); },
   process(n,I){
     const st=(I.start||0)>.5; if(st && !n.prevStart) ftpsrvStart(n); n.prevStart=st;
-    if(I.bin && I.bin!==n.lastBin){ n.lastBin=I.bin; const b=I.bin, nm=String(b.name||('file-'+b.id)).replace(/[\\/]/g,'_'); n.mem.set(nm,{d:b.d,mime:b.mime||httpMime(nm),t:Date.now()}); nsvPush(n,{src:'ftp',ev:'publish',name:nm,bytes:b.d.length}); }
+    if(I.bin && I.bin!==n.lastBin){ n.lastBin=I.bin; nsvPublish(n,I.bin,'ftp'); }
     n.stat=n.srv ? 'sessions '+n.srv.stats.sessions+' · files '+n.srv.stats.files+' · sent '+fmSize(n.srv.stats.tx)+' · received '+fmSize(n.srv.stats.rx) : '';
     return nsvServerOutputs(n); },
   draw:nsvDrawSrv });
@@ -236,7 +259,7 @@ async function nsvClientRun(n,job){                // одна операция 
   try{
     const ns=await nsvLink(n);
     const r=await job(ns);
-    n.ok=1; n.status=r?.status||'done';
+    n.ok=r?.ok!==undefined ? r.ok : 1; n.status=r?.status||'done';
     if(r?.bin) n.outBin=r.bin;
     if(r?.text!==undefined) n.outText=r.text;
     if(r?.rows) for(const row of r.rows) nsvPush(n,row);

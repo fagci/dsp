@@ -181,6 +181,7 @@ function httpFileHandler(vfs,opt={}){
     if(req.method==='GET' || req.method==='HEAD'){
       if(!st) return {status:404,text:'not found: '+p};
       if(st.dir){
+        if(!p.endsWith('/') && p!=='/' && req.query.json===undefined){ const q=req.target.indexOf('?'); return {status:301,headers:{location:encodeURI(p)+'/'+(q<0 ? '' : req.target.slice(q))},text:'moved to '+p+'/'}; }   // папка без «/» — на адрес со «/», как у Apache и nginx: клиенты узнают в ней папку
         if(opt.index){ const ix=(p==='/' ? '' : p.replace(/\/$/,''))+'/'+opt.index; if(await vfs.stat(ix)) return {body:await vfs.read(ix),headers:{'content-type':httpMime(opt.index)},range:true}; }
         const list=await vfs.list(p);
         if(req.query.json!==undefined) return {json:list.map(f=>({name:f.name,dir:f.dir,size:f.size,mtime:f.mtime}))};

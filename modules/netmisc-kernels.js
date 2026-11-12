@@ -104,22 +104,65 @@ async function tftpExchange(u,send,pkt,peer,onPkt,o){
     }
   }
 }
-// клиент читает файл
+// Блоки: общий цикл отправки / приёма для клиента и сервера. Опции — blksize, tsize, timeout, windowsize (RFC 2347…2349, 7440).
+// Номера блоков в счёте считаются сквозными, на проводе — по модулю 65536 (после 65535 идёт 0, как у iPXE и pxelinux).
+// Отправитель: total — число блоков (последний короче bs, пустой, если размер кратен bs); getBlock(i) → байты блока i (с 1).
+async function tftpSendLoop(u,send,peer,total,getBlock,win,o,onAck){
+  let base=1, retries=0;
+  while(base<=total){
+    const top=Math.min(total,base+win-1);
+    for(let b=base;b<=top;b++) await send(tftpData(b&65535,await getBlock(b)));
+    for(;;){
+      let d;
+      try{ d=await tftpRecv(u,o.timeout||2000,peer.s); }
+      catch(e){ if(e.message!=='timeout') throw e; if(++retries>(o.retries||4)) throw new Error('no answer from the other side'); break; }  // тишина → окно сначала
+      const p=tftpParse(d.bytes); if(!p) continue;
+      if(p.op===5) throw new Error(p.msg||TFTP_ERR[p.code]||('error '+p.code));
+      if(p.op!==4) continue;
+      const abs=(base-1)+(((p.blk-(base-1))%65536)+65536)%65536;       // 16 бит → сквозной номер в пределах окна
+      if(abs<base || abs>top) continue;                                // повтор старого ACK — игнорируем (без «ученика чародея»)
+      base=abs+1; retries=0; onAck?.(abs); break;
+    }
+  }
+}
+// Приёмник: first — уже принятый пакет данных (или null), lastPkt — что повторять при тишине (ACK/OACK); onBlock(bytes) — по порядку
+async function tftpRecvLoop(u,send,peer,lastPkt,bs,win,o,onBlock,first){
+  let expect=1, inWin=0, retries=0, pend=first||null;
+  for(;;){
+    let p;
+    if(pend){ p=pend; pend=null; }
+    else {
+      let d;
+      try{ d=await tftpRecv(u,o.timeout||2000,peer.s); }
+      catch(e){ if(e.message!=='timeout') throw e; if(++retries>(o.retries||4)) throw new Error('no answer from the other side'); await send(lastPkt); continue; }
+      p=tftpParse(d.bytes); if(!p) continue;
+    }
+    if(p.op===5) throw new Error(p.msg||TFTP_ERR[p.code]||('error '+p.code));
+    if(p.op!==3) continue;
+    retries=0;
+    if(p.blk!==(expect&65535)){ lastPkt=tftpAck((expect-1)&65535); await send(lastPkt); inWin=0; continue; }   // пропуск или повтор: просим продолжить с нужного
+    await onBlock(p.data); expect++; inWin++;
+    if(p.data.length<bs){ lastPkt=tftpAck(p.blk); await send(lastPkt); return; }
+    if(inWin>=win){ lastPkt=tftpAck(p.blk); await send(lastPkt); inWin=0; }
+  }
+}
+// клиент читает файл. o: blksize, windowsize, timeout, retries, onProgress(got,tsize)
 async function tftpGet(ns,host,port,file,o={}){
   const u=await ns.udpOpen(0,false);
   try{
-    let peer=null, bs=512, expect=1, got=0, tsize=0; const out=[];
+    let peer=null, bs=512, win=1, tsize=0, got=0; const out=[];
     const send=pkt=>peer ? u.send(peer.h,peer.p,pkt) : u.send(host,port,pkt);
-    let pkt=tftpReq(1,file,'octet',o.blksize ? {blksize:o.blksize,tsize:0} : {});
-    for(;;){
-      const {p,d}=await tftpExchange(u,send,pkt,peer,p=>(p.op===6 && expect===1 && !got) || (p.op===3 && (p.blk===(expect&65535) || p.blk===((expect-1)&65535))),o);
-      if(!peer) peer=tftpSplit(d.peer);
-      if(p.op===6){ bs=+p.opts.blksize||512; tsize=+p.opts.tsize||0; pkt=tftpAck(0); continue; }
-      if(p.blk!==(expect&65535)){ pkt=tftpAck(p.blk); continue; }              // повтор уже принятого блока
-      out.push(p.data); got+=p.data.length; o.onProgress?.(got,tsize);
-      pkt=tftpAck(p.blk); expect++;
-      if(p.data.length<bs){ await send(pkt); return nsCat(out); }
-    }
+    const opts={}; if(o.blksize) opts.blksize=o.blksize; if(o.windowsize>1) opts.windowsize=o.windowsize; if(Object.keys(opts).length) opts.tsize=0;
+    const req=tftpReq(1,file,'octet',opts);
+    const {p,d}=await tftpExchange(u,send,req,null,p=>p.op===6 || (p.op===3 && p.blk===1),o);
+    peer=tftpSplit(d.peer);
+    let lastPkt, first=null;
+    if(p.op===6){
+      bs=Math.max(8,+p.opts.blksize||512); tsize=+p.opts.tsize||0; win=Math.max(1,+p.opts.windowsize||1);
+      lastPkt=tftpAck(0); await send(lastPkt);
+    } else { first=p; lastPkt=req; }
+    await tftpRecvLoop(u,send,peer,lastPkt,bs,win,o,b=>{ out.push(b); got+=b.length; o.onProgress?.(got,tsize); },first);
+    return nsCat(out);
   } finally { await u.close(); }
 }
 // клиент пишет файл
@@ -127,57 +170,66 @@ async function tftpPut(ns,host,port,file,bytes,o={}){
   if(typeof bytes==='string') bytes=nsEnc(bytes);
   const u=await ns.udpOpen(0,false);
   try{
-    let peer=null, bs=512, blk=0;
+    let peer=null, bs=512, win=1;
     const send=pkt=>peer ? u.send(peer.h,peer.p,pkt) : u.send(host,port,pkt);
-    let pkt=tftpReq(2,file,'octet',o.blksize ? {blksize:o.blksize,tsize:bytes.length} : {});
-    for(;;){
-      const {p,d}=await tftpExchange(u,send,pkt,peer,p=>(p.op===6 && blk===0) || (p.op===4 && p.blk===(blk&65535)),o);
-      if(!peer) peer=tftpSplit(d.peer);
-      if(p.op===6) bs=+p.opts.blksize||512;
-      if(blk>0) o.onProgress?.(Math.min(bytes.length,blk*bs),bytes.length);
-      if(blk*bs>bytes.length) return bytes.length;                            // подтверждён последний (в том числе пустой) блок
-      blk++; pkt=tftpData(blk,bytes.subarray((blk-1)*bs,blk*bs));
-    }
+    const opts={}; if(o.blksize) opts.blksize=o.blksize; if(o.windowsize>1) opts.windowsize=o.windowsize; if(Object.keys(opts).length) opts.tsize=bytes.length;
+    const {p,d}=await tftpExchange(u,send,tftpReq(2,file,'octet',opts),null,p=>p.op===6 || (p.op===4 && p.blk===0),o);
+    peer=tftpSplit(d.peer);
+    if(p.op===6){ bs=Math.max(8,+p.opts.blksize||512); win=Math.max(1,+p.opts.windowsize||1); }
+    const total=Math.floor(bytes.length/bs)+1;
+    await tftpSendLoop(u,send,peer,total,i=>bytes.subarray((i-1)*bs,i*bs),win,o,abs=>o.onProgress?.(Math.min(bytes.length,abs*bs),bytes.length));
+    return bytes.length;
   } finally { await u.close(); }
 }
-// сервер: слушает port (от 1024), на каждый запрос — свой сокет (свой TID). vfs — как у FTP / HTTP; write — разрешить WRQ
+// сервер: слушает port, на каждый запрос — свой сокет (свой TID). vfs — как у FTP / HTTP; write — разрешить WRQ.
+// Для сетевой загрузки (PXE, iPXE, pxelinux, U-Boot, прошивки): путь с «\» и «//» приводится к «/…», файл читается кусками (образ в сотни МБ не лежит в памяти целиком),
+// опции blksize / tsize / windowsize / timeout принимаются, неизвестные молча отбрасываются. opt: maxBlk (по умолчанию 65464), maxWin (по умолчанию 64), maxBytes (запись)
 class TftpServer{
-  constructor(ns,vfs,opt={}){ this.ns=ns; this.vfs=vfs; this.opt=opt; this.u=null; this.on=false; this.stats={reads:0,writes:0,tx:0,rx:0}; }
+  constructor(ns,vfs,opt={}){ this.ns=ns; this.vfs=vfs; this.opt=opt; this.u=null; this.on=false; this.active=0; this.stats={reads:0,writes:0,tx:0,rx:0,errors:0}; }
   async start(port){ this.u=await this.ns.udpOpen(port,false); this.on=true; this._loop(); return this.u.port; }
   async stop(){ this.on=false; if(this.u) await this.u.close(); this.u=null; }
   async _loop(){
     while(this.on && this.u){
       let d; try{ d=await this.u.recv(0); }catch(e){ break; } if(!d) break;
       const p=tftpParse(d.bytes); if(!p || (p.op!==1 && p.op!==2)) continue;
-      this._xfer(p,d.peer).catch(()=>{});
+      this.active++; this._xfer(p,d.peer).catch(e=>{ this.stats.errors++; this.opt.onLog?.({ev:'error',path:p.file,bytes:0,peer:d.peer,msg:String(e&&e.message||e)}); }).finally(()=>{ this.active--; });
     }
   }
   async _xfer(p,peerStr){
     const peer=tftpSplit(peerStr), u=await this.ns.udpOpen(0,false), send=pkt=>u.send(peer.h,peer.p,pkt), o={timeout:this.opt.timeout,retries:this.opt.retries};
     try{
-      const path=vfsNorm('/'+p.file), st=await this.vfs.stat(path), oack={}; let bs=512;
-      if(p.opts.blksize){ bs=Math.max(8,Math.min(65464,+p.opts.blksize||512)); oack.blksize=bs; }
+      const path=vfsNorm('/'+String(p.file).replace(/\\/g,'/')), oack={}; let bs=512, win=1;
+      const st=await this.vfs.stat(path);
+      if(p.opts.blksize){ bs=Math.max(8,Math.min(this.opt.maxBlk||65464,+p.opts.blksize||512)); oack.blksize=bs; }
+      if(p.opts.timeout){ const t=Math.max(1,Math.min(255,+p.opts.timeout||0)); if(t){ oack.timeout=t; o.timeout=t*1000; } }
+      if(p.opts.windowsize){ win=Math.max(1,Math.min(this.opt.maxWin||64,+p.opts.windowsize||1)); oack.windowsize=win; }
       const log=(ev,n)=>this.opt.onLog?.({ev,path,bytes:n,peer:peerStr});
       if(p.op===1){
-        if(!st || st.dir){ await send(tftpErr(1)); return; }
-        const bytes=await this.vfs.read(path);
-        if(p.opts.tsize!==undefined) oack.tsize=bytes.length;
+        if(!st || st.dir){ await send(tftpErr(1)); this.opt.onLog?.({ev:'notfound',path,bytes:0,peer:peerStr}); return; }
+        const size=st.size!=null ? st.size : (await this.vfs.read(path)).length;
+        if(p.opts.tsize!==undefined) oack.tsize=size;
         if(Object.keys(oack).length) await tftpExchange(u,send,tftpOack(oack),peer,a=>a.op===4 && a.blk===0,o);
-        const total=Math.floor(bytes.length/bs)+1;
-        for(let blk=1;blk<=total;blk++) await tftpExchange(u,send,tftpData(blk,bytes.subarray((blk-1)*bs,blk*bs)),peer,a=>a.op===4 && a.blk===(blk&65535),o);
-        this.stats.reads++; this.stats.tx+=bytes.length; log('download',bytes.length);
+        const total=Math.floor(size/bs)+1, span=bs*Math.max(win,32);            // читаем из vfs кусками «span» байт, раздаём блоками
+        let cache={a:0,b:0,d:null};
+        const getBlock=async i=>{
+          const a=(i-1)*bs, e=Math.min(size,a+bs);
+          if(a>=size) return new Uint8Array(0);
+          if(!cache.d || a<cache.a || e>cache.b){ const from=a, to=Math.min(size,a+span); cache={a:from,b:to,d:await this.vfs.read(path,from,to)}; }
+          return cache.d.subarray(a-cache.a,e-cache.a);
+        };
+        let sent=0;
+        await tftpSendLoop(u,send,peer,total,getBlock,win,o,abs=>{ sent=Math.min(size,abs*bs); });
+        this.stats.reads++; this.stats.tx+=size; log('download',size);
       } else {
-        if(!this.opt.write){ await send(tftpErr(2,'read only')); return; }
+        if(!this.opt.write){ await send(tftpErr(2,'read only')); this.opt.onLog?.({ev:'denied',path,bytes:0,peer:peerStr}); return; }
         if(st && st.dir){ await send(tftpErr(2,'is a directory')); return; }
-        const chunks=[]; let expect=1, got=0;
-        let pkt=Object.keys(oack).length ? tftpOack(oack) : tftpAck(0);
-        for(;;){
-          const {p:a}=await tftpExchange(u,send,pkt,peer,a=>a.op===3 && (a.blk===(expect&65535) || a.blk===((expect-1)&65535)),o);
-          if(a.blk!==(expect&65535)){ pkt=tftpAck(a.blk); continue; }
-          chunks.push(a.data); got+=a.data.length; pkt=tftpAck(a.blk); expect++;
-          if(a.data.length<bs){ await send(pkt); break; }
-          if(got>(this.opt.maxBytes||(64<<20))){ await send(tftpErr(3)); return; }
-        }
+        const chunks=[]; let got=0;
+        const last=Object.keys(oack).length ? tftpOack(oack) : tftpAck(0);
+        await send(last);
+        let over=false;
+        try{
+          await tftpRecvLoop(u,send,peer,last,bs,win,o,b=>{ chunks.push(b); got+=b.length; if(got>(this.opt.maxBytes||(64<<20))){ over=true; throw new Error('too big'); } });
+        }catch(e){ if(over) await send(tftpErr(3)); throw e; }
         const all=nsCat(chunks); await this.vfs.write(path,all); this.stats.writes++; this.stats.rx+=all.length; log('upload',all.length); this.opt.onUpload?.(path,all);
       }
     } finally { await u.close(); }
