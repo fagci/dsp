@@ -768,7 +768,7 @@ const PRESET_CATS={
   'Phone App: Join a Wi-Fi Network from a Patch (Suggestion / Peer Link)':'Network & IoT',
   'Geofence: Enter / Exit Alerts on the Map':'Maps & Locating',
   'Follow Detector: Is the Same Device Following Me?':'Maps & Locating',
-  'Phone App: Top Suspicious Devices as a Graph for 5 min':'Maps & Locating',
+  'Phone App: Flipper, Tags and Smart Glasses Around Me':'Maps & Locating',
   'Phone sensors: Scan Wi-Fi / BLE / BT Only Away From Home':'Maps & Locating',
   'Cases: SDR Frequency and Torch by Place and Light':'Maps & Locating',
   'SMS PDU: Build and Parse (GSM 7-bit / UCS-2, Data SMS)':'Network & IoT',
@@ -2800,24 +2800,25 @@ addEdge(fl.id,'hit',ph.id,'go'); addEdge(fl.id,'hit',vb.id,'go'); addEdge(fl.id,
 addEdge(fl.id,'map',map.id,'rec'); addEdge(ps.id,'rec',map.id,'rec'); addEdge(fl.id,'rows',tb.id,'rows');
 markWiresDirty();
 });
-preset('Phone App: Top Suspicious Devices as a Graph for 5 min', function(){
+preset('Phone App: Flipper, Tags and Smart Glasses Around Me', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'Only the interesting devices, and only for a while. The phone hears Wi-Fi, BLE and Bluetooth; Follow Detector ranks the devices (heard in several places while you moved = «FOLLOWING», then «watch»; the ones seen in one place are skipped). Its list goes to the «top» input of Rec → Entities: with «only top devices» the rules (Phone radios) see just the first N of them (default 10). «show an entity for» = 5 min: a device that was not heard for 5 minutes (or fell out of the list) is deleted from the Table — {id, _delete} on the same output — and the Graph drops it. The Table keeps a row per node and link (key id).\n'+
-  'Tune: Follow Detector (places / separation / minutes / distance, «ignore ids» for your own devices), Rec → Entities (show for, top N, top field). Press Connect in Phone sensors (DSP app).'});
-nt.size.w=1000; nt.size.h=150; applySize(nt);
-const ps=addNode('termux',40,230,{url:'ws://127.0.0.1:8765',gps:true,ble:true,bt:true,wifi:true,wifiEvery:10,battery:false});
-ps.size.w=500; ps.size.h=520; applySize(ps);
-const fl=addNode('follow',580,230,{places:3,sep:150,mins:5,dist:300});
-fl.size.w=400; fl.size.h=420; applySize(fl);
-const ent=addNode('recEnt',1020,230,{rules:ENT_TEMPLATES['Phone radios (Wi-Fi · BLE · Bluetooth)'],keep:5,topMode:'only top devices',topN:10});
-ent.size.w=480; ent.size.h=520; applySize(ent);
-const tb=addNode('table',1540,230,{list:'@patch',key:'id',initial:false,cols:['id','type','label','shape','color','from','to','rssi']});
+const nt=addNode('note',40,40,{text:'Who of the «interesting» is around right now. The phone scans Bluetooth LE (DSP app); BLE Signatures recognises by the advertisement: Flipper Zero (name «Flipper …», services 0x3081–0x3083), tags (Apple AirTag / Find My accessories, Samsung SmartTag, Tile, Google Find Hub) and smart glasses (Meta / Ray-Ban Meta, Snap Spectacles, Even Realities, Rokid, XREAL…). It is a heuristic on the name, company id and services: a device with a hidden name and no known id is not seen, and a false match is possible.\n'+
+  'The list of what was heard (closest first, each stays 5 min after its last packet) goes to «top» of Rec → Entities: with «only top devices» the Phone radios rules draw only those devices, each is shown for 5 min after its last record and then deleted from the Table and the Graph. A new device raises a notification. Your own tags: «ignore ids» (regex) in BLE Signatures. Press Connect in Phone sensors.'});
+nt.size.w=1000; nt.size.h=170; applySize(nt);
+const ps=addNode('termux',40,250,{url:'ws://127.0.0.1:8765',gps:true,ble:true,bleMode:'low_latency',bt:false,wifi:false,battery:false});
+ps.size.w=460; ps.size.h=500; applySize(ps);
+const bs=addNode('blesig',540,250,{ttl:5});
+bs.size.w=400; bs.size.h=400; applySize(bs);
+const ent=addNode('recEnt',980,250,{rules:ENT_TEMPLATES['Phone radios (Wi-Fi · BLE · Bluetooth)'],keep:5,topMode:'only top devices',topN:20});
+ent.size.w=480; ent.size.h=500; applySize(ent);
+const tb=addNode('table',1500,250,{list:'@patch',key:'id',initial:false,cols:['id','type','label','shape','color','from','to','rssi']});
 tb.size.w=460; tb.size.h=380; applySize(tb);
-const g=addNode('graphview',2040,230,{directed:false,weights:false});
+const g=addNode('graphview',2000,250,{directed:false,weights:false});
 g.size.w=620; g.size.h=420; applySize(g);
-addEdge(ps.id,'rec',fl.id,'rec'); addEdge(ps.id,'rec',fl.id,'pos');
-addEdge(ps.id,'rec',ent.id,'rec'); addEdge(fl.id,'rows',ent.id,'top');
-addEdge(ent.id,'rec',tb.id,'rec'); addEdge(tb.id,'rows',g.id,'rows');
+const ph=addNode('phone',540,700,{url:'ws://127.0.0.1:8765',action:'notify',title:'BLE Signatures',body:'Flipper, a tag or smart glasses nearby',notifyEv:false,torchState:false});
+ph.size.w=380; ph.size.h=380; applySize(ph);
+addEdge(ps.id,'rec',bs.id,'rec'); addEdge(ps.id,'rec',ent.id,'rec'); addEdge(bs.id,'rows',ent.id,'top');
+addEdge(ent.id,'rec',tb.id,'rec'); addEdge(tb.id,'rows',g.id,'rows'); addEdge(bs.id,'hit',ph.id,'go');
 markWiresDirty();
 });
 preset('Phone sensors: Scan Wi-Fi / BLE / BT Only Away From Home', function(){
