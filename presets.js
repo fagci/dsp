@@ -133,7 +133,11 @@ syncHash(); buildPatchList();
 if(run && ok) setTimeout(autoRun,500);
 } else if(n && hasPatch(n)){ if(n!==currentPatchName) openPatch(n); if(run) setTimeout(autoRun,500); }
 }
-window.addEventListener('hashchange',loadFromHash);
+// Шаг назад по истории (жест «назад», закрытие шторки — modules/mobile.js) возвращает адрес записи, сделанной до открытия нынешнего патча:
+// её #p=старое — не просьба открыть старый патч. Такой hashchange приходит сразу за popstate: адрес правим, патч не трогаем.
+let hashPopAt=-1e9;
+window.addEventListener('popstate',()=>{ hashPopAt=performance.now(); });
+window.addEventListener('hashchange',()=>{ if(performance.now()-hashPopAt<400){ hashPopAt=-1e9; syncHash(); return; } loadFromHash(); });
 document.getElementById('plink').onclick=async()=>{
 try{
 const url=location.origin+location.pathname+'#d='+await packPatch(serialize());
