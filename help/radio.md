@@ -178,6 +178,19 @@ Presets: *Time Signal: DCF77 Clock (Generator)*, *Time Signal: WWVB Clock (Gener
 
 Presets: *Sub-tones: CTCSS Tone → Decoder with Voice (Loopback)*, *Sub-tones: DCS Code → Decoder with Voice (Loopback)*.
 
+## Repeater controller (DTMF commands)
+
+**Repeater Controller** (Protocols) is the logic of a repeater; **Repeater Command (DTMF)** is its mirror for testing without a radio (it builds the command for *DTMF: Transmit*).
+
+- **Inputs:** `digit` — the `digit` output of *DTMF: Receive*; `cos` — the carrier (the `gate` of the DTMF decoder, a squelch, or `active` of *CTCSS Decoder* / *DCS Decoder* to open the repeater only for the right sub-tone). With `cos` unwired the carrier counts as always present.
+- **PTT:** the carrier plus the **hang time**; a carrier longer than the **time-out** turns the transmitter off until the carrier drops. **Station ID** every *idEvery* seconds during use and at the end of a transmission (if the last one was ≥ *idMin* ago): the `id` output pulses — drive your Morse or voice ID from it.
+- **Commands:** `*` + password + code + argument + `#`, e.g. `*1234105#`: `1 nn` link node nn, `0 nn` unlink (`0` alone — all), `8` / `9` emergency mode on / off, `5` ID now, `7` / `6` disable / enable the repeater. A pause between digits longer than *digitTimeout* drops the command; **three wrong passwords lock the commands** for *lockout* seconds.
+- **Emergency mode:** no time-out, hang time at least 5 s, ID twice as often; `emergency` output = 1. **Linking** joins repeaters into a net: the `linked` output counts the linked nodes and `rec` carries `{kind: link, node, on}` — send it to the other repeaters with Pins / MQTT (the controller does not move audio between sites).
+- **Output `rec`:** `{src:'REPCTL', kind: cmd|link|emergency|id|ptt|tot|timeout|denied, text, …}`.
+- **Not done:** the audio of the ID itself and the voice replies, per-user passwords and the remote programming of timers; the link only reports the state.
+
+Preset: *Repeater Controller: DTMF Commands, PTT and ID (Loopback)*.
+
 ## SAME / EAS
 
 **SAME / EAS Decoder** (Decoders, main thread) reads the digital header of the NOAA Weather Radio alerts (US 162.400–162.550 MHz, NFM; the same coding is used by the Emergency Alert System): AFSK at 520.83 Bd, 1 = 2083.3 Hz, 0 = 1562.5 Hz, characters of 8 bits LSB first.
