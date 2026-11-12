@@ -657,6 +657,7 @@ const PRESET_CATS={
   'Chirp Modem: Noise and Reflection':'Modems & Data Links',
   'APRS: Transmit and Receive (Loop)':'Modems & Data Links',
   'DTMF: Encoder + Decoder':'Modems & Data Links',
+  'Repeater Controller: DTMF Commands, PTT and ID (Loopback)':'Modems & Data Links',
   'Sub-tones: CTCSS Tone → Decoder with Voice (Loopback)':'Modems & Data Links',
   'Sub-tones: DCS Code → Decoder with Voice (Loopback)':'Modems & Data Links',
   'Text → Bits → Text (Encodings)':'Modems & Data Links',
@@ -7253,6 +7254,30 @@ const log=addNode('recLog',640,420,{});
 log.size.w=360; applySize(log);
 addEdge(tx.id,'out',m1.id,'a'); addEdge(vo.id,'out',m1.id,'b'); addEdge(nz.id,'out',m1.id,'c');
 addEdge(m1.id,'out',rx.id,'in'); addEdge(rx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('Repeater Controller: DTMF Commands, PTT and ID (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The logic of a repeater without a radio: Repeater Command builds a DTMF command (*password code argument #), DTMF: Transmit plays it, DTMF: Receive decodes it, Repeater Controller runs it. Commands: link / unlink a node (to join repeaters into a net), emergency on / off, ID now, disable / enable. Three wrong passwords lock the commands.\n'+
+  'The controller also does what a repeater controller does: PTT follows the carrier (here the tone itself, wire a squelch or CTCSS / DCS Decoder `active` into cos on a real receiver), hang time, a time-out timer, a station ID every 10 minutes and at the end of a transmission (the `id` pulse starts your Morse or voice ID). Emergency mode switches the time-out off, stretches the hang time and doubles the ID rate. `rec` carries every event — wire it to Pins / MQTT to tell the other repeaters of the net.\n'+
+  'Change the command and press Make; a wrong password in the generator is refused.'});
+nt.size.w=960; nt.size.h=170; applySize(nt);
+const cm=addNode('repCmd',40,260,{cmd:'link',args:'05',pass:'1234'});
+cm.size.w=320; cm.size.h=220; applySize(cm);
+const tx=addNode('dtmfTx',400,260,{text:'*12341 05#',toneMs:100,gapMs:60,amp:.3});
+tx.size.w=300; tx.size.h=220; applySize(tx);
+const rx=addNode('dtmfRx',740,260,{thr:6,minMs:40});
+rx.size.w=300; rx.size.h=200; applySize(rx);
+const rc=addNode('repCtl',1080,260,{pass:'1234',hang:2,tot:180,idEvery:600});
+rc.size.w=360; rc.size.h=300; applySize(rc);
+const pt=addNode('numview',1480,260,{});
+const em=addNode('numview',1480,340,{});
+const log=addNode('recLog',1080,600,{});
+log.size.w=400; applySize(log);
+addEdge(cm.id,'text',tx.id,'text'); addEdge(cm.id,'go',tx.id,'go');
+addEdge(tx.id,'out',rx.id,'in');
+addEdge(rx.id,'digit',rc.id,'digit'); addEdge(rx.id,'gate',rc.id,'cos');
+addEdge(rc.id,'ptt',pt.id,'in'); addEdge(rc.id,'emergency',em.id,'in'); addEdge(rc.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 preset('Text → Bits → Text (Encodings)', function(){
