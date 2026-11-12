@@ -2,7 +2,8 @@
 /* ============================ BLE GATT / Bluetooth (DSP app) ============================
    Всё, чего нет в Web Bluetooth: подключение к любому адресу без диалога выбора устройства, полный список служб и характеристик,
    чтение / запись / подписка по UUID, MTU, PHY, приоритет соединения, сопряжение (bond), классический Bluetooth (RFCOMM / SPP —
-   клиент и сервер), BLE-реклама (телефон как маячок). Команды и записи — tools/android/README.md (gatt.*, bt.*, ble.adv.*).
+   клиент и сервер), BLE-реклама (телефон как маячок), HID-периферия (телефон как своя клавиатура/мышь — локальный эксперимент,
+   не клон чужого устройства). Команды и записи — tools/android/README.md (gatt.*, bt.*, ble.adv.*, hid.*).
    Нужен доверенный клиент (страница приложения, либо «Let any page use actions» в Settings приложения) — см. phoneact.js.
    Сборка команд и разбор значений — modules/phonelink-kernels.js (без DOM, tools/test-phonelink.mjs). */
 
@@ -35,7 +36,7 @@ function gattStart(n){
   };
 }
 function gattSub(n){
-  const m=JSON.stringify({sub:['gatt','gattsrv','btlink','l2cap']});
+  const m=JSON.stringify({sub:['gatt','gattsrv','btlink','l2cap','hid']});
   if(n.ws && n.ws.readyState===1 && m!==n.sentSub){ n.sentSub=m; n.ws.send(m); }
 }
 function gattSend(n,cmd){
@@ -58,11 +59,11 @@ function gattFeed(n,r){
   if(n.recQ.length>5000) n.recQ.splice(0,n.recQ.length-5000);
 }
 
-def({ id:'gattlink', title:'BLE GATT / Bluetooth (DSP app)', cat:'Sources', kw:'bluetooth le ble gatt rfcomm spp classic pairing bond uuid characteristic notify write advertise beacon peripheral connect',
+def({ id:'gattlink', title:'BLE GATT / Bluetooth (DSP app)', cat:'Sources', kw:'bluetooth le ble gatt rfcomm spp classic pairing bond uuid characteristic notify write advertise beacon peripheral connect hid keyboard mouse',
   ins:[{n:'go',t:'num'},{n:'addr',t:'txt'},{n:'svc',t:'txt'},{n:'chr',t:'txt'},{n:'data',t:'txt'},{n:'cmd',t:'rec'}],
   outs:[{n:'rec',t:'rec'},{n:'value',t:'num'},{n:'hex',t:'txt'},{n:'text',t:'txt'},{n:'ok',t:'num'},{n:'new',t:'num'}],
   readout:true, tall:true,
-  groups:[{n:'GATT'},{n:'GATT server (peripheral)',open:false},{n:'Classic / RFCOMM / L2CAP',open:false},{n:'Advertise (peripheral)',open:false},{n:'Periodic advertising',open:false},{n:'Decode value',open:false}],
+  groups:[{n:'GATT'},{n:'GATT server (peripheral)',open:false},{n:'Classic / RFCOMM / L2CAP',open:false},{n:'Advertise (peripheral)',open:false},{n:'Periodic advertising',open:false},{n:'HID device (own keyboard / mouse)',open:false},{n:'Decode value',open:false}],
   params:[
     {n:'url',t:'text',d:'ws://127.0.0.1:8765',dev:true,label:'bridge of the DSP app — an address, or @name from Settings → Devices'},
     {n:'action',t:'select',opts:PL_GATT_ACTIONS,d:'connect',label:'action (the Run button, or a rising edge on go)'},
@@ -98,6 +99,10 @@ def({ id:'gattlink', title:'BLE GATT / Bluetooth (DSP app)', cat:'Sources', kw:'
     {n:'advPint',t:'range',min:100,max:81900,step:50,d:200,label:'periodic interval, ms (100 … 81900)',g:'Periodic advertising'},
     {n:'advPmfr',t:'text',d:'',label:'periodic data: manufacturer id=hex (FFFF=0102…); «adv pdata» replaces it while running',g:'Periodic advertising'},
     {n:'advPsvc',t:'text',d:'',label:'periodic data: service uuid=hex',g:'Periodic advertising'},
+    {n:'hidType',t:'select',opts:['keyboard','mouse','custom'],d:'keyboard',label:'HID type — the phone\'s own role, needs a local experiment: pair it in system Bluetooth settings first, then hid connect',g:'HID device (own keyboard / mouse)'},
+    {n:'hidName',t:'text',d:'',label:'device name shown to the host (empty — DSP keyboard/mouse)',g:'HID device (own keyboard / mouse)'},
+    {n:'hidDescriptor',t:'text',d:'',label:'custom: HID report descriptor, hex',g:'HID device (own keyboard / mouse)'},
+    {n:'hidReportId',t:'num',d:0,label:'hid report: report id (0 — none)',g:'HID device (own keyboard / mouse)'},
     {n:'fmt',t:'select',opts:['auto',...BLE_FORMATS],d:'auto',label:'value format (auto — Reference/Bluetooth UUIDs or hex)',g:'Decode value'},
     {n:'scale',t:'num',d:1,label:'scale',g:'Decode value'},
     {n:'reconnect',t:'check',d:true,label:'reconnect'},

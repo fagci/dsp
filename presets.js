@@ -779,6 +779,7 @@ const PRESET_CATS={
   'Batch Check: Ping, Site, IPTV, Domain, SMS and SIM Balance in a Table':'Network & IoT',
   'Phone App: BLE GATT Server (the Phone as a Peripheral)':'Network & IoT',
   'Phone App: BLE L2CAP Channel (Fast Stream Without GATT)':'Network & IoT',
+  'Phone App: HID Device (Phone as Its Own Keyboard / Mouse)':'Network & IoT',
   'Phone App: mDNS / DNS-SD Service Discovery (Bonjour)':'Network & IoT',
   'Phone App: Wi-Fi RTT Distance to Access Points':'Maps & Locating',
   'Phone App: Wi-Fi Aware (Talk Without a Router)':'Network & IoT',
@@ -2664,6 +2665,17 @@ nt.size.w=900; nt.size.h=130; applySize(nt);
 const gl=addNode('gattlink',40,210,{url:'ws://127.0.0.1:8765',action:'l2cap listen',secure:false,wfmt:'text'});
 gl.size.w=420; gl.size.h=520; applySize(gl);
 const lg=addNode('recLog',500,210,{});
+lg.size.w=420; applySize(lg);
+addEdge(gl.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: HID Device (Phone as Its Own Keyboard / Mouse)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A local experiment, not a clone of someone else\'s device: the phone registers its OWN Bluetooth identity as a HID peripheral (classic Bluetooth, Android 9+, public BluetoothHidDevice API — no root). «hid register» picks the type — keyboard and mouse use the built-in standard USB-HID boot descriptors, «custom» takes any HID report descriptor as hex. Pair the phone with the host (a PC) in the host\'s own Bluetooth settings first (it shows up as the name below), then «hid connect» with its address. «hid report» sends one input report: for a keyboard, 8 bytes — modifier byte, a reserved 0x00, then up to 6 USB-HID key usage codes (e.g. 000000000400000000 sets the «a» key, 00000000000000 releases everything); for a mouse, 3 bytes — button bits, dx, dy (each -127…127, e.g. 00 0a 00 moves 10 px right). «hid list» shows what is registered and connected.'});
+nt.size.w=900; nt.size.h=190; applySize(nt);
+const gl=addNode('gattlink',40,250,{url:'ws://127.0.0.1:8765',action:'hid register',hidType:'keyboard'});
+gl.size.w=420; gl.size.h=560; applySize(gl);
+const lg=addNode('recLog',500,250,{});
 lg.size.w=420; applySize(lg);
 addEdge(gl.id,'rec',lg.id,'rec');
 markWiresDirty();

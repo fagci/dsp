@@ -26,7 +26,7 @@ function plScanOpts(p){
 }
 
 // ---------- GATT / Bluetooth ----------
-const PL_GATT_ACTIONS=['connect','disconnect','discover','read','write','notify on','notify off','mtu','rssi','priority','phy','list','bonded','bond','unbond','uuids','rfcomm connect','rfcomm send','rfcomm close','rfcomm listen','adv start','adv stop','srv start','srv stop','srv set','srv notify','srv respond','srv list','srv disconnect','l2cap connect','l2cap send','l2cap close','l2cap listen','adv pdata'];
+const PL_GATT_ACTIONS=['connect','disconnect','discover','read','write','notify on','notify off','mtu','rssi','priority','phy','list','bonded','bond','unbond','uuids','rfcomm connect','rfcomm send','rfcomm close','rfcomm listen','adv start','adv stop','srv start','srv stop','srv set','srv notify','srv respond','srv list','srv disconnect','l2cap connect','l2cap send','l2cap close','l2cap listen','adv pdata','hid register','hid unregister','hid connect','hid disconnect','hid report','hid list'];
 // I — значения со входов (приоритетнее полей узла): {addr, svc, chr, data}
 function plGattCmd(p,I={}){
   const addr=plAddr(I.addr||p.addr), svc=String(I.svc||p.svc||'').trim(), chr=String(I.chr||p.chr||'').trim();
@@ -77,6 +77,16 @@ function plGattCmd(p,I={}){
     case 'l2cap listen': return {cmd:'l2cap.listen',secure:!!p.secure};
     case 'l2cap send': { if(e=need('addr')) return {error:e}; const w=payload(); return w ? {cmd:'l2cap.send',addr,...w} : {error:'nothing to send'}; }
     case 'l2cap close': return {cmd:'l2cap.close',...(addr ? {addr} : {})};
+    case 'hid register': {
+      const type=p.hidType||'keyboard', name=String(p.hidName||'').trim();
+      if(type==='custom'){ if(!plIsHex(p.hidDescriptor)) return {error:'descriptor: hex HID report descriptor'}; return {cmd:'hid.register',type,...(name?{name}:{}),descriptor:plHex(p.hidDescriptor)}; }
+      return {cmd:'hid.register',type,...(name?{name}:{})};
+    }
+    case 'hid unregister': return {cmd:'hid.unregister'};
+    case 'hid connect': return (e=need('addr')) ? {error:e} : {cmd:'hid.connect',addr};
+    case 'hid disconnect': return (e=need('addr')) ? {error:e} : {cmd:'hid.disconnect',addr};
+    case 'hid report': { const w=payload(); return w ? {cmd:'hid.report',...(addr?{addr}:{}),id:+p.hidReportId||0,...w} : {error:p.wfmt==='text' ? 'nothing to send' : 'data: hex bytes — 8 for keyboard, 3 for mouse'}; }
+    case 'hid list': return {cmd:'hid.list'};
   }
   return {error:'unknown action'};
 }
@@ -167,6 +177,17 @@ function plLine(r){
       default: return 'srv '+r.ev;
     }
     case 'l2cap': return 'l2cap '+r.ev+' '+(r.addr||'')+(r.psm ? ' psm '+r.psm : '')+(r.hex ? ' '+r.hex.slice(0,40) : '');
+    case 'hid': switch(r.ev){
+      case 'app': return 'hid '+(r.registered==='1' ? 'registered' : 'unregistered');
+      case 'connected': return 'hid '+r.addr+' connected';
+      case 'disconnected': return 'hid '+r.addr+' disconnected';
+      case 'get': return 'hid '+r.addr+' get report (type '+r.type+', id '+r.id+')';
+      case 'set': return 'hid '+r.addr+' set report = '+r.hex;
+      case 'protocol': return 'hid '+r.addr+' protocol: '+r.mode;
+      case 'data': return 'hid '+r.addr+' output report = '+r.hex;
+      case 'unplug': return 'hid '+r.addr+' unplugged';
+      default: return 'hid '+r.ev;
+    }
     case 'btlink': return 'rfcomm '+r.ev+' '+(r.addr||'')+(r.hex ? ' '+r.hex.slice(0,40) : '');
     case 'btdev': return 'paired '+r.addr+' '+(r.name||'')+' ('+r.type+')';
     case 'net': switch(r.ev){

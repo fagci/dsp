@@ -91,6 +91,18 @@ ok('shell exec: field or wire, root/timeout pass through, command type stays "cm
   ok('l2cap records → lines',K.plLine({src:'l2cap',ev:'listen',psm:129})==='l2cap listen  psm 129' && /data A/.test(K.plLine({src:'l2cap',ev:'data',addr:'A',hex:'01'})));
 }
 
+// HID device (keyboard / mouse / custom)
+{
+  const b={addr:'aa:bb:cc:dd:ee:ff',wfmt:'hex',data:'00000400000000',hidReportId:0};
+  ok('hid register: keyboard / mouse need no descriptor',K.plGattCmd({action:'hid register',hidType:'keyboard'}).cmd==='hid.register' && K.plGattCmd({action:'hid register',hidType:'mouse'}).type==='mouse' && !('descriptor' in K.plGattCmd({action:'hid register',hidType:'keyboard'})));
+  ok('hid register: custom needs a hex descriptor',K.plGattCmd({action:'hid register',hidType:'custom'}).error && K.plGattCmd({action:'hid register',hidType:'custom',hidDescriptor:'05010906'}).descriptor==='05010906');
+  ok('hid register: name passed through when set',K.plGattCmd({action:'hid register',hidType:'keyboard',hidName:'DSP kbd'}).name==='DSP kbd');
+  ok('hid connect / disconnect need an address',K.plGattCmd({action:'hid connect'}).error && K.plGattCmd({...b,action:'hid connect'}).cmd==='hid.connect' && K.plGattCmd({...b,action:'hid disconnect'}).cmd==='hid.disconnect');
+  ok('hid report: data required, addr optional, id passed',K.plGattCmd({action:'hid report'}).error && (c=>c.cmd==='hid.report' && c.hex==='00000400000000' && c.addr==='AA:BB:CC:DD:EE:FF' && c.id===0)(K.plGattCmd({...b,action:'hid report'})) && !('addr' in K.plGattCmd({action:'hid report',wfmt:'hex',data:'010000'})));
+  ok('hid unregister / list',K.plGattCmd({action:'hid unregister'}).cmd==='hid.unregister' && K.plGattCmd({action:'hid list'}).cmd==='hid.list');
+  ok('hid records → lines',K.plLine({src:'hid',ev:'connected',addr:'A'})==='hid A connected' && K.plLine({src:'hid',ev:'set',addr:'A',hex:'01'})==='hid A set report = 01' && K.plLine({src:'hid',ev:'app',registered:'1'})==='hid registered');
+}
+
 // NSD / RTT / Aware
 {
   const b={port:8080,nsdType:'_http._tcp',nsdName:'DSP',nsdTxt:'',wfmt:'hex',dfmt:'text',data:''};
