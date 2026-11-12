@@ -191,6 +191,18 @@ Presets: *Sub-tones: CTCSS Tone → Decoder with Voice (Loopback)*, *Sub-tones: 
 
 Preset: *Repeater Controller: DTMF Commands, PTT and ID (Loopback)*.
 
+## Winlink over packet radio (AX.25 + B2F)
+
+**Winlink Packet** (Protocols) is a station for Winlink e-mail over packet radio: AX.25 in connected mode plus the B2F mail exchange with LZHUF compression. A **client** dials a gateway, swaps the mail and hangs up; a **gateway** answers anyone. Two nodes talk to each other in the presets, with no radio.
+
+- **Link layer** (`ax25link-kernels.js`): `SABM` → `UA`, numbered I-frames (mod 8, window 4, up to *paclen* bytes), `RR` / `REJ`, go-back-N, repeats by *T1* (12 tries, then the link is declared dead), `DISC` → `UA`. One link per station; no SREJ, no mod 128.
+- **B2F** (`winlink-kernels.js`): SID line, proposals `FC EM MID usize csize 0` + `F> checksum`, answers `FS +-=` (already seen MIDs are rejected, so a repeated session does not duplicate mail), the message packed with **LZHUF** (`lzhuf-kernels.js`, the Okumura / Yoshizaki LZSS + adaptive Huffman) and a CRC-16, blocks of ≤250 bytes with a checksum, then `FF` / `FQ`. The message itself: headers `Mid / Date / Type / From / To / Cc / Subject / Mbo / Body / File`, body, attachments.
+- **Ports:** `blk` in (frames from *Receive AX.25*), `frame` out (the same kind of `blk`, for a direct wire to another station), `bit` out (HDLC + NRZI at the *baud* of the node — into a Bell 202 modulator, like *Transmit AX.25*), `connect` (pulse), `msg` (rec `{to, subject, body}` to queue mail), `rec` (every message received: `{src:'WINLINK', mid, from, to, subject, body, files}`), `text`, `connected`, `busy`. *drop frames %* on the output tests the retries.
+- **Mirrors:** the message (`wlMsgBuild` ↔ `wlMsgParse`), the packing (`wlPack` ↔ `wlUnpack`, `lzEncode` ↔ `lzDecode`), the proposals and answers, the data blocks and the frames (`axBuild` ↔ `axParse`) are pairs with a round-trip test (`tools/test-winlink.mjs`, `tools/test-ax25link.mjs`).
+- **Not done:** **VARA FM** and **Pactor** are proprietary (no public specification) — not implemented; no secure login (`;PQ` / `;PR`) and no CMS access over the Internet, no binary-forward options (FBB), no multiple connections. The CRC byte order and the contents of the block checksums were written down from memory of the B2F description and are **not compared with a live RMS / CMS gateway**: the two stations here agree with each other, compatibility with real Winlink software is unverified. Do not use a real callsign on the air with it without checking.
+
+Presets: *Winlink Packet: Client ↔ Gateway by Frames (Loopback)*, *Winlink Packet: over Bell 202 Modems (Loopback)*.
+
 ## SAME / EAS
 
 **SAME / EAS Decoder** (Decoders, main thread) reads the digital header of the NOAA Weather Radio alerts (US 162.400–162.550 MHz, NFM; the same coding is used by the Emergency Alert System): AFSK at 520.83 Bd, 1 = 2083.3 Hz, 0 = 1562.5 Hz, characters of 8 bits LSB first.
