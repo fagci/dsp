@@ -55,7 +55,9 @@ function sameBuild(org,ev,locs,purgeHHMM,jday,hh,mm,call){
 def({ id:'sameRx', title:'SAME / EAS Decoder', cat:'Decoders', readout:true, tall:true, resize:true, w:460,
   kw:'same eas noaa weather radio alert tornado warning nwr',
   ins:[{n:'in',t:'sig'}], outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'new',t:'num'}],
-  params:[{n:'wait',t:'range',min:2,max:10,step:.5,d:4,label:'close a message after this silence, s (the 3 repeats are voted)'}],
+  params:[{n:'wait',t:'range',min:2,max:10,step:.5,d:4,label:'close a message after this silence, s (the 3 repeats are voted)'},
+          {n:'fips',t:'text',d:'',label:'only these areas: OK, 40109, 040109… (empty — all)'},
+          {n:'events',t:'text',d:'',label:'only these events: TOR SVR *W, !RWT (empty — all)'}],
   init:n=>{ n.key=''; n.msgs=0; n.recent=[]; n.last=''; n.samp=0; n.sx=new Float32Array(0); n.xb=0; n.tNext=0; n.jj=0; n.ph=[]; n.cand=[]; n.group=null; n.bursts=0; n.lvl=0; },
   process(n,I){
     const sr=Eng.sr, sps=sr/SAME_BAUD;
@@ -162,6 +164,7 @@ function sameClose(n,recs,texts){
       line=f.eventName+' ('+f.event+') · '+f.orgName+' · '+f.locations.length+' area'+(f.locations.length>1 ? 's' : '')+(f.states.length ? ' '+f.states.join(' ') : '')+
         ' · valid '+f.purge+' min · day '+f.jday+' '+String(f.hour).padStart(2,'0')+':'+String(f.min).padStart(2,'0')+' UTC · '+f.callsign;
       rec.text=line;
+      if(typeof wxMatch==='function' && !wxMatch({locations:rec.locations,event:rec.event},n.p.fips,n.p.events)){ n.skipped=(n.skipped||0)+1; n.last='filtered out: '+line; return; }
     } else { rec.kind='raw'; rec.text=s; line='unparsed: '+s; }
   }
   n.msgs++; n.last=line; n.recent.push(line+'  ['+v.agree+'/'+g.list.length+']'); if(n.recent.length>20) n.recent.shift();
