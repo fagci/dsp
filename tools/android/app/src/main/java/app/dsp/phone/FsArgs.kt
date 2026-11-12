@@ -21,6 +21,13 @@ object FsArgs {
     fun safeSegments(path: String?): List<String> = (path ?: "").split('/', '\\').map { it.trim() }
         .filter { it.isNotEmpty() && it != "." && it != ".." }.map { it.replace(Regex("[^\\p{L}\\p{N} _.-]"), "_").take(60) }.take(4)
 
+    /** Путь внутри папки, выданной через fs.pick (монтирование): имена как есть — скобки, кириллица, пробелы; делит только «/», пустые и «.»/«..» отбрасываются, управляющие символы вычёркиваются; не глубже 32 уровней. Выйти за папку нельзя: путь ищется по именам потомков. */
+    fun segs(path: String?): List<String> = (path ?: "").split('/').map { it.filter { c -> !c.isISOControl() } }
+        .filter { it.isNotEmpty() && it != "." && it != ".." }.map { it.take(255) }.take(32)
+
+    /** Новое имя файла или папки без «/» и управляющих символов (переименование в смонтированной папке). */
+    fun leaf(s: String?): String = (s ?: "").filter { !it.isISOControl() && it != '/' }.take(255).trim().ifEmpty { "file" }
+
     fun safeName(s: String?): String = (s ?: "").replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_").trim().take(120).ifEmpty { "file" }
 
     /** Границы чтения: (с какого байта, сколько) — не больше MAX_CHUNK и не за концом файла (size < 0 — размер неизвестен). */
