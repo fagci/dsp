@@ -1819,12 +1819,13 @@ panzoom.pan(view.x,view.y,{animate:false});
 wires.style.transform=content.style.transform;
 syncGridBg();
 }
-function fitView(box){                              // вписать весь патч в экран (или в box — область холста)
+function fitView(box,only){                         // вписать весь патч в экран (или в box — область холста); only — только эти узлы
 flush();                                            // ← синхронизируем граф перед замерами offsetWidth/Height
-if(!Graph.nodes.length) return;
+const list=only&&only.length?only:Graph.nodes;
+if(!list.length) return;
 const cr=cv.getBoundingClientRect(), r=box&&box.w?{width:box.w,height:box.h}:cr, ox=box?.x||0, oy=box?.y||0, pad=24;
 let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
-for(const n of Graph.nodes){ const el=n.ghost||n.el; x0=Math.min(x0,n.x); y0=Math.min(y0,n.y);
+for(const n of list){ const el=n.ghost||n.el; x0=Math.min(x0,n.x); y0=Math.min(y0,n.y);
 x1=Math.max(x1,n.x+el.offsetWidth); y1=Math.max(y1,n.y+el.offsetHeight); }
 const sx=Math.max(1,x1-x0), sy=Math.max(1,y1-y0);
 if(r.width<50||r.height<50) return;
@@ -1838,7 +1839,15 @@ view.y=(oy+pad+(r.height-pad*2-sy*k)/2)/k-y0; applyView();
 function fitViewWhenReady(){
 requestAnimationFrame(()=>requestAnimationFrame(()=>fitView()));
 }
-document.getElementById('fit').onclick=()=>fitView();
+// выделены узлы — вписываем их (на телефоне: тап по заголовку узла, затем Fit — узел во весь экран; без выделения — весь патч);
+// повторное нажатие, когда выделенное уже вписано, показывает весь патч
+let fitSelAt=null;
+document.getElementById('fit').onclick=()=>{
+const sel=Graph.nodes.filter(n=>Sel.has(n.id)), key=sel.map(n=>n.id).join();
+if(sel.length && sel.length<Graph.nodes.length && !(fitSelAt && fitSelAt.key===key && fitSelAt.k===view.k && fitSelAt.x===view.x && fitSelAt.y===view.y)){
+fitView(null,sel); fitSelAt={key,k:view.k,x:view.x,y:view.y}; }
+else { fitSelAt=null; fitView(); }
+};
 // кнопка жгутов: провода между одной парой узлов лежат рядом (по умолчанию включено, выбор помнится в браузере)
 const bundleBtn=document.getElementById('bundle');
 bundleBtn.classList.toggle('on',bundleOn);

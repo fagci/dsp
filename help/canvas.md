@@ -16,7 +16,7 @@
 - A preset opens fitted to the screen. Select a module and press **tiles**: it fills the screen — the picture on top, the parameters under it (scroll), the corner-arrows button leaves the picture alone. Plan Studio keeps its tabs in every mode.
 
 ## Moving around
-- Drag an empty spot to pan, wheel or pinch to zoom, **Fit** (the corners button) shows everything.
+- Drag an empty spot to pan, wheel or pinch to zoom, **Fit** (the corners button) shows everything; with modules selected it zooms to them instead (handy on a phone: tap a module's title, then Fit), and a second press shows the whole patch.
 - Drag a module by its header. Select several with Shift+click, then **Align** or **Duplicate** from the toolbar.
 
 ## The module header
