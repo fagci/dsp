@@ -9,7 +9,7 @@
 - Patches can be dragged from the list onto the canvas: they are *added* to the current graph.
 
 ## Looking at a wire
-- **Hover a wire** (do not click: a click deletes it): the tip shows `source.pin → target.pin`, the type, the last value (a number, a block's range and rms, the keys of a record), **blocks per second** and the **age** of the last block (`now`, `300 ms ago`; «source is not producing» after 1.5 s of silence; «engine stopped»). Only the source of that wire is counted, so there is no cost without a hover. Logic: `modules/wireprobe-kernels.js`, `node tools/test-wireprobe.mjs`. Preset «Help: Wire Probe (Value, Rate, Age on a Wire)».
+- **Hover a wire** (do not click: a click deletes it; on a touch screen the first tap only marks the wire red, the second one deletes it): the tip shows `source.pin → target.pin`, the type, the last value (a number, a block's range and rms, the keys of a record), **blocks per second** and the **age** of the last block (`now`, `300 ms ago`; «source is not producing» after 1.5 s of silence; «engine stopped»). Only the source of that wire is counted, so there is no cost without a hover. Logic: `modules/wireprobe-kernels.js`, `node tools/test-wireprobe.mjs`. Preset «Help: Wire Probe (Value, Rate, Age on a Wire)».
 
 ## On a phone
 - The toolbar is at the bottom and scrolls sideways: menu, run, tiles, fit, undo / redo and quick chain come first, files and clear are at the end.
