@@ -474,6 +474,7 @@ const PRESET_CATS={
   'ADS-B: Radar and Attitude (Generator)':'Aircraft, Satellites & Telemetry',
   'Remote ID: Drones on a Map (ESP32)':'Aircraft, Satellites & Telemetry',
   'Remote ID: Demo Frame (no hardware)':'Aircraft, Satellites & Telemetry',
+  'Protocol Registry: Encode → Decode Loopback and Mirror-Pair List':'Network & IoT',
   'ADS-B: Aircraft Map (Generator)':'Aircraft, Satellites & Telemetry',
   'ADS-B: Aircraft Map (USB SDR, 1090 MHz)':'Aircraft, Satellites & Telemetry',
   'Meteor-M LRPT: Image (Generator)':'Aircraft, Satellites & Telemetry',
@@ -4071,6 +4072,25 @@ od.size.w=560; od.size.h=240; applySize(od);
 const map=addNode('geoMap',40,440,{mz:15,mlat:55.0408,mlon:82.932,ttl:0,labels:true});
 map.size.w=620; map.size.h=380; applySize(map);
 addEdge(tx.id,'text',od.id,'text'); addEdge(od.id,'rec',map.id,'rec');
+markWiresDirty();
+});
+preset('Protocol Registry: Encode → Decode Loopback and Mirror-Pair List', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Every protocol in the registry has a decoder and (should have) a mirror encoder: fields → bytes → fields must come out the same. Protocol Codec does that for any protocol that has a codec adapter.\n'+
+  'Left: ADS-B ident frame built from fields (encode), the hex goes over a wire into a second Protocol Codec set to decode — the fields come back. Pick another protocol (RDS, Remote ID, DNS, NTP, TFTP, BLE, SMS, Syslog, DCF77, LZHUF) in both nodes.\n'+
+  'Below: «list» mode sends the whole registry as records into a Table — status ✓ pair / ~ both sides / △ generator only / ✗ decoder or encoder only shows what still needs a mirror.'});
+nt.size.w=900; nt.size.h=120; applySize(nt);
+const enc=addNode('protoCodec',40,190,{proto:'ADS-B / Mode S',mode:'encode'});
+enc.size.w=420; enc.size.h=300; applySize(enc);
+const dec=addNode('protoCodec',520,190,{proto:'ADS-B / Mode S',mode:'decode'});
+dec.size.w=420; dec.size.h=300; applySize(dec);
+const lp=addNode('protoCodec',1000,190,{proto:'RDS / RBDS',mode:'loopback'});
+lp.size.w=420; lp.size.h=300; applySize(lp);
+const ls=addNode('protoCodec',40,540,{proto:'DNS',mode:'list'});
+ls.size.w=420; ls.size.h=220; applySize(ls);
+const tb=addNode('table',520,540,{list:'@patch',data:''});
+tb.size.w=900; tb.size.h=420; applySize(tb);
+addEdge(enc.id,'hex',dec.id,'hex'); addEdge(ls.id,'rec',tb.id,'rec');
 markWiresDirty();
 });
 preset('ADS-B: Aircraft Map (Generator)', function(){

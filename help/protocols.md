@@ -113,3 +113,14 @@ Field types: `u8…u64`, `i8…i64` (any multiple of 8 bits), `f32`, `f64`, `bit
 
 Presets *Hex: Parse a Packet (Ethernet / IPv4 / UDP)*, *Hex: PCAP File → Packets → HEX Structure*, *Hex: Table Rows → Packets → Table*, *Wi-Fi: ESP32 Sniffer → Table and HEX Structure*. Logic: `modules/hex-kernels.js`, structures `modules/hex-formats.js`, `node tools/test-hex.mjs` (CRC check values, the Wikipedia IPv4 header, the classic ADS-B frame with CRC-24, build / parse round trips, endianness and bit order, truncated packets, structure checks).
 
+## Protocol registry and Protocol Codec
+
+`modules/protoreg-kernels.js` keeps one record per protocol: which kernel functions parse it, which build it, which only generate a test signal. A protocol with a codec adapter is **checked**: `protoRoundtrip(id)` builds the sample fields to bytes, parses them back and compares (`node tools/test-protoreg.mjs`).
+
+**Protocol Codec** (`protoCodec`, cat Protocols) is the node for it: pick a protocol and a mode.
+
+- *loopback* — fields → hex → fields; shows ✓ or the fields that differ.
+- *encode* / *decode* — fields (JSON, from the parameter or the `fields` pin; empty — the protocol's sample) ⇄ hex (the `hex` pin).
+- *list* — the whole registry as records on `rec` (feed a Table): `status` is `pair` (round trip checked), `both` (functions on both sides, no check yet), `gen` (decoder + test generator only), `dec` / `enc` (one side only).
+
+Adapters exist for ADS-B (DF17 ident, position, velocity), RDS (PS, RadioText, AF, clock), Remote ID, NTP, TFTP, DNS, BLE GATT values, Syslog, SMS PDU, DCF77 and LZHUF. Test signals with emergency / service codes are never meant for the air. Preset: *Protocol Registry: Encode → Decode Loopback and Mirror-Pair List*.
