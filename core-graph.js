@@ -637,6 +637,8 @@ return n;
 }
 // подряд идущие кнопки/галочки — в один ряд; общая раскладка для основных и adv-параметров
 function renderParamRows(container,n,params,group){
+// ряды, заданные вручную (def.pack) — поля одного ряда стоят рядом и на узком узле (rowlabel-kernels.js, paramPackOrder)
+const packed=paramPackOrder(params,MOD[n.type].rows!==false ? MOD[n.type].pack : null); params=packed.list;
 // подписи строк — modules/rowlabel-kernels.js: короткое имя, без повтора имени секции, одинаковые различаются
 const ROW_T=['range','range2','check','select','buttons','num','text'], rowPs=params.filter(p=>ROW_T.includes(p.t)), rowLab=new Map();
 paramRowLabels(rowPs,group).forEach((x,k)=>rowLab.set(rowPs[k],x));
@@ -677,6 +679,8 @@ if(sel) sel.addEventListener('wheel',e=>{ e.preventDefault(); e.stopPropagation(
 const now=performance.now(); if(sel._lastWheelT!=null && now-sel._lastWheelT<120) return; sel._lastWheelT=now;
 const k=clamp(sel.selectedIndex+(e.deltaY>0?1:-1),0,sel.options.length-1);
 if(k!==sel.selectedIndex){ sel.selectedIndex=k; sel.dispatchEvent(new Event('change')); } },{passive:false});
+const pk=packed.row.get(p);
+if(pk!==undefined){ let cnt=0; for(const v of packed.row.values()) if(v===pk) cnt++; r.classList.add('pk','pk'+Math.min(cnt,4)); r.classList.remove('pr-long'); }
 grp.append(r); }
 return; }
 renderParamRowsPlain(container,n,params);

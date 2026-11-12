@@ -51,3 +51,22 @@ function paramRowLabels(params,group){
   }
   return rows.map(r=>({text:r.text, unit:r.unit, full:r.full, more:!!r.p.tip || r.full!==(r.unit ? r.text+', '+r.unit : r.text)}));
 }
+
+// Ряды, заданные вручную (def.pack: ['gain ofs','stack grid meas']): поля одной строки стоят в одном ряду и на узком узле.
+// params — строки одного блока; → {list, row}: list — порядок вывода (ряд встаёт на место первого своего поля),
+// row — Map(параметр → номер ряда) только для рядов, где в этом блоке нашлось два поля и больше
+function paramPackOrder(params,pack){
+  const row=new Map(), list=[];
+  if(!Array.isArray(pack) || !pack.length) return {list:params.slice(), row};
+  const of=new Map(); pack.forEach((s,i)=>{ for(const nm of String(s).split(/\s+/).filter(Boolean)) if(!of.has(nm)) of.set(nm,i); });
+  const done=new Set();
+  for(const p of params){
+    if(done.has(p)) continue;
+    const i=of.get(p.n);
+    if(i===undefined || p.t==='button'){ list.push(p); done.add(p); continue; }
+    const names=String(pack[i]).split(/\s+/).filter(Boolean);
+    const mates=names.map(nm=>params.find(q=>q.n===nm && q.t!=='button' && !done.has(q) && of.get(q.n)===i)).filter(Boolean);
+    for(const q of mates){ list.push(q); done.add(q); if(mates.length>1) row.set(q,i); }
+  }
+  return {list, row};
+}
