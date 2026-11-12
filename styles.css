@@ -776,13 +776,15 @@ body.noedit #bar .ed{display:none}
   .prmrows .pr-unit{font-size:11px}
   .prmrows>.pr-check::before{width:9px;height:9px}
   .pgh{font-size:11px}
-  /* размер меняется только у выделенного узла: чужой узел не растягивается случайным касанием у края */
-  .node:not(.sel) .rz{pointer-events:none}
-  /* видимый уголок у выделенного узла */
-  .node.sel .rz-br::after,.node.sel .rz-bl::after{content:'';position:absolute;bottom:9px;width:10px;height:10px;
-    border:solid var(--acc);border-width:0 2px 2px 0;opacity:.8;pointer-events:none}
-  .node.sel .rz-br::after{right:9px}
-  .node.sel .rz-bl::after{left:9px;transform:scaleX(-1)}
+  /* за края размер меняется только у выделенного узла: чужой узел не растягивается случайным касанием у края.
+     Уголки работают всегда — в них случайно не попасть, а выделять узел ради размера не нужно */
+  .node:not(.sel) :is(.rz-r,.rz-l,.rz-b){pointer-events:none}
+  /* видимый уголок: у выделенного ярче */
+  .rz-br::after,.rz-bl::after{content:'';position:absolute;bottom:9px;width:10px;height:10px;
+    border:solid var(--dim);border-width:0 2px 2px 0;opacity:.55;pointer-events:none}
+  .node.sel :is(.rz-br,.rz-bl)::after{border-color:var(--acc);opacity:.8}
+  .rz-br::after{right:9px}
+  .rz-bl::after{left:9px;transform:scaleX(-1)}
 }
 .advToggle{display:flex;align-items:center;gap:6px;min-height:18px;padding:2px 0;white-space:nowrap;cursor:pointer;color:var(--dim);font-size:10px;letter-spacing:.05em;text-transform:uppercase;user-select:none;margin-top:2px;border-bottom:1px solid var(--line)}
 .advToggle.closed{border-bottom-color:transparent}
