@@ -4785,7 +4785,7 @@ markWiresDirty();
 });
 preset('SAME Filter by County and Event (Loopback)', function(){
 clearAll();
-const nt=addNode('note',40,40,{text:'SAME / EAS Decoder passes only the alerts for your areas and events: «only these areas» takes states (two letters or FIPS), counties (SSCCC) or full PSSCCC codes, «only these events» — TOR SVR, wildcards (*W = all warnings) and exclusions (!RWT !RMT). The end-of-message NNNN is always passed. Here a tornado warning for county 048453 goes through the filter «48» (state code); put a code of another state into the generator and it is dropped: the decoder says «filtered out».\n'+
+const nt=addNode('note',40,40,{text:'SAME / EAS Decoder passes only the alerts for your areas and events: «only these areas» takes states (two letters or FIPS), counties (SSCCC) or full PSSCCC codes, «only these events» — TOR SVR, wildcards (*W = all warnings) and exclusions (!RWT !RMT). The end-of-message NNNN is always passed. Areas are shown by name (county, state) from a built-in Census list; a county can also be filtered by name: ST:County, e.g. TX:Travis (underscore for spaces). Here a tornado warning for county 048453 goes through the filter «48» (state code); put a code of another state into the generator and it is dropped: the decoder says «filtered out».\n'+
   'The test signal is for a cable or the sound-card loop only: never put it on the air or into an alerting system.'});
 nt.size.w=880; nt.size.h=130; applySize(nt);
 const tx=addNode('sameTx',40,230,{event:'TOR',loc:'048453',call:'KTEST/NW'});
