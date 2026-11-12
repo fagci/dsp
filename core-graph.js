@@ -120,7 +120,9 @@ const IQ_ADAPT={ iqSig:{type:'iqAudio', inp:'in', main:'out', second:'q'},
                  sigIq:{type:'iqMerge', inp:'I', second:'Q', out:'iq'} };
 function portT(n,dir,name){ return portsOf(n,dir).find(o=>o.n===name)?.t; }
 function isQPin(name){ return name==='Q' || name==='q'; }
+function buzz(ms){ try{ if(matchMedia('(pointer:coarse)').matches) navigator.vibrate?.(ms); }catch(e){} }   // короткий отклик на тач-устройстве
 function connect(from,fp,to,tp){
+buzz(14);
 const a=Graph.map[from], b=Graph.map[to]; if(!a||!b||from===to) return;
 const ft=portT(a,'outs',fp), tt=portT(b,'ins',tp);
 const kind=ft==='iq' && tt==='sig' ? IQ_ADAPT.iqSig : ft==='sig' && tt==='iq' ? IQ_ADAPT.sigIq : null;
@@ -468,11 +470,11 @@ set:v=>{ if(typeof v==='string' && RO_CTL_T.test(v)) v=v.replace(RO_CTL,''); if(
 r.addEventListener('pointerdown',ev=>ev.stopPropagation());   // не таскать узел за текст
 r.addEventListener('click',()=>{
 navigator.clipboard?.writeText(r.textContent);
-r.classList.add('copied'); setTimeout(()=>r.classList.remove('copied'),400); });
+r.classList.add('copied'); setTimeout(()=>r.classList.remove('copied'),400); showToast('Copied'); });
 if(d.tall){
 const cp=document.createElement('button'); cp.className='copy'; cp.textContent='Copy';
 cp.addEventListener('click',()=>{ navigator.clipboard?.writeText(r.textContent);
-cp.textContent='copied'; setTimeout(()=>cp.textContent='Copy',900); });
+cp.textContent='copied'; setTimeout(()=>cp.textContent='Copy',900); showToast('Copied'); });
 mid.append(cp); } }
 if(d.swatch){ const s=document.createElement('div'); s.className='swatch'; mid.append(s); }
 el.querySelector('.x').addEventListener('click',e=>{e.stopPropagation();
@@ -813,6 +815,9 @@ dragging=true; moved=false; sx=e.clientX; sy=e.clientY; sv=n.p[s.n];
 box.addEventListener('pointermove',e=>{
 if(!dragging) return;
 const dx=s.knob ? (e.clientX-sx)-(e.clientY-sy) : e.clientX-sx;
+if(!s.knob && !moved && e.pointerType==='touch'){          // палец: меняем значение только явным горизонтальным движением, вертикальное — отмена
+if(Math.abs(e.clientY-sy)>8 && Math.abs(e.clientY-sy)>Math.abs(dx)){ dragging=false; if(pid!=null) box.releasePointerCapture(pid); return; }
+if(Math.abs(dx)<=8) return; }
 if(Math.abs(dx)>3) moved=true;
 if(!moved) return;
 const slow=e.shiftKey?8:1, w=s.knob ? 200 : Math.max(60,box.offsetWidth);
@@ -949,14 +954,17 @@ v=isLo? Math.min(v,other-(step||1)) : Math.max(v,other+(step||1));
 n.p[key]=v; render(v); };
 render(n.p[key]); (n.set||(n.set={}))[key]=setV;
 box.addEventListener('dblclick',()=>{ box.querySelector('input')?.blur(); setV(s.d[isLo?0:1]); });   // сброс к умолчанию
-let dragging=false,sx=0,sv=0,moved=false,pid=null;
+let dragging=false,sx=0,sy=0,sv=0,moved=false,pid=null;
 box.addEventListener('pointerdown',e=>{
 if(e.target!==box  && e.target!==fillEl  && e.target!==valEl) return;
 e.stopPropagation(); pid=e.pointerId; box.setPointerCapture(pid);
-dragging=true; moved=false; sx=e.clientX; sv=n.p[key]; });
+dragging=true; moved=false; sx=e.clientX; sy=e.clientY; sv=n.p[key]; });
 box.addEventListener('pointermove',e=>{
 if(!dragging) return;
 const dx=e.clientX-sx;
+if(!moved && e.pointerType==='touch'){                    // палец: только горизонтальное движение меняет значение
+if(Math.abs(e.clientY-sy)>8 && Math.abs(e.clientY-sy)>Math.abs(dx)){ dragging=false; if(pid!=null) box.releasePointerCapture(pid); return; }
+if(Math.abs(dx)<=8) return; }
 if(Math.abs(dx) >3) moved=true;
 if(!moved) return;
 const slow=e.shiftKey?8:1, w=Math.max(60,box.offsetWidth);
@@ -1486,7 +1494,7 @@ if(pending.dir==='o') connect(pending.n.id,pending.port,n.id,port);
 else connect(n.id,port,pending.n.id,pending.port);
 stat.textContent='connection created'; }
 clearPending(); return; }
-const el=nodePorts(n)[dir][port]; el.classList.add('lit');
+const el=nodePorts(n)[dir][port]; el.classList.add('lit'); buzz(8);
 link={n,port,dir,el,x0:ev.clientX,y0:ev.clientY};
 const t=document.createElementNS('http://www.w3.org/2000/svg','path');
 t.setAttribute('fill','none'); t.setAttribute('stroke','var(--acc)');
