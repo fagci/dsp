@@ -100,3 +100,33 @@ function dnsRecs(r,server){
 }
 
 if(typeof module!=='undefined') module.exports={dnsQuery,dnsParse,dnsRecs,dnsReverse};
+
+/* ---------- сборка полного сообщения DNS (зеркало dnsParse; ответ сервера целиком) ---------- */
+const dnsPut16=v=>[(v>>8)&255,v&255], dnsPut32=v=>[(v>>>24)&255,(v>>>16)&255,(v>>>8)&255,v&255];
+function dnsTypeNum(t){ return typeof t==='number' ? t : (DNS_TYPES[String(t).toUpperCase()] ?? parseInt(t,10)); }
+function dnsRdataBuild(type,d){
+  switch(type){
+    case 1: return String(d).split('.').map(x=>+x&255);
+    case 28: { let [h,t]=String(d).split('::'); const hp=h?h.split(':'):[], tp=t!==undefined && t ? t.split(':') : [];
+      const g=[...hp,...(t===undefined ? [] : Array(8-hp.length-tp.length).fill('0')),...tp]; return g.flatMap(x=>dnsPut16(parseInt(x||'0',16))); }
+    case 2: case 5: case 12: return dnsName(d);
+    case 15: return [...dnsPut16(d.pref),...dnsName(d.host)];
+    case 16: { const s=String(d), out=[]; for(let i=0;i<Math.max(1,s.length);i+=255){ const c=s.slice(i,i+255); out.push(c.length,...Array.from(c,x=>x.charCodeAt(0)&255)); } return out; }
+    case 33: return [...dnsPut16(d.prio),...dnsPut16(d.weight),...dnsPut16(d.port),...dnsName(d.host)];
+    case 6: return [...dnsName(d.mname),...dnsName(d.rname),...dnsPut32(d.serial),...dnsPut32(d.refresh),...dnsPut32(d.retry),...dnsPut32(d.expire),...dnsPut32(d.minimum)];
+    case 257: return [d.flags,d.tag.length,...Array.from(d.tag+d.value,x=>x.charCodeAt(0)&255)];
+    default: return (String(d).match(/../g)||[]).map(x=>parseInt(x,16));
+  }
+}
+// r — как у dnsParse: {id,qr,opcode,aa,tc,rd,ra,ad,rcode,questions:[{name,type}],answers/authority/additional:[{name,type,class,ttl,data}]}
+function dnsBuild(r){
+  const f=(r.qr?0x8000:0)|((r.opcode||0)<<11)|(r.aa?0x400:0)|(r.tc?0x200:0)|(r.rd?0x100:0)|(r.ra?0x80:0)|(r.ad?0x20:0)|((r.rcode||0)&15);
+  const q=r.questions||[], an=r.answers||[], ns=r.authority||[], ar=r.additional||[];
+  const b=[...dnsPut16((r.id||0)&0xFFFF),...dnsPut16(f),...dnsPut16(q.length),...dnsPut16(an.length),...dnsPut16(ns.length),...dnsPut16(ar.length)];
+  for(const x of q) b.push(...dnsName(x.name),...dnsPut16(dnsTypeNum(x.type)),0,1);
+  for(const x of [...an,...ns,...ar]){
+    const t=dnsTypeNum(x.type), rd=dnsRdataBuild(t,x.data);
+    b.push(...dnsName(x.name),...dnsPut16(t),...dnsPut16(x.class==null ? 1 : x.class),...dnsPut32(x.ttl||0),...dnsPut16(rd.length),...rd);
+  }
+  return Uint8Array.from(b);
+}
