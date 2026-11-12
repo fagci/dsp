@@ -10,7 +10,8 @@ A browser can talk HTTP and WebSocket, nothing more: no raw sockets, no ICMP, no
 | **Network Links** | the phone's networks (Wi-Fi, mobile data, Ethernet over OTG, VPN) and the open sockets / servers of the app on each, with speed; the picture is drawn by **Graph** (output `rows`), changes come as records |
 | **Batch Check** | a list in, the answers in the same rows: ping, tcp port, web page (code, text, css block), IPTV stream, domain expiry, SMS with delivery report, SIM balance by USSD |
 | **Network Tools** | Wake-on-LAN, NTP time offset, syslog, SMTP mail, TFTP get and put |
-| **Syslog / TFTP Server** | the phone as a log collector or a TFTP server for routers and cameras |
+| **Syslog / TFTP Server** | the phone as a log collector or a TFTP server for routers and cameras; for network boot (PXE, iPXE, U-Boot images) with window size, block size and a big image read in pieces |
+| **SMB Client, File Copy / Bridge** | files on a Windows / Samba / NAS share; copy between a Files folder, FTP, SMB, TFTP and HTTP; HTTP / FTP / TFTP servers can serve another share through the «source» field (a bridge) |
 | **Telnet Terminal, HTTP / FTP servers and clients** | talk to devices and serve files from the phone |
 | **VPN traffic monitor** | which app talks to which address (no decryption) |
 | **DNS Benchmark** | response time of DNS servers from where you are |
