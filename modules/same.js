@@ -160,9 +160,10 @@ function sameClose(n,recs,texts){
     const f=sameParse(s);
     if(f && f.ok){
       Object.assign(rec,{kind:'header', org:f.org, orgName:f.orgName, event:f.event, eventName:f.eventName, locations:f.locations.join(' '), states:f.states.join(' '),
-        areas:f.locations.length, purge:f.purge, jday:f.jday, hour:f.hour, min:f.min, callsign:f.callsign, id:f.callsign||f.org});
+        areaNames:typeof wxAreaNames==='function' ? wxAreaNames(f.locations) : '', areas:f.locations.length, purge:f.purge, jday:f.jday, hour:f.hour, min:f.min, callsign:f.callsign, id:f.callsign||f.org});
       line=f.eventName+' ('+f.event+') · '+f.orgName+' · '+f.locations.length+' area'+(f.locations.length>1 ? 's' : '')+(f.states.length ? ' '+f.states.join(' ') : '')+
         ' · valid '+f.purge+' min · day '+f.jday+' '+String(f.hour).padStart(2,'0')+':'+String(f.min).padStart(2,'0')+' UTC · '+f.callsign;
+      if(rec.areaNames) line+=' · '+rec.areaNames;
       rec.text=line;
       if(typeof wxMatch==='function' && !wxMatch({locations:rec.locations,event:rec.event},n.p.fips,n.p.events)){ n.skipped=(n.skipped||0)+1; n.last='filtered out: '+line; return; }
     } else { rec.kind='raw'; rec.text=s; line='unparsed: '+s; }
