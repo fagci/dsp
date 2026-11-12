@@ -291,9 +291,13 @@ const PRESET_CAT_ORDER=['Start Here',
                          'Music: Visualizers',
                          'Music: Player',
                          'Analysis & Measurement',
+                         'Health',
                          'Tools',
                          'Tile Layouts'];
 const PRESET_CATS={
+  'Health: Binaural':'Health',
+  'Health: Breath':'Health',
+  'Health: Noise and Nature Mixer':'Health',
   'Tools: Rangefinder and Protractor (Phone Camera Angles)':'Tools',
   'Tools: Sound Level Meter (Microphone, dBA)':'Tools',
   'Tools: Light Meter (Ambient Light, Exposure)':'Tools',
@@ -10661,5 +10665,82 @@ const ac=addNode('accel',40,230,{grav:true});
 const gd=addNode('guard',380,210,{delay:5,sens:.8}); gd.size.w=340; gd.size.h=210; applySize(gd);
 const si=addNode('siren',760,210,{sound:'siren',vol:.7}); si.size.w=300; si.size.h=150; applySize(si);
 addEdge(ac.id,'x',gd.id,'x'); addEdge(ac.id,'y',gd.id,'y'); addEdge(ac.id,'z',gd.id,'z'); addEdge(gd.id,'alarm',si.id,'on');
+markWiresDirty();
+});
+
+// ---- Health: бинауральные биения, дыхание, шумы ----
+// Не лечебные приборы: звук и ритм для расслабления / сосредоточения; ощущения у людей разные
+preset('Health: Binaural', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Binaural beats: the left ear gets «carrier − beat/2», the right ear «carrier + beat/2» — the brain hears the difference as a slow pulse. HEADPHONES ARE REQUIRED.\n'+
+  'Click a row of the table: its beat and carrier go to the Noise Generator (the pitch glides to the new values, no clicks). The row names the brain-wave band it is named after — the effect is individual and not proven; treat it as a relaxation / focus aid, not a treatment.\n'+
+  'Binaural beats are weak above ~30 Hz: for 40 Hz switch «tone mode» in the generator to isochronic (a pulsing tone, works on speakers). Quiet volume, not while driving; people with epilepsy should skip pulsing sounds.\n'+
+  'Pink noise under the tone masks room noise and makes the beat easier to follow. Add rain, waves or chimes in the generator.'});
+nt.size.w=900; nt.size.h=150; applySize(nt);
+const tb=addNode('table',40,230,{list:'@patch',
+  data:'name,band,beat,carrier,use,note\n'+
+  'Deep sleep,delta,2,150,sleep,slow waves of deep sleep; use lying down with the screen off\n'+
+  'Drifting off,delta-theta,4,170,sleep,the edge of sleep; a 20-30 minute fall-asleep session\n'+
+  'Meditation,theta,6,180,meditate,deep relaxation and daydreaming; eyes closed\n'+
+  'Light meditation (Schumann),theta-alpha,7.83,190,meditate,7.83 Hz — the Earth-ionosphere resonance; popular as a calm tone\n'+
+  'Relaxed,alpha,10,200,relax,relaxed and awake; a good first try\n'+
+  'Calm focus (SMR),low beta,13,220,focus,quiet attention for reading and study\n'+
+  'Alert focus,beta,18,240,focus,active thinking and work; short sessions\n'+
+  'Energise,high beta,25,260,wake,wake-up; do not use before sleep\n'+
+  'Gamma 40 Hz,gamma,40,300,study,weak as binaural; use isochronic mode in the generator'});
+tb.size.w=520; tb.size.h=330; applySize(tb);
+const ng=addNode('noisegen',620,230,{vol:.6,pink:.35,tone:.5,mode:'binaural',carrier:200,beat:10,width:1});
+ng.size.w=300; applySize(ng);
+const dc=addNode('dac',960,230,{vol:.3,mode:'stereo'});
+const ff=addNode('fft',960,330,{size:'4096'});
+const sa=addNode('sa',620,640,{fmin:50,fmax:600,split:.4}); sa.size.w=560; sa.size.h=240; applySize(sa);
+addEdge(tb.id,'beat',ng.id,'beat'); addEdge(tb.id,'carrier',ng.id,'carrier');
+addEdge(ng.id,'L',dc.id,'L'); addEdge(ng.id,'R',dc.id,'R');
+addEdge(ng.id,'out',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
+markWiresDirty();
+});
+
+preset('Health: Breath', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Breath Pacer: click a pattern in the table — the circle grows while you inhale and shrinks while you exhale, the soft tone rises and falls with it (you can close your eyes).\n'+
+  'The surf of the Noise Generator breathes with you: the pacer\'s «swell» output drives the generator volume. The session ends after «dur» seconds (Restart starts again).\n'+
+  'Slow breathing (about 6 a minute, a longer exhale) is the usual relaxation pattern. Do not force it: if you feel dizzy, breathe normally. Holds are for comfortable lengths only; not in water or while driving. Not medical advice.'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const tb=addNode('table',40,210,{list:'@patch',
+  data:'name,inhale,hold,exhale,hold2,sip,dur,use,note\n'+
+  'Resonance 5.5-5.5,5.5,0,5.5,0,0,600,calm,about 5.5 breaths a minute — the classic slow rhythm for calm and heart-rate variability\n'+
+  'Coherent 5-5,5,0,5,0,0,600,calm,6 breaths a minute; easy to hold for 10 minutes\n'+
+  'Extended exhale 4-6,4,0,6,0,0,300,calm,the exhale is longer than the inhale: winding down in the evening\n'+
+  '4-7-8 relax,4,7,8,0,0,240,sleep,4 in · 7 hold · 8 out; 4 cycles at first, then up to 8\n'+
+  'Box 4-4-4-4,4,4,4,4,0,300,focus,even square rhythm: steady attention under pressure\n'+
+  'Triangle 4-4-4,4,4,4,0,0,300,focus,inhale · hold · exhale; a gentler box\n'+
+  'Physiological sigh,2,0,6,0,1,120,stress,two quick nose inhales (the second tops up) and one long exhale; the fastest calm-down\n'+
+  'Pursed-lip 2-4,2,0,4,0,0,300,breath,in through the nose, out slowly through pursed lips\n'+
+  'Wake-up 2-2,2,0,2,0,0,60,wake,fast and light; a minute is enough, never to hyperventilate'});
+tb.size.w=560; tb.size.h=340; applySize(tb);
+const bp=addNode('breath',630,210,{cue:true,cueVol:.2,floor:.3}); bp.size.w=290; bp.size.h=330; applySize(bp);
+const ng=addNode('noisegen',960,210,{vol:.5,waves:.7,period:9,pink:.15,width:1}); ng.size.w=290; applySize(ng);
+const mx=addNode('mixer',1290,210,{channels:'3',pa:-1,pb:1,pc:0,ka:1,kb:1,kc:.8});
+const dc=addNode('dac',1290,360,{vol:.3,mode:'stereo'});
+for(const k of ['inhale','hold','exhale','hold2','sip','dur']) addEdge(tb.id,k,bp.id,k);
+addEdge(bp.id,'swell',ng.id,'vol');
+addEdge(ng.id,'L',mx.id,'a'); addEdge(ng.id,'R',mx.id,'b'); addEdge(bp.id,'cue',mx.id,'c');
+addEdge(mx.id,'L',dc.id,'L'); addEdge(mx.id,'R',dc.id,'R');
+markWiresDirty();
+});
+
+preset('Health: Noise and Nature Mixer', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Noise Generator: several noises at once, each with its own level and no equalizer — the colour of a noise IS its spectrum (white flat, pink −3 dB/oct, brown −6, blue +3, violet +6; look at the analyzer).\n'+
+  'Beside them generative sounds that never repeat: rain, surf, wind with gusts, random chimes in a scale (pentatonic, lydian, hirajoshi…), a heartbeat and a beat tone (binaural / monaural / isochronic).\n'+
+  '«bed pulse» slowly modulates the noise layers (isochronic noise); «stereo width» 0 puts one noise in both ears, 1 gives each ear its own. Same seed — same sound. Good for masking noise, sleep and focus; keep the volume low.'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const ng=addNode('noisegen',40,210,{vol:.55,pink:.3,brown:.35,rain:.45,density:140,wind:.2,chimes:.3,rate:6,scale:'pentatonic',root:60,width:1});
+ng.size.w=300; applySize(ng);
+const dc=addNode('dac',380,210,{vol:.3,mode:'stereo'});
+const ff=addNode('fft',380,320,{size:'4096'});
+const sa=addNode('sa',380,440,{fmin:20,fmax:12000,split:.4}); sa.size.w=620; sa.size.h=300; applySize(sa);
+addEdge(ng.id,'L',dc.id,'L'); addEdge(ng.id,'R',dc.id,'R');
+addEdge(ng.id,'out',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
 markWiresDirty();
 });
