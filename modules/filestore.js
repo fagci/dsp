@@ -759,6 +759,8 @@ let fmDrag=null;
    Формат звука — clip (редактируемый, в audio), wav16 или opus; видео — webm / mp4 (что умеет браузер).
    Приём: байты на входе `bin` (File → Bytes, Bytes → Frames …) сохраняются файлом. Куда: вход `path` —
    [хранилище/]папки/[имя.расширение], папки создаются; пусто — открытая папка (запись) или Received (приём).
+   Смонтированная папка (⛓ mount, mount.js): `mounts/ИМЯ/папки/[имя.расширение]` — запись и приём идут прямо на диск / в папку телефона;
+   открыта смонтированная папка и path пуст — туда же (клип в ней сохраняется как wav16). Без имени файл получает свободное («rec (1).wav»).
    Узел заменил Sample Library и Bytes → File (старые патчи открываются как Files). */
 const FS_REC_AUDIO=['audio/webm;codecs=opus','audio/ogg;codecs=opus','audio/mp4'];
 const FS_REC_VIDEO=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4'];
@@ -780,29 +782,55 @@ function fsWavI16(samples,sr){
   for(let i=0;i<n;i++) v.setInt16(44+i*2,Math.max(-1,Math.min(1,samples[i]))*32767,true);
   return new Blob([b],{type:'audio/wav'});
 }
-// куда класть: path = [хранилище/]папки/[имя.расширение]; force — хранилище задано видом файла (клип — только audio)
+// куда класть: path = [хранилище/]папки/[имя.расширение]; force — хранилище задано видом файла (клип — только audio).
+// «mounts/ИМЯ/папки/[имя.расширение]» — смонтированная папка (Mounts, mount.js): результат {mount:{fs,dir}}, файл пишется на месте;
+// пустой path при открытой в менеджере узла смонтированной папке — тоже туда
 async function fsDest(n,path,space,force){
   const parts=String(path||'').split('/').map(x=>x.trim()).filter(Boolean);
+  const nameOf=()=>parts.length && /\.[A-Za-z0-9]{1,5}$/.test(parts[parts.length-1]) ? parts.pop() : '';
+  if(parts[0]==='mounts' && parts.length>1 && typeof Mounts!=='undefined'){
+    parts.shift(); const spec=parts.shift(), m=Mounts.byName(spec) || (spec==='memory' ? Mounts.scratch() : null);
+    if(!m) throw new Error('no mounted folder "'+spec+'" (⛓ mount in Files)');
+    const name=nameOf(), fs=await Mounts.fsOf(m), dir=parts.join('/');
+    if(dir) await fs.mkdir(dir);
+    return {mount:{fs,dir},space,folderId:null,name};
+  }
   if(parts.length && FS_SPACES.includes(parts[0])){ const sp=parts.shift(); if(!force) space=sp; }
-  const name=parts.length && /\.[A-Za-z0-9]{1,5}$/.test(parts[parts.length-1]) ? parts.pop() : '';
+  const name=nameOf();
   let folderId=null;
-  if(!path){ if(n.fm?.space===space) folderId=n.fm.folder; }
+  if(!path){
+    if(n.fm?.space==='mounts' && n.fm.folder!=null && typeof Mounts!=='undefined'){
+      const i=String(n.fm.folder).indexOf(':'), m=Mounts.byId(String(n.fm.folder).slice(0,i));
+      if(m) return {mount:{fs:await Mounts.fsOf(m),dir:String(n.fm.folder).slice(i+1)},space,folderId:null,name};
+    }
+    if(n.fm?.space===space) folderId=n.fm.folder;
+  }
   else for(const f of parts){
     const have=(await FileStore.listFolders(space,folderId)).find(x=>x.name===f);
     folderId=have ? have.id : await FileStore.addFolder(space,f,folderId);
   }
   return {space,folderId,name};
 }
+// файл в смонтированную папку; без заданного имени — свободное («rec (1).wav»), с именем — как просили
+async function fsPutMount(d,blob,fallback){
+  const fs=d.mount.fs; if(!fs.caps.write) throw new Error('the mounted folder is read-only');
+  let nm=d.name||fallback;
+  if(!d.name) nm=fsDedupName(nm,new Set((await fs.list(d.mount.dir).catch(()=>[])).map(e=>e.name)));
+  await fs.write(mtJoin(d.mount.dir,nm),blob); MountStore.bust(); return nm;
+}
 async function fsSaveBlob(n,blob,name,space){                 // запись/приём → файл
   const d=await fsDest(n,n.pathIn,space);
-  await FileStore.put({space:d.space,folderId:d.folderId,name:d.name||name,mime:blob.type||'application/octet-stream',blob,meta:{}});
+  if(d.mount) await fsPutMount(d,blob,name);
+  else await FileStore.put({space:d.space,folderId:d.folderId,name:d.name||name,mime:blob.type||'application/octet-stream',blob,meta:{}});
   n.okP=2;
 }
 async function fsReceive(n,o){
   const blob=new Blob([o.d],{type:o.mime||'application/octet-stream'}), name=o.name||'data.bin';
   const space=(o.mime||'').startsWith('image/') ? 'images' : 'files';
-  const d=await fsDest(n,n.pathIn||'Received',space), nm=d.name||name;
-  await FileStore.importFile(d.space,new File([blob],nm,{type:blob.type}),d.folderId,nm);
+  const d=await fsDest(n,n.pathIn||(n.fm?.space==='mounts' ? '' : 'Received'),space);
+  let nm=d.name||name;
+  if(d.mount) nm=await fsPutMount(d,blob,nm);
+  else await FileStore.importFile(d.space,new File([blob],nm,{type:blob.type}),d.folderId,nm);
   if(n.p.download) fmDownload({name:nm,mime:blob.type,blob});
   n.okP=2;
 }
@@ -884,7 +912,8 @@ async function fsRecStop(n){
   try{
     if(n.p.recFmt==='clip'){
       const d=await fsDest(n,n.pathIn,'audio',true);
-      await SampleDB.addClip({name:d.name.replace(/\.[^.]+$/,'')||'rec '+fsStamp(),folderId:d.folderId,sr:rec.sr,samples,
+      if(d.mount) await fsPutMount(d,fsWavI16(samples,rec.sr),'rec '+fsStamp()+'.wav');          // в папке на диске клипов нет: обычный wav16
+      else await SampleDB.addClip({name:d.name.replace(/\.[^.]+$/,'')||'rec '+fsStamp(),folderId:d.folderId,sr:rec.sr,samples,
         peaks:SampleDB.computePeaks(samples),duration:len/rec.sr});
       n.okP=2;
     } else await fsSaveBlob(n,fsWavI16(samples,rec.sr),'rec '+fsStamp()+'.wav','files');       // wav16; opus из графа не кодируется — тоже wav16
