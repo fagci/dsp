@@ -660,6 +660,8 @@ const PRESET_CATS={
   'DTMF: Encoder + Decoder':'Modems & Data Links',
   'Winlink Packet: Client ↔ Gateway by Frames (Loopback)':'Modems & Data Links',
   'Winlink Packet: over Bell 202 Modems (Loopback)':'Modems & Data Links',
+  'Dial-Up Modem: Handshake and Connect (Loopback)':'Modems & Data Links',
+  'Dial-Up Modem: Noisy Narrow Line, Slow Connect (Loopback)':'Modems & Data Links',
   'Repeater Controller: DTMF Commands, PTT and ID (Loopback)':'Modems & Data Links',
   'Sub-tones: CTCSS Tone → Decoder with Voice (Loopback)':'Modems & Data Links',
   'Sub-tones: DCS Code → Decoder with Voice (Loopback)':'Modems & Data Links',
@@ -7338,6 +7340,39 @@ addEdge(cl.id,'bit',m1.id,'bit'); addEdge(m1.id,'out',d1.id,'in'); addEdge(d1.id
 addEdge(gw.id,'bit',m2.id,'bit'); addEdge(m2.id,'out',d2.id,'in'); addEdge(d2.id,'soft',r2.id,'in'); addEdge(r2.id,'blk',cl.id,'blk');
 addEdge(cl.id,'rec',log.id,'rec'); addEdge(gw.id,'rec',log.id,'rec');
 markWiresDirty();
+});
+// две стороны модема через две линии: звонящий слышен в динамике до CONNECT; созвездие и скорость — приём звонящего
+function mdmPresetBuild(note,lineP){
+clearAll();
+const nt=addNode('note',40,40,{text:note});
+nt.size.w=1000; nt.size.h=170; applySize(nt);
+const cl=addNode('modem',40,240,{role:'caller',number:'5551234',ringS:3,pace:3,autoDial:true,spk:'until connect',vol:2,greet:'Hello from the caller! 0123456789\r\n'});
+cl.size.w=380; cl.size.h=420; applySize(cl);
+const an=addNode('modem',40,700,{role:'answerer',ringS:3,pace:3,spk:'off',greet:'Hello from the answering modem!\r\n'});
+an.size.w=380; an.size.h=420; applySize(an);
+const l1=addNode('phoneline',480,240,lineP);
+const l2=addNode('phoneline',480,700,lineP);
+const ff=addNode('fft',780,240,{size:'4096'});
+const sa=addNode('sa',780,330,{fmin:0,fmax:4000,split:.4});
+sa.size.w=560; sa.size.h=360; applySize(sa);
+const dc=addNode('dac',780,730,{vol:.5,mode:'mono'});
+const cs=addNode('const2',1360,330,{dec:1,scale:.6,fade:.1});
+const nv=addNode('numview',1360,240,{label:'bit/s (caller receives)',digits:0});
+addEdge(cl.id,'line',l1.id,'in'); addEdge(l1.id,'out',an.id,'line');
+addEdge(an.id,'line',l2.id,'in'); addEdge(l2.id,'out',cl.id,'line');
+addEdge(cl.id,'spk',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec'); addEdge(cl.id,'spk',dc.id,'L');
+addEdge(cl.id,'iq',cs.id,'iq'); addEdge(cl.id,'rate',nv.id,'in');
+markWiresDirty();
+}
+preset('Dial-Up Modem: Handshake and Connect (Loopback)', function(){
+mdmPresetBuild('Dial-up modem on the sound card: two Modem nodes (caller and answerer) talk through two Telephone Line nodes, with nothing shared except the audio. '+
+  'Run it and listen to the caller`s speaker: dial tone, DTMF dialing, ring, the answering tone ANSam (2100 Hz with 15 Hz AM and phase reversals), V.8 CM / JM on V.21 (the quick warbles), INFO0, the probing multitone (L1 / L2), training, and then the hiss of data after CONNECT. '+
+  'The spectrum + waterfall show every stage; the constellation shows the equalizer output; the number is the bit rate the caller receives. The rate is measured on the line: lower the SNR or narrow the band in a Telephone Line and it falls.\n'+
+  'This is a V.8 + V.34-class modem (up to about 30 kbit/s here), not V.90 / V.92: 56k PCM needs a digital end of the line. It is not bit-compatible with real modems and is for the sound card only: do not connect it to a real telephone line.',{lo:300,hi:3400,snr:44,delayMs:12,gainDb:-6,law:true});
+});
+preset('Dial-Up Modem: Noisy Narrow Line, Slow Connect (Loopback)', function(){
+mdmPresetBuild('The same two modems on a bad line: band 500–2700 Hz, SNR 29 dB, 60 ms delay. The probing finds the narrow band and picks 2400 baud; the training measures the SNR and picks fewer bits per symbol, so the connection is slow (the old «CONNECT 9600» sound). '+
+  'If the training fails (try SNR 20 dB or a stronger noise) the modems retrain up to three times and then hang up with NO CARRIER. Change the line in the two Telephone Line nodes and restart (Hang up + Dial). Not for a real telephone line.',{lo:500,hi:2700,snr:29,delayMs:60,gainDb:-12,law:true});
 });
 preset('Text → Bits → Text (Encodings)', function(){
 clearAll();
