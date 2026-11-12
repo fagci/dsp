@@ -1,0 +1,20 @@
+// Rec → Entities: «интересные устройства» (top) и срок жизни сущностей (keep). Проверка: node tools/test-entkeep.mjs
+import vm from 'node:vm'; import fs from 'node:fs';
+const geo=fs.readFileSync(new URL('../modules/geo.js',import.meta.url),'utf8');
+const a=geo.indexOf('const entKey='), b=geo.indexOf("def({ id:'recEnt'");
+const ctx=vm.createContext({String,Set,Array,Map});
+vm.runInContext(geo.slice(a,b)+';this.K={entTopSet,entTopHit,entExpire,entKey};',ctx);
+const K=ctx.K; let bad=0; const ok=(c,m)=>{ console.log((c?'ok   ':'FAIL ')+m); if(!c) bad++; };
+const rows=[{id:'AA:BB',status:'FOLLOWING'},{id:'cc:dd',status:'watch'},{id:'ee:ff',status:'seen'},{addr:'11:22'},{name:'x'}];
+const s=K.entTopSet(rows,10);
+ok(s.size===3 && s.has('aa:bb') && s.has('cc:dd') && s.has('11:22'),'top: регистр, поле addr, «seen» и строки без id пропущены');
+ok(K.entTopSet(rows,1).size===1,'top: первые N');
+ok(K.entTopHit(s,{src:'ble',addr:'AA:BB:'.slice(0,5)},'addr|bssid|dev|id'),'запись по addr');
+ok(K.entTopHit(s,{dev:'ble:cc:dd'},'addr|bssid|dev|id'),'запись по dev с префиксом ble:');
+ok(!K.entTopHit(s,{addr:'ee:ff'},'addr|bssid|dev|id') && !K.entTopHit(s,{},'addr'),'не из списка / нет поля');
+const seen=new Map([['rec\u0001d1',0],['gb\u0001d1',0],['rec\u0001d2',200000]]);
+ok(K.entExpire(seen,240000,0).length===0,'keep=0: вечно');
+const e=K.entExpire(seen,300001,300000);
+ok(e.length===2 && e.some(x=>x.port==='rec'&&x.id==='d1') && e.some(x=>x.port==='gb'&&x.id==='d1') && seen.size===1,'через 5 мин старые уходят в _delete своего порта, свежие остаются');
+ok(K.entExpire(seen,300002,300000).length===0,'повторно не удаляется');
+process.exit(bad?1:0);
