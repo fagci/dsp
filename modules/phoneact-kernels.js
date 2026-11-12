@@ -3,6 +3,11 @@
 
 const PHONE_ACTIONS=['notify','torch on','torch off','vibrate','vibrate stop','sms.send','sms.data','sms.send_raw','sms.list','contacts.find','ir.info','crash.last','alarm.set','alarm.remove','alarm.list','alarm.stop','alarm.snooze','alarm.test','boot.set','boot.list','boot.run','boot.stop','cal.calendars','cal.list','cal.add','cal.remove','rec.start','rec.stop','rec.status','rec.list','rec.read','rec.delete','rec.export','callrec.set','callrec.status','callrec.stop','media.list','media.thumb','media.read','media.save','fs.pick','fs.grants','fs.list','fs.read','fs.write','fs.mkdir','fs.delete','fs.revoke','ussd.send','ussd.sims','call.dial','call.end','call.answer','screenrec.start','screenrec.stop','screenrec.status'];
 
+// секции полей узла Phone Actions, нужные действию (по префиксу имени); пусто — действию поля не нужны
+const PHONE_ACT_GROUPS=[[/^(notify|torch|vibrate)/,['Notify / vibrate / torch']],[/^(sms|contacts)\./,['SMS / contacts']],[/^sms\.send$/,['Notify / vibrate / torch']],
+  [/^alarm\./,['Alarm']],[/^boot\./,['Boot patches']],[/^cal\./,['Calendar']],[/^rec\./,['Recording']],[/^callrec\./,['Call recording']],
+  [/^media\./,['Gallery']],[/^media\.(read|save)$/,['Folders / files']],[/^fs\./,['Folders / files']],[/^(ussd|call)\./,['USSD / calls']],[/^screenrec\./,['Screen recording']]];
+function phoneActGroups(action){ const out=[]; for(const [re,gs] of PHONE_ACT_GROUPS) if(re.test(String(action||''))) for(const g of gs) if(!out.includes(g)) out.push(g); return out; }
 // адрес моста; в приложении к адресу этого телефона добавляется ключ приложения (?k=…) — с ним открыты SMS и контакты
 function phoneUrl(url,key){
   if(typeof gwUrl==='function' && String(url||'').trim()[0]==='@') url=gwUrl(url);          // «@имя» из списка устройств (Settings → Devices)

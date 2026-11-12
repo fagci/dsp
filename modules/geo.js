@@ -3171,8 +3171,8 @@ const SV_NAME_KEYS=['wifi','ble','bt','cell'];
 defGroups('geoMap',[
   {n:'Edit', p:'mode tools addName addIcon drawColor'},
   {n:'Display', p:'ttl tiles tileFallback overlay ovAlpha iconScale grid labels circles cluster follow net'},
-  {n:'Survey', p:'svDots svTrack errWifi errBle errBt errCell'},
-  {n:'Data layers', p:'vfile vclr osmKind osmGo'},
+  {n:'Survey', p:'svDots svTrack errWifi errBle errBt errCell', open:false},      // редкие секции свёрнуты: узел вдвое ниже (раскрываются сами, если в них что-то изменено)
+  {n:'Data layers', p:'vfile vclr osmKind osmGo', open:false},
   {n:'Tracks', p:'trail maxEnt arrows rayKm', open:false},
   {n:'Export', p:'store csv geojson kml gpx', open:false},
   {n:'Custom tiles', p:'tileUrl tileUrl2', open:false},
