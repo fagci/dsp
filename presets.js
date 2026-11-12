@@ -299,6 +299,7 @@ const PRESET_CATS={
   'Health: Breath':'Health',
   'Health: Noise and Nature Mixer':'Health',
   'Health: Camp Night (Thunder, Campfire, Crickets)':'Health',
+  'Health: Sunrise Alarm (Light, Wind, Chimes)':'Health',
   'Health: Sleep Timer (Fade Out, Then Stop)':'Health',
   'Health: Chakra Tones (Solfeggio and Note Scale)':'Health',
   'Tools: Rangefinder and Protractor (Phone Camera Angles)':'Tools',
@@ -10818,6 +10819,29 @@ const ff=addNode('fft',380,310,{size:'4096'});
 const sa=addNode('sa',380,430,{fmin:20,fmax:12000,split:.4}); sa.size.w=620; sa.size.h=300; applySize(sa);
 addEdge(ng.id,'L',dc.id,'L'); addEdge(ng.id,'R',dc.id,'R');
 addEdge(ng.id,'out',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
+markWiresDirty();
+});
+
+preset('Health: Sunrise Alarm (Light, Wind, Chimes)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A whole night in one graph. Evening: rain and brown noise (Noise Generator) fade out under Sleep Timer (action «nothing»: the engine keeps running, only the sound goes). Morning: Sunrise Alarm grows the LIGHT over «sunrise length» minutes before the wake-up time\n'+
+  '(dark red → orange → amber → warm white — the screen of the phone becomes a lamp; a tap on it — «I am awake»), and later, from «sound enters at», the SOUND of the second Noise Generator (wind, surf, chimes in a scale) comes in, quiet and quadratic, to the full level exactly at the wake-up time. Then it all switches off after «keep full level».\n'+
+  'Start the sound in the evening (the graph counts by the clock; the screen stays on and the sound in the background keeps the tab alive — better on a charger; the phone Alarm Clock node is the one that rings even when the graph is stopped). «Test (2 min)» runs a short sunrise now.\n'+
+  'Outputs: light / kelvin / color / gain / left — a lamp over MQTT, tiles, any module (here: the trend of the light). The «start» input begins a sunrise by an edge (a Trigger Clock, a phone sensor, a button), «stop» does what the tap does.'});
+nt.size.w=940; nt.size.h=170; applySize(nt);
+const nn=addNode('noisegen',40,240,{vol:.55,pink:0,brown:.3,rain:.3,density:100,width:1}); nn.size.w=280; applySize(nn);
+const nm=addNode('noisegen',40,520,{vol:.5,pink:.1,wind:.35,waves:.3,chimes:.25,width:1}); nm.size.w=280; applySize(nm);
+const st=addNode('sleeptimer',360,240,{min:20,fade:180,curve:'quadratic',action:'nothing',auto:true}); st.size.w=260; applySize(st);
+const sr=addNode('sunrise',360,520,{time:'7:00',days:'every day',lead:30,curve:'gamma',soundAt:.4,vol:1,hold:10,screen:true}); sr.size.w=300; applySize(sr);
+const mx=addNode('mixer',700,380,{channels:'4',ka:1,kb:1,kc:1,kd:1,pa:-1,pb:1,pc:-1,pd:1});
+const dc=addNode('dac',960,380,{vol:.3,mode:'stereo'});
+const tr=addNode('trend',700,640,{span:600,auto:false,lo:0,hi:1}); tr.size.w=380; tr.size.h=150; applySize(tr);
+addEdge(nn.id,'L',st.id,'L'); addEdge(nn.id,'R',st.id,'R');
+addEdge(nm.id,'L',sr.id,'L'); addEdge(nm.id,'R',sr.id,'R');
+addEdge(st.id,'L',mx.id,'a'); addEdge(st.id,'R',mx.id,'b');
+addEdge(sr.id,'L',mx.id,'c'); addEdge(sr.id,'R',mx.id,'d');
+addEdge(mx.id,'L',dc.id,'L'); addEdge(mx.id,'R',dc.id,'R');
+addEdge(sr.id,'light',tr.id,'in');
 markWiresDirty();
 });
 
