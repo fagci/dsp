@@ -64,4 +64,16 @@ eq('lat/lon format',[K.wxAprsLat(35.4),K.wxAprsLat(-0.5),K.wxAprsLon(-97.5),K.wx
 // SAME-запись (без координат и expires): время конца = t + purge
 { const s={src:'SAME',kind:'header',event:'TOR',eventName:'Tornado Warning',locations:'040109 040017',states:'OK',purge:30,t:t0};
   ok('SAME record → bulletin with the end time',/Tornado Warning 040109 040017 til 1730Z/.test(K.wxAprsBulletin(s)),K.wxAprsBulletin(s)); }
+// названия округов (с данными переписи): код ↔ название
+{ const c2=vm.createContext({Math,Date,Set,Map,Number,String,JSON,isFinite,Array,Object,RegExp});
+  vm.runInContext(fs.readFileSync(path.join(root,'modules/fips-data.js'),'utf8').replace(/const /g,'var ')+src+';this.K={FIPS_COUNTIES,wxAreaName,wxAreaNames,wxAreaCode,wxFipsMatch,wxAprsBulletin};',c2);
+  const N=c2.K;
+  ok('area name: county and state',N.wxAreaName('048453')==='Travis, TX' && N.wxAreaName('040109')==='Oklahoma, OK',N.wxAreaName('048453'));
+  ok('area name: part of a county, whole state, unknown county',N.wxAreaName('148453')==='NW Travis, TX' && N.wxAreaName('048000')==='Texas (statewide)' && N.wxAreaName('048999')==='county 999, TX');
+  ok('area names: list with a tail',N.wxAreaNames('048453 040109 048001 048003',2)==='Travis, TX; Oklahoma, OK (+2)');
+  // зеркало: каждое название округа → код → то же название (повторы внутри штата допускаются: города и округа Вирджинии)
+  { let n=0, back=0; for(const k in N.FIPS_COUNTIES){ n++; const c=N.wxAreaCode(N.FIPS_COUNTIES[k],N.wxAreaName('0'+k).slice(-2)); if(c && N.wxAreaName(c)===N.wxAreaName('0'+k)) back++; }
+    ok('area code ↔ name for all '+n+' counties',back===n,back+'/'+n); }
+  ok('filter by name: TX:Travis, TX:San_Saba, "Travis County"',N.wxFipsMatch(['048453'],'TX:Travis') && !N.wxFipsMatch(['048001'],'TX:Travis') && N.wxFipsMatch(['048411'],'TX:San_Saba') && N.wxAreaCode('Travis County','tx')==='048453');
+  ok('APRS bulletin uses names for SAME records',/Tornado Warning Travis, TX til/.test(N.wxAprsBulletin({kind:'header',event:'TOR',eventName:'Tornado Warning',locations:'048453',purge:30,t:t0})),N.wxAprsBulletin({kind:'header',event:'TOR',eventName:'Tornado Warning',locations:'048453',purge:30,t:t0})); }
 console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad ? 1 : 0);

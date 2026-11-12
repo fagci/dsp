@@ -28,13 +28,40 @@ const wxTime=s=>{ const t=Date.parse(s); return isFinite(t) ? t : null; };
 const wxIso=ms=>ms==null ? '' : new Date(ms).toISOString().replace(/\.\d+Z$/,'+00:00');
 const wxStates=list=>[...new Set(list.map(l=>WX_STATE[String(l).padStart(6,'0').slice(1,3)]).filter(Boolean))].join(' ');
 
+/* ---------- названия округов (FIPS, modules/fips-data.js) ---------- */
+const WX_PART={'0':'','1':'NW','2':'N','3':'NE','4':'W','5':'C','6':'E','7':'SW','8':'S','9':'SE'};
+const wxHasFips=()=>typeof FIPS_COUNTIES!=='undefined' && typeof FIPS_STATES!=='undefined';
+// PSSCCC → «Travis, TX», «NW Travis, TX», «Texas (statewide)»; неизвестный округ — «county 453, TX»
+function wxAreaName(loc){
+  loc=String(loc).padStart(6,'0');
+  const ss=loc.slice(1,3), cc=loc.slice(3), ab=WX_STATE[ss]||ss, part=WX_PART[loc[0]]||'';
+  if(cc==='000') return (wxHasFips() && FIPS_STATES[ss] || ab)+' (statewide)';
+  const nm=wxHasFips() && FIPS_COUNTIES[ss+cc];
+  return (part ? part+' ' : '')+(nm || 'county '+cc)+', '+ab;
+}
+// список кодов («040109 048453») → «A, XX; B, YY (+N)»
+function wxAreaNames(locs,max){
+  const L=(Array.isArray(locs) ? locs : String(locs||'').split(/[\s,;-]+/)).filter(x=>/^\d{6}$/.test(x));
+  const m=max||6, t=L.slice(0,m).map(wxAreaName).join('; ');
+  return L.length>m ? t+' (+'+(L.length-m)+')' : t;
+}
+// зеркало wxAreaName: название округа и штат → PSSCCC (часть округа не указывается — «0»)
+function wxAreaCode(name,state){
+  if(!wxHasFips()) return null;
+  const ss=WX_STATE_CODE[String(state||'').toUpperCase()] || (/^\d{2}$/.test(state) ? state : null); if(!ss) return null;
+  const q=String(name||'').toLowerCase().replace(/_/g,' ').replace(/\s+(county|parish|borough)$/,'').trim();
+  for(const k in FIPS_COUNTIES) if(k.slice(0,2)===ss && FIPS_COUNTIES[k].toLowerCase()===q) return '0'+k;
+  return null;
+}
+
 /* ---------- фильтр ---------- */
 // «OK», «40», «40109», «040109», через пробел/запятую → [{p,ss,cc}]; p='0' — любая часть округа, cc='000' — весь штат
 function wxFipsList(s){
   const out=[];
   for(const t of String(s||'').split(/[\s,;]+/).filter(Boolean)){
-    const u=t.toUpperCase();
-    if(/^[A-Z]{2}$/.test(u)){ if(WX_STATE_CODE[u]) out.push({p:'0',ss:WX_STATE_CODE[u],cc:'000'}); }
+    const u=t.toUpperCase(), nm=/^([A-Za-z]{2}):(.+)$/.exec(t);
+    if(nm){ const c=wxAreaCode(nm[2],nm[1]); if(c) out.push({p:'0',ss:c.slice(1,3),cc:c.slice(3)}); }
+    else if(/^[A-Z]{2}$/.test(u)){ if(WX_STATE_CODE[u]) out.push({p:'0',ss:WX_STATE_CODE[u],cc:'000'}); }
     else if(/^\d{2}$/.test(u)) out.push({p:'0',ss:u,cc:'000'});
     else if(/^\d{5}$/.test(u)) out.push({p:'0',ss:u.slice(0,2),cc:u.slice(2)});
     else if(/^\d{6}$/.test(u)) out.push({p:u[0],ss:u.slice(1,3),cc:u.slice(3)});
@@ -176,7 +203,7 @@ const wxDhm=ms=>{ const d=new Date(ms); return [d.getUTCDate(),d.getUTCHours(),d
 // конец действия: expires (NWS/CAP) или время записи + purge, мин (SAME)
 const wxUntil=r=>r.expires ?? (r.purge ? (r.t||Date.now())+r.purge*60000 : null);
 function wxShort(r,max){
-  const a=r.area || (r.locations ? r.locations.split(' ').slice(0,4).join(' ') : r.states||'');
+  const a=r.area || (r.locations ? (wxHasFips() ? wxAreaNames(r.locations,2) : r.locations.split(' ').slice(0,4).join(' ')) : r.states||'');
   const u=wxUntil(r);
   let t=(r.eventName||r.event||'Alert')+(r.kind==='cancel'||r.kind==='eom' ? ' CANCELLED' : '')+(a ? ' '+a : '')+(u && r.kind==='header' ? ' til '+wxHm(u)+'Z' : '');
   t=t.replace(/[|~{}\r\n]+/g,' ');
