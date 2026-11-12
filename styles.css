@@ -739,7 +739,11 @@ body.noedit #bar .ed{display:none}
 .prmrows>.pr-range2 .slidernum input[type=number]{text-align:right;font-size:11px}
 .prmrows>.pr-range2 .r2dash{padding:0 2px;font-size:10px}
 /* при 2+ колонках, пока ячейки уже ~220px, длинной строке (подпись + значение, см. pr-long) — 2 ячейки */
-@container nio (min-width:320px) and (max-width:943px){ .prmrows>.prm.pr-long{flex:2 1 calc(2*var(--prc) + 12px)} }
+@container nio (min-width:560px) and (max-width:943px){ .prmrows>.prm.pr-long{flex:2 1 calc(2*var(--prc) + 12px)} }
+/* узкий узел (до 560px: телефон, узкая панель дашборда) — один столбец, как список настроек: подпись слева, значение справа.
+   Ряды в одну и в две ячейки вперемешку выглядели случайными; колонки — только там, где им есть место. */
+@container nio (max-width:559px){ .prmrows>.prm.pr{flex-basis:100%} }
+.dash-body .node .io3{container:nio/inline-size}
 /* единица (хвост подписи «…, Hz») — тусклым текстом после значения */
 .prmrows .pr-unit{position:relative;z-index:1;flex:none;margin-left:-3px;font-size:10px;color:var(--dim);pointer-events:none}
 /* выбор из двух переключается кликом */
