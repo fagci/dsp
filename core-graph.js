@@ -842,6 +842,8 @@ addEventListener('pointerdown',e=>{ if(numPadEl && !numPadEl.contains(e.target))
 let ptipEl=null, ptipTimer=0;
 function paramTip(anchor,s){
   ptipEl?.remove(); clearTimeout(ptipTimer);
+  // у строки параметра своя карточка по долгому нажатию (rowtip выше) — вторую поверх не показываем
+  if(anchor.closest?.('#content .prm.pr[data-full], #dashGrid .prm.pr[data-full]')) return;
   const m=document.createElement('div'); m.className='ptip';
   const b=document.createElement('b'); b.textContent=s.label||s.n; m.append(b);
   if(s.tip){ const t=document.createElement('div'); t.textContent=s.tip; m.append(t); }
