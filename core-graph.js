@@ -1712,20 +1712,26 @@ cancelLink();
 }
 cv.addEventListener('pointerdown',ev=>{
 if(uiLocked()) return;
+const two=!!tapFrom && ev.pointerType==='touch';      // второй палец — щипок, не тап
+tapFrom=null;
 if(ev.target===cv||ev.target===content){
 if(pending){ const mg=linkNearest(ev.clientX,ev.clientY);        // тап рядом с подходящим пином — это попадание в него
 if(mg){ const pn=pending; ev.stopPropagation(); ev.preventDefault();
 if(pn.dir==='o') connect(pn.n.id,pn.port,mg.dataset.node,mg.dataset.port); else connect(mg.dataset.node,mg.dataset.port,pn.n.id,pn.port);
 stat.textContent='connection created'; clearPending(); return; } }
 if(!ev.shiftKey &&Sel.size){ Sel.clear(); syncSel(); }
-tapFrom=pending ? {n:pending.n,port:pending.port,dir:pending.dir,x:ev.clientX,y:ev.clientY,t:ev.timeStamp} : null;
-clearPending(); }
+tapFrom=pending ? {n:pending.n,port:pending.port,dir:pending.dir,x:ev.clientX,y:ev.clientY,t:ev.timeStamp,id:ev.pointerId,far:two} : null; }
 },true);
-// выбран порт, затем тап по пустому месту — выбор модуля для него (отпускание рядом с точкой нажатия, не панорама)
+// выбран порт, затем тап по пустому месту — выбор модуля для него (отпускание рядом с точкой нажатия).
+// Перетаскивание пустого места (панорама, щипок) выбор пина не снимает: до второго пина ещё нужно доехать.
 let tapFrom=null;
+window.addEventListener('pointermove',ev=>{ const f=tapFrom; if(f && ev.pointerId===f.id && Math.hypot(ev.clientX-f.x,ev.clientY-f.y)>8) f.far=true; },{passive:true});
 cv.addEventListener('pointerup',ev=>{
-const f=tapFrom; tapFrom=null;
-if(!f || ev.timeStamp-f.t>500 || Math.hypot(ev.clientX-f.x,ev.clientY-f.y)>8) return;
+const f=tapFrom; if(!f || ev.pointerId!==f.id) return;
+tapFrom=null;
+if(f.far || Math.hypot(ev.clientX-f.x,ev.clientY-f.y)>8) return;     // двигали холст — пин остаётся выбранным
+clearPending();
+if(ev.timeStamp-f.t>500) return;
 const t=portT(f.n,f.dir==='o'?'outs':'ins',f.port);
 if(t) openModPicker(ev.clientX,ev.clientY,toCanvas(ev),{n:f.n,port:f.port,dir:f.dir,type:t});
 });                                              // capture — отработать раньше Panzoom
