@@ -357,6 +357,7 @@ const PRESET_CATS={
   'Measure: Channel Model — Noise, Fading and Doppler on a Signal (Generator)':'Analysis & Measurement',
   'Measure: Spectrum Baseline — New Signal and Missing Carrier Alarm (Generator)':'Analysis & Measurement',
   'Measure: Air Diary — Who Transmits and When (Generator)':'Analysis & Measurement',
+  'Geo: Geotag — Signal Level Map of a Walk (Mock GPS)':'Maps & Locating',
   'Measure: SINAD of an FM Receiver (Generator)':'Analysis & Measurement',
   'Measure: IQ Quality — DC and Imbalance (Generator)':'Analysis & Measurement',
   'Meshtastic: Chat and Nodes on the Map':'Network & IoT',
@@ -3935,6 +3936,22 @@ const lg=addNode('recLog',1560,600,{}); lg.size.w=520; applySize(lg);
 addEdge(g1.id,'iq',a1.id,'a'); addEdge(g2.id,'iq',a1.id,'b'); addEdge(lf.id,'out',g1.id,'off');
 addEdge(a1.id,'out',sp.id,'in'); addEdge(sp.id,'spec',ad.id,'spec');
 addEdge(ad.id,'tx',tb.id,'rows'); addEdge(ad.id,'bursts',tl.id,'rows'); addEdge(ad.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Geo: Geotag — Signal Level Map of a Walk (Mock GPS)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Geotag glues a position to anything: records (the «rec» input — packets, finds of a decoder, measurements) and plain numbers (the «in» input — a level, a temperature: one record every «every» seconds, field «rssi»).\n'+
+  'The position is taken at the TIME of the record (field t; without it — arrival): between two fixes it is interpolated, so a record that a decoder delivers late still lands where it was received. Fixes come from records on «pos» (Phone Sensors, Mock GPS…), numbers on lat / lon, or — if nothing is wired — the GPS of this device.\n'+
+  'Here: Mock GPS walks a route (speed 25 m/s to see it quickly), a slow wave stands for the signal level; Geotag makes records {t, rssi, dev, lat, lon, acc, gage}, at most one per 8 m. Table collects them and the Map shows the survey: the track, coloured by level. «step» / «dt» thin the records, «no position: drop / pass», constants like dev=sdr1 go into every record.\n'+
+  'With a real receiver: wire the level of a USB SDR or the Signal Meter to «in», Phone Sensors (gps) to «pos» — the same graph, outside.'});
+nt.size.w=900; nt.size.h=190; applySize(nt);
+const mg=addNode('mockgps',40,300,{enable:true,mode:'route',speed:25,acc:5,rate:2}); mg.size.w=320; mg.size.h=300; applySize(mg);
+const lf=addNode('lfo',440,300,{freq:.05,min:-95,max:-45,wave:'sine'});
+const gt=addNode('geotag',440,520,{field:'rssi',consts:'dev=sim',every:.5,step:8,maxAge:5,own:false});
+const tb=addNode('table',800,300,{}); tb.size.w=440; tb.size.h=320; applySize(tb);
+const mp=addNode('geoMap',1280,300,{}); mp.size.w=640; mp.size.h=460; applySize(mp);
+addEdge(mg.id,'lat',gt.id,'lat'); addEdge(mg.id,'lon',gt.id,'lon'); addEdge(lf.id,'out',gt.id,'in');
+addEdge(gt.id,'rec',tb.id,'rec'); addEdge(tb.id,'rows',mp.id,'meas'); addEdge(gt.id,'rec',mp.id,'rec');
 markWiresDirty();
 });
 preset('Measure: SINAD of an FM Receiver (Generator)', function(){
