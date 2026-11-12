@@ -298,6 +298,7 @@ const PRESET_CATS={
   'Health: Binaural':'Health',
   'Health: Breath':'Health',
   'Health: Noise and Nature Mixer':'Health',
+  'Health: Chakra Tones (Solfeggio and Note Scale)':'Health',
   'Tools: Rangefinder and Protractor (Phone Camera Angles)':'Tools',
   'Tools: Sound Level Meter (Microphone, dBA)':'Tools',
   'Tools: Light Meter (Ambient Light, Exposure)':'Tools',
@@ -10742,5 +10743,43 @@ const ff=addNode('fft',380,320,{size:'4096'});
 const sa=addNode('sa',380,440,{fmin:20,fmax:12000,split:.4}); sa.size.w=620; sa.size.h=300; applySize(sa);
 addEdge(ng.id,'L',dc.id,'L'); addEdge(ng.id,'R',dc.id,'R');
 addEdge(ng.id,'out',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
+markWiresDirty();
+});
+
+// два распространённых набора «частот чакр»: Solfeggio (396…963) и ноты гаммы от до = 256 Гц
+preset('Health: Chakra Tones (Solfeggio and Note Scale)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Chakra tones in the two systems most often quoted. SOLFEGGIO: 396, 417, 528, 639, 741, 852, 963 Hz from root to crown (some lists swap 528 and 639 between the solar plexus and the heart). NOTE SCALE: the seven notes C D E F G A B with C = 256 Hz (256, 288, 320, 341.3, 384, 426.7, 480 Hz), one per chakra. Other sets exist too (e.g. planetary / «cosmic octave» tunings).\n'+
+  'Click a row: the oscillator plays that exact pure tone; the Noise Generator adds a soft pink / surf bed and an LFO makes the tone slowly swell. The analyzer shows the line at the chosen frequency.\n'+
+  'These are traditions, not science: there is no evidence that a frequency acts on a particular chakra. It is a way to meditate with a pure tone — enjoy it as a sound, keep the volume low.'});
+nt.size.w=900; nt.size.h=150; applySize(nt);
+const tb=addNode('table',40,230,{list:'@patch',
+  data:'name,system,chakra,freq,note,colour,theme\n'+
+  'Root · Solfeggio,solfeggio,Muladhara,396,~G4,red,grounding and safety\n'+
+  'Sacral · Solfeggio,solfeggio,Svadhisthana,417,~G#4,orange,flow and creativity\n'+
+  'Solar plexus · Solfeggio,solfeggio,Manipura,528,~C5,yellow,will and confidence\n'+
+  'Heart · Solfeggio,solfeggio,Anahata,639,~D#5,green,connection and compassion\n'+
+  'Throat · Solfeggio,solfeggio,Vishuddha,741,~F#5,blue,expression\n'+
+  'Third eye · Solfeggio,solfeggio,Ajna,852,~G#5,indigo,intuition and insight\n'+
+  'Crown · Solfeggio,solfeggio,Sahasrara,963,~B5,violet,stillness and unity\n'+
+  'Root · C,note scale,Muladhara,256,C4 (C=256),red,grounding and safety\n'+
+  'Sacral · D,note scale,Svadhisthana,288,D4,orange,flow and creativity\n'+
+  'Solar plexus · E,note scale,Manipura,320,E4,yellow,will and confidence\n'+
+  'Heart · F,note scale,Anahata,341.3,F4,green,connection and compassion\n'+
+  'Throat · G,note scale,Vishuddha,384,G4,blue,expression\n'+
+  'Third eye · A,note scale,Ajna,426.7,A4,indigo,intuition and insight\n'+
+  'Crown · B,note scale,Sahasrara,480,B4,violet,stillness and unity'});
+tb.size.w=640; tb.size.h=380; applySize(tb);
+const os=addNode('osc',720,230,{wave:'sine',freq:396,amp:.2}); 
+const lf=addNode('lfo',720,420,{freq:.08,min:.08,max:.22,wave:'sine'});
+const ng=addNode('noisegen',1000,230,{vol:.4,pink:.25,waves:.4,period:10,width:1}); ng.size.w=290; applySize(ng);
+const mx=addNode('mixer',1330,230,{channels:'3',pa:0,pb:-1,pc:1,ka:1,kb:1,kc:1});
+const dc=addNode('dac',1330,380,{vol:.3,mode:'stereo'});
+const ff=addNode('fft',720,520,{size:'8192'});
+const sa=addNode('sa',720,640,{fmin:200,fmax:1100,split:.4}); sa.size.w=620; sa.size.h=240; applySize(sa);
+addEdge(tb.id,'freq',os.id,'freq'); addEdge(lf.id,'out',os.id,'amp');
+addEdge(os.id,'out',mx.id,'a'); addEdge(ng.id,'L',mx.id,'b'); addEdge(ng.id,'R',mx.id,'c');
+addEdge(mx.id,'L',dc.id,'L'); addEdge(mx.id,'R',dc.id,'R');
+addEdge(os.id,'out',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
 markWiresDirty();
 });
