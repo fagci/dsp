@@ -10,7 +10,7 @@ const MG_DEF_SERVER={nostr:'wss://relay.damus.io wss://nos.lol',ntfy:'https://nt
 function mgNodeLog(n,dir,m){
   const row={t:m.t || Date.now(),proto:n.p.proto,dir,from:dir==='out' ? String(n.p.nick||'me') : mgClean(m.from||''),to:m.to||'',text:mgClean(m.text),id:m.id||''};
   if(m.atts && m.atts.length){
-    row.atts=m.atts.map(a=>({name:a.name,mime:a.mime,size:a.size||((a.bytes||[]).length||0)}));
+    row.atts=m.atts.map(a=>({name:a.name,mime:a.mime,size:a.size||((a.bytes||[]).length||0),...(a.fid!=null ? {fid:a.fid,path:a.path} : {}),...(a.kind ? {kind:a.kind} : {}),...(a.dur ? {dur:a.dur} : {})}));      // fid — номер файла в Files (его берёт Whisper и др.)
     row.text=(row.text?row.text+' ':'')+row.atts.map(a=>'[file: '+a.name+(a.size?' · '+(a.size/1024).toFixed(0)+' KB':'')+']').join(' ');
   }
   if(m.thread) row.thread=m.thread;
@@ -80,7 +80,12 @@ function mgNodeStart(n){
       if(m.kind==='edit' || m.kind==='delete'){ n.recQ.push({t:m.t||Date.now(),proto:p.proto,dir:m.self ? 'out' : 'in',kind:m.kind,target:String(m.target||''),author:String(m.author||''),text:m.kind==='edit' ? String(m.text||'') : '',room:m.room||'',to:m.to||'',from:String(m.author||''),force:!!m.force,id:m.id||''}); return; }     // правка / удаление — событие для Chat, не строка журнала
       if(m.kind==='reaction'){ n.recQ.push({t:m.t||Date.now(),proto:p.proto,dir:m.self ? 'out' : 'in',kind:'reaction',target:String(m.target||''),author:String(m.author||''),emojis:m.emojis||[],op:m.op||'add',room:m.room||'',to:m.to||'',text:'',from:String(m.author||''),id:m.id||''}); return; }     // реакция — событие для Chat, не строка журнала
       if(m.kind==='roster'){ n.recQ.push({t:m.t||Date.now(),proto:p.proto,dir:'in',kind:'roster',contacts:m.contacts||[],text:'',from:''}); n.status='roster: '+(m.contacts||[]).length+' contact(s)'; return; }     // список контактов — в rec (для Contacts), не в чат
-      if(m.delay && !cfg.history) return; mgNodeSaveAtts(n,m); mgNodeLog(n,m.self ? 'out' : 'in',m);
+      if(m.delay && !cfg.history) return;
+      if(m.atts && m.atts.length && typeof FileStore!=='undefined'){      // вложение сначала ложится в Files (получает номер), и только потом запись уходит на выход: по номеру её находят Whisper и другие
+        n.saveQ=(n.saveQ||Promise.resolve()).then(()=>mgNodeSaveAtts(n,m)).catch(()=>{}).then(()=>mgNodeLog(n,m.self ? 'out' : 'in',m));
+        return;
+      }
+      mgNodeLog(n,m.self ? 'out' : 'in',m);
     },
     status:(t,s)=>{ n.status=t; n.ok=s==='up'; if(/^registered\b|already registered/.test(t)) n.regNext=false; if(s==='fatal') n.sess=null; },
   });
@@ -95,7 +100,7 @@ function mgNodeReact(n,r){                                  // реакция о
   Promise.resolve(n.sess.react ? n.sess.react(r) : false).then(ok=>{ if(!ok && !/react|reaction|Matrix|Telegram|Nostr|XMPP/.test(n.status||'')) n.status=n.p.proto+': reactions are not supported here'; }).catch(()=>{});
 }
 function mgNodeSend(n,text,to){
-  text=String(text||'').trim(); if(!text) return;
+  text=String(text||'').trim(); if(!text && !(n.p.proto==='telegram' && String(n.p.attach||'').trim())) return;      // телеграм: файл можно отправить и без текста
   if(!n.sess){ n.status='not connected — press Connect'; return; }
   (async()=>{
     if(!to && n.book && n.book.length && text[0]==='@'){                     // адресная книга: @alias → @адрес из контактов
@@ -104,12 +109,27 @@ function mgNodeSend(n,text,to){
     }
     let atts=null;
     const ref=String(n.p.attach||'').trim();
-    if(n.p.proto==='email' && ref){
+    if((n.p.proto==='email' || n.p.proto==='telegram') && ref){
       atts=await mgLoadAtts(ref);
       if(!atts) n.status='attachment «'+ref+'» not found in Files';
     }
     return n.sess.send(text,to||undefined,atts||undefined);
   })().then(ok=>{ if(!ok && n.sess && !/not sent|not found/.test(n.status)) n.status+=' · not sent'; });
+}
+/* записи с вложениями (atts[].fid — номер в Files) → отправка файлов; подпись — поле caption или text записи */
+function mgNodeSendFiles(n,input,to){
+  if(!n.sess){ n.status='not connected — press Connect'; return; }
+  if(n.p.proto!=='telegram' && n.p.proto!=='email'){ n.status=n.p.proto+': sending files is not supported here (telegram, email)'; return; }
+  (async()=>{
+    for(const r of Array.isArray(input) ? input : [input]){
+      if(!r || typeof r!=='object' || !Array.isArray(r.atts)) continue;
+      const atts=[];
+      for(const a of r.atts){ if(a && a.fid!=null){ const x=await mgLoadAtts(String(a.fid)); if(x) atts.push(...x); } }
+      if(!atts.length){ n.status='file not found in Files'; continue; }
+      const ok=await n.sess.send(String(r.caption||''),to||r.room||undefined,atts);
+      if(!ok && n.sess && !/not sent/.test(n.status)) n.status+=' · not sent';
+    }
+  })().catch(e=>{ n.status='send files: '+e.message; });
 }
 /* вложение из Files: имя или id файла → [{name, mime, bytes}] */
 async function mgLoadAtts(ref){
@@ -129,10 +149,11 @@ async function mgLoadAtts(ref){
 }
 /* входящие вложения — в папку mail/ хранилища Files */
 function mgNodeSaveAtts(n,m){
-  if(!m.atts || !m.atts.length || typeof FileStore==='undefined') return;
-  (async()=>{
+  if(!m.atts || !m.atts.length || typeof FileStore==='undefined') return Promise.resolve();
+  return (async()=>{
     try{
-      const path=mgAttPath(n.p.attPath,m,n.p.proto);                 // по шаблону «mail/{from}»: вложенные папки создаются по пути
+      const tpl=n.p.proto==='telegram' && (n.p.attPath||'mail/{from}')==='mail/{from}' ? 'telegram/{from}' : n.p.attPath;
+      const path=mgAttPath(tpl,m,n.p.proto);                 // по шаблону «mail/{from}»: вложенные папки создаются по пути
       let dir=null;
       for(const name of path){
         let f=(await FileStore.listFolders('files',dir?dir.id:null).catch(()=>[])).find(x=>x.name===name);
@@ -142,8 +163,9 @@ function mgNodeSaveAtts(n,m){
       }
       for(const a of m.atts){
         const blob=new Blob([a.bytes],{type:a.mime});
-        await FileStore.put({space:'files',folderId:dir?dir.id:null,name:a.name,mime:a.mime,blob,
-          meta:{from:m.fromAddr||m.from||'',subject:m.subject||'',t:m.t||Date.now()}});
+        a.fid=await FileStore.put({space:'files',folderId:dir?dir.id:null,name:a.name,mime:a.mime,blob,
+          meta:{from:m.fromAddr||m.from||'',subject:m.subject||'',t:m.t||Date.now(),...(m.ref ? {ref:m.ref} : {})}});
+        a.path=path.join('/')+'/'+a.name;
       }
       n.status='saved '+m.atts.length+' attachment(s) → Files/'+path.join('/');
     }catch(e){ n.status='attachment save failed: '+e.message; }
@@ -152,7 +174,7 @@ function mgNodeSaveAtts(n,m){
 
 def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · IRC · XMPP · APRS · Email · SMS · Reticulum · Mastodon · Bluesky · RSS)', cat:'Sources',
   kw:'messenger chat nostr ntfy matrix telegram bot irc xmpp jabber relay message channel push notify send receive internet',
-  ins:[{n:'send',t:'txt'},{n:'to',t:'txt'},{n:'rows',t:'bands'},{n:'react',t:'rec'},{n:'edit',t:'rec'}], outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'from',t:'txt'},{n:'new',t:'num'},{n:'ok',t:'num'}],
+  ins:[{n:'send',t:'txt'},{n:'to',t:'txt'},{n:'rows',t:'bands'},{n:'react',t:'rec'},{n:'edit',t:'rec'},{n:'file',t:'rec'}], outs:[{n:'rec',t:'rec'},{n:'text',t:'txt'},{n:'from',t:'txt'},{n:'new',t:'num'},{n:'ok',t:'num'}],
   readout:true, tall:true,
   params:[
     {n:'proto',t:'select',opts:['nostr','ntfy','matrix','telegram','irc','xmpp','aprs','email','sms','reticulum','mastodon','bluesky','rss'],d:'nostr',fn:n=>{ mgNodeStop(n); mgNodeReset(n); n.sig=undefined; n.status='not connected'; },label:'protocol'},
@@ -160,8 +182,8 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
     {n:'pxcred',t:'text',d:'',cred:true,credType:'proxy',label:'proxy',tip:'proxy — a credential of type «proxy» (socks5://… or http://…): the Node bridge opens everything through it (IRC, XMPP, e-mail, Matrix, Nostr, feeds…). Empty — the proxy of the gateway in Settings → Devices, or the bridge\'s own --proxy',adv:true,if:n=>n.p.proto!=='sms'},
     {n:'account',t:'text',d:'',cred:true,label:'account',tip:'account — a credential (Settings → Credentials) or «＋ new…» right here: it IS the server, the login and the password of the channel. Empty — no auth (Nostr anonymous, ntfy, public feeds; defaults: public relays, ntfy.sh, …)',if:n=>!['sms','rss'].includes(n.p.proto)},
     {n:'channel',t:'text',d:'dsp',label:'channel / room / topic',tip:'channel — nostr: hashtag · ntfy: topic · matrix: room (!id:server or #alias:server) · telegram: only to receive from ONE chat — its id or @name; leave empty for all chats (replies go to the last one) · irc: #channels · xmpp: room@conference.server (empty — direct messages only) · aprs: server filter (g/CALL, m/50, r/lat/lon/km, b/CALL*; empty — messages to you) · email: mailbox (empty — INBOX) · reticulum: the default recipient (32-digit address or a name heard in announces) · mastodon / bluesky: WHAT TO READ — #tags (several: any of them), -#tag drops posts with it, mastodon: «local» / «home» (token), empty — the public timeline; bluesky: @account, a feed link (bsky.app/profile/…/feed/…) or an at:// feed · rss: WORDS — any of them in the title / text / categories, -word drops an item; empty — everything',if:n=>n.p.proto!=='sms'},
-    {n:'attach',t:'text',d:'',label:'attach file (email)',tip:'email: a file from Files (name or id) attached to what is sent',if:n=>n.p.proto==='email'},
-    {n:'attPath',t:'text',d:'mail/{from}',label:'attachments folder',tip:'email: folder in Files for incoming attachments — «/» makes subfolders; {from} address, {name}, {subject}, {date}, {year}, {month}, {thread}, {proto}',adv:true,if:n=>n.p.proto==='email'},
+    {n:'attach',t:'text',d:'',label:'attach file (email, telegram)',tip:'email, telegram: a file from Files (name or id) sent along with the message; telegram picks the kind by type — .ogg/.opus voice message, other audio, jpeg/png/webp photo, mp4 video, the rest a document (up to 50 MB); the message text becomes the caption (up to 1024 characters)',if:n=>n.p.proto==='email' || n.p.proto==='telegram'},
+    {n:'attPath',t:'text',d:'mail/{from}',label:'attachments folder',tip:'email, telegram (voice messages, audio, documents; telegram with the default value uses telegram/{from}): folder in Files for incoming attachments — «/» makes subfolders; {from} address, {name}, {subject}, {date}, {year}, {month}, {thread}, {proto}',adv:true,if:n=>n.p.proto==='email' || n.p.proto==='telegram'},
     {n:'contacts',t:'text',d:'',label:'aliases (Name=addr)',tip:'contacts — extra aliases «Name=address» (comma-separated); wire a Table with name/addr columns into «rows» for a full address book',if:n=>!['mastodon','bluesky','rss'].includes(n.p.proto)},
     {n:'poll',t:'range',min:5,max:600,step:5,d:30,label:'check every, s',tip:'email / mastodon / bluesky / rss: check every, s (mastodon, bluesky: at least 5; rss: at least 60)',if:n=>['email','mastodon','bluesky','rss'].includes(n.p.proto)},
     {n:'nick',t:'text',d:'dsp',label:'nick',tip:'nick (shown to others; in Chat set «my name» the same)',if:n=>['nostr','ntfy','matrix','telegram','irc','xmpp','reticulum'].includes(n.p.proto)},
@@ -196,6 +218,7 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
     n.book=book;
     if(I.edit && I.edit!==n.lastEdit){ n.lastEdit=I.edit; for(const r of Array.isArray(I.edit) ? I.edit : [I.edit]) if(r && typeof r==='object') mgNodeModify(n,r); }
     if(I.react && I.react!==n.lastReact){ n.lastReact=I.react; for(const r of Array.isArray(I.react) ? I.react : [I.react]) if(r && typeof r==='object') mgNodeReact(n,r); }
+    if(I.file && I.file!==n.lastFile){ n.lastFile=I.file; mgNodeSendFiles(n,I.file,typeof I.to==='string' ? I.to : ''); }      // файлы из Files по записям (Record Audio, Record Video, камера…): отправить в чат
     const send=typeof I.send==='string' ? I.send : '';
     if(send && send!==n.lastSend) mgNodeSend(n,send,typeof I.to==='string' ? I.to : '');
     n.lastSend=send;

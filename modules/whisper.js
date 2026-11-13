@@ -112,7 +112,8 @@ function wsPump(n){
     if(!text || (n.p.junk && (wsJunk(text) || wsLoop(text)))){ n.skipped++; return; }
     const line=n.p.stamps ? wsStamp(j.sec)+' '+text : text;
     n.text=text; n.partial=''; n.full=wsAppend(n.full,line,20000,'\n'); n.count++; n.go=true;
-    n.q.push({t:Date.now(),src:'whisper',text,sec:+j.sec.toFixed(1),model:cfg.repo});
+    if(n.fileJob) n.fileJob.texts.push(text);                    // фразы файла из очереди «file» — в общий итог файла (выход done)
+    n.q.push({t:Date.now(),src:'whisper',text,sec:+j.sec.toFixed(1),model:cfg.repo,...(n.fileJob && n.fileJob.ref ? {ref:n.fileJob.ref} : {})});
     n.rev++; redraw(n);
   }).catch(e=>{ if(gen!==n.gen) return; n.err=String(e.message||e); n.retryAt=performance.now()+8000; n.rev++; redraw(n); })
     .finally(()=>{ if(gen===n.gen){ n.busy=false; wsPump(n); } });
@@ -165,9 +166,21 @@ function wsStatus(n){
   return bits.join(' · ');
 }
 
+function wsFileDone(n,r){ n.dq.push(r); if(r.text && !r.err){ n.reply=r.text; n.replyTo=r.room; } n.rev++; }      // итог файла: на done; текст и чат — на reply / to
+// файл из Files по записи с входа «file»: у вложения рядом с Chat / Messenger есть fid — номер в Files
+async function wsFromFiles(n,job){
+  const rec=typeof FileStore!=='undefined' ? await FileStore.get(job.fid).catch(()=>null) : null;
+  if(!rec || !rec.blob){ n.err='file «'+job.name+'» not found in Files'; wsFileDone(n,wsDoneRec({...job,texts:[]},n.err)); n.fileRun=false; n.rev++; redraw(n); return; }
+  return wsFile(n,rec.blob,job);
+}
+function wsTake(n,I){
+  if(I.file && I.file!==n.lastFile){ n.lastFile=I.file; n.fq.push(...wsFileJobs(I.file,n.fseen)); }
+  if(!n.fileRun && n.fq.length){ n.fileRun=true; n.fileStop=false; wsFromFiles(n,n.fq.shift()); }
+}
 // файл целиком: декодируем, режем теми же настройками, но быстрее реального времени
-async function wsFile(n,file){
-  const gen=n.gen;
+async function wsFile(n,file,job){
+  const gen=n.gen, name=(job && job.name) || file.name;
+  n.fileJob=job ? {...job,texts:[]} : null;
   try{
     n.err=''; n.fileInfo='decoding…'; n.rev++; redraw(n);
     const d=await decodeAudioFile(file), x=wsTo16k(d.samples,d.sr), seg=wsSegmenter(16000,{...wsSegCfg(n),max:Math.min(+n.p.maxlen,28)}), B=1600;
@@ -182,9 +195,10 @@ async function wsFile(n,file){
     }
     if(!n.fileStop) for(const s of seg.flush()) wsEnqueue(n,s,total);
     while((n.busy || n.jobs.length) && gen===n.gen && !n.fileStop) await new Promise(r=>setTimeout(r,200));
-    if(gen===n.gen) n.fileInfo=n.fileStop ? 'file stopped' : 'file done · '+file.name;
-  }catch(e){ if(gen===n.gen){ n.err='file: '+(e.message||e); n.fileInfo=''; } }
-  finally{ if(gen===n.gen){ n.fileRun=false; n.rev++; redraw(n); } }
+    if(gen===n.gen) n.fileInfo=n.fileStop ? 'file stopped' : 'file done · '+name;
+    if(gen===n.gen && job && !n.fileStop) wsFileDone(n,wsDoneRec(n.fileJob,'')); }
+  catch(e){ if(gen===n.gen){ n.err='file: '+(e.message||e); n.fileInfo=''; if(job) wsFileDone(n,wsDoneRec(n.fileJob,n.err)); } }
+  finally{ if(gen===n.gen){ n.fileRun=false; n.fileJob=null; n.rev++; redraw(n); } }
 }
 function wsPickFile(n){
   if(n.fileRun){ n.fileStop=true; return; }
@@ -195,9 +209,9 @@ function wsPickFile(n){
 
 def({ id:'whisper', lazy:'manual', title:'Speech to Text (Whisper, neural)', cat:'Analysis', readout:true, tall:true, w:300, resize:true,
   kw:'whisper speech to text recognition stt transcribe transcription subtitles voice neural network ai openai russian english translate offline radio',
-  // in — звук; text — последняя фраза, full — вся стенограмма, go — импульс на новую фразу, rec — событие, busy — фраз в работе
-  ins:[{n:'in',t:'sig'}],
-  outs:[{n:'text',t:'txt'},{n:'partial',t:'txt'},{n:'full',t:'txt'},{n:'go',t:'num'},{n:'rec',t:'rec'},{n:'count',t:'num'},{n:'busy',t:'num'}],
+  // in — звук; file — записи с вложением (Messenger: голосовые из Telegram): файл берётся из Files по номеру, распознаётся по очереди, итог — на done (rec), reply (текст) и to (чат для ответа); text — последняя фраза, full — вся стенограмма, go — импульс на новую фразу, rec — событие, busy — фраз в работе
+  ins:[{n:'in',t:'sig'},{n:'file',t:'rec'}],
+  outs:[{n:'text',t:'txt'},{n:'partial',t:'txt'},{n:'full',t:'txt'},{n:'go',t:'num'},{n:'rec',t:'rec'},{n:'count',t:'num'},{n:'busy',t:'num'},{n:'done',t:'rec'},{n:'reply',t:'txt'},{n:'to',t:'txt'}],
   params:[{n:'engine',t:'select',opts:['auto','app','browser'],d:'auto',label:'engine: app — whisper.cpp on the phone (DSP app: dotprod CPU, GPU via OpenCL where there is one; knows Russian far better), browser — ONNX in the page; auto — the phone engine in the app, else the browser'},
           {n:'appModel',t:'select',opts:Object.keys(WAP_MODELS),d:'medium-q5_0',label:'phone model (medium-q5_0 ≈539 MB good Russian and keeps up on most phones, large-v3-turbo-q5_0 ≈574 best Russian but needs the GPU or a fast phone, small-q5_1 ≈181 faster, weaker; downloaded once into the app)'},
           {n:'appGpu',t:'check',d:true,label:'phone: use the GPU (OpenCL, Adreno 7xx / 8xx); off — CPU only. Switching CPU → GPU needs an app restart'},
@@ -222,10 +236,11 @@ def({ id:'whisper', lazy:'manual', title:'Speech to Text (Whisper, neural)', cat
           {n:'save',t:'button',label:'Save text',fn:n=>{ if(n.full) wsDownload(n.full,'whisper-'+Date.now()+'.txt'); }},
           {n:'custom',t:'text',d:'',label:'own model repo on huggingface.co (ONNX for Transformers.js), e.g. onnx-community/whisper-large-v3-turbo; empty — by «model»',adv:true}],
   init(n){ n.seg=null; n.segKey=''; n.sr=0; n.clock=0; n.jobs=[]; n.busy=false; n.gen=0; n.q=[]; n.text=''; n.full=''; n.count=0; n.go=false;
-           n.err=''; n.ms=0; n.skipped=0; n.dropped=0; n.mergedN=0; n.rev=0; n.retryAt=0; n.fileRun=false; n.fileStop=false; n.fileInfo=''; n.preKey=''; n.stat=''; n.rtf=0; n.busyAt=0; n.partial=''; n.draftBusy=false; n.draftGen=0; n.draftAt=0; },
+           n.err=''; n.ms=0; n.skipped=0; n.dropped=0; n.mergedN=0; n.rev=0; n.retryAt=0; n.fileRun=false; n.fileStop=false; n.fileInfo=''; n.fq=[]; n.fseen=new Set(); n.dq=[]; n.fileJob=null; n.lastFile=null; n.reply=''; n.replyTo=''; n.preKey=''; n.stat=''; n.rtf=0; n.busyAt=0; n.partial=''; n.draftBusy=false; n.draftGen=0; n.draftAt=0; },
   dispose(n){ n.gen++; n.jobs=[]; n.seg=null; },
   process(n,I){
     const x=I.in, sr=Eng.sr;
+    wsTake(n,I);
     if(x && n.p.listen && !n.fileRun){
       const key=[sr,n.p.thr,n.p.pause,n.p.maxlen].join('|');
       if(!n.seg || n.segKey!==key){ n.seg=wsSegmenter(sr,wsSegCfg(n)); n.segKey=key; }
@@ -238,7 +253,8 @@ def({ id:'whisper', lazy:'manual', title:'Speech to Text (Whisper, neural)', cat
     if(n.err && performance.now()>=n.retryAt && n.retryAt){ n.err=''; n.retryAt=0; n.preKey=''; }
     const st=wsStatus(n); if(st!==n.stat){ n.stat=st; redraw(n); }
     const rec=n.q.length ? n.q.splice(0) : null, go=n.go ? 1 : 0; n.go=false;
-    return {text:n.text, partial:n.partial||'', full:n.full, go, rec, count:n.count, busy:n.jobs.length+(n.busy ? 1 : 0)}; },
+    const done=n.dq.length ? n.dq.splice(0) : null;
+    return {text:n.text, partial:n.partial||'', full:n.full, go, rec, count:n.count, busy:n.jobs.length+(n.busy ? 1 : 0)+n.fq.length, done, reply:n.reply, to:n.replyTo}; },
   drawKey:n=>n.stat+'|'+n.rev,
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
     r.textContent=n.stat+(n.skipped ? ' · skipped '+n.skipped : '')+(n.full ? '\n\n'+n.full.slice(-1200) : '')+(n.partial ? '\n▸ '+n.partial : ''); }});

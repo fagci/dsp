@@ -407,6 +407,17 @@ function mgOpenTelegram(cfg,c){
     let j=null; try{ j=await r.json(); }catch(e){}
     return j || {ok:false,error_code:r.status,description:'HTTP '+r.status};
   };
+  const fileBase=base.replace(/\/bot[^/]*\/$/,'/file/bot'+token+'/');
+  const dl=async f=>{                                              // getFile → путь → скачать; {bytes} или {err}
+    if(f.size>20*1024*1024) return {err:'larger than 20 MB — the Bot API does not hand such files out'};
+    try{
+      const g=await call('getFile',{file_id:f.id});
+      if(!g.ok || !g.result || !g.result.file_path) return {err:g.description||'getFile failed'};
+      const r=await io.fetch(fileBase+g.result.file_path,{signal:ac.signal});
+      if(!r.ok) return {err:'download failed: HTTP '+r.status};
+      return {bytes:new Uint8Array(await r.arrayBuffer())};
+    }catch(e){ return {err:e.message}; }
+  };
   (async()=>{
     try{
       const me=await call('getMe');
@@ -418,18 +429,45 @@ function mgOpenTelegram(cfg,c){
         const u=mgTgUpdates(r,cfg.channel);
         offset=Math.max(offset,u.next); if(u.last!==null) lastChat=u.last;
         if(u.skipped){ ignored+=u.skipped; c.status('Telegram: @'+botName+' · '+ignored+' message(s) from other chats ignored — the channel «'+cfg.channel+'» is a chat filter, clear it to receive from all chats','up'); }
-        for(const m of u.msgs) c.msg(m);
+        for(const m of u.msgs){
+          if(m.file){                                              // вложение: скачиваем сюда же (Bot API отдаёт файлы до 20 МБ), дальше — как вложение почты
+            const f=m.file; delete m.file;
+            const got=await dl(f);
+            if(got.bytes) m.atts=[{name:f.name,mime:f.mime||'application/octet-stream',bytes:got.bytes,size:got.bytes.length,kind:f.kind,dur:f.dur}];
+            else c.status('Telegram: '+f.name+' — '+got.err,'up');
+          }
+          c.msg(m);
+        }
         for(const x of u.react) c.msg(x);
         for(const x of u.edits) c.msg(x);
       }
     }catch(e){ if(!closed) c.down('Telegram: '+e.message,false); }
   })();
   return {
-    async send(text,to){
+    async send(text,to,atts){
       const chat=String(to || cfg.channel || lastChat || '').trim();
       if(!chat){ c.status('Telegram: no chat yet — write to the bot first, or set the channel (chat id / @name)','warn'); return false; }
       try{
         let first=null;
+        if(atts && atts.length){                                   // файлы: голосовое / аудио / фото / видео / документ по типу; текст — подпись первого (до 1024 знаков), длиннее — отдельным сообщением
+          const cap=String(text||'').length<=1024 ? String(text||'') : '';
+          if(!cap && text) { const r0=await call('sendMessage',{chat_id:/^-?\d+$/.test(chat) ? +chat : chat,text:mgSplit(text,3500)[0]}); if(!r0.ok){ c.status('Telegram: '+(r0.description||'send failed'),'warn'); return false; } }
+          let i=0;
+          for(const a of atts){
+            const k=mgTgSendKind({name:a.name,mime:a.mime,size:(a.bytes||[]).length});
+            if(!k){ c.status('Telegram: '+a.name+' is larger than 50 MB — the Bot API does not take such files','warn'); return false; }
+            const fd=new FormData(); fd.append('chat_id',chat);
+            if(cap && !i) fd.append('caption',cap);
+            fd.append(k.field,new Blob([a.bytes],{type:a.mime||'application/octet-stream'}),a.name||'file');
+            const r=await io.fetch(base+k.method,{method:'POST',signal:ac.signal,body:fd});
+            let j=null; try{ j=await r.json(); }catch(e){}
+            if(!j || !j.ok){ c.status('Telegram: '+a.name+' — '+((j && j.description)||'HTTP '+r.status),'warn'); return false; }
+            if(!first) first=j.result; i++;
+          }
+          const cid0=first && first.chat ? String(first.chat.id) : '';
+          c.msg({from:String(cfg.nick||'me'),to:chat,text:String(text||''),t:Date.now(),self:true,local:true,atts:atts.map(a=>({name:a.name,mime:a.mime,size:(a.bytes||[]).length})),...(first && first.message_id!=null ? {id:'tgo'+cid0+':'+first.message_id,ref:cid0+':'+first.message_id,mid:first.message_id,room:cid0} : {})});
+          return true;
+        }
         for(const part of mgSplit(text,3500)){
           const r=await call('sendMessage',{chat_id:/^-?\d+$/.test(chat) ? +chat : chat,text:part});
           if(!r.ok){ c.status('Telegram: '+(r.description||'send failed'),'warn'); return false; }

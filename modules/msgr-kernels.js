@@ -222,6 +222,48 @@ function mgMatrixSync(j,room,self){                         // → {next,msgs:[{
   }
   return {next:j && j.next_batch,msgs:out,react,redact,edits,marks};
 }
+/* Вложение сообщения Bot API → {kind:'voice'|'audio'|'video_note'|'document', id (file_id), mime, size, dur, name} или null.
+   Берём только то, что можно разобрать как звук или сохранить файлом; фото и стикеры пропускаем. */
+function mgTgFile(m){
+  for(const kind of ['voice','audio','video_note','document']){
+    const x=m && m[kind]; if(!x || typeof x!=='object' || !x.file_id) continue;
+    return {kind,id:String(x.file_id),mime:String(x.mime_type||(kind==='voice' ? 'audio/ogg' : kind==='video_note' ? 'video/mp4' : '')),size:+x.file_size||0,dur:+x.duration||0,name:String(x.file_name||x.title||'')};
+  }
+  return null;
+}
+const MG_TG_EXT={'audio/ogg':'ogg','audio/mpeg':'mp3','audio/mp4':'m4a','audio/x-m4a':'m4a','audio/wav':'wav','audio/x-wav':'wav','audio/flac':'flac','audio/webm':'webm','video/mp4':'mp4','video/webm':'webm','application/pdf':'pdf','text/plain':'txt'};
+function mgTgFileName(f,chat,mid){                                // имя в Files: родное, а у голосовых и кружков его нет — по чату и номеру сообщения
+  const own=String(f.name||'').replace(/[\u0000-\u001f\/\\:*?"<>|]+/g,'_').trim();
+  if(own) return own.slice(0,120);
+  return (f.kind==='voice' ? 'voice' : f.kind==='video_note' ? 'circle' : f.kind)+'-'+String(chat).replace(/^-/,'m')+'-'+mid+'.'+(MG_TG_EXT[f.mime]||'bin');
+}
+/* Что и каким методом отправить: вложение {name,mime,size} → {method, field} Bot API.
+   Ogg/Opus — голосовое (с волной), прочий звук — аудио, картинки до 10 МБ — фото, mp4/webm — видео, остальное — документ. Загрузка — до 50 МБ. */
+function mgTgSendKind(a){
+  const mime=String(a.mime||'').toLowerCase(), name=String(a.name||'').toLowerCase(), size=+a.size||0;
+  if(size>50*1024*1024) return null;
+  if(mime==='audio/ogg' || mime==='audio/opus' || /\.(ogg|oga|opus)$/.test(name)) return {method:'sendVoice',field:'voice'};
+  if(mime.startsWith('audio/')) return {method:'sendAudio',field:'audio'};
+  if(/^image\/(jpeg|png|webp)$/.test(mime) && size<=10*1024*1024) return {method:'sendPhoto',field:'photo'};
+  if(mime==='video/mp4') return {method:'sendVideo',field:'video'};
+  return {method:'sendDocument',field:'document'};
+}
+/* Обратное: поля → объект обновления Bot API (проверка без эфира: собрали → mgTgUpdates разобрал → поля те же).
+   f: {update, chat, mid, from, text, t (мс), file:{kind,id,mime,size,dur,name}, react:{emojis[], user}} */
+function mgTgUpdate(f){
+  const chat={id:+f.chat,...(f.title ? {title:f.title} : {})}, user=f.from ? {username:String(f.from)} : {};
+  if(f.react) return {update_id:f.update|0,message_reaction:{chat,message_id:f.mid,user:{username:String(f.react.user||'')},date:Math.floor((+f.t||0)/1000),old_reaction:[],new_reaction:(f.react.emojis||[]).map(emoji=>({type:'emoji',emoji}))}};
+  const m={message_id:f.mid,chat,from:user,date:Math.floor((+f.t||0)/1000)};
+  if(f.file){
+    const x={file_id:f.file.id,file_unique_id:'u'+f.file.id,file_size:f.file.size};
+    if(f.file.mime) x.mime_type=f.file.mime;
+    if(f.file.dur) x.duration=f.file.dur;
+    if(f.file.name && f.file.kind!=='voice' && f.file.kind!=='video_note') x[f.file.kind==='audio' ? 'title' : 'file_name']=f.file.name;
+    m[f.file.kind]=x;
+    if(f.text) m.caption=f.text;
+  } else m.text=String(f.text||'');
+  return {update_id:f.update|0,message:m};
+}
 function mgTgUpdates(j,chat){                               // → {next,msgs,react,last:chat_id,skipped}
   const out=[], react=[], edits=[]; let next=0, last=null, skipped=0;
   const want=String(chat||'').trim().toLowerCase();
@@ -240,11 +282,15 @@ function mgTgUpdates(j,chat){                               // → {next,msgs,re
         edits.push({kind:'edit',id:'tge'+u.update_id,target:String(c1.id)+':'+e0.message_id,text:e0.text,author:f1.username||f1.first_name||c1.title||String(c1.id),room:String(c1.id),t:(+e0.edit_date||+e0.date||0)*1000});
       continue;
     }
-    const m=u.message || u.channel_post; if(!m || typeof m.text!=='string') continue;
+    const m=u.message || u.channel_post; if(!m) continue;
+    const file=mgTgFile(m);                                        // голосовое / аудио / кружок / документ: текст — подпись (может быть пустой)
+    if(typeof m.text!=='string' && !file) continue;
     const c=m.chat||{};
     if(filter && String(c.id)!==want && '@'+String(c.username||'').toLowerCase()!==want){ skipped++; continue; }
     const f=m.from||{};
-    out.push({id:String(u.update_id),ref:String(c.id)+':'+m.message_id,mid:m.message_id,from:f.username||f.first_name||c.title||String(c.id),room:String(c.id),text:m.text,t:(+m.date||0)*1000,chat:c.title||c.username||''});
+    const row={id:String(u.update_id),ref:String(c.id)+':'+m.message_id,mid:m.message_id,from:f.username||f.first_name||c.title||String(c.id),room:String(c.id),text:typeof m.text==='string' ? m.text : String(m.caption||''),t:(+m.date||0)*1000,chat:c.title||c.username||''};
+    if(file){ file.name=mgTgFileName(file,c.id,m.message_id); row.file=file; }
+    out.push(row);
     last=c.id;
   }
   return {next,msgs:out,react,edits,last,skipped};

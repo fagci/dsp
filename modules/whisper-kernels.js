@@ -127,3 +127,25 @@ function wsManualName(repo,fname){
   const f=String(fname||'').replace(/^.*[\\/]/,'').replace(/ \(\d+\)(?=\.[^.]*$)/,'');     // «tokenizer (1).json» → tokenizer.json
   return 'Whisper · '+repo+' · '+(/\.onnx(_data.*)?$/.test(f) ? 'onnx/' : '')+f;
 }
+
+// итог файла из очереди: запись для выхода done и тексты для reply / to (ответ в тот же чат)
+function wsDoneRec(j,err){
+  const text=(j.texts||[]).join(' ').replace(/\s+/g,' ').trim(), room=String(j.ref||'').replace(/:[^:]*$/,'');
+  return {t:Date.now(),src:'whisper',kind:'transcript',text,name:j.name,ref:j.ref||'',room,from:j.from||'',fid:j.fid,...(err ? {err} : {})};
+}
+// записи с входа «file» → задания [{fid,name,ref,from}]: вложения Messenger (atts[] с fid — номер в Files) или запись с самим fid.
+// Берём только звук и видео; seen (Set) не даёт взять одно вложение дважды.
+function wsFileJobs(input,seen){
+  const out=[];
+  for(const r of Array.isArray(input) ? input : [input]){
+    if(!r || typeof r!=='object') continue;
+    for(const a of Array.isArray(r.atts) ? r.atts : (r.fid!=null ? [r] : [])){
+      if(!a || a.fid==null || (a.mime && !/^(audio|video)\//.test(a.mime))) continue;
+      const key=a.fid+'|'+(r.id||'');
+      if(seen.has(key)) continue;
+      seen.add(key); if(seen.size>500) seen.delete(seen.values().next().value);
+      out.push({fid:a.fid,name:String(a.name||('file '+a.fid)),ref:String(r.ref||''),from:String(r.from||'')});
+    }
+  }
+  return out;
+}
