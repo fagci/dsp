@@ -173,7 +173,19 @@ const PW = rnd(), TOK = rnd(), TG = rnd() + ':' + rnd(), IRC_PW = rnd(), BAD = r
   queue.push({update_id: 6, message: {chat: {id: 43}, from: {username: 'carol'}, text: 'with the default channel word', date: 9}});
   await until(() => D.msgs.length);
   ok('telegram: the default channel word «dsp» does not swallow messages', D.msgs[0]?.text === 'with the default channel word', JSON.stringify(D.st.at(-1)));
-  D.s.close();
+  D.s.close(); await sleep(1400);
+  // файлы Telegram без CORS: прямой запрос браузера падает, через прокси — проходит; без прокси — понятная подсказка
+  const noCors = {...io, fetch: (u, o) => /\/file\/bot/.test(u) && !/via=px/.test(u) ? Promise.reject(new TypeError('Failed to fetch')) : fetch(u, o)};
+  const E = rig('telegram', {server, pass: TG, channel: 'dsp', io: noCors, proxyUrl: u => u + '?via=px'}); await until(() => E.state() === 'up');
+  queue.push({update_id: 11, message: {message_id: 8, chat: {id: 44}, from: {username: 'dan'}, date: 9, voice: {file_id: 'V2', mime_type: 'audio/ogg', duration: 2, file_size: 7}}});
+  await until(() => E.msgs.length);
+  ok('telegram: a file the browser cannot read directly comes through the CORS proxy', E.msgs[0]?.atts?.[0]?.bytes?.length === 7, JSON.stringify(E.st.slice(-2)));
+  E.s.close(); await sleep(1400);
+  const F = rig('telegram', {server, pass: TG, channel: 'dsp', io: noCors}); await until(() => F.state() === 'up');
+  queue.push({update_id: 12, message: {message_id: 9, chat: {id: 44}, from: {username: 'dan'}, date: 9, voice: {file_id: 'V3', mime_type: 'audio/ogg', duration: 2, file_size: 7}}});
+  await until(() => F.msgs.length);
+  ok('telegram: without a way round CORS the status says what to do', !F.msgs[0].atts && F.st.some(s => /Failed to fetch.*CORS proxy/.test(s[1])), JSON.stringify(F.st.slice(-2)));
+  F.s.close(); await sleep(1400);
   const B = rig('telegram', {server, pass: BAD}); await until(() => B.state() === 'fatal');
   ok('telegram bad token fatal', B.state() === 'fatal', JSON.stringify(B.st));
 }

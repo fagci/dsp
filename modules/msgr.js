@@ -193,7 +193,7 @@ def({ id:'messenger', title:'Messenger (Nostr · ntfy · Matrix · Telegram · I
     {n:'via',t:'select',opts:['auto','page','bridge'],d:'auto',label:'connection',tip:'where TCP comes from (IRC ircs://, XMPP, APRS-IS, email): auto — the phone itself inside the DSP app, else the gateway below; bridge — always the gateway',adv:true,if:n=>n.p.proto!=='sms'},
     {n:'bridge',t:'text',d:'',dev:true,label:'gateway',tip:'TCP gateway — @name from Settings → Devices (the token stays there), or one address for either: the DSP app on a phone (ws://192.168.0.5:8765; the app must allow other pages) or the Node bridge (ws://127.0.0.1:8777); the type is detected',if:n=>['irc','xmpp','aprs','email','reticulum','rss'].includes(n.p.proto) || n.p.via==='bridge' || !!n.p.bridge || !!n.p.pxcred},
     {n:'plain',t:'check',d:false,label:'plain password (xmpp)',tip:'xmpp: allow a password without TLS (only for a server on your own network)',adv:true,if:n=>n.p.proto==='xmpp'},
-    {n:'proxy',t:'check',d:false,label:'rss via CORS proxy',tip:'rss: through the CORS proxy from Settings (a Node bridge in the gateway field needs none)',adv:true,if:n=>n.p.proto==='rss'},
+    {n:'proxy',t:'check',d:false,label:'via CORS proxy (rss, telegram files)',tip:'rss: through the CORS proxy from Settings (a Node bridge in the gateway field needs none) · telegram: voice messages and files are downloaded from a host without CORS headers — in the DSP app the phone does it, in a browser only this proxy helps',adv:true,if:n=>n.p.proto==='rss' || n.p.proto==='telegram'},
     {n:'reconnect',t:'check',d:true,label:'reconnect',adv:true},
     {n:'autoConnect',t:'check',d:false,label:'connect at start',tip:'connect when the patch starts',adv:true},
     {n:'text',t:'text',d:'',label:'message'},

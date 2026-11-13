@@ -413,9 +413,22 @@ function mgOpenTelegram(cfg,c){
     try{
       const g=await call('getFile',{file_id:f.id});
       if(!g.ok || !g.result || !g.result.file_path) return {err:g.description||'getFile failed'};
-      const r=await io.fetch(fileBase+g.result.file_path,{signal:ac.signal});
-      if(!r.ok) return {err:'download failed: HTTP '+r.status};
-      return {bytes:new Uint8Array(await r.arrayBuffer())};
+      // /file/bot… в отличие от методов Bot API идёт без CORS-заголовков: страница его не прочтёт. В приложении Android файл берёт телефон
+      // (его сокеты), иначе — напрямую (Node, расширение), а в браузере — через CORS-прокси из Settings, если включён.
+      const u=fileBase+g.result.file_path, viaPhone=cfg.phone && !(cfg.io && cfg.io.fetch);
+      const tries=[];
+      if(viaPhone) tries.push(()=>mgPhoneFetch(cfg.phone)(u,{signal:ac.signal}));
+      tries.push(()=>io.fetch(u,{signal:ac.signal}));
+      if(cfg.proxyUrl) tries.push(()=>io.fetch(cfg.proxyUrl(u),{signal:ac.signal}));
+      let last='';
+      for(const t of tries){
+        try{
+          const r=await t();
+          if(!r.ok){ last='HTTP '+r.status; continue; }
+          return {bytes:new Uint8Array(await r.arrayBuffer())};
+        }catch(e){ last=e.message; }
+      }
+      return {err:'download failed ('+last+')'+(/fetch|network|cors/i.test(last) ? ' — the browser blocks Telegram file downloads (no CORS): in the DSP app they go through the phone, in a browser tick «via CORS proxy» in the node' : '')};
     }catch(e){ return {err:e.message}; }
   };
   (async()=>{
