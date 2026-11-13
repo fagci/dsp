@@ -784,6 +784,9 @@ const PRESET_CATS={
   'Phone App: BLE GATT Server (the Phone as a Peripheral)':'Network & IoT',
   'Phone App: BLE L2CAP Channel (Fast Stream Without GATT)':'Network & IoT',
   'Phone App: HID Device (Phone as Its Own Keyboard / Mouse)':'Network & IoT',
+  'Phone App: HID Keyboard + Mouse + Media (Phone as a TV / PC Remote)':'Network & IoT',
+  'Phone App: HID Gamepad (Phone as a Bluetooth Gamepad)':'Network & IoT',
+  'HID Loopback: Keyboard, Mouse and Media Reports → Decode (No Radio)':'Network & IoT',
   'Phone App: mDNS / DNS-SD Service Discovery (Bonjour)':'Network & IoT',
   'Phone App: Wi-Fi RTT Distance to Access Points':'Maps & Locating',
   'Phone App: Wi-Fi Aware (Talk Without a Router)':'Network & IoT',
@@ -2742,6 +2745,45 @@ gl.size.w=420; gl.size.h=560; applySize(gl);
 const lg=addNode('recLog',500,250,{});
 lg.size.w=420; applySize(lg);
 addEdge(gl.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: HID Keyboard + Mouse + Media (Phone as a TV / PC Remote)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The phone as a Bluetooth keyboard + mouse + media remote in ONE device (three HID reports: keyboard, mouse, consumer control) — a remote for a smart TV / Android TV box / PC / projector. Local experiment: the app registers its OWN HID identity (classic Bluetooth, Android 9+, no root). 1) Press Connect — the phone shows up as «DSP keyboard + mouse + media». 2) Pair it in the HOST\'s Bluetooth settings (the TV: Settings → Remotes & accessories → Add accessory); the host connects by itself, or put its address into «host» (Paired hosts lists them). 3) The touchpad moves the cursor (one finger), taps = left click, a quick tap and drag = drag, two fingers = scroll, a two-finger tap = right click; the button rows are media (prev / play / next / mute / vol ±), TV Home and Back, mouse buttons and Enter. The D-pad below is wired to the «key» input: arrows + OK (Enter), its corners BACK / MENU / HOME / MUTE come through the «alias» table. «text» types on the host (US layout, or ЙЦУКЕН when the host is set to Russian) — wire any text source into the «text» input, e.g. speech recognition for voice typing on a TV. «dx» / «dy» make an air mouse from a tilt sensor or an XY Pad. Sound itself does not travel over HID: volume and playback of the TV are controlled here, while audio to the TV goes over the system Bluetooth audio (A2DP) in Android settings.'});
+nt.size.w=1000; nt.size.h=250; applySize(nt);
+const hp=addNode('hidpad',40,320,{url:'ws://127.0.0.1:8765',alias:'a=back,b=menu,c=home,d=mute',auto:false});
+hp.size.w=320; hp.size.h=560; applySize(hp);
+const dp=addNode('dpad',420,320,{labels:'BACK,MENU,HOME,MUTE'}); dp.size.w=230; dp.size.h=230; applySize(dp);
+addEdge(dp.id,'key',hp.id,'key');
+const lg=addNode('recLog',700,320,{}); lg.size.w=360; applySize(lg);
+addEdge(hp.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: HID Gamepad (Phone as a Bluetooth Gamepad)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The phone as a Bluetooth gamepad: 16 buttons, a hat switch, two sticks and two triggers in one standard HID report (9 bytes) — an Android TV / emulator / PC / Steam sees an ordinary game controller named «DSP gamepad». Local experiment: the app registers its OWN HID identity (classic Bluetooth, Android 9+). Press Connect, pair the phone in the host\'s Bluetooth settings, and the host connects by itself (or fill «host»). The Joystick node gives the two sticks (screen sticks and WASD / arrows) and buttons b1…b8 (Space, Enter, Z, X, Q, E, R, F), the D-pad drives the hat switch through its up / down / left / right outputs. «invert the Y axes» is on because the Joystick reports up as +1 while HID wants up = −1. A report goes out only when something changed (plus a refresh every second), at most «rate» per second. Only one HID device can be registered at a time: this one replaces the keyboard + mouse remote while it runs.'});
+nt.size.w=1000; nt.size.h=190; applySize(nt);
+const hg=addNode('hidgamepad',720,260,{url:'ws://127.0.0.1:8765',invy:true,rate:60});
+hg.size.w=420; hg.size.h=420; applySize(hg);
+const js=addNode('joystick',40,260,{}); js.size.w=420; js.size.h=330; applySize(js);
+const dp=addNode('dpad',40,640,{labels:'A,B,X,Y'}); dp.size.w=220; dp.size.h=220; applySize(dp);
+for(const k of ['x1','y1','x2','y2','b1','b2','b3','b4','b5','b6','b7','b8']) addEdge(js.id,k,hg.id,k);
+for(const k of ['up','down','left','right']) addEdge(dp.id,k,hg.id,k);
+addEdge(dp.id,'a',hg.id,'b9'); addEdge(dp.id,'b',hg.id,'b10'); addEdge(dp.id,'x',hg.id,'b11'); addEdge(dp.id,'y',hg.id,'b12');
+markWiresDirty();
+});
+preset('HID Loopback: Keyboard, Mouse and Media Reports → Decode (No Radio)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Loopback for the HID remote — checks the reports without a host and without Bluetooth (the encoder and the decoder are mirror images: every field you send comes back the same). The HID Keyboard + Mouse + Media node builds the real reports (keyboard id 1 = 8 bytes, mouse id 2 = 5 bytes, media id 3 = 2 bytes) and always puts them on «rec» as {src:\'hidtx\', id, hex}, connected or not (auto-connect is off here, so nothing leaves the phone). HID Report Decode turns them back into key names, mouse deltas and media usages. Press the D-pad (arrows, OK, corner buttons BACK / MENU / HOME / MUTE), tap the pad\'s buttons, or press Type — the text becomes key presses (press + release per character), with letters, digits and punctuation on a US host layout. Test reports with the Power / Sleep codes are never sent from here.'});
+nt.size.w=1000; nt.size.h=210; applySize(nt);
+const hp=addNode('hidpad',40,320,{auto:false,text:'Hello, TV! 123',alias:'a=back,b=menu,c=home,d=mute'});
+hp.size.w=320; hp.size.h=560; applySize(hp);
+const dp=addNode('dpad',420,320,{labels:'BACK,MENU,HOME,MUTE'}); dp.size.w=230; dp.size.h=230; applySize(dp);
+addEdge(dp.id,'key',hp.id,'key');
+const dc=addNode('hidparse',700,320,{device:'combo'}); dc.size.w=380; dc.size.h=200; applySize(dc);
+addEdge(hp.id,'rec',dc.id,'rec');
+const lg=addNode('recLog',700,560,{}); lg.size.w=380; lg.size.h=320; applySize(lg);
+addEdge(dc.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('Phone App: mDNS / DNS-SD Service Discovery (Bonjour)', function(){
