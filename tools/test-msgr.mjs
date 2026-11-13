@@ -283,4 +283,24 @@ eq('clean: ordinary text, unicode and empties are untouched', [M.mgClean('при
   eq('attPath unknown sender', M.mgAttPath('mail/{from}', {}, 'email'), ['mail', 'unknown']);
   eq('attPath unknown token is dropped', M.mgAttPath('a/{nope}/b', m, 'email'), ['a', 'b']); }
 
+// Telegram: голосовые, аудио, кружки, документы — кодер и разборщик зеркальны (поля → обновление Bot API → поля)
+{ const cases = [
+    {update: 20, chat: -100, mid: 5, from: 'bob', t: 5000, file: {kind: 'voice', id: 'AwAD1', mime: 'audio/ogg', size: 9000, dur: 7, name: 'voice-m100-5.ogg'}},
+    {update: 21, chat: 42, mid: 6, from: 'anna', t: 6000, text: 'подпись', file: {kind: 'audio', id: 'AwAD2', mime: 'audio/mpeg', size: 1234, dur: 61, name: 'song.mp3'}},
+    {update: 22, chat: 42, mid: 7, from: 'anna', t: 7000, file: {kind: 'document', id: 'AwAD3', mime: 'audio/x-wav', size: 500, dur: 0, name: 'запись 1.wav'}},
+    {update: 23, chat: 42, mid: 8, from: 'anna', t: 8000, file: {kind: 'video_note', id: 'AwAD4', mime: 'video/mp4', size: 700, dur: 3, name: 'circle-42-8.mp4'}}];
+  for (const c of cases) {
+    const r = M.mgTgUpdates({result: [M.mgTgUpdate(c)]}, '');
+    const m = r.msgs[0];
+    eq('telegram round trip ' + c.file.kind, [m.ref, m.from, m.text, m.file], [c.chat + ':' + c.mid, c.from, c.text || '', c.file]);
+  }
+  eq('telegram: a voice message without file_name gets a name by chat and message', M.mgTgFileName({kind: 'voice', mime: 'audio/ogg'}, -100, 5), 'voice-m100-5.ogg');
+  eq('telegram: unknown file name is cleaned', M.mgTgFileName({kind: 'document', name: 'a/b:c.mp3'}, 1, 2), 'a_b_c.mp3');
+  eq('telegram: photos and stickers are still skipped', M.mgTgUpdates({result: [{update_id: 1, message: {chat: {id: 1}, photo: [{file_id: 'p'}]}}, {update_id: 2, message: {chat: {id: 1}, sticker: {file_id: 's'}}}]}, '').msgs.length, 0);
+  eq('telegram send kind by type', [['voice.ogg', 'audio/ogg'], ['a.mp3', 'audio/mpeg'], ['p.jpg', 'image/jpeg'], ['p.gif', 'image/gif'], ['v.mp4', 'video/mp4'], ['x.pdf', 'application/pdf'], ['n.opus', '']].map(([name, mime]) => M.mgTgSendKind({name, mime, size: 10}).method),
+    ['sendVoice', 'sendAudio', 'sendPhoto', 'sendDocument', 'sendVideo', 'sendDocument', 'sendVoice']);
+  eq('telegram send: a big picture goes as a document, over 50 MB is refused', [M.mgTgSendKind({name: 'p.png', mime: 'image/png', size: 11 * 1024 * 1024}).method, M.mgTgSendKind({name: 'x.zip', size: 51 * 1024 * 1024})], ['sendDocument', null]);
+  const re = M.mgTgUpdates({result: [M.mgTgUpdate({update: 30, chat: 42, mid: 6, t: 9000, react: {user: 'anna', emojis: ['✍']}})]}, '');
+  eq('telegram round trip reaction', re.react.map(x => [x.target, x.author, x.emojis, x.op]), [['42:6', 'anna', ['✍'], 'set']]); }
+
 console.log(bad ? 'FAILED ' + bad : 'all ok'); process.exit(bad ? 1 : 0);

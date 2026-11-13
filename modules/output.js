@@ -1383,26 +1383,28 @@ function recStop(n){
   if(n.fmtNow==='mp3'){
     if(!n.enc){ n.err=n.err||'MP3 encoder not ready — nothing saved'; return; }
     const d=n.enc.flush(); if(d.length) n.mp3.push(new Uint8Array(d.buffer.slice(d.byteOffset,d.byteOffset+d.length)));
-    dl(new Blob(n.mp3,{type:'audio/mpeg'}),recFileName(n,'mp3'));
+    const b=new Blob(n.mp3,{type:'audio/mpeg'}), nm=recFileName(n,'mp3');
+    if(n.p.dest==='Files') recKeep(n,b,nm,n.p.folder); else dl(b,nm);
     n.mp3=[]; n.enc=null;
-  } else { wavDownload(n.chunks,Eng.sr,recFileName(n,'wav')); n.chunks=[]; }
+  } else { wavDownload(n.chunks,Eng.sr,recFileName(n,'wav'),n.p.dest==='Files' ? (b,nm)=>recKeep(n,b,nm,n.p.folder) : null); n.chunks=[]; }
 }
-def({ id:'rec', title:'Record Audio', cat:'Output', ins:[{n:'in',t:'sig'}], readout:true,
+def({ id:'rec', title:'Record Audio', cat:'Output', ins:[{n:'in',t:'sig'}], outs:[{n:'file',t:'rec'}], readout:true,
   params:[{n:'go',t:'button',label:'Record / stop',fn:n=>{ n.on ? recStop(n) : recStart(n); }},
-          {n:'dest',t:'select',opts:['download','disk file'],d:'download',label:'save to (disk file: streamed, no length limit)'},
+          {n:'dest',t:'select',opts:['download','disk file','Files'],d:'download',label:'save to (disk file: streamed, no length limit; Files: into the Files storage, the record of the file goes to the «file» pin — wire it to a Messenger to send the recording to a chat)'},
+          {n:'folder',t:'text',d:'Recordings',label:'folder in Files (save to: Files)',if:n=>n.p.dest==='Files'},
           {n:'fmt',t:'select',opts:['wav','mp3'],d:'wav',label:'format'},
           {n:'kbps',t:'select',opts:['64','96','128','192','256','320'],d:'128',label:'MP3 bitrate, kbps'},
           {n:'prefix',t:'text',d:'rec',label:'file name prefix (then date_time)'}],
   init:n=>{ n.on=false; n.chunks=[]; n.mp3=[]; n.mp3Bytes=0; n.pending=[]; n.samples=0; n.err=''; },
   process(n,I){
-    if(!n.on || !I.in) return {};
+    if(!n.on || !I.in) return {file:recTakeFile(n)};
     n.samples+=I.in.length;
     if(n.fmtNow==='mp3'){
       const pcm=recToPcm(n,I.in);
       if(n.enc) recMp3Push(n,pcm); else n.pending.push(pcm);
     } else if(n.disk) recDiskWrite(n,recToPcm(n,I.in).buffer);
     else n.chunks.push(I.in.slice());
-    return {}; },
+    return {file:recTakeFile(n)}; },
   draw(n){
     const sec=n.samples/Eng.sr;
     const t=n.on && n.disk ? '● '+sec.toFixed(1)+' s → disk · '+(n.disk.bytes/1048576).toFixed(1)+' MB'
@@ -1410,7 +1412,7 @@ def({ id:'rec', title:'Record Audio', cat:'Output', ins:[{n:'in',t:'sig'}], read
            : n.on ? '● '+sec.toFixed(1)+' s'+(n.fmtNow==='mp3' ? ' · mp3 '+(n.mp3Bytes/1024).toFixed(0)+' KB'+(n.enc?'':' (loading encoder…)')
                                                               : ' · wav '+(sec*Eng.sr*2/1048576).toFixed(1)+' MB')
                  : 'ready · '+n.p.fmt+(n.p.fmt==='mp3' ? ' '+n.p.kbps+' kbps' : '');
-    n.el.querySelector('.readout').textContent=(n.err?n.err+'\n':'')+t; }});
+    n.el.querySelector('.readout').textContent=(n.err?n.err+'\n':'')+(n.saved && n.p.dest==='Files' ? n.saved+'\n' : '')+t; }});
 
 
 // Выход в сеть по WebSocket: текст (по изменению), числа JSON-объектом раз в period, звук PCM16 LE
@@ -1477,7 +1479,7 @@ def({ id:'netout', title:'Network Out', cat:'Output', readout:true,
     const t=(n.warn&&!n.ws ? '⚠ '+n.warn+'\n' : '')+n.status+' · sent '+n.sent+(n.dropped?' · dropped '+n.dropped:'');
     if(r.textContent!==t) r.textContent=t; }});
 
-function wavDownload(chunks,sr,name){
+function wavDownload(chunks,sr,name,sink){
   const len=chunks.reduce((a,c)=>a+c.length,0);
   const b=new ArrayBuffer(44+len*2), v=new DataView(b);
   const wr=(o,s)=>{ for(let i=0;i<s.length;i++) v.setUint8(o+i,s.charCodeAt(i)); };
@@ -1487,8 +1489,24 @@ function wavDownload(chunks,sr,name){
   v.setUint16(34,16,true); wr(36,'data'); v.setUint32(40,len*2,true);
   let o=44; for(const c of chunks) for(let i=0;i<c.length;i++){
     v.setInt16(o,clamp(c[i],-1,1)*32767,true); o+=2; }
-  dl(new Blob([b],{type:'audio/wav'}),name||('rec-'+recStamp()+'.wav'));
+  (sink||dl)(new Blob([b],{type:'audio/wav'}),name||('rec-'+recStamp()+'.wav'));
 }
+/* Запись в Files вместо загрузки браузером: папка Files/<folder>, на выходе file — запись {atts:[{name,mime,size,fid,path}]}:
+   её берут Messenger (отправить в чат), Whisper (распознать) и всё, что понимает вложения. */
+async function recKeep(n,blob,name,folder){
+  try{
+    let dir=null; const parts=[];
+    for(const nm of String(folder||'').split('/').map(x=>x.trim().replace(/[\u0000-\u001f\\:*?"<>|]+/g,'_')).filter(x=>x && x!=='.' && x!=='..')){
+      let f=(await FileStore.listFolders('files',dir?dir.id:null).catch(()=>[])).find(x=>x.name===nm);
+      if(!f) f=await FileStore.addFolder('files',nm,dir?dir.id:null);
+      dir=f; parts.push(nm);
+    }
+    const fid=await FileStore.put({space:'files',folderId:dir?dir.id:null,name,mime:blob.type||'application/octet-stream',blob,meta:{}});
+    (n.fileQ||(n.fileQ=[])).push({t:Date.now(),src:'rec',kind:'file',name,text:'',atts:[{name,mime:blob.type||'application/octet-stream',size:blob.size,fid,path:parts.concat(name).join('/')}]});
+    n.err=''; n.saved='saved → Files/'+parts.concat(name).join('/');
+  }catch(e){ n.err='Files: '+(e.message||e); }
+}
+const recTakeFile=n=>n.fileQ && n.fileQ.length ? n.fileQ.splice(0) : null;
 function dl(blob,name){ const a=document.createElement('a');
   a.href=URL.createObjectURL(blob); a.download=name; a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
@@ -1760,12 +1778,14 @@ async function vrecStart(n){
 function vrecStop(n){ if(n.rec && n.rec.state!=='inactive') n.rec.stop(); }
 function vrecSnap(n){
   if(!vrecDraw(n)){ n.err='no picture on vid / img'; return; }
-  n.cv.toBlob(b=>b && dl(b,vrecName({p:n.p,t0:Date.now()},'png')),'image/png');
+  n.cv.toBlob(b=>{ if(!b) return; const nm=vrecName({p:n.p,t0:Date.now()},'png'); if(n.p.snapTo==='Files') recKeep(n,b,nm,n.p.folder); else dl(b,nm); },'image/png');
 }
 def({ id:'vidrec', lazy:'manual', title:'Record Video', cat:'Output', readout:true,
-  ins:[{n:'vid',t:'vid'},{n:'img',t:'img'},{n:'gate',t:'num'},{n:'snap',t:'num'}], outs:[{n:'on',t:'num'},{n:'sec',t:'num'}],
+  ins:[{n:'vid',t:'vid'},{n:'img',t:'img'},{n:'gate',t:'num'},{n:'snap',t:'num'}], outs:[{n:'on',t:'num'},{n:'sec',t:'num'},{n:'file',t:'rec'}],
   params:[{n:'go',t:'button',label:'Record / stop',fn:n=>{ n.on ? vrecStop(n) : vrecStart(n); }},
           {n:'shot',t:'button',label:'Snapshot PNG',fn:n=>vrecSnap(n)},
+          {n:'snapTo',t:'select',opts:['download','Files'],d:'download',label:'snapshot to (Files: into Files/<folder>, the record of the file goes to the «file» pin — a Messenger sends it to a chat: an SSTV picture, a waterfall…)'},
+          {n:'folder',t:'text',d:'Snapshots',label:'folder in Files (snapshot to: Files)',if:n=>n.p.snapTo==='Files'},
           {n:'fmt',t:'select',opts:['auto',...VREC_MIME.map(m=>m[0])],d:'auto',label:'format (auto: the first the browser can encode)'},
           {n:'fps',t:'range',min:5,max:60,step:1,d:25,label:'frame rate'},
           {n:'kbps',t:'range',min:200,max:20000,step:100,d:4000,label:'bitrate, kbps'},
@@ -1785,7 +1805,7 @@ def({ id:'vidrec', lazy:'manual', title:'Record Video', cat:'Output', readout:tr
       if(s && n.snapv===false) vrecSnap(n);
       n.snapv=s;
     }
-    return {on:n.on?1:0, sec:n.on ? (Date.now()-n.t0)/1000 : 0}; },
+    return {on:n.on?1:0, sec:n.on ? (Date.now()-n.t0)/1000 : 0, file:recTakeFile(n)}; },
   drawKey:n=>n.on+'|'+n.err+'|'+Math.floor(Date.now()/500)+'|'+n.bytes+'|'+!!(n.I&&(n.I.vid||n.I.img)),
   draw(n){
     const r=n.el.querySelector('.readout'); if(!r) return;

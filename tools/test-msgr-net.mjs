@@ -129,14 +129,19 @@ const PW = rnd(), TOK = rnd(), TG = rnd() + ':' + rnd(), IRC_PW = rnd(), BAD = r
 }
 
 // ---- Telegram ----
-{ const queue = []; const sent = [];
+{ const queue = []; const sent = []; const uploads = [];
   const srv = http.createServer(async (req, res) => {
+    const fm = /^\/file\/bot([^/]+)\/(.+)$/.exec(req.url);
+    if (fm) { if (fm[1] !== TG) { res.writeHead(401); return res.end(); } res.writeHead(200, {'content-type': 'audio/ogg'}); return res.end(Buffer.from([0x4f, 0x67, 0x67, 0x53, 1, 2, 3])); }
     const m = /\/bot([^/]+)\/(\w+)/.exec(req.url), js = o => { res.writeHead(200, {'content-type': 'application/json'}); res.end(JSON.stringify(o)); };
     if (!m || m[1] !== TG) { res.writeHead(401); return res.end('{"ok":false,"error_code":401,"description":"Unauthorized"}'); }
-    const b = JSON.parse((await body(req)) || '{}');
+    const raw = await body(req);
+    if (/^send(Voice|Audio|Photo|Video|Document)$/.test(m[2])) { uploads.push({method: m[2], type: req.headers['content-type'], raw}); return js({ok: true, result: {message_id: 90, chat: {id: 42}}}); }
+    const b = JSON.parse(raw || '{}');
     if (m[2] === 'getMe') return js({ok: true, result: {username: 'dsp_bot'}});
     if (m[2] === 'getUpdates') { for (let i = 0; i < 60 && !queue.length; i++) await sleep(20); return js({ok: true, result: queue.splice(0)}); }
     if (m[2] === 'sendMessage') { sent.push(b); return js({ok: true, result: {}}); }
+    if (m[2] === 'getFile') return js(b.file_id === 'BIG' ? {ok: false, description: 'file is too big'} : {ok: true, result: {file_path: 'voice/file_1.oga'}});
   }); servers.push(srv);
   const port = await listen(srv), server = 'http://127.0.0.1:' + port;
   const A = rig('telegram', {server, pass: TG, nick: 'dspbot'});
@@ -148,6 +153,20 @@ const PW = rnd(), TOK = rnd(), TG = rnd() + ':' + rnd(), IRC_PW = rnd(), BAD = r
   ok('telegram incoming', A.msgs[0]?.text === 'hello bot' && A.msgs[0].from === 'bob', JSON.stringify(A.msgs));
   ok('telegram reply goes to the last chat', await A.s.send('hello human') === true && sent[0].chat_id === 42 && sent[0].text === 'hello human');
   ok('telegram own message echoed locally', A.msgs.at(-1).self === true);
+  queue.push({update_id: 7, message: {message_id: 3, chat: {id: 42}, from: {username: 'bob'}, date: 10, voice: {file_id: 'V1', mime_type: 'audio/ogg', duration: 4, file_size: 7}}});
+  await until(() => A.msgs.some(x => x.atts));
+  const vm1 = A.msgs.find(x => x.atts);
+  ok('telegram voice message is downloaded as an attachment', vm1.atts[0].name === 'voice-42-3.ogg' && vm1.atts[0].mime === 'audio/ogg' && vm1.atts[0].dur === 4 && Buffer.from(vm1.atts[0].bytes).toString('latin1') === 'OggS\x01\x02\x03', JSON.stringify(vm1.atts[0]).slice(0, 200));
+  ok('telegram voice message keeps its reference for the reply', vm1.ref === '42:3' && vm1.room === '42' && !('file' in vm1));
+  queue.push({update_id: 8, message: {message_id: 4, chat: {id: 42}, from: {username: 'bob'}, date: 11, voice: {file_id: 'BIG', duration: 4000, file_size: 7}}});
+  queue.push({update_id: 9, message: {message_id: 5, chat: {id: 42}, from: {username: 'bob'}, date: 12, document: {file_id: 'D', file_name: 'huge.wav', file_size: 30 * 1024 * 1024}}});
+  await until(() => A.msgs.filter(x => x.mid >= 4).length >= 2);
+  ok('telegram: a refused or oversized file does not stop the message', A.msgs.filter(x => x.mid >= 4).every(x => !x.atts) && A.st.some(s => /huge\.wav.*20 MB/.test(s[1])) && A.st.some(s => /voice-42-4\.ogg.*too big/.test(s[1])), JSON.stringify(A.st.slice(-3)));
+  ok('telegram: a file goes up as multipart with the right method and a caption', await A.s.send('подпись', undefined, [{name: 'voice.ogg', mime: 'audio/ogg', bytes: new Uint8Array([79, 103, 103, 83])}]) === true
+    && uploads[0].method === 'sendVoice' && /multipart\/form-data/.test(uploads[0].type) && /name="chat_id"\r\n\r\n42/.test(uploads[0].raw) && /name="caption"\r\n\r\nподпись/.test(uploads[0].raw) && /filename="voice.ogg"/.test(uploads[0].raw), JSON.stringify(uploads[0]).slice(0, 300));
+  await A.s.send('', undefined, [{name: 'a.pdf', mime: 'application/pdf', bytes: new Uint8Array(3)}, {name: 'p.png', mime: 'image/png', bytes: new Uint8Array(3)}]);
+  ok('telegram: kind by type — document, photo; no caption when there is no text', uploads.slice(1).map(u => u.method).join() === 'sendDocument,sendPhoto' && !/name="caption"/.test(uploads[1].raw));
+  ok('telegram: a sent file is echoed with its attachment and reference', A.msgs.at(-1).self === true && A.msgs.at(-1).atts.map(a => a.name).join() === 'a.pdf,p.png' && A.msgs.at(-1).ref === '42:90');
   A.s.close();
   await sleep(1400);                       // долгий опрос закрытого A у имитации ещё висит и забрал бы очередь
   const D = rig('telegram', {server, pass: TG, channel: 'dsp'}); await until(() => D.state() === 'up');

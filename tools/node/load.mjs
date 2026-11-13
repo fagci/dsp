@@ -7,14 +7,14 @@ import {fileURLToPath} from 'node:url';
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const API = ['mgHex', 'mgUnhex', 'mgUtf8', 'mgB64', 'mgSchnorrPub', 'mgSchnorrSign', 'mgSchnorrVerify', 'mgBechEnc', 'mgBechDec',
   'mgNostrKey', 'mgNostrGenKey', 'mgNpub', 'mgNostrId', 'mgNostrSign', 'mgNostrVerify', 'mgNostrReq', 'mgNostrFrame', 'mgNostrText',
-  'mgLines', 'mgNtfyLine', 'mgMatrixSync', 'mgTgUpdates', 'mgIrcParse', 'mgIrcFmt', 'mgSplit', 'mgIrcClient',
+  'mgLines', 'mgNtfyLine', 'mgMatrixSync', 'mgTgUpdates', 'mgTgFile', 'mgTgSendKind', 'mgTgFileName', 'mgTgUpdate', 'mgIrcParse', 'mgIrcFmt', 'mgSplit', 'mgIrcClient',
   'mgAprsPass', 'mgAprsParse', 'mgAprsMsg', 'mgAprsAck', 'mgAprsClient', 'mgMailParse', 'mgMailCompose', 'mgAddrResolve', 'mgPhoneFetch', 'mgReactKey', 'mgNostrExtra', 'mgClean', 'mgMatrixRoster', 'mgAttPath', 'mgImapClient', 'mgImapNext', 'mgSmtpClient', 'mgMimeWords', 'RnsNode', 'RnFloat', 'rnMpPack', 'rnMpUnpack', 'rnHdlc', 'rnDeframer', 'rnPack', 'rnUnpack', 'rnIdentity', 'rnLxmfPack', 'rnLxmfUnpack', 'rnTokenEnc', 'rnTokenDec', 'rnEncryptFor', 'rnDecryptWith', 'rnNameHash', 'rnDestHash', 'mgHtmlText', 'mgFeedSpec', 'mgFeedKeep', 'mgXmlTree', 'mgRssParse', 'mgRssMatch', 'mgMastoUrl', 'mgMastoPost', 'mgBskyPost', 'mgBskyUrls', 'mgBskyPosts', 'mgIdGt', 'certNewCA', 'certLoadCA', 'certNewLeaf', 'cdIp', 'cdUnpem', 'CD_LOCAL_DNS', 'CD_LOCAL_NETS', 'mgXmlParser', 'mgXmlEsc', 'mgXmppClient', 'mgConnect'];
 
 // extra — глобалы, которых нет у vm-контекста по умолчанию (fetch, WebSocket, …); по умолчанию берутся из Node
 export function loadMsgr(extra = {}) {
   const g = {Uint8Array, Uint32Array, TextEncoder, TextDecoder, DataView, BigInt, Math, JSON, Date, Promise, Error, Array, Object, String, Number, Set, Map,
     URL, URLSearchParams, AbortController, btoa, atob, console, crypto: globalThis.crypto, setTimeout, clearTimeout, setInterval, clearInterval,
-    fetch: globalThis.fetch, WebSocket: globalThis.WebSocket, encodeURIComponent, ...extra};
+    fetch: globalThis.fetch, WebSocket: globalThis.WebSocket, Blob: globalThis.Blob, FormData: globalThis.FormData, encodeURIComponent, ...extra};
   const ctx = vm.createContext(g);
   for (const f of ['modules/meshcore-kernels.js', 'modules/netsock-kernels.js', 'modules/msgr-kernels.js', 'modules/feed-kernels.js', 'modules/cert-kernels.js', 'modules/rns-kernels.js', 'modules/msgr-session.js']) {
     const p = path.join(root, f);

@@ -756,6 +756,8 @@ const PRESET_CATS={
   'Phone App: USB SDR over OTG (RTL-SDR, HackRF…)':'SDR Receivers',
   'bitchat Mesh Chat (no app install)':'Network & IoT',
   'Messenger: One Chat for Nostr, ntfy, Matrix, Telegram, IRC and XMPP':'Network & IoT',
+  'Telegram Bot: Voice Messages to Text (Whisper)':'Network & IoT',
+  'Telegram Bot: Send Radio Recordings and SSTV Pictures':'Network & IoT',
   'APRS-IS: Messages and Stations on the Map':'Network & IoT',
   'Email: Mailbox as a Chat (IMAP / SMTP)':'Network & IoT',
   'Email: a Correspondence as Threads in the Chat':'Network & IoT',
@@ -2007,6 +2009,36 @@ const ch=addNode('chat',540,280,{echo:false,me:'dsp',time:true});
 ch.size.w=420; ch.size.h=560; applySize(ch);
 addEdge(a.id,'rec',ch.id,'rec'); addEdge(b.id,'rec',ch.id,'rec');
 addEdge(ch.id,'text',a.id,'send'); addEdge(ch.id,'text',b.id,'send');
+markWiresDirty();
+});
+preset('Telegram Bot: Voice Messages to Text (Whisper)', function(){
+clearAll();
+const nt=addNode('note',40,30,{text:'Send (or forward) a voice message to your Telegram bot — the transcript comes back as a reply in the same chat. 1) Make a bot in @BotFather and paste its token into the Messenger password field, press Connect (for a group, turn off «privacy mode» in BotFather, or the bot hears only commands). 2) A voice message, an audio file or a video circle is downloaded through the Bot API (up to 20 MB) into Files → telegram/<name>. 3) Rec Filter passes only audio and video to Whisper; Whisper decodes the file from Files, recognises it phrase by phrase (the first time it loads the model — the phone engine in the DSP app, ONNX in a browser; then it works offline), and puts the whole text on «reply», the chat on «to» — both go back to the Messenger. «done» carries the same as a record (name, from, ref = chat:message, text) for further wiring: a Rec Filter on r.text, a Table, a Rule. Reactions of the people in the chat arrive in the same «rec» (kind=reaction, emojis[]) — e.g. a ✍ under a voice message can be the signal «take it into work»: Rec Filter «r.kind===\'reaction\' && r.emojis.includes(\'✍\')». Voice messages are Ogg/Opus: Chromium (the app, Chrome, Edge) decodes them; Safari may not. Only the bot\'s own chats: it does not see your private chats with other people.'});
+nt.size.w=900; nt.size.h=240; applySize(nt);
+const m=addNode('messenger',40,300,{proto:'telegram',nick:'dspbot'});
+m.size.w=420; m.size.h=380; applySize(m);
+const rf=addNode('recFilter',500,300,{expr:"r.atts && r.atts.some(a => a.fid != null && /^(audio|video)\\//.test(a.mime || 'audio/x'))"});
+const w=addNode('whisper',720,300,{lang:'auto'});
+w.size.w=340; w.size.h=380; applySize(w);
+const ch=addNode('chat',1100,300,{echo:false,me:'dspbot',time:true});
+ch.size.w=380; ch.size.h=380; applySize(ch);
+addEdge(m.id,'rec',rf.id,'rec'); addEdge(rf.id,'rec',w.id,'file');
+addEdge(w.id,'reply',m.id,'send'); addEdge(w.id,'to',m.id,'to');
+addEdge(m.id,'rec',ch.id,'rec'); addEdge(w.id,'done',ch.id,'rec');
+markWiresDirty();
+});
+preset('Telegram Bot: Send Radio Recordings and SSTV Pictures', function(){
+clearAll();
+const nt=addNode('note',40,30,{text:'Send what the workbench made to a Telegram chat. Record Audio saves the recording into Files (save to: Files, folder Recordings) and gives the record of the file on its «file» pin; Record Video does the same for a snapshot PNG (snapshot to: Files, folder Snapshots) — both go to the Messenger «file» pin, which takes the file from Files and sends it as the bot: .ogg/.opus as a voice message, other audio as audio, jpeg/png/webp as a photo, mp4 as video, the rest as a document (up to 50 MB; the record\'s «caption» field becomes the caption). The chat is the one that wrote to the bot last (or the channel field, or the «to» pin). 1) Token from @BotFather into the Messenger password field, Connect, write anything to the bot. 2) Press Record / stop on Record Audio — the last recording of the air (whatever comes on its «in»: a demodulator, the microphone) arrives in the chat. 3) For an SSTV or WEFAX picture, wire the «img» of Raster (line by line) from any SSTV preset into Record Video «img» (here a picture from a file stands in), press Snapshot PNG — or feed «snap» with the decoder\'s lock, and the finished picture is sent by itself. Files can also be sent by hand: put the name or number of a file from Files into «attach file» of the Messenger and press Send. A transmitted picture or recording is public to that chat — send only what you mean to.'});
+nt.size.w=900; nt.size.h=250; applySize(nt);
+const m=addNode('mic',40,320,{gainA:1,echo:false,ns:false,agc:false});
+const rc=addNode('rec',300,320,{dest:'Files',folder:'Recordings',fmt:'wav',prefix:'air'});
+const im=addNode('imgsrc',40,520,{});
+const vr=addNode('vidrec',300,520,{snapTo:'Files',folder:'Snapshots',prefix:'sstv'});
+const ms=addNode('messenger',620,320,{proto:'telegram',nick:'dspbot'});
+ms.size.w=420; ms.size.h=380; applySize(ms);
+addEdge(m.id,'a',rc.id,'in'); addEdge(rc.id,'file',ms.id,'file');
+addEdge(im.id,'img',vr.id,'img'); addEdge(vr.id,'file',ms.id,'file');
 markWiresDirty();
 });
 preset('APRS-IS: Messages and Stations on the Map', function(){
