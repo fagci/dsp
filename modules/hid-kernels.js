@@ -204,11 +204,14 @@ function hidReportParse(device,id,bytes){
 }
 
 // ---------- команды для приложения ----------
-function hidRegisterCmd(device,name){
+// transport: 'bluetooth' (hid.*, BluetoothHidDevice) или 'usb' (usbhid.*: USB-гаджет через configfs, нужен root) — записи и отчёты те же
+const hidUsb=t=>/^usb/i.test(String(t||''));
+const hidCmdName=(t,what)=>(hidUsb(t) ? 'usbhid.' : 'hid.')+what;
+function hidRegisterCmd(device,name,transport){
   const d=device && typeof device==='object' ? device : (HID_DEVICES[device]||HID_DEVICES.combo);
-  return {cmd:'hid.register',type:'custom',name:String(name||'').trim()||d.name||'DSP HID',descriptor:d.hex,subclass:d.subclass||0};
+  return {cmd:hidCmdName(transport,'register'),...(hidUsb(transport) ? {} : {type:'custom'}),name:String(name||'').trim()||d.name||'DSP HID',descriptor:d.hex,subclass:d.subclass||0};
 }
-const hidReportCmd=(id,bytes,addr)=>({cmd:'hid.report',...(addr?{addr}:{}),id,hex:hidxHex(bytes)});
+const hidReportCmd=(id,bytes,addr,transport)=>({cmd:hidCmdName(transport,'report'),...(addr && !hidUsb(transport)?{addr}:{}),id,hex:hidxHex(bytes)});
 
 // ---------- тачпад ----------
 // Раскладка холста: сверху строка состояния, тачпад, под ним ряды кнопок
