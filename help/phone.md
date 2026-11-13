@@ -66,3 +66,14 @@ Presets: *MeshCore: Advert Loopback (Generator)* (a signed advert through the Lo
 
 **Outputs:** `text` / `from` / `lat` / `lon` / `new`, and `rec` — `{t, kind, route, hop, direct, from, name, sig, text, lat, lon, channelHash, psk, encrypted…}`. The parser is checked against the wire format only (`node tools/test-meshcore.mjs`), not on real hardware yet. See also the `meshcore` structure in *HEX Structure* for a field-by-field dump of the header and path without decrypting anything.
 
+## The phone as a Bluetooth keyboard, mouse, media remote and gamepad
+
+The Android app can register its own HID device over classic Bluetooth (Android 9+, no root), so the phone becomes a remote for a smart TV, a PC or a projector. Presets (*Network & IoT*): **Phone App: HID Keyboard + Mouse + Media (Phone as a TV / PC Remote)**, **Phone App: HID Gamepad (Phone as a Bluetooth Gamepad)** and **HID Loopback: Keyboard, Mouse and Media Reports → Decode (No Radio)**.
+
+1. Open the preset and press **Connect** — the phone appears to hosts as «DSP keyboard + mouse + media» (the `name` field renames it).
+2. Pair it in the **host's** Bluetooth settings (a TV: *Remotes & accessories → Add accessory*). The host connects by itself, or put its address into `host` (the **Paired hosts** button lists the phone's paired devices).
+3. **Touchpad:** one finger moves the cursor, a tap is a left click, a tap followed at once by a drag drags, two fingers scroll, a two-finger tap is a right click. Buttons below: prev / play / next / mute, vol − / vol +, **home** and **back** (the TV's own buttons), the three mouse buttons and Enter.
+4. **Typing:** the `text` field and **Type** (or the `text` input — wire speech recognition into it for voice typing on a TV). `layout` is the host's keyboard layout: `us`, or `ru` (ЙЦУКЕН — Cyrillic goes to the physical keys). Characters with no key are skipped and counted.
+5. **Wiring:** `key` holds a key while it is non-empty (names: letters, digits, `up down left right enter esc tab space backspace delete f1…f12`, chords like `ctrl+c`, media `vol+ vol- mute play next prev home back search`; the keyboard's Home is `khome`); a D-pad's corner buttons a / b / c / d go through the `alias` table. `dx` / `dy` / `wheel` / `btn` give a mouse from any numbers — an XY Pad or the tilt of the phone makes an air mouse.
+
+Only one HID device is registered at a time, so the gamepad replaces the remote while it runs. **Sound does not go over HID:** the remote controls the TV's volume and playback; audio to the TV itself goes over the system Bluetooth audio (A2DP), chosen in Android's sound settings.
