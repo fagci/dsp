@@ -12,7 +12,7 @@ function scStop(n){
 }
 // читает тело не дальше lim байт; плейлист (#…) читается целиком до 64 КБ
 async function scGet(n,url,ac,mode,lim){
-  const r=await fetch(n.p.proxy ? Net.url(url) : url,{cache:'no-store',signal:ac.signal,...(mode==='no-cors' ? {mode:'no-cors'} : {})});
+  const r=await fetch(Net.via(n,url),{cache:'no-store',signal:ac.signal,...(mode==='no-cors' ? {mode:'no-cors'} : {})});
   if(r.type==='opaque') { try{ ac.abort(); }catch(e){} return {opaque:true}; }
   const rd=r.body ? r.body.getReader() : null, parts=[]; let len=0, max=lim;
   if(rd) for(;;){

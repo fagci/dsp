@@ -4,7 +4,7 @@
    Free Music — Openverse и Internet Archive, без ключей. Список → выбор → url для Audio Stream / Playlist.
    Нужен CORS на сервере (или прокси из настроек); разбор ответов — online-kernels.js. */
 
-const olNet=(n,u)=>n.p.proxy ? Net.url(u) : u;
+const olNet=(n,u)=>Net.via(n,u);
 // один запрос на ключ: новый отменяет прежний
 async function olGet(n,key,url,kind,opt){
   const {timeout=20,...fo}=opt||{};

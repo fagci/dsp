@@ -101,9 +101,13 @@ ISS: footprint, ground track ahead, sky plot, next passes and Doppler-corrected 
 
 <img width="1221" height="719" alt="image" src="https://github.com/user-attachments/assets/83aacc0a-e61b-4d46-bed7-65bbfe542233" />
 
-## Proxy for KiwiSDR and lists
+## Proxies
 
-The **CORS proxy** from the settings panel is used for list downloads (Satellites, Station Schedule, SDR Receivers Directory…) and for the **KiwiSDR** and **OpenWebRX** nodes (OpenWebRX: `http://host:port/ws/`). For Kiwi the address `http://host:port/<ts>/SND` is substituted into the proxy URL the same way (`{url}` is replaced by the encoded address, otherwise the address is appended) and the scheme `http(s)` becomes `ws(s)`, so the proxy must pass WebSocket. Without a proxy the node connects to `ws://host:port` directly, which an https page cannot do (mixed content).
+Settings → Network keeps **one list of proxies** with a kind each: a **CORS proxy** of your own (nginx, a Worker; `{url}` is replaced by the encoded address), a **bridge** chosen from Devices (the DSP app / `node tools/node/bridge.mjs`: its `/proxy`, token from Devices) and a **SOCKS / HTTP proxy** (a `proxy` credential that a bridge opens: messenger nodes take it per session, the bridge's own web requests follow its `--proxy`). **Test** sends one request through an entry. One entry is the **general proxy** — the fallback of the whole app (mode: always / on error / off). Every online node has a `proxy` field in *advanced*: `auto` (the general rule), `off` or a name from the list — to send a single node through a bridge or a SOCKS exit. Old patches and the old single «CORS proxy» line keep working (the line becomes the first entry). Preset: «Proxies: CORS, Bridge and SOCKS for Online Nodes».
+
+### Proxy for KiwiSDR and lists
+
+The **general proxy** from the settings panel is used for list downloads (Satellites, Station Schedule, SDR Receivers Directory…) and for the **KiwiSDR** and **OpenWebRX** nodes (OpenWebRX: `http://host:port/ws/`). For Kiwi the address `http://host:port/<ts>/SND` is substituted into the proxy URL the same way (`{url}` is replaced by the encoded address, otherwise the address is appended) and the scheme `http(s)` becomes `ws(s)`, so the proxy must pass WebSocket. Without a proxy the node connects to `ws://host:port` directly, which an https page cannot do (mixed content).
 
 nginx, setting `https://example.com/proxy/` (the address is appended):
 

@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 let defd=null;
 const ctx=vm.createContext({URL,String,Math,Array,Object,Set,Map,Promise,Uint8Array,TextDecoder,AbortController,TypeError,fetch,setTimeout,clearTimeout,Date,
-  Net:{url:u=>u}, def:d=>{ defd=d; }});
+  Net:{url:u=>u, via:(n,u)=>u, uses:n=>false}, def:d=>{ defd=d; }});
 const src=['iptv-kernels','streamcheck-kernels','streamcheck'].map(f=>fs.readFileSync(path.join(root,'modules/'+f+'.js'),'utf8')).join('\n');
 vm.runInContext(src+';this.T={scClassify,scDeepUrl,scPool,scProbe,scRun,scBuild};',ctx);
 const T=ctx.T;

@@ -21,7 +21,7 @@ async function sdrdirDownload(n){
   const url=String(n.p.url||'').trim() || SDRDIR_URLS[n.p.kind];
   n.msg='downloading…';
   try{
-    const r=await fetch(Net.url(url)); if(!r.ok) throw new Error('HTTP '+r.status);
+    const r=await fetch(Net.urlFor(n,url)); if(!r.ok) throw new Error('HTTP '+r.status);
     sdrdirLoadText(n,await r.text(),url.replace(/^https?:\/\//,'').split('/')[0]);
   }catch(e){ n.msg='download failed: '+e.message+' — the site may block cross-origin requests: set a CORS proxy in Settings or load the file'; }
 }
@@ -29,7 +29,7 @@ function sdrdirRestore(n){
   geoGet('sdrdir-'+n.p.kind).then(v=>{ if(v && v.list && n.p.kind===n.kindLoaded){ n.list=v.list; n.src=v.src; n.key=''; } }).catch(()=>{});
 }
 
-def({ id:'sdrdir', title:'SDR Receivers Directory', cat:'Geo', kw:'kiwisdr spyserver websdr remote receivers map list directory',
+def({ id:'sdrdir', net:true, title:'SDR Receivers Directory', cat:'Geo', kw:'kiwisdr spyserver websdr remote receivers map list directory',
   ins:[{n:'select',t:'rec'}],                          // клик на карте (выход sel)
   outs:[{n:'rows',t:'bands'},{n:'server',t:'txt'},{n:'name',t:'txt'},{n:'count',t:'num'}], readout:true,
   params:[{n:'kind',t:'select',opts:['kiwisdr','spyserver','rxtx'],d:'kiwisdr',label:'receivers',

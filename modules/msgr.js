@@ -40,7 +40,7 @@ function mgNodeStart(n){
   if(rawBridge[0]==='@' && gwErr(rawBridge)){ n.status=gwErr(rawBridge); return; }
   const bridge=gwUrl(rawBridge) + (p.bridgeToken && /^wss?:/i.test(rawBridge) ? '?token='+encodeURIComponent(p.bridgeToken) : '');      // bridgeToken — из старых патчей; новый путь — токен в Settings → Devices
   const cfg={server:'',channel:String(p.channel||'').trim(),user:'',pass:'',
-    nick:String(p.nick||'dsp').trim() || 'dsp',appKey:(()=>{ try{ return (window.DspApp && DspApp.appKey && DspApp.appKey()) || ''; }catch(e){ return ''; } })(),history:+p.history||0,retry:!!p.reconnect,via:p.via,proxyUrl:p.proxy && typeof Net!=='undefined' ? u=>Net.url(u) : null,smtp:'',pollMs:(+p.poll||30)*1000,bridge,insecure:!!p.plain,cache:n.mxCache};
+    nick:String(p.nick||'dsp').trim() || 'dsp',appKey:(()=>{ try{ return (window.DspApp && DspApp.appKey && DspApp.appKey()) || ''; }catch(e){ return ''; } })(),history:+p.history||0,retry:!!p.reconnect,via:p.via,proxyUrl:typeof Net!=='undefined' && Net.uses({p}) ? u=>Net.via({p},u) : null,smtp:'',pollMs:(+p.poll||30)*1000,bridge,insecure:!!p.plain,cache:n.mxCache};
   // прокси: свой (учётка типа proxy) или прокси устройства-моста из Settings → Devices; открывает его только Node-мост — без моста прямой выход не делаем молча
   const pxName=String(p.pxcred||'').trim() || (rawBridge[0]==='@' ? Gw.proxyOf(rawBridge) : '');
   if(pxName){

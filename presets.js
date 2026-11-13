@@ -4,17 +4,31 @@
 const PKEY='dsp-presets', AKEY='dsp-autosave', VKEY='dsp-presets-ver', HKEY='dsp-presets-hash', LKEY='dsp-presets-layered';   // в PKEY — только патчи пользователя; встроенные пресеты — код (PRESETS), собираются при открытии
 const LS={ get(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } },
 set(k,v){ try{ localStorage.setItem(k,v); }catch(e){ stat.textContent='storage unavailable'; } } };
-// общий CORS-прокси (панель настроек): «{url}» заменяется адресом, иначе адрес дописывается к префиксу
+// Прокси (Settings → Network): список «имя → cors / bridge / socks» (proxy-kernels.js), один из них — общий (запасной). «{url}» заменяется адресом, иначе адрес дописывается к префиксу
 // В приложении Android (DspApp — его JS-мост) запросы к чужим хостам идут через приложение с CORS-заголовками и mixed content разрешён: прокси не нужен
 const Net={ get app(){ return typeof DspApp!=='undefined'; },
-  // режим прокси (Settings): always — всё, что ходит через Net.url, идёт через прокси (как было); auto — сначала напрямую, через прокси только
-  // после отказа браузера (CORS, mixed content), хост запоминается; off — прокси не используется
+  // режим общего прокси (Settings): always — всё, что ходит через Net.url, идёт через него; auto — сначала напрямую, через прокси только
+  // после отказа браузера (CORS, mixed content), хост запоминается; off — прокси не используется совсем
   get mode(){ const m=LS.get('dsp-proxy-mode'); return m==='off' || m==='auto' ? m : 'always'; },
-  get proxy(){ if(this.app || this.mode==='off') return ''; const v=(LS.get('dsp-proxy')||'').trim(); return v[0]==='@' && typeof Gw!=='undefined' ? Gw.proxyTemplate(v) : v; },     // «@имя» — Node-мост из Settings → Devices
+  // список прокси и общий (запасной) — Px (proxies.js); старая строка «CORS proxy» при первом чтении становится записью списка
+  list(){ return Px.list(); },
+  get defName(){ return Px.def(); },
+  // шаблон адреса прокси по имени ('' — нет такого или не настроен)
+  of(name){ if(this.app || this.mode==='off') return ''; const e=pxFind(this.list(),name); return e ? pxTemplate(e,typeof Gw!=='undefined' ? Gw.list() : [],typeof Gw!=='undefined' ? Gw.tokens() : {}) : ''; },
+  get proxy(){ return this.of(this.defName); },                          // общий прокси: шаблон
+  // выбор узла (параметр proxy: auto · off · имя; раньше галочка) → {mode,name}
+  sel(n){ return pxSel(n && n.p ? n.p.proxy : undefined,this.defName,this.mode); },
+  choices(n){ const c=pxChoices(this.list()); if(n && n.p && (typeof n.p.proxy!=='string' || !c.includes(n.p.proxy))){ const s=this.sel(n); n.p.proxy=s.mode==='name' && c.includes(s.name) ? s.name : s.mode==='off' ? 'off' : 'auto'; } return c; },   // и приводит старую галочку к значению
   need:new Set(),                                                       // хосты, которым в этой сессии понадобился прокси (режим auto)
   needs(u){ try{ return this.need.has(new URL(u,location.href).host); }catch(e){ return false; } },
-  // force — адрес для сокета (ws через прокси) и узлы, которые просят прокси явно: в режиме auto прямой попытки у них нет
-  url(u,force){ const p=this.proxy; if(!p) return u; if(this.mode==='auto' && !force && !this.needs(u)) return u; return p.includes('{url}') ? p.replace('{url}',encodeURIComponent(u)) : p+u; } };
+  // force — адрес для сокета (ws через прокси) и узлы, которые просят прокси явно: в режиме auto прямой попытки у них нет; name — прокси из списка вместо общего
+  url(u,force,name){ const p=name ? this.of(name) : this.proxy; if(!p) return u; if(!name && this.mode==='auto' && !force && !this.needs(u)) return u; return pxApply(p,u); },
+  // адрес для узла по его параметру proxy: off / auto — как есть (при auto общий прокси подстрахует сам, см. fetch ниже), имя — через этот прокси
+  via(n,u){ const s=this.sel(n); if(s.mode==='name'){ const p=this.of(s.name); return p ? pxApply(p,u) : u; } return u; },
+  // то же для узлов, что и раньше ходили через общий прокси сами (TLE, каталоги, потоки): auto — как общий прокси из Settings (режим always / on error), off — напрямую, имя — через него
+  urlFor(n,u){ const s=this.sel(n); return s.mode==='off' ? u : s.mode==='name' ? this.via(n,u) : this.url(u); },
+  uses(n){ return this.sel(n).mode==='name'; } };                       // узел явно идёт через прокси (для предупреждений о mixed content)
+
 // Режим auto: fetch, который браузер отказался выполнить (TypeError — CORS, mixed content), один раз повторяется через прокси (только GET / HEAD чужого сайта).
 // Если не вышло и через прокси — вернётся исходная ошибка, а не ошибка прокси; хост, которому прокси помог, дальше идёт через него сразу.
 (()=>{
@@ -367,6 +381,7 @@ const PRESET_CATS={
   'Measure: SINAD of an FM Receiver (Generator)':'Analysis & Measurement',
   'Measure: IQ Quality — DC and Imbalance (Generator)':'Analysis & Measurement',
   'Meshtastic: Chat and Nodes on the Map':'Network & IoT',
+  'Proxies: CORS, Bridge and SOCKS for Online Nodes':'Network & IoT',
   'Help: Your First Patch':'Start Here',
   'Chain: SDR with Spectrum Steering (Pins and Chunks)':'Start Here',
   'Help: Wire Probe (Value, Rate, Age on a Wire)':'Start Here',
@@ -8358,6 +8373,17 @@ nt.size.w=900; nt.size.h=110; applySize(nt);
 const wc=addNode('webcams',40,170,{lat:52.52,lon:13.4,radius:25}); wc.size.h=380; applySize(wc);
 const map=addNode('geoMap',440,170,{mz:8,mlat:52.52,mlon:13.4,labels:true}); map.size.w=560; map.size.h=420; applySize(map);
 addEdge(wc.id,'rows',map.id,'rows'); addEdge(map.id,'sel',wc.id,'select');
+markWiresDirty();
+});
+preset('Proxies: CORS, Bridge and SOCKS for Online Nodes', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'One list of proxies for every node that goes online. Settings → Network → «Proxies»: add (1) a CORS proxy of your own (nginx / a Worker, the address with {url}), (2) a bridge from the Devices tab (the DSP app or the Node bridge: it fetches the page itself, nobody else sees the addresses) or (3) a SOCKS / HTTP proxy — a «proxy» credential that a bridge opens (the browser cannot speak SOCKS; start the bridge with --proxy). «Test» sends one request through the entry.\n'+
+  'Pick one as the General proxy: it is the fallback of the whole app — nodes go direct and it helps after the browser refuses (CORS, mixed content); mode «always» sends everything through it, «off» switches proxies off. Each online node has a «proxy» field in advanced: auto (the rule above), off (this node never asks a proxy) or a name from the list — here the left node goes through «auto», the right one is told to use no proxy at all. Pick a name there to route a single node through a bridge or a SOCKS exit while the rest stay direct.'});
+nt.size.w=900; nt.size.h=120; applySize(nt);
+const me=addNode('geoMe',40,190,{src:'manual',lat:52.52,lon:13.405}); me.size.w=300; applySize(me);
+const a=addNode('meteo',380,190,{proxy:'auto'}); a.size.w=320; a.size.h=230; applySize(a);
+const b=addNode('meteo',740,190,{proxy:'off'}); b.size.w=320; b.size.h=230; applySize(b);
+for(const m of [a,b]){ addEdge(me.id,'lat',m.id,'lat'); addEdge(me.id,'lon',m.id,'lon'); }
 markWiresDirty();
 });
 preset('Weather: Open-Meteo Now, Dew Point and Elevation', function(){

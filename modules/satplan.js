@@ -20,7 +20,7 @@ async function spDownload(n){
   const groups=String(n.p.groups||'').split(/[,;\s]+/).filter(g=>g && g!=='file'); n.msg='downloading TLE…';
   try{
     for(const g of groups){
-      const r=await fetch(Net.url(SAT_TLE_URL.replace('{g}',g))); if(!r.ok) throw new Error(g+': HTTP '+r.status);
+      const r=await fetch(Net.urlFor(n,SAT_TLE_URL.replace('{g}',g))); if(!r.ok) throw new Error(g+': HTTP '+r.status);
       const text=await r.text(); if(!satParseTle(text).length) throw new Error(g+': no TLE in response');
       await geoPut('tle:'+g,{t:Date.now(), text}).catch(()=>{});
     }
@@ -35,7 +35,7 @@ function spFind(sats,q){
 }
 const SP_DEPS={passes:(s,from,h,obs,minEl,maxN)=>satPasses(s,from,h,obs,minEl,maxN), rate:(s,t,obs)=>satRangeRate(s,t,obs)};
 
-def({ id:'satPlan', title:'Satellite Autopilot', cat:'Radio', readout:true, tall:true, resize:true, w:420,
+def({ id:'satPlan', net:true, title:'Satellite Autopilot', cat:'Radio', readout:true, tall:true, resize:true, w:420,
   kw:'satellite pass scheduler autopilot planner doppler record weather noaa apt meteor lrpt aos los plan next pass tune',
   // rows — цели из Table (поля sat / freq / mode / minEl / prio); пустой вход — параметр targets
   ins:[{n:'rows',t:'bands'}],

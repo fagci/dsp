@@ -19,7 +19,7 @@ function vcatCache(key,rows){
 }
 function vcatStatus(n,s){ n.status=s; }
 async function vcatGet(n,url,as){
-  const r=await fetch(n.p.proxy && typeof Net!=='undefined' ? Net.url(url) : url,{signal:n.abort.signal});
+  const r=await fetch(typeof Net!=='undefined' ? Net.via(n,url) : url,{signal:n.abort.signal});
   if(!r.ok) throw new Error('HTTP '+r.status);
   return as==='json' ? r.json() : r.text();
 }

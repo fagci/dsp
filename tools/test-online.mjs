@@ -20,7 +20,7 @@ const mkFetch=()=>async(u,o)=>{
 const ctx=vm.createContext({URL,URLSearchParams,String,Number,Math,Array,Object,Set,Map,Promise,JSON,Uint8Array,TextEncoder,TextDecoder,Blob,
   AbortController,TypeError,Date,parseInt,isFinite,encodeURIComponent,performance,setTimeout,clearTimeout,
   fetch:(...a)=>ctx.__fetch(...a), __fetch:mkFetch(),
-  Net:{url:u=>'PROXY/'+encodeURIComponent(u)}, def:d=>{ defs[d.id]=d; },
+  Net:{url:u=>'PROXY/'+encodeURIComponent(u), via:(n,u)=>n.p.proxy ? 'PROXY/'+encodeURIComponent(u) : u, uses:n=>!!n.p.proxy}, def:d=>{ defs[d.id]=d; },
   setMod:(n,k,v)=>{ n.p[k]=v; }, recNum:v=>typeof v==='number'&&isFinite(v)?v:null, recList:v=>Array.isArray(v)?v:v?[v]:[],
   GeoMe:{lat:null,lon:null},
   createImageBitmap:async()=>({width:8,height:4,close(){}}),

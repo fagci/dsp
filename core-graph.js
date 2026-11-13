@@ -3453,16 +3453,15 @@ if(window.DspApp && !window.dspDlNames){
 (()=>{
   const btn=document.getElementById('settings'), panel=document.getElementById('setPanel'), px=document.getElementById('proxy');
   if(!btn || !panel) return;
-  px.value=LS.get('dsp-proxy')||'';
   if(window.DspApp){                                     // в приложении Android прокси не нужен: запросы идут через приложение с CORS-заголовками
     px.closest('label').hidden=true;
     const pn=document.getElementById('proxyNote'); if(pn) pn.textContent='Android app: CORS and mixed content are handled by the app, no proxy needed.';
   }
   const pm=document.getElementById('proxyMode');
   if(pm){ pm.value=LS.get('dsp-proxy-mode')==='off' || LS.get('dsp-proxy-mode')==='auto' ? LS.get('dsp-proxy-mode') : 'always'; if(window.DspApp) pm.closest('label').hidden=true; }
-  const lit=()=>btn.classList.toggle('on',!!px.value.trim() && (!pm || pm.value!=='off'));
-  px.onchange=()=>{ LS.set('dsp-proxy',px.value.trim()); lit(); };
+  const lit=()=>btn.classList.toggle('on',!!Net.defName && (!pm || pm.value!=='off'));
   if(pm) pm.onchange=()=>{ LS.set('dsp-proxy-mode',pm.value); lit(); };
+  window.addEventListener('px-changed',lit);
   lit();
   const place=()=>{
     const r=btn.getBoundingClientRect(), w=Math.min(470,innerWidth-16);

@@ -71,7 +71,7 @@ async function lkHttp(n,url){
   if(!n.want) return;
   const ac=n.abort=new AbortController();
   try{
-    const r=await fetch(n.p.proxy ? Net.url(url) : url,{cache:'no-store',signal:ac.signal});
+    const r=await fetch(Net.via(n,url),{cache:'no-store',signal:ac.signal});
     if(!r.ok) throw new Error('HTTP '+r.status);
     lkStatus(n,'streaming'); n.connected=true;
     const rd=r.body.getReader();
@@ -91,7 +91,7 @@ function lkStart(n){
   if(via==='websocket' || via==='http stream'){
     const ok=via==='websocket' ? /^wss?:\/\//i : /^https?:\/\//i;
     if(!ok.test(url)){ lkStatus(n,'URL must start with '+(via==='websocket' ? 'ws:// or wss://' : 'http:// or https://')); return; }
-    if(netInsecure(url) && !(via==='http stream' && n.p.proxy)) n.warn=NET_INSECURE_MSG;
+    if(netInsecure(url) && !(via==='http stream' && Net.uses(n))) n.warn=NET_INSECURE_MSG;
     n.want=true;
     if(via==='websocket') lkWs(n,url); else lkHttp(n,url);
   } else if(via==='serial') serialConnect(n);

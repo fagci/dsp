@@ -51,11 +51,11 @@ async function icOpen(n,raw,name){
     icLog(n,kind==='rtsp' || /^(rtsp|rtmp|udp|rtp)/i.test(url) ? 'RTSP / RTMP / UDP cannot be opened in a browser — use the camera\'s HTTP (MJPEG / snapshot / HLS) address, or a gateway such as go2rtc' : 'URL must start with http:// or https://');
     n.want=false; return;
   }
-  if(kind==='hls'){ n.hlsUrl=n.p.proxy ? Net.url(url) : url; icLog(n,'HLS — wire «url» to IPTV'); return; }
+  if(kind==='hls'){ n.hlsUrl=Net.via(n,url); icLog(n,'HLS — wire «url» to IPTV'); return; }
   if(kind==='page'){ icLog(n,'this is a web page, not a picture — open it in a tab'); n.want=false; return; }
-  n.warn= typeof netInsecure==='function' && netInsecure(url) && !n.p.proxy ? NET_INSECURE_MSG : '';
+  n.warn= typeof netInsecure==='function' && netInsecure(url) && !Net.uses(n) ? NET_INSECURE_MSG : '';
   const fetchIt=async()=>{
-    const r=await fetch(n.p.proxy ? Net.url(url) : url,{cache:'no-store',signal:ac.signal,headers:a.auth ? {Authorization:a.auth} : undefined});
+    const r=await fetch(Net.via(n,url),{cache:'no-store',signal:ac.signal,headers:a.auth ? {Authorization:a.auth} : undefined});
     if(!r.ok) throw new Error(r.status===401 ? 'HTTP 401 (user:password@ in the address)' : 'HTTP '+r.status);
     return r;
   };
@@ -64,7 +64,7 @@ async function icOpen(n,raw,name){
     let r=await fetchIt();
     if(kind==='auto'){
       kind=camKindByType(r.headers.get('content-type')) || 'snapshot';
-      if(kind==='hls'){ ac.abort(); n.hlsUrl=n.p.proxy ? Net.url(url) : url; icLog(n,'HLS — wire «url» to IPTV'); return; }
+      if(kind==='hls'){ ac.abort(); n.hlsUrl=Net.via(n,url); icLog(n,'HLS — wire «url» to IPTV'); return; }
       if(kind==='page'){ ac.abort(); icLog(n,'this is a web page, not a picture'); n.want=false; return; }
     }
     n.kind=kind;
