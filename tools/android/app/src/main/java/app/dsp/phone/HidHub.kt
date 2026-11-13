@@ -45,6 +45,7 @@ class HidHub(private val ctx: Context, private val emit: Emit, private val needs
     private var listener: BluetoothProfile.ServiceListener? = null
     private var pendingReg: Pair<BridgeServer.Client?, Any?>? = null
     @Volatile private var registered = false
+    private var curKey: String? = null                               // что сейчас зарегистрировано: имя + subclass + дескриптор — то же самое повторно не регистрируем (хост отвалился бы)
     private val targets = ConcurrentHashMap<String, BluetoothDevice>()   // addr → устройство, которому разрешено подключаться/слать отчёты
 
     private fun rec(ev: String, addr: String?, vararg kv: Pair<String, String?>) =
@@ -55,8 +56,8 @@ class HidHub(private val ctx: Context, private val emit: Emit, private val needs
             h.post {
                 registered = registeredNow
                 rec("app", dev?.address, "registered" to if (registeredNow) "1" else "0")
-                pendingReg?.let { (c, id) -> if (c != null) Reply.done(c, id, "hid.register", if (registeredNow) null else "registration refused") }
-                pendingReg = null
+                if (registeredNow) { pendingReg?.let { (c, id) -> if (c != null) Reply.done(c, id, "hid.register", null) }; pendingReg = null }
+                else curKey = null                                      // снятие (своё или системное) — не ошибка регистрации; не пришло подтверждение — отвечает таймаут
             }
         }
         override fun onConnectionStateChanged(dev: BluetoothDevice, state: Int) {
@@ -89,6 +90,26 @@ class HidHub(private val ctx: Context, private val emit: Emit, private val needs
         }
     }
 
+    private fun sdp0(j: JSONObject) = j.optString("name", "").take(63)
+
+    private fun regGo(ad: android.bluetooth.BluetoothAdapter, sdp: BluetoothHidDeviceAppSdpSettings, qos: BluetoothHidDeviceAppQosSettings, key: String, c: BridgeServer.Client, id: Any?, cmd: String, tries: Int) {
+        val px = proxy ?: run { pendingReg = null; return Reply.done(c, id, cmd, "HID profile proxy is gone — try again") }
+        if (registered) {                                           // прежнее устройство ещё зарегистрировано: снять и подождать
+            try { px.unregisterApp() } catch (e: Exception) {}
+            registered = false; curKey = null; targets.clear()
+            h.postDelayed({ regGo(ad, sdp, qos, key, c, id, cmd, tries) }, 700); return
+        }
+        val ok = try { px.registerApp(sdp, null, qos, { r -> h.post(r) }, callback()) } catch (e: Exception) { false }    // с API 28 — только вариант с Executor
+        if (ok) { curKey = key; return }                            // ответ придёт из onAppStatusChanged
+        if (tries < 2) {                                            // стек мог ещё держать прежнюю регистрацию — снять и повторить
+            try { px.unregisterApp() } catch (e: Exception) {}
+            h.postDelayed({ regGo(ad, sdp, qos, key, c, id, cmd, tries + 1) }, 900)
+        } else {
+            pendingReg = null
+            Reply.done(c, id, cmd, "registerApp refused — another app may hold the Bluetooth HID device role (close it, or turn Bluetooth off and on), or this ROM has the HID device profile disabled")
+        }
+    }
+
     fun exec(c: BridgeServer.Client, j: JSONObject) {
         val cmd = j.optString("cmd"); val id = j.opt("id")
         val perms = if (Build.VERSION.SDK_INT >= 31) listOf(android.Manifest.permission.BLUETOOTH_CONNECT) else emptyList()
@@ -105,7 +126,6 @@ class HidHub(private val ctx: Context, private val emit: Emit, private val needs
         when (cmd) {
             "hid.register" -> {
                 if (Build.VERSION.SDK_INT < 28) return Reply.done(c, id, cmd, "needs Android 9 (API 28)+")
-                if (registered) return Reply.done(c, id, cmd, null, extra = arrayOf("again" to "true"))
                 val type = j.optString("type", "keyboard")
                 val descriptor = when (type) {
                     "keyboard" -> KEYBOARD_DESCRIPTOR
@@ -116,22 +136,25 @@ class HidHub(private val ctx: Context, private val emit: Emit, private val needs
                 val subclass = when (type) { "keyboard" -> 0x40; "mouse" -> 0x80; else -> j.optInt("subclass", 0x00) }
                 val sdp = BluetoothHidDeviceAppSdpSettings(j.optString("name", "DSP $type").take(63), "DSP workbench HID", "DSP", subclass.toByte(), descriptor)
                 val qos = BluetoothHidDeviceAppQosSettings(BluetoothHidDeviceAppQosSettings.SERVICE_BEST_EFFORT, 800, 9, 0, 11250, -1)
+                val key = "${sdp0(j)}|$subclass|" + Hex.of(descriptor)
+                if (registered && key == curKey) return Reply.done(c, id, cmd, null, extra = arrayOf("again" to "true"))
+                if (pendingReg != null) return Reply.done(c, id, cmd, null, extra = arrayOf("again" to "true"))      // регистрация уже идёт
                 pendingReg = c to id
-                val ok = ad.getProfileProxy(ctx, object : BluetoothProfile.ServiceListener {
-                    override fun onServiceConnected(p: Int, px: BluetoothProfile) {
-                        proxy = px as BluetoothHidDevice
-                        val ok = proxy!!.registerApp(sdp, null, qos, { r -> h.post(r) }, callback())    // с API 28 — только вариант с Executor
-                        if (!ok) { pendingReg = null; Reply.done(c, id, cmd, "registerApp refused") }
-                    }
-                    override fun onServiceDisconnected(p: Int) { registered = false; proxy = null }
-                }.also { listener = it }, BluetoothProfile.HID_DEVICE)
-                if (!ok) { pendingReg = null; Reply.done(c, id, cmd, "getProfileProxy refused") }
-                // ответ придёт из onAppStatusChanged — не пришёл за 10 с — отказ
-                h.postDelayed({ if (pendingReg?.first === c && !registered) { pendingReg = null; Reply.done(c, id, cmd, "timeout", "timeout") } }, 10_000)
+                // другое устройство — сначала снимаем прежнее и ждём, потом регистрируем (иначе Android отвечает отказом); отказ — ещё две попытки
+                val go = { regGo(ad, sdp, qos, key, c, id, cmd, 0) }
+                if (proxy != null) go() else {
+                    val ok = ad.getProfileProxy(ctx, object : BluetoothProfile.ServiceListener {
+                        override fun onServiceConnected(p: Int, px: BluetoothProfile) { proxy = px as BluetoothHidDevice; h.post { go() } }
+                        override fun onServiceDisconnected(p: Int) { registered = false; curKey = null; proxy = null }
+                    }.also { listener = it }, BluetoothProfile.HID_DEVICE)
+                    if (!ok) { pendingReg = null; Reply.done(c, id, cmd, "getProfileProxy refused — this Bluetooth stack has no HID device profile") }
+                }
+                // ответ придёт из onAppStatusChanged — не пришёл за 12 с — отказ
+                h.postDelayed({ if (pendingReg?.first === c && !registered) { pendingReg = null; Reply.done(c, id, cmd, "timeout", "timeout") } }, 12_000)
             }
             "hid.unregister" -> {
                 val p = proxy ?: return Reply.done(c, id, cmd, null)
-                p.unregisterApp(); registered = false; targets.clear()
+                p.unregisterApp(); registered = false; curKey = null; targets.clear()
                 Reply.done(c, id, cmd, null)
             }
             "hid.connect" -> {

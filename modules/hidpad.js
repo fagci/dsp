@@ -118,7 +118,7 @@ def({ id:'hidpad', title:'HID Keyboard + Mouse + Media (phone as a Bluetooth rem
     if(Array.isArray(I.dev) && I.dev!==n.lastDev){                       // строка «Reference/HID Devices» из Table: другое устройство
       n.lastDev=I.dev; const d=hidDeviceFromRow(I.dev[I.dev.length-1]);
       if(d){ n.devRow=d; n.ho.ids=d.ids; n.err=''; n.ho.releaseAll(); n.ho.take(); n.touch=new HidTouch();
-        if(n.ws && n.ws.readyState===1 && n.reg){ n.connTried=false; gattSend(n,{cmd:hidCmdName(n.p.transport,'unregister')}); n.reg=false; n.hosts.clear(); setTimeout(()=>{ if(n.ws && n.ws.readyState===1) hidRegister(n); },400); } }
+        if(n.ws && n.ws.readyState===1 && n.reg){ n.connTried=false; n.reg=false; n.hosts.clear(); hidRegister(n); } }      // приложение само снимает прежнее устройство и регистрирует новое
       else n.err='dev: a row with a hex «descriptor» is needed (Reference/HID Devices)';
     }
     if(Array.isArray(I.cmd) && I.cmd!==n.lastCmd){                        // команды: строки Table (Reference/HID Keys), Rule, свои записи
@@ -146,7 +146,7 @@ def({ id:'hidpad', title:'HID Keyboard + Mouse + Media (phone as a Bluetooth rem
     const rec=n.txRec.length ? n.txRec.splice(0) : null;
     return {rec,reg:n.reg?1:0,hosts:n.hosts.size,sent:n.sent,caps:n.leds&&n.leds.caps?1:0,num:n.leds&&n.leds.num?1:0};
   },
-  drawKey:n=>hidStatus(n)+'|'+(n.leds?'L':'')+n.pulse,
+  drawKey:n=>hidStatus(n)+'|'+(n.leds?'L':'')+n.pulse+'|'+n.bonded.length,
   draw(n,cv,cx){
     const W=cv.width, H=cv.height, L=hidPadLayout(W,H), pd=L.pad;
     if(n._wcv!==cv){ n._wcv=cv; hidWire(n,cv); }
@@ -157,7 +157,12 @@ def({ id:'hidpad', title:'HID Keyboard + Mouse + Media (phone as a Bluetooth rem
     cx.fillStyle=themeColor('--scr-panel'); cx.strokeStyle=n.reg&&n.hosts.size ? themeColor('--t-blk') : themeColor('--axis'); cx.lineWidth=1.5;
     cx.beginPath(); cx.roundRect(pd.x,pd.y,pd.w,pd.h,8); cx.fill(); cx.stroke();
     cx.globalAlpha=.35; cx.fillStyle=themeColor('--axis'); cx.textAlign='center'; cx.textBaseline='middle';
-    cx.fillText('move · tap = click',pd.x+pd.w/2,pd.y+pd.h/2-8); cx.fillText('2 fingers: scroll · tap = right click',pd.x+pd.w/2,pd.y+pd.h/2+8); cx.globalAlpha=1;
+    if(n.bonded.length){                                  // «Paired hosts»: имя и адрес — адрес можно вписать в поле host
+      cx.globalAlpha=.9; cx.fillStyle=themeColor('--scr-hi'); const rows=n.bonded.slice(0,6), lh=Math.min(15,pd.h/(rows.length+2));
+      cx.fillText('paired devices (address → «host»):',pd.x+pd.w/2,pd.y+lh);
+      rows.forEach((t,i)=>cx.fillText(t.length>pd.w/6 ? t.slice(0,Math.floor(pd.w/6))+'…' : t,pd.x+pd.w/2,pd.y+lh*(i+2.2)));
+    } else { cx.fillText('move · tap = click',pd.x+pd.w/2,pd.y+pd.h/2-8); cx.fillText('2 fingers: scroll · tap = right click',pd.x+pd.w/2,pd.y+pd.h/2+8); }
+    cx.globalAlpha=1;
     for(const b of L.btns){
       const on=[...n.held.values()].includes(b.id);
       cx.fillStyle=on ? themeColor('--t-blk') : themeColor('--scr-panel'); cx.strokeStyle=themeColor('--axis'); cx.lineWidth=1;
