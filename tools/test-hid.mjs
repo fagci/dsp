@@ -5,7 +5,7 @@ import vm from 'node:vm';
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n); };
 const ctx=vm.createContext({Math,Number,String,Object,Array,JSON,Map,Set,parseInt,isFinite});
 vm.runInContext(fs.readFileSync(new URL('../modules/hid-kernels.js',import.meta.url),'utf8')+
- ';this.K={HID_DEVICES,hidDescInfo,hidKeySpec,hidTextKeys,hidKeyChar,hidKbdBuild,hidKbdParse,hidLedBuild,hidLedParse,hidMouseBuild,hidMouseParse,hidMediaBuild,hidMediaParse,hidPadBuild,hidPadParse,hidHat,hidReportParse,hidRegisterCmd,hidReportCmd,hidPadLayout,hidHit,HidTouch,HidOut,hidBytes,hidxHex,hidAccel,HID_MEDIA,hidRefKeys,hidRefDevices,hidDeviceFromRow,hidSpecFromCode,hidApplyCmd}',ctx);
+ ';this.K={HID_DEVICES,hidDescInfo,hidKeySpec,hidTextKeys,hidKeyChar,hidKbdBuild,hidKbdParse,hidLedBuild,hidLedParse,hidMouseBuild,hidMouseParse,hidMediaBuild,hidMediaParse,hidPadBuild,hidPadParse,hidHat,hidReportParse,hidRegisterCmd,hidReportCmd,hidPadLayout,hidHit,HidTouch,HidOut,hidBytes,hidxHex,hidAccel,HID_MEDIA,hidRefKeys,hidRefDevices,hidCmdName,hidUsb,hidDeviceFromRow,hidSpecFromCode,hidApplyCmd}',ctx);
 const K=ctx.K, J=o=>JSON.stringify(o);
 
 // дескрипторы: отчёты нужных размеров, скобки сбалансированы
@@ -80,6 +80,12 @@ ok('releaseAll: keyboard, mouse and media reports are zero',q.length===3 && q.ev
 const rc=K.hidRegisterCmd('combo',''), rg=K.hidRegisterCmd('gamepad',' Pad ');
 ok('register command: custom type, descriptor hex, subclass, name',rc.cmd==='hid.register' && rc.type==='custom' && rc.descriptor===K.HID_DEVICES.combo.hex && rc.subclass===0xC0 && rc.name==='DSP keyboard + mouse + media' && rg.name==='Pad' && rg.subclass===8);
 ok('report command: id, hex; addr only when given',J(K.hidReportCmd(2,[1,2,3,4,5]))==='{"cmd":"hid.report","id":2,"hex":"0102030405"}' && K.hidReportCmd(1,[0],'AA:BB:CC:DD:EE:FF').addr==='AA:BB:CC:DD:EE:FF');
+
+// USB (root): те же отчёты, другие команды
+const ur=K.hidRegisterCmd('combo','','usb (root)'), ub=K.hidReportCmd(2,[1,2,3,4,5],'AA:BB:CC:DD:EE:FF','usb (root)');
+ok('usb register: usbhid.register, descriptor + subclass, no BT-only fields',ur.cmd==='usbhid.register' && ur.descriptor===K.HID_DEVICES.combo.hex && ur.subclass===0xC0 && !('type' in ur) && K.hidRegisterCmd('combo','').cmd==='hid.register');
+ok('usb report: usbhid.report, no host address',ub.cmd==='usbhid.report' && !('addr' in ub) && ub.id===2 && ub.hex==='0102030405');
+ok('transport names: bluetooth by default',K.hidCmdName('','list')==='hid.list' && K.hidCmdName('bluetooth','unregister')==='hid.unregister' && K.hidCmdName('usb (root)','list')==='usbhid.list' && K.hidUsb('USB'));
 
 // разбор записи по id/длине (то, что делает узел HID Report Decode)
 ok('report decode by id: key / mouse / media / LEDs',K.hidReportParse('combo',1,kb).kind==='key' && K.hidReportParse('combo',2,mb).kind==='mouse' && K.hidReportParse('combo',3,[0xE9,0]).name==='vol+' && K.hidReportParse('combo',1,[2]).kind==='leds' && K.hidReportParse('combo',9,[1,2])===null && K.hidReportParse('gamepad',1,pb).kind==='pad');

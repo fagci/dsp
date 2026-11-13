@@ -787,6 +787,7 @@ const PRESET_CATS={
   'Phone App: HID Keyboard + Mouse + Media (Phone as a TV / PC Remote)':'Network & IoT',
   'Phone App: HID Gamepad (Phone as a Bluetooth Gamepad)':'Network & IoT',
   'Phone App: HID Devices and Key Codes from Tables (Control Over Pins)':'Network & IoT',
+  'Phone App: HID over a USB Cable (Root): the Phone as a USB Keyboard / Mouse / Remote':'Network & IoT',
   'HID Loopback: Keyboard, Mouse and Media Reports → Decode (No Radio)':'Network & IoT',
   'Phone App: mDNS / DNS-SD Service Discovery (Bonjour)':'Network & IoT',
   'Phone App: Wi-Fi RTT Distance to Access Points':'Maps & Locating',
@@ -2786,6 +2787,18 @@ hp.size.w=320; hp.size.h=560; applySize(hp);
 addEdge(td.id,'rec',hp.id,'dev');
 addEdge(tk.id,'rec',hp.id,'cmd');
 const lg=addNode('recLog',1000,360,{}); lg.size.w=380; lg.size.h=360; applySize(lg);
+addEdge(hp.id,'rec',lg.id,'rec');
+markWiresDirty();
+});
+preset('Phone App: HID over a USB Cable (Root): the Phone as a USB Keyboard / Mouse / Remote', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The same remote as the Bluetooth preset, but over the USB cable: the phone itself becomes a USB keyboard + mouse + media device for a TV, a PC, a projector or a console that has a USB port — no pairing, works while the host has no Bluetooth, and at boot. It needs ROOT and a kernel with the USB HID gadget function (CONFIG_USB_F_HID — NetHunter and many custom kernels have it, most stock kernels do not; the app says so when it is missing). Press Connect: the app adds a «hid» function to the phone\'s USB gadget through configfs and rebinds the controller, so the USB mode may blink for a second (adb / file transfer usually keep working as a composite device). Plug the cable into the host, the status line shows «host usb» as soon as the host has enumerated it. The device row on the «dev» pin (Reference/HID Devices) and the «cmd» commands work as in the Bluetooth version; «Disconnect» removes the function and gives the USB mode back. Do not point it at a computer you do not own or control. This is the phone as its OWN input device, a local experiment.'});
+nt.size.w=1000; nt.size.h=230; applySize(nt);
+const hp=addNode('hidpad',40,300,{url:'ws://127.0.0.1:8765',transport:'usb (root)',alias:'a=back,b=menu,c=home,d=mute'});
+hp.size.w=320; hp.size.h=560; applySize(hp);
+const dp=addNode('dpad',420,300,{labels:'BACK,MENU,HOME,MUTE'}); dp.size.w=230; dp.size.h=230; applySize(dp);
+addEdge(dp.id,'key',hp.id,'key');
+const lg=addNode('recLog',700,300,{}); lg.size.w=380; lg.size.h=360; applySize(lg);
 addEdge(hp.id,'rec',lg.id,'rec');
 markWiresDirty();
 });

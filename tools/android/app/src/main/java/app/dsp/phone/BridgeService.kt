@@ -41,6 +41,7 @@ class BridgeService : Service() {
     private lateinit var gattsrv: GattServerHub
     private lateinit var l2cap: L2capHub
     private lateinit var hid: HidHub
+    private lateinit var usbhid: UsbHidHub
     private lateinit var wlink: WifiLinkHub
     private lateinit var monitor: MonitorHub
     private lateinit var wnet: WifiNetHub
@@ -87,7 +88,7 @@ class BridgeService : Service() {
         actions = PhoneActions(this, { s, j -> server.emit(s, j) }, { p -> main.post { requestPerms(p) } }, cfg)
         val needs = Needs(this) { p -> main.post { requestPerms(p) } }
         val emit: Emit = { s, j -> server.emit(s, j) }
-        speech = SpeechHub(this, emit, needs); gatt = GattHub(this, emit, needs); btlink = BtLinkHub(this, emit, needs); adv = AdvertiseHub(this, needs); gattsrv = GattServerHub(this, emit, needs); l2cap = L2capHub(this, emit, needs); hid = HidHub(this, emit, needs); wlink = WifiLinkHub(this, emit, needs) { posPairs(gps.recent()) }; monitor = MonitorHub(cfg); wnet = WifiNetHub(this, emit, needs)
+        speech = SpeechHub(this, emit, needs); gatt = GattHub(this, emit, needs); btlink = BtLinkHub(this, emit, needs); adv = AdvertiseHub(this, needs); gattsrv = GattServerHub(this, emit, needs); l2cap = L2capHub(this, emit, needs); hid = HidHub(this, emit, needs); usbhid = UsbHidHub(this, emit, needs); wlink = WifiLinkHub(this, emit, needs) { posPairs(gps.recent()) }; monitor = MonitorHub(cfg); wnet = WifiNetHub(this, emit, needs)
         alarms = AlarmCmds(this); Alarms.sink = emit
         headless = HeadlessHub(this, cfg, emit)
         cal = CalendarHub(this, needs)
@@ -183,7 +184,7 @@ class BridgeService : Service() {
     private fun holds(): List<String> {
         val l = ArrayList<String>()
         fun add(name: String, n: Int) { if (n > 0) l.add(if (n > 1) "$name×$n" else name) }
-        add("gatt", gatt.held()); add("rfcomm", btlink.held()); add("advertising", adv.held()); add("gatt server", gattsrv.held()); add("l2cap", l2cap.held()); add("hid", hid.held()); add("nsd / aware", wlink.held()); add("wifi monitor mode", monitor.held()); add("wifi direct / hotspot / join", wnet.held()); add("sockets", net.held()); add("broadcast receiver", sys.held()); add("speech", speech.held())
+        add("gatt", gatt.held()); add("rfcomm", btlink.held()); add("advertising", adv.held()); add("gatt server", gattsrv.held()); add("l2cap", l2cap.held()); add("hid", hid.held()); add("usb hid", usbhid.held()); add("nsd / aware", wlink.held()); add("wifi monitor mode", monitor.held()); add("wifi direct / hotspot / join", wnet.held()); add("sockets", net.held()); add("broadcast receiver", sys.held()); add("speech", speech.held())
         return l
     }
 
@@ -196,7 +197,7 @@ class BridgeService : Service() {
         if (idleSince == 0L) { idleSince = now; return }
         val h = holds()
         if (cfg.idleMin <= 0 || h.isEmpty() || now - idleSince < cfg.idleMin * 60_000L) return
-        gatt.release(); gattsrv.release(); l2cap.release(); hid.release(); wlink.release(); monitor.release(); wnet.release(); btlink.release(); adv.release(); net.release(); sys.release(); speech.release()
+        gatt.release(); gattsrv.release(); l2cap.release(); hid.release(); usbhid.release(); wlink.release(); monitor.release(); wnet.release(); btlink.release(); adv.release(); net.release(); sys.release(); speech.release()
         idleSince = now
         server.note("info", "no clients for ${cfg.idleMin} min: released ${h.joinToString(", ")}")
     }
@@ -230,6 +231,7 @@ class BridgeService : Service() {
             n.startsWith("gattsrv.") -> gattsrv.exec(c, j)
             n.startsWith("l2cap.") -> l2cap.exec(c, j)
             n.startsWith("hid.") -> hid.exec(c, j)
+            n.startsWith("usbhid.") -> usbhid.exec(c, j)
             n == "wifi.monitor" || n == "wifi.channel" -> monitor.exec(c, j)
             n.startsWith("p2p.") || n == "wifi.hotspot.start" || n == "wifi.hotspot.stop" || n.startsWith("wifi.suggest") || n == "wifi.connect" || n == "wifi.disconnect" -> wnet.exec(c, j)
             n.startsWith("nsd.") || n.startsWith("wifi.") || n.startsWith("aware.") -> wlink.exec(c, j)
@@ -271,7 +273,7 @@ class BridgeService : Service() {
         inst = null; up = false
         power.close(); activity.close(); try { torrents.close() } catch (e: Exception) { }; try { vlc.close() } catch (e: Throwable) { }; try { sys.stopMock() } catch (e: Exception) { }; FloatWin.closeAll(); headless.shutdown(); callrec.close(); recorder.close()
         server.stop()
-        sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close(); usb.close(); actions.close(); speech.close(); gatt.close(); gattsrv.close(); l2cap.close(); hid.close(); wlink.close(); monitor.close(); wnet.close(); btlink.close(); adv.close(); ai.stop(); net.close(); sys.close(); stats.close()
+        sensors.close(); gps.close(); wifi.close(); battery.close(); ble.close(); bt.close(); gnss.close(); cell.close(); mic.close(); sniffer.close(); usb.close(); actions.close(); speech.close(); gatt.close(); gattsrv.close(); l2cap.close(); hid.close(); usbhid.close(); wlink.close(); monitor.close(); wnet.close(); btlink.close(); adv.close(); ai.stop(); net.close(); sys.close(); stats.close()
         wake?.takeIf { it.isHeld }?.release()
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).cancel(ID)
         super.onDestroy()
