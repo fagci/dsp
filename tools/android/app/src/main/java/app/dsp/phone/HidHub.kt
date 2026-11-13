@@ -174,7 +174,7 @@ class HidHub(private val ctx: Context, private val emit: Emit, private val needs
                 val data = Args.payload(j, 64) ?: return Reply.done(c, id, cmd, "hex or text: up to 64 bytes")
                 val devs = if (addr != null) listOfNotNull(targets[addr]) else targets.values.toList()
                 if (devs.isEmpty()) return Reply.done(c, id, cmd, "not connected to any host")
-                val repId = j.optInt("id", 0).toByte()
+                val repId = j.optInt("rid", 0).toByte()      // не "id": это номер запроса, им страница сверяет ответ
                 val okAll = devs.all { p.sendReport(it, repId.toInt(), data) }
                 Reply.done(c, id, cmd, if (okAll) null else "sendReport refused")
             }

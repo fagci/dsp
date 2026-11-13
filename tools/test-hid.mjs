@@ -79,12 +79,12 @@ ok('releaseAll: keyboard, mouse and media reports are zero',q.length===3 && q.ev
 // команды приложению
 const rc=K.hidRegisterCmd('combo',''), rg=K.hidRegisterCmd('gamepad',' Pad ');
 ok('register command: custom type, descriptor hex, subclass, name',rc.cmd==='hid.register' && rc.type==='custom' && rc.descriptor===K.HID_DEVICES.combo.hex && rc.subclass===0xC0 && rc.name==='DSP keyboard + mouse + media' && rg.name==='Pad' && rg.subclass===8);
-ok('report command: id, hex; addr only when given',J(K.hidReportCmd(2,[1,2,3,4,5]))==='{"cmd":"hid.report","id":2,"hex":"0102030405"}' && K.hidReportCmd(1,[0],'AA:BB:CC:DD:EE:FF').addr==='AA:BB:CC:DD:EE:FF');
+ok('report command: report id goes as rid (id is the request number), hex; addr only when given',J(K.hidReportCmd(2,[1,2,3,4,5]))==='{"cmd":"hid.report","rid":2,"hex":"0102030405"}' && K.hidReportCmd(1,[0],'AA:BB:CC:DD:EE:FF').addr==='AA:BB:CC:DD:EE:FF');
 
 // USB (root): те же отчёты, другие команды
 const ur=K.hidRegisterCmd('combo','','usb (root)'), ub=K.hidReportCmd(2,[1,2,3,4,5],'AA:BB:CC:DD:EE:FF','usb (root)');
 ok('usb register: usbhid.register, descriptor + subclass, no BT-only fields',ur.cmd==='usbhid.register' && ur.descriptor===K.HID_DEVICES.combo.hex && ur.subclass===0xC0 && !('type' in ur) && K.hidRegisterCmd('combo','').cmd==='hid.register');
-ok('usb report: usbhid.report, no host address',ub.cmd==='usbhid.report' && !('addr' in ub) && ub.id===2 && ub.hex==='0102030405');
+ok('usb report: usbhid.report, no host address',ub.cmd==='usbhid.report' && !('addr' in ub) && ub.rid===2 && !('id' in ub) && ub.hex==='0102030405');
 ok('transport names: bluetooth by default',K.hidCmdName('','list')==='hid.list' && K.hidCmdName('bluetooth','unregister')==='hid.unregister' && K.hidCmdName('usb (root)','list')==='usbhid.list' && K.hidUsb('USB'));
 
 // разбор записи по id/длине (то, что делает узел HID Report Decode)
