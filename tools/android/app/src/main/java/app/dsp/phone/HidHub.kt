@@ -59,7 +59,7 @@ class HidHub(private val ctx: Context, private val emit: Emit, private val needs
                 pendingReg = null
             }
         }
-        override fun onConnectionStateChange(dev: BluetoothDevice, state: Int) {
+        override fun onConnectionStateChanged(dev: BluetoothDevice, state: Int) {
             h.post {
                 when (state) {
                     BluetoothProfile.STATE_CONNECTED -> { targets[dev.address] = dev; rec("connected", dev.address) }
@@ -81,9 +81,12 @@ class HidHub(private val ctx: Context, private val emit: Emit, private val needs
             }
         }
         override fun onSetProtocol(dev: BluetoothDevice, protocol: Byte) { h.post { rec("protocol", dev.address, "mode" to (if (protocol.toInt() == 0) "boot" else "report")) } }
-        override fun onInterruptData(dev: BluetoothDevice, reportId: Byte, data: ByteArray) =
+        override fun onInterruptData(dev: BluetoothDevice, reportId: Byte, data: ByteArray) {
             h.post { rec("data", dev.address, "id" to reportId.toString(), "hex" to Json.str(Hex.of(data))) }
-        override fun onVirtualCableUnplug(dev: BluetoothDevice) = h.post { targets.remove(dev.address); rec("unplug", dev.address) }
+        }
+        override fun onVirtualCableUnplug(dev: BluetoothDevice) {
+            h.post { targets.remove(dev.address); rec("unplug", dev.address) }
+        }
     }
 
     fun exec(c: BridgeServer.Client, j: JSONObject) {
@@ -117,8 +120,10 @@ class HidHub(private val ctx: Context, private val emit: Emit, private val needs
                 val ok = ad.getProfileProxy(ctx, object : BluetoothProfile.ServiceListener {
                     override fun onServiceConnected(p: Int, px: BluetoothProfile) {
                         proxy = px as BluetoothHidDevice
-                        val ok = if (Build.VERSION.SDK_INT >= 30) proxy!!.registerApp(sdp, null, qos, { r -> h.post(r) }, callback())
-                        else @Suppress("DEPRECATION") proxy!!.registerApp(sdp, null, qos, callback())
+                        val ok = if (Build.VERSION.SDK_INT >= 30) {
+                            val exec = java.util.concurrent.Executor { r -> h.post(r) }
+                            proxy!!.registerApp(sdp, null, qos, exec, callback())
+                        } else @Suppress("DEPRECATION") proxy!!.registerApp(sdp, null, qos, callback())
                         if (!ok) { pendingReg = null; Reply.done(c, id, cmd, "registerApp refused") }
                     }
                     override fun onServiceDisconnected(p: Int) { registered = false; proxy = null }
