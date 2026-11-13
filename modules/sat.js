@@ -121,7 +121,7 @@ function satTxText(norad){
 async function satTleDownload(n){
   const g=n.p.group; n.msg='downloading TLE '+g+'…';
   try{
-    const r=await fetch(Net.url(SAT_TLE_URL.replace('{g}',g))); if(!r.ok) throw new Error('HTTP '+r.status);
+    const r=await fetch(Net.urlFor(n,SAT_TLE_URL.replace('{g}',g))); if(!r.ok) throw new Error('HTTP '+r.status);
     const text=await r.text();
     const list=satParseTle(text); if(!list.length) throw new Error('no TLE in response');
     await geoPut('tle:'+g,{t:Date.now(), text}).catch(()=>{});
@@ -146,7 +146,7 @@ function satMatch(s,f){
     .some(x=>/^\d+$/.test(x) ? s.norad===+x : name.includes(x));
 }
 
-def({ id:'satTrack', title:'Satellites', cat:'Radio',
+def({ id:'satTrack', net:true, title:'Satellites', cat:'Radio',
   // Положение спутников (на карту — rec), вид неба, ближайшие пролёты выбранного и Доплер:
   // freq — принимаемая частота downlink с поправкой (на tuneFreq приёмника), up — что передавать.
   ins:[{n:'select',t:'rec'}],                         // выбор спутника кликом на карте (выход sel)

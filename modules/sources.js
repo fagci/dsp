@@ -7127,7 +7127,7 @@ function streamMseStop(n){
 async function streamMse(n, audio, url){
   if(typeof MediaSource==='undefined') throw new Error('MediaSource unavailable');
   const ac=new AbortController(); n.mseAbort=ac;
-  const resp=await fetch(Net.url(url),{signal:ac.signal,cache:'no-store'});
+  const resp=await fetch(Net.urlFor(n,url),{signal:ac.signal,cache:'no-store'});
   if(!resp.ok || !resp.body) throw new Error('HTTP '+resp.status);
   const ct=(resp.headers.get('content-type')||'').split(';')[0].trim().toLowerCase();
   const mime=[ct, ...(/aac/.test(ct) ? ['audio/aac','audio/mpeg'] : ['audio/mpeg','audio/aac'])].find(m=>m && MediaSource.isTypeSupported(m));
@@ -7285,7 +7285,7 @@ async function icyMetadataStart(n, url){
   }
 }
 
-def({ id:'stream', title:'Audio Stream (URL)', cat:'Sources',
+def({ id:'stream', net:true, title:'Audio Stream (URL)', cat:'Sources',
   ins:[{n:'url',t:'txt'}],
   outs:[{n:'L',t:'sig'},{n:'R',t:'sig'},{n:'artist',t:'val'},{n:'title',t:'val'},{n:'trackChange',t:'val'}],
   readout:true,

@@ -14,17 +14,17 @@ const ND_OVERPASS=['https://overpass-api.de/api/interpreter','https://overpass.k
 const ND_APP={link:()=>AppLink.link()};                       // одно соединение с мостом на всю страницу (applink.js)
 const ndIsPost=init=>{ const m=String(init?.method||'GET').toUpperCase(); return m!=='GET' && m!=='HEAD'; };
 async function ndFetch(n,url,init){
-  const px=Net.proxy;
-  if(!px){
+  const sel=Net.sel(n), px=sel.mode==='name' ? Net.of(sel.name) : Net.proxy;
+  if(sel.mode==='off' || !px){
     if(Net.app && ndIsPost(init)){
       let ns=null; try{ ns=await ND_APP.link(); }catch(e){}                       // моста нет — пробуем сами, как раньше
       if(ns) return httpStream(ns,url,{method:init.method,headers:init.headers,body:init.body,signal:init.signal,timeout:600000});
     }
     return fetch(url,init);
   }
-  const via=()=>fetch(Net.url(url,true),init);
+  const via=()=>fetch(sel.mode==='name' ? Net.url(url,true,sel.name) : Net.url(url,true),init);
+  if(sel.mode==='name') return via();                                     // прокси выбран в узле — только через него
   if(Net.needs(url)){ try{ return await via(); }catch(e){ if(e.name==='AbortError') throw e; } return fetch(url,init); }
-  if(n.p.proxy && Net.mode==='always') return via();
   try{ return await fetch(url,init); }
   catch(e){
     if(!(e instanceof TypeError) || init?.signal?.aborted) throw e;

@@ -21,7 +21,10 @@ const mkFetch=()=>async(u,o)=>{
     body:{getReader:()=>({read:async()=>o?.signal?.aborted ? Promise.reject(Object.assign(new Error('aborted'),{name:'AbortError'})) : i<chunks.length ? {done:false,value:enc(chunks[i++])} : {done:true}})}};
 };
 const store={};
-const NET={app:false,proxy:'P/{url}',mode:'always',need:new Set(),needs(u){ try{ return this.need.has(new URL(u).host); }catch(e){ return false; } },url(u){ return 'PROXY/'+encodeURIComponent(u); }};
+const NET={app:false,proxy:'P/{url}',mode:'always',need:new Set(),needs(u){ try{ return this.need.has(new URL(u).host); }catch(e){ return false; } },url(u){ return 'PROXY/'+encodeURIComponent(u); },
+  // как Net в presets.js: параметр proxy узла — auto / off / имя; старая галочка true — «через общий прокси» (в режиме always)
+  sel(n){ const v=n && n.p ? n.p.proxy : undefined; return v==='off' ? {mode:'off'} : v==='proxy' || (v===true && this.mode!=='auto' && this.proxy) ? {mode:'name',name:'proxy'} : {mode:'auto'}; },
+  of(){ return this.proxy; }};
 const ctx=vm.createContext({URL,URLSearchParams,String,Number,Math,Array,Object,Set,Map,Promise,JSON,Uint8Array,TextEncoder,TextDecoder,
   AbortController,TypeError,Error,Date,parseInt,parseFloat,isFinite,encodeURIComponent,performance,setTimeout,clearTimeout,
   fetch:(...a)=>ctx.__fetch(...a), __fetch:mkFetch(),

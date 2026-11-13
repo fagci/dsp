@@ -698,8 +698,19 @@ function buf(n,name){ (n.b||(n.b={})); return n.b[name] || (n.b[name] = new Floa
 
 /* ============================ РЕЕСТР МОДУЛЕЙ ============================ */
 const MOD = {};
+// Прокси в сетевых узлах. Узел, ходящий в сеть, получает параметр proxy (advanced): auto — напрямую, при отказе браузера (CORS, mixed content)
+// помогает общий прокси из Settings → Network · off — без прокси · имя из списка прокси. Узлу достаточно объявить net:true; старая галочка
+// proxy (check) заменяется на этот выбор сама (значение true из старых патчей читает Net.sel). Сам запрос: Net.via(n,url) / ndFetch.
+function netProxyParam(d){
+  const ps=d.params||(d.params=[]), i=ps.findIndex(q=>q.n==='proxy'), old=i>=0 ? ps[i] : null;
+  if(old && old.t!=='check') return;                                   // уже выбор (или свой смысл) — не трогаем
+  const q={...(old||{}),n:'proxy',t:'select',opts:n=>typeof Net!=='undefined' ? Net.choices(n) : ['auto','off'],d:'auto',adv:true,label:'proxy',
+    tip:(old && old.tip) || (old && old.label ? old.label+' · ' : '')+'auto: directly, the general proxy from Settings → Network helps after a refusal · off: no proxy · or a proxy from the list there (CORS proxy, bridge, SOCKS)'};
+  if(old) ps[i]=q; else ps.push(q);
+}
 const def = d => {
   if(MOD[d.id]) console.warn('дублирующийся id модуля: '+d.id);   // тихая перезапись — источник трудноуловимых багов
+  if(d.net || (d.params||[]).some(q=>q.n==='proxy' && q.t==='check')) netProxyParam(d);
   MOD[d.id]=d;
 };
 // Группы параметров: defGroups(id,[{n:'Имя', p:'имена параметров через пробел', open:false}, …]).

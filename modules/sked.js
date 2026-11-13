@@ -145,7 +145,7 @@ function skedLine(e){
     (e.lang?' ['+e.lang+']':'')+(e.target?' → '+e.target:'')+(e.txItu?' ('+e.txItu+')':'');
 }
 
-def({ id:'sked', title:'Station Schedule', cat:'Radio',
+def({ id:'sked', net:true, title:'Station Schedule', cat:'Radio',
   // Какая станция сейчас в эфире: метки на спектре (bands → 'sa'), список на частоте настройки,
   // передатчики на карту (rec) с расстоянием и азимутом от своей позиции.
   // spanLo/spanHi (Гц) — полоса приёмника (freqLo/freqHi у USB SDR): метки только в ней
@@ -249,7 +249,7 @@ async function skedDownload(n){
   const url=String(n.p.url||'').trim(); if(!url){ n.msg='enter URL'; return; }
   n.msg='downloading…';
   try{
-    const r=await fetch(Net.url(url)); if(!r.ok) throw new Error('HTTP '+r.status);
+    const r=await fetch(Net.urlFor(n,url)); if(!r.ok) throw new Error('HTTP '+r.status);
     // EiBi — в Latin-1
     const buf=await r.arrayBuffer();
     let text;

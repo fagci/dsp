@@ -17,7 +17,8 @@ const Gw={
   resolve(s){ return gwResolve(this.list(),this.tokens(),s).url; },
   err(s){ return gwResolve(this.list(),this.tokens(),s).err||''; },
   // «@имя» в поле CORS proxy → шаблон адреса прокси этого устройства (должно быть Node-мост)
-  proxyOf(s){ const n=gwRef(s), d=n!==null && gwFind(this.list(),n); return d && d.proxy ? d.proxy : ''; },      // «@имя» → имя учётки-прокси устройства
+  proxyOf(s){ const n=gwRef(s), d=n!==null && gwFind(this.list(),n); if(d && d.proxy) return d.proxy;
+    const e=d && typeof Net!=='undefined' ? Net.list().find(p=>p.type==='socks' && String(p.dev).replace(/^@/,'').toLowerCase()===d.name.toLowerCase()) : null; return e ? e.cred : ''; },       // учётка proxy устройства: своя (Devices) или запись socks списка прокси      // «@имя» → имя учётки-прокси устройства
   proxyTemplate(s){ const n=gwRef(s), d=n!==null && gwFind(this.list(),n); return d ? gwProxyTemplate(d,this.tokens()[d.name.toLowerCase()]) : ''; },
   names(){                                                           // подсказки для полей адреса
     let dl=document.getElementById('gwNames'); if(!dl){ dl=document.createElement('datalist'); dl.id='gwNames'; document.body.append(dl); }

@@ -10,7 +10,7 @@ function ipStop(n){
   n.abort=null; clearTimeout(n.timer);
 }
 function ipPush(n,d){ n.rx.push(d); n.rxLen+=d.length; n.bytes+=d.length; }
-const ipFetch=(n,u,o)=>fetch(n.p.proxy ? Net.url(u) : u,{cache:'no-store',...o});
+const ipFetch=(n,u,o)=>fetch(Net.via(n,u),{cache:'no-store',...o});
 const ipSleep=(n,ms)=>new Promise(r=>{ n.timer=setTimeout(r,ms); });
 
 function ipSetChannels(n,items){
@@ -24,7 +24,7 @@ async function ipOpen(n,url){
   n.want=true; n.url=url; n.segsDone=0; n.last=null; n.listOnly=false; n.variant='';
   n.rx=[]; n.rxLen=0; n.stream=(n.stream||0)+1;                   // новый поток: хвост прошлого не отдавать, потребителю сообщить
   const g=n.gen, ac=n.abort=new AbortController();
-  n.warn= typeof netInsecure==='function' && netInsecure(url) && !n.p.proxy ? NET_INSECURE_MSG : '';
+  n.warn= typeof netInsecure==='function' && netInsecure(url) && !Net.uses(n) ? NET_INSECURE_MSG : '';
   try{ await ipRun(n,url,g,ac); }
   catch(e){
     if(g!==n.gen) return;
