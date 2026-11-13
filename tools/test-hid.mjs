@@ -5,7 +5,7 @@ import vm from 'node:vm';
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n); };
 const ctx=vm.createContext({Math,Number,String,Object,Array,JSON,Map,Set,parseInt,isFinite});
 vm.runInContext(fs.readFileSync(new URL('../modules/hid-kernels.js',import.meta.url),'utf8')+
- ';this.K={HID_DEVICES,hidDescInfo,hidKeySpec,hidTextKeys,hidKeyChar,hidKbdBuild,hidKbdParse,hidLedBuild,hidLedParse,hidMouseBuild,hidMouseParse,hidMediaBuild,hidMediaParse,hidPadBuild,hidPadParse,hidHat,hidReportParse,hidRegisterCmd,hidReportCmd,hidPadLayout,hidHit,HidTouch,HidOut,hidBytes,hidxHex,hidAccel,HID_MEDIA,hidRefKeys,hidRefDevices,hidCmdName,hidUsb,hidDeviceFromRow,hidSpecFromCode,hidApplyCmd}',ctx);
+ ';this.K={HID_DEVICES,hidDescInfo,hidKeySpec,hidTextKeys,hidKeyChar,hidKbdBuild,hidKbdParse,hidLedBuild,hidLedParse,hidMouseBuild,hidMouseParse,hidMediaBuild,hidMediaParse,hidPadBuild,hidPadParse,hidHat,hidReportParse,hidRegisterCmd,hidReportCmd,hidPadLayout,hidHit,HidTouch,HidOut,hidBytes,hidxHex,hidAccel,HID_MEDIA,hidRefKeys,hidRefDevices,hidCmdName,hidUsb,hidHostLike,hidDeviceFromRow,hidSpecFromCode,hidApplyCmd}',ctx);
 const K=ctx.K, J=o=>JSON.stringify(o);
 
 // дескрипторы: отчёты нужных размеров, скобки сбалансированы
@@ -86,6 +86,10 @@ const ur=K.hidRegisterCmd('combo','','usb (root)'), ub=K.hidReportCmd(2,[1,2,3,4
 ok('usb register: usbhid.register, descriptor + subclass, no BT-only fields',ur.cmd==='usbhid.register' && ur.descriptor===K.HID_DEVICES.combo.hex && ur.subclass===0xC0 && !('type' in ur) && K.hidRegisterCmd('combo','').cmd==='hid.register');
 ok('usb report: usbhid.report, no host address',ub.cmd==='usbhid.report' && !('addr' in ub) && ub.rid===2 && !('id' in ub) && ub.hex==='0102030405');
 ok('transport names: bluetooth by default',K.hidCmdName('','list')==='hid.list' && K.hidCmdName('bluetooth','unregister')==='hid.unregister' && K.hidCmdName('usb (root)','list')==='usbhid.list' && K.hidUsb('USB'));
+
+// выбор хоста среди спаренных: компьютеры да, наушники и телефоны нет
+ok('auto host: a computer (class 0x010c) and an HID-host UUID qualify',K.hidHostLike({cls:0x10c}) && K.hidHostLike({cls:0x5a020c,uuids:['1124']}) && K.hidHostLike({cls:0,uuids:['00001124-0000-1000-8000-00805f9b34fb']}) && K.hidHostLike({cls:0x10c,uuids:[]}));
+ok('auto host: a phone, headphones and an unknown device do not',!K.hidHostLike({cls:0x5a020c,uuids:['110a']}) && !K.hidHostLike({cls:0x240404}) && !K.hidHostLike({}) && !K.hidHostLike({cls:null,uuids:null}));
 
 // разбор записи по id/длине (то, что делает узел HID Report Decode)
 ok('report decode by id: key / mouse / media / LEDs',K.hidReportParse('combo',1,kb).kind==='key' && K.hidReportParse('combo',2,mb).kind==='mouse' && K.hidReportParse('combo',3,[0xE9,0]).name==='vol+' && K.hidReportParse('combo',1,[2]).kind==='leds' && K.hidReportParse('combo',9,[1,2])===null && K.hidReportParse('gamepad',1,pb).kind==='pad');
