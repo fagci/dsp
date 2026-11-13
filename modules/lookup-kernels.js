@@ -168,6 +168,11 @@ function luParseBtUuids(text){
   const o=JSON.parse(String(text).replace(/^\ufeff/,'')); if(!o || !Array.isArray(o.rows)) throw new Error('bluetooth-uuids.json: unexpected format');
   return {cols:o.cols||['uuid','kind','name','fmt','scale','unit','note'],rows:o.rows};
 }
+// data/hid-ref.json (tools/hid-ref.mjs): устройства HID и коды клавиш — две таблицы сразу
+function luParseHidRef(text){
+  const o=JSON.parse(String(text).replace(/^\ufeff/,'')); if(!o || !o.devices || !Array.isArray(o.devices.rows) || !o.keys || !Array.isArray(o.keys.rows)) throw new Error('hid-ref.json: unexpected format');
+  return {devices:{cols:o.devices.cols,rows:o.devices.rows},keys:{cols:o.keys.cols,rows:o.keys.rows}};
+}
 // intercept-ids.json (tools/intercept-data.py из data/patterns.py и tscm_frequencies.py): несколько таблиц сразу
 function luParseIds(text){
   const o=JSON.parse(String(text).replace(/^﻿/,'')); if(!o || !Array.isArray(o.tscm)) throw new Error('intercept-ids.json: unexpected format');
