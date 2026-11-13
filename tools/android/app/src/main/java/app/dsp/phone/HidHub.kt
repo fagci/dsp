@@ -104,7 +104,7 @@ class HidHub(private val ctx: Context, private val emit: Emit, private val needs
             ?: return Reply.done(c, id, cmd, "Bluetooth is off")
         when (cmd) {
             "hid.register" -> {
-                if (Build.VERSION.SDK_INT < 28) return Reply.done(c, id, cmd, "needs Android 9 (API 28)+")
+                if (Build.VERSION.SDK_INT < 30) return Reply.done(c, id, cmd, "needs Android 11 (API 30)+")
                 if (registered) return Reply.done(c, id, cmd, null, extra = arrayOf("again" to "true"))
                 val type = j.optString("type", "keyboard")
                 val descriptor = when (type) {
@@ -120,10 +120,8 @@ class HidHub(private val ctx: Context, private val emit: Emit, private val needs
                 val ok = ad.getProfileProxy(ctx, object : BluetoothProfile.ServiceListener {
                     override fun onServiceConnected(p: Int, px: BluetoothProfile) {
                         proxy = px as BluetoothHidDevice
-                        val ok = if (Build.VERSION.SDK_INT >= 30) {
-                            val exec = java.util.concurrent.Executor { r -> h.post(r) }
-                            proxy!!.registerApp(sdp, null, qos, exec, callback())
-                        } else @Suppress("DEPRECATION") proxy!!.registerApp(sdp, null, qos, callback())
+                        val exec = java.util.concurrent.Executor { r -> h.post(r) }
+                        val ok = proxy!!.registerApp(sdp, null, qos, exec, callback())
                         if (!ok) { pendingReg = null; Reply.done(c, id, cmd, "registerApp refused") }
                     }
                     override fun onServiceDisconnected(p: Int) { registered = false; proxy = null }
