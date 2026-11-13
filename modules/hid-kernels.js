@@ -213,6 +213,9 @@ function hidRegisterCmd(device,name,transport){
 }
 const hidReportCmd=(id,bytes,addr,transport)=>({cmd:hidCmdName(transport,'report'),...(addr && !hidUsb(transport)?{addr}:{}),rid:id,hex:hidxHex(bytes)});
 
+// спаренное устройство (запись btdev приложения: cls — класс, uuids — службы) → годится ли в хосты HID: компьютер (класс 0x01) или умеет роль HID-хоста (UUID 1124 / 1812)
+const hidHostLike=r=>{ const major=(((+r.cls)||0)>>8)&31, u=(Array.isArray(r.uuids) ? r.uuids : []).map(x=>String(x).toLowerCase()); return major===1 || u.includes('1124') || u.includes('1812') || u.some(x=>x.startsWith('00001124')); };
+
 // ---------- тачпад ----------
 // Раскладка холста: сверху строка состояния, тачпад, под ним ряды кнопок
 const HID_BUTTONS=[

@@ -10,7 +10,7 @@
 const HID_SUB='hid';
 function hidStop(n){
   if(n.ws && n.ws.readyState===1 && n.reg){ try{ n.ws.send(JSON.stringify({cmd:hidCmdName(n.p.transport,'unregister'),id:++n.seq})); }catch(e){} }
-  n.reg=false; n.hosts.clear(); n.typeQ.length=0;
+  n.reg=false; n.hosts.clear(); n.typeQ.length=0; n.pick=false; n.retries=0; clearTimeout(n.retryT);
   gattStop(n);
 }
 function hidStart(n){
@@ -27,8 +27,9 @@ function hidStart(n){
 function hidRegister(n){ gattSend(n,hidRegisterCmd(n.devRow||n.dev,n.p.name||(n.devRow&&n.devRow.name),n.p.transport)); }
 function hidFeed(n,r){
   if(!r || typeof r!=='object') return;
-  if(r.src==='btdev' && r.addr){ if(!n.bondedAt || Date.now()-n.bondedAt>3000){ n.bonded=[]; } n.bondedAt=Date.now(); n.bonded.push(r.name ? r.name+' '+r.addr : r.addr); return; }
+  if(r.src==='btdev' && r.addr){ if(n.pick) n.cand.push(r); if(!n.bondedAt || Date.now()-n.bondedAt>3000){ n.bonded=[]; } n.bondedAt=Date.now(); n.bonded.push(r.name ? r.name+' '+r.addr : r.addr); return; }
   if(r.src==='cmd'){
+    if(r.cmd==='bt.bonded' && n.pick){ n.pick=false; hidAutoConnect(n); return; }
     if(r.cmd==='hid.report' || r.cmd==='usbhid.report') n.fail=r.ok ? '' : String(r.msg||'report refused');      // отказ отчёта виден в статусе, а не молчит
     if(r.cmd==='hid.register' || r.cmd==='usbhid.register'){ if(r.ok){ n.reg=true; hidAfterReg(n); } else n.regErr=r.msg||'registration refused'; }
     if((r.cmd==='hid.list' || r.cmd==='usbhid.list') && r.ok){ if(r.registered) n.reg=true; if(Array.isArray(r.devices)) for(const a of r.devices) n.hosts.add(a); }
@@ -36,16 +37,31 @@ function hidFeed(n,r){
   }
   if(r.src!=='hid') return;
   if(r.ev==='app'){ n.reg=+r.registered===1; if(n.reg) hidAfterReg(n); }
-  else if(r.ev==='connected'){ n.hosts.add(r.addr); n.regErr=''; }
-  else if(r.ev==='disconnected' || r.ev==='unplug'){ n.hosts.delete(r.addr); n.ho&&n.ho.releaseAll(); n.ho&&n.ho.take(); }
+  else if(r.ev==='connected'){ n.hosts.add(r.addr); n.regErr=''; n.retries=0; n.err=''; }
+  else if(r.ev==='disconnected' || r.ev==='unplug'){
+    n.hosts.delete(r.addr); n.ho&&n.ho.releaseAll(); n.ho&&n.ho.take();
+    if(n.reg && !n.hosts.size && (n.retries||0)<5 && !hidUsb(n.p.transport)){            // хост отвалился — через пару секунд подключиться к нему снова
+      n.retries=(n.retries||0)+1; clearTimeout(n.retryT);
+      n.retryT=setTimeout(()=>{ if(n.reg && !n.hosts.size && n.ws && n.ws.readyState===1){ n.connTried=false; hidAfterReg(n); } },2500);
+    }
+  }
   else if(r.ev==='data' && r.hex!=null){                   // output-отчёт хоста — светодиоды клавиатуры
     const id=+r.id||0, d=hidReportParse(n.dev,id,hidBytes(r.hex));
     if(d && d.kind==='leds') n.leds=d;
   }
 }
+// после регистрации хост должен увидеть HID-запись телефона: подключаемся к нему сами — к адресу из «host» или к спаренному компьютеру
+// (так не нужно сперва отключаться, спариваться и снова жать Connect: хост, спаренный раньше, подхватывает устройство сразу)
 function hidAfterReg(n){
+  if(hidUsb(n.p.transport) || n.hosts.size) return;
   const h=plAddr(n.p.host);
-  if(h && !hidUsb(n.p.transport) && !n.hosts.has(h) && !n.connTried){ n.connTried=true; gattSend(n,{cmd:'hid.connect',addr:h}); }
+  if(h){ if(!n.connTried){ n.connTried=true; gattSend(n,{cmd:'hid.connect',addr:h}); } return; }
+  if(n.p.autoHost && !n.pick && !n.connTried){ n.connTried=true; n.pick=true; n.cand=[]; gattSend(n,{cmd:'bt.bonded'}); }
+}
+function hidAutoConnect(n){
+  const c=n.cand.filter(hidHostLike).slice(0,3); n.cand=[];
+  if(!c.length){ n.err='no paired computer found — pair the phone in the host\'s Bluetooth settings, or put its address into «host»'; n.connTried=false; return; }
+  c.forEach((r,i)=>setTimeout(()=>{ if(n.reg && !n.hosts.size && n.ws && n.ws.readyState===1) gattSend(n,{cmd:'hid.connect',addr:r.addr}); },i*1500));
 }
 // отчёт: в rec всегда (проверка без эфира), в приложение — когда оно зарегистрировано и хост подключён
 function hidTx(n,r){
@@ -98,10 +114,11 @@ def({ id:'hidpad', title:'HID Keyboard + Mouse + Media (phone as a Bluetooth rem
     {n:'url',t:'text',d:'ws://127.0.0.1:8765',dev:true,label:'bridge of the DSP app — an address, or @name from Settings → Devices',g:'Link'},
     {n:'name',t:'text',d:'',label:'name the host sees (empty — DSP keyboard + mouse + media). Changing it takes effect after a new Connect',g:'Link'},
     {n:'host',t:'text',d:'',label:'host address AA:BB:CC:DD:EE:FF to connect to after registering (empty — the paired host connects by itself). «Paired hosts» lists them',g:'Link'},
+    {n:'autoHost',t:'check',d:true,label:'after registering, connect to the host by itself: to «host», or to a paired computer (so there is no need to disconnect, pair and press Connect again). Pair the phone in the host\'s Bluetooth settings once',g:'Link'},
     {n:'auto',t:'check',d:false,label:'connect to the app and register when the patch starts',g:'Link'},
     {n:'reconnect',t:'check',d:true,label:'reconnect to the app',g:'Link'},
     {n:'type',t:'button',label:'Type',fn:n=>hidTypeText(n,n.p.text)},
-    {n:'connect',t:'button',label:'Connect',fn:n=>{ n.connTried=false; if(n.ws && n.ws.readyState===1) hidRegister(n); else hidStart(n); }},
+    {n:'connect',t:'button',label:'Connect',fn:n=>{ n.connTried=false; n.retries=0; n.err=''; if(n.ws && n.ws.readyState===1) hidRegister(n); else hidStart(n); }},
     {n:'bonded',t:'button',label:'Paired hosts',fn:n=>{ n.bonded=[]; gattSend(n,{cmd:'bt.bonded'}); }},
     {n:'rel',t:'button',label:'Release all',fn:n=>{ n.ho.releaseAll(); hidKick(n); }},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>hidStop(n)},
@@ -111,9 +128,9 @@ def({ id:'hidpad', title:'HID Keyboard + Mouse + Media (phone as a Bluetooth rem
     n.val=null; n.hex=''; n.txt=''; n.fresh=0;
     n.reg=false; n.regErr=''; n.hosts=new Set(); n.bonded=[]; n.connTried=false; n.leds=null; n.txRec=[]; n.sent=0; n.typed=0; n.skipped=0;
     n.ho=new HidOut(HID_DEVICES.combo.ids); n.touch=new HidTouch(); n.typeQ=[]; n.typeT=0; n.pumpT=0; n.held=new Map(); n.pads=new Map();
-    n.prevKey=''; n.prevText=''; n.prevBtn=0; n.autoDone=false; n._wcv=null; n.pulse=0; n.devRow=null; n.lastDev=null; n.lastCmd=null; n.err=''; n.fail='';
+    n.prevKey=''; n.prevText=''; n.prevBtn=0; n.autoDone=false; n._wcv=null; n.pulse=0; n.devRow=null; n.lastDev=null; n.lastCmd=null; n.err=''; n.fail=''; n.pick=false; n.cand=[]; n.retries=0; n.retryT=0;
   },
-  dispose:n=>{ clearTimeout(n.pumpT); hidStop(n); },
+  dispose:n=>{ clearTimeout(n.pumpT); clearTimeout(n.retryT); hidStop(n); },
   process(n,I){
     const p=n.p;
     if(p.auto && !n.autoDone){ n.autoDone=true; hidStart(n); }
@@ -233,9 +250,10 @@ def({ id:'hidgamepad', title:'HID Gamepad (phone as a Bluetooth gamepad)', cat:'
     {n:'host',t:'text',d:'',label:'host address AA:BB:CC:DD:EE:FF to connect to after registering (empty — the paired host connects by itself)'},
     {n:'invy',t:'check',d:true,label:'invert the Y axes (a stick or a Joystick node gives up = +1, HID wants up = −1)'},
     {n:'rate',t:'range',min:5,max:120,step:1,d:60,label:'reports per second at most (a report goes only when something changed, plus a refresh every second)'},
+    {n:'autoHost',t:'check',d:true,label:'after registering, connect to the host by itself: to «host», or to a paired computer (so there is no need to disconnect, pair and press Connect again). Pair the phone in the host\'s Bluetooth settings once'},
     {n:'auto',t:'check',d:false,label:'connect to the app and register when the patch starts'},
     {n:'reconnect',t:'check',d:true,label:'reconnect to the app'},
-    {n:'connect',t:'button',label:'Connect',fn:n=>{ n.connTried=false; if(n.ws && n.ws.readyState===1) hidRegister(n); else hidStart(n); }},
+    {n:'connect',t:'button',label:'Connect',fn:n=>{ n.connTried=false; n.retries=0; n.err=''; if(n.ws && n.ws.readyState===1) hidRegister(n); else hidStart(n); }},
     {n:'bonded',t:'button',label:'Paired hosts',fn:n=>{ n.bonded=[]; gattSend(n,{cmd:'bt.bonded'}); }},
     {n:'disconnect',t:'button',label:'Disconnect',fn:n=>hidStop(n)},
   ],
