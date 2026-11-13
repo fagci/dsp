@@ -211,7 +211,7 @@ function hidRegisterCmd(device,name,transport){
   const d=device && typeof device==='object' ? device : (HID_DEVICES[device]||HID_DEVICES.combo);
   return {cmd:hidCmdName(transport,'register'),...(hidUsb(transport) ? {} : {type:'custom'}),name:String(name||'').trim()||d.name||'DSP HID',descriptor:d.hex,subclass:d.subclass||0};
 }
-const hidReportCmd=(id,bytes,addr,transport)=>({cmd:hidCmdName(transport,'report'),...(addr && !hidUsb(transport)?{addr}:{}),id,hex:hidxHex(bytes)});
+const hidReportCmd=(id,bytes,addr,transport)=>({cmd:hidCmdName(transport,'report'),...(addr && !hidUsb(transport)?{addr}:{}),rid:id,hex:hidxHex(bytes)});
 
 // ---------- тачпад ----------
 // Раскладка холста: сверху строка состояния, тачпад, под ним ряды кнопок

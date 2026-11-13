@@ -85,7 +85,7 @@ function plGattCmd(p,I={}){
     case 'hid unregister': return {cmd:'hid.unregister'};
     case 'hid connect': return (e=need('addr')) ? {error:e} : {cmd:'hid.connect',addr};
     case 'hid disconnect': return (e=need('addr')) ? {error:e} : {cmd:'hid.disconnect',addr};
-    case 'hid report': { const w=payload(); return w ? {cmd:'hid.report',...(addr?{addr}:{}),id:+p.hidReportId||0,...w} : {error:p.wfmt==='text' ? 'nothing to send' : 'data: hex bytes — 8 for keyboard, 3 for mouse'}; }
+    case 'hid report': { const w=payload(); return w ? {cmd:'hid.report',...(addr?{addr}:{}),rid:+p.hidReportId||0,...w} : {error:p.wfmt==='text' ? 'nothing to send' : 'data: hex bytes — 8 for keyboard, 3 for mouse'}; }
     case 'hid list': return {cmd:'hid.list'};
   }
   return {error:'unknown action'};

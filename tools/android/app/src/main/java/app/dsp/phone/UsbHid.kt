@@ -141,7 +141,7 @@ class UsbHidHub(private val ctx: Context, private val emit: Emit, private val ne
             "usbhid.report" -> {
                 val o = wout ?: return Reply.done(c, id, cmd, "no USB HID device — usbhid.register first")
                 val data = Args.payload(j, 64) ?: return Reply.done(c, id, cmd, "hex or text: up to 64 bytes")
-                val rid = j.optInt("id", 0)
+                val rid = j.optInt("rid", 0)                 // не "id": это номер запроса
                 val bytes = if (ids) byteArrayOf(rid.toByte()) + data else data
                 frame.writeBytes(bytes)
                 try { o.write((UsbHidScript.write(frame.absolutePath) + "\n").toByteArray()); o.flush() }

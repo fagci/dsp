@@ -29,6 +29,7 @@ function hidFeed(n,r){
   if(!r || typeof r!=='object') return;
   if(r.src==='btdev' && r.addr){ if(!n.bondedAt || Date.now()-n.bondedAt>3000){ n.bonded=[]; } n.bondedAt=Date.now(); n.bonded.push(r.name ? r.name+' '+r.addr : r.addr); return; }
   if(r.src==='cmd'){
+    if(r.cmd==='hid.report' || r.cmd==='usbhid.report') n.fail=r.ok ? '' : String(r.msg||'report refused');      // отказ отчёта виден в статусе, а не молчит
     if(r.cmd==='hid.register' || r.cmd==='usbhid.register'){ if(r.ok){ n.reg=true; hidAfterReg(n); } else n.regErr=r.msg||'registration refused'; }
     if((r.cmd==='hid.list' || r.cmd==='usbhid.list') && r.ok){ if(r.registered) n.reg=true; if(Array.isArray(r.devices)) for(const a of r.devices) n.hosts.add(a); }
     return;
@@ -71,6 +72,7 @@ function hidStatus(n){
   const bits=[(n.devRow&&n.devRow.name ? n.devRow.name+' · ' : '')+n.status];
   if(n.ws && n.status==='connected') bits.push(n.reg ? 'registered' : (n.regErr||'registering…'), n.hosts.size ? 'host '+[...n.hosts].join(', ') : (hidUsb(n.p.transport) ? 'cable: no host yet' : 'no host connected'));
   if(n.err) bits.push('⚠ '+n.err);
+  if(n.fail) bits.push('⚠ '+n.fail);
   return bits.join(' · ');
 }
 
@@ -109,7 +111,7 @@ def({ id:'hidpad', title:'HID Keyboard + Mouse + Media (phone as a Bluetooth rem
     n.val=null; n.hex=''; n.txt=''; n.fresh=0;
     n.reg=false; n.regErr=''; n.hosts=new Set(); n.bonded=[]; n.connTried=false; n.leds=null; n.txRec=[]; n.sent=0; n.typed=0; n.skipped=0;
     n.ho=new HidOut(HID_DEVICES.combo.ids); n.touch=new HidTouch(); n.typeQ=[]; n.typeT=0; n.pumpT=0; n.held=new Map(); n.pads=new Map();
-    n.prevKey=''; n.prevText=''; n.prevBtn=0; n.autoDone=false; n._wcv=null; n.pulse=0; n.devRow=null; n.lastDev=null; n.lastCmd=null; n.err='';
+    n.prevKey=''; n.prevText=''; n.prevBtn=0; n.autoDone=false; n._wcv=null; n.pulse=0; n.devRow=null; n.lastDev=null; n.lastCmd=null; n.err=''; n.fail='';
   },
   dispose:n=>{ clearTimeout(n.pumpT); hidStop(n); },
   process(n,I){
