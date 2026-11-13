@@ -5,7 +5,7 @@ import vm from 'node:vm';
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n); };
 const ctx=vm.createContext({Math,Number,String,Object,Array,JSON,Map,Set,parseInt,isFinite});
 vm.runInContext(fs.readFileSync(new URL('../modules/hid-kernels.js',import.meta.url),'utf8')+
- ';this.K={HID_DEVICES,hidDescInfo,hidKeySpec,hidTextKeys,hidKeyChar,hidKbdBuild,hidKbdParse,hidLedBuild,hidLedParse,hidMouseBuild,hidMouseParse,hidMediaBuild,hidMediaParse,hidPadBuild,hidPadParse,hidHat,hidReportParse,hidRegisterCmd,hidReportCmd,hidPadLayout,hidHit,HidTouch,HidOut,hidBytes,hidxHex,hidAccel,HID_MEDIA}',ctx);
+ ';this.K={HID_DEVICES,hidDescInfo,hidKeySpec,hidTextKeys,hidKeyChar,hidKbdBuild,hidKbdParse,hidLedBuild,hidLedParse,hidMouseBuild,hidMouseParse,hidMediaBuild,hidMediaParse,hidPadBuild,hidPadParse,hidHat,hidReportParse,hidRegisterCmd,hidReportCmd,hidPadLayout,hidHit,HidTouch,HidOut,hidBytes,hidxHex,hidAccel,HID_MEDIA,hidRefKeys,hidRefDevices,hidDeviceFromRow,hidSpecFromCode,hidApplyCmd}',ctx);
 const K=ctx.K, J=o=>JSON.stringify(o);
 
 // дескрипторы: отчёты нужных размеров, скобки сбалансированы
@@ -101,5 +101,37 @@ const g2=new K.HidTouch({scroll:.5});
 a=[...g2.down(1,50,50,9000),...g2.down(2,90,50,9000),...g2.move(1,50,70,9020),...g2.move(2,90,70,9020),...g2.move(1,50,90,9040),...g2.move(2,90,90,9040),...g2.up(2,9100),...g2.up(1,9100)];
 ok('two fingers: scroll, finger down = wheel down, no click',a.some(x=>x.a==='scroll' && x.wheel<0) && !a.some(x=>x.a==='click' || x.a==='move'),J(a));
 ok('acceleration: faster strokes go further',K.hidAccel(20,1,1)>K.hidAccel(2,1,1)*10/1.0 && K.hidAccel(5,1,0)===5);
+
+// справочники для Table: устройства и коды
+const rd=K.hidRefDevices(), rk=K.hidRefKeys();
+ok('device reference: every descriptor balanced, report sizes listed',rd.length>=6 && rd.every(d=>K.hidDescInfo(d.descriptor).balanced && d.reports),J(rd.map(d=>d.name)));
+ok('device reference: combo row = built-in combo descriptor',rd.find(d=>d.name==='combo').descriptor===K.HID_DEVICES.combo.hex && rd.find(d=>d.name==='combo').ids==='kbd:1 mouse:2 media:3');
+const dv=K.hidDeviceFromRow(rd.find(d=>d.name==='remote'));
+ok('device row → register: role ids kept, subclass numeric',dv && dv.ids.media===1 && !dv.ids.kbd && K.hidRegisterCmd(dv,'').descriptor===dv.hex && K.hidRegisterCmd(dv,'').name==='DSP media remote');
+ok('device row: a custom descriptor without roles is accepted, junk is not',K.hidDeviceFromRow({name:'x',descriptor:'05010906a101c0'}).ids.kbd===undefined && K.hidDeviceFromRow({descriptor:''})===null && K.hidDeviceFromRow(null)===null);
+ok('key reference: every row resolves to the same code as the name',rk.every(r=>{ const sp=r.kind==='modifier' ? {mod:+r.code} : K.hidSpecFromCode(r.page,r.code), by=K.hidKeySpec(r.name); return r.kind==='modifier' ? by.mod===sp.mod : by && (by.media||by.key)===(sp.media||sp.key); }),J(rk.filter(r=>r.kind!=='modifier' && !K.hidKeySpec(r.name)).slice(0,3)));
+ok('key reference: letters, arrows, volume and Home are there',['a','up','enter','f5','vol+','home','back','ctrl'].every(n=>rk.some(r=>r.name===n)));
+ok('data/hid-ref.json is up to date (node tools/hid-ref.mjs)',(()=>{ const f=JSON.parse(fs.readFileSync(new URL('../data/hid-ref.json',import.meta.url),'utf8')); return J(f.devices.rows)===J(rd) && J(f.keys.rows)===J(rk); })());
+// команды по пину
+let h=new K.HidOut(), act;
+K.hidApplyCmd(h,{key:"vol+"}); q=h.take();
+ok('cmd {key}: tap = press + release',q.length===2 && q[0].id===3 && K.hidMediaParse(q[0].bytes).name==='vol+');
+K.hidApplyCmd(h,{page:'12',code:'226'}); q=h.take();
+ok('cmd {page, code} (a Reference/HID Keys row): mute',K.hidMediaParse(q[0].bytes).name==='mute');
+K.hidApplyCmd(h,{name:'a',kind:'key',page:'7',code:'4'}); q=h.take();
+ok('cmd: a key-reference row types the key',K.hidKbdParse(q[0].bytes).keys[0]===4 && K.hidKbdParse(q[1].bytes).keys.length===0);
+K.hidApplyCmd(h,{key:'ctrl',down:1}); K.hidApplyCmd(h,{key:'c',down:1}); K.hidApplyCmd(h,{key:'c',down:0}); K.hidApplyCmd(h,{key:'ctrl',down:0}); q=h.take();
+ok('cmd: down 1 / 0 holds and releases a chord',q.length===4 && K.hidKbdParse(q[1].bytes).mod===1 && K.hidKbdParse(q[3].bytes).mod===0);
+K.hidApplyCmd(h,{dx:5,dy:-3,wheel:1}); K.hidApplyCmd(h,{click:2}); q=h.take();
+ok('cmd: motion and a right click',K.hidMouseParse(q[0].bytes).dx===5 && K.hidMouseParse(q[0].bytes).dy===-3 && K.hidMouseParse(q[0].bytes).wheel===1 && K.hidMouseParse(q[1].bytes).right && !K.hidMouseParse(q[2].bytes).right);
+act=K.hidApplyCmd(h,{report:5,hex:'01 02'}); q=h.take();
+ok('cmd: a raw report for a custom device',q.length===1 && q[0].id===5 && J(q[0].bytes)==='[1,2]' && act.length===0);
+act=K.hidApplyCmd(h,{text:'hi',key:'zzz'});
+ok('cmd: text goes back to the node, unknown key is an error',act.some(a=>a.text==='hi') && act.some(a=>a.error),J(act));
+ok('cmd: own records (hidtx / hidrx) are ignored — no feedback loop',K.hidApplyCmd(h,{src:'hidtx',id:1,hex:'00',key:'a'}).length===0 && h.take().length===0);
+h=new K.HidOut({media:1}); K.hidApplyCmd(h,{key:'a'}); K.hidApplyCmd(h,{dx:5});
+ok('device without a role: that command is skipped, not sent to a wrong id',h.take().length===0);
+act=K.hidApplyCmd(h,{register:1,connect:'AA:BB:CC:DD:EE:FF'});
+ok('cmd: register / connect are node actions',act.length===2 && act[1].connect==='AA:BB:CC:DD:EE:FF');
 
 if(bad){ console.log(bad+' failed'); process.exit(1); } console.log('all ok');

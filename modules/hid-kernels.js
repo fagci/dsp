@@ -8,23 +8,38 @@
 // ---------- дескрипторы ----------
 // combo: 1 — клавиатура (8 байт: модификаторы, резерв, 6 кодов; output 1 байт — светодиоды), 2 — мышь (кнопки, dx, dy, колесо, pan — 5 байт),
 //        3 — Consumer Control (16-битный код Usage, 2 байта)
-const HID_COMBO_HEX=
-  '05010906a1018501'+'0507'+'19e029e7'+'15002501'+'75019508'+'8102'+'95017508'+'8101'+'95057501'+'0508'+'19012905'+'9102'+'95017503'+'9101'+
-  '95067508'+'15002565'+'0507'+'19002965'+'8100'+'c0'+
-  '05010902a1018502'+'0901a100'+'05091901'+'2903'+'15002501'+'95037501'+'8102'+'95017505'+'8101'+
-  '0501'+'093009310938'+'1581257f'+'75089503'+'8106'+
-  '050c0a3802'+'1581257f'+'75089501'+'8106'+'c0c0'+
-  '050c0901a1018503'+'150026ff03'+'1900'+'2aff03'+'75109501'+'8100'+'c0';
+const hidxId=id=>'85'+(id&255).toString(16).padStart(2,'0');
+// фрагменты дескриптора по ролям; id — report id (в составном устройстве у каждой роли свой)
+const hidKbdDesc=id=>'05010906a101'+hidxId(id)+'0507'+'19e029e7'+'15002501'+'75019508'+'8102'+'95017508'+'8101'+'95057501'+'0508'+'19012905'+'9102'+'95017503'+'9101'+
+  '95067508'+'15002565'+'0507'+'19002965'+'8100'+'c0';
+const hidMouseDesc=id=>'05010902a101'+hidxId(id)+'0901a100'+'05091901'+'2903'+'15002501'+'95037501'+'8102'+'95017505'+'8101'+
+  '0501'+'093009310938'+'1581257f'+'75089503'+'8106'+'050c0a3802'+'1581257f'+'75089501'+'8106'+'c0c0';
+const hidConsDesc=id=>'050c0901a101'+hidxId(id)+'150026ff03'+'1900'+'2aff03'+'75109501'+'8100'+'c0';
+const HID_COMBO_HEX=hidKbdDesc(1)+hidMouseDesc(2)+hidConsDesc(3);
 // gamepad: report id 1 — 16 кнопок (2 байта), hat (4 бита, 1…8 по часовой от севера, 0 — нет) + 4 бита резерва, X Y Z Rz (int8), два триггера (0…255)
 const HID_PAD_HEX=
   '05010905a1018501'+'0509'+'19012910'+'15002501'+'75019510'+'8102'+
   '0501'+'0939'+'15012508'+'75049501'+'8142'+'75049501'+'8103'+
   '0501'+'09300931'+'09320935'+'1581257f'+'75089504'+'8102'+
   '0502'+'09c509c4'+'150026ff00'+'75089502'+'8102'+'c0';
+// справочник устройств (список Table «Reference/HID Devices», data/hid-ref.json — tools/hid-ref.mjs): имя, дескриптор, subclass, роли → report id
 const HID_DEVICES={
-  combo:{hex:HID_COMBO_HEX,subclass:0xC0,name:'DSP keyboard + mouse + media',ids:{kbd:1,mouse:2,media:3}},
-  gamepad:{hex:HID_PAD_HEX,subclass:0x08,name:'DSP gamepad',ids:{pad:1}},
+  combo:{hex:HID_COMBO_HEX,subclass:0xC0,name:'DSP keyboard + mouse + media',ids:{kbd:1,mouse:2,media:3},note:'TV / PC remote: touchpad, keys, volume, Home / Back'},
+  gamepad:{hex:HID_PAD_HEX,subclass:0x08,name:'DSP gamepad',ids:{pad:1},note:'16 buttons, hat, 2 sticks, 2 triggers (9-byte report)'},
+  keyboard:{hex:hidKbdDesc(1),subclass:0x40,name:'DSP keyboard',ids:{kbd:1},note:'keyboard only (8-byte report, LEDs back)'},
+  mouse:{hex:hidMouseDesc(1),subclass:0x80,name:'DSP mouse',ids:{mouse:1},note:'mouse only: 3 buttons, dx, dy, wheel, pan'},
+  remote:{hex:hidConsDesc(1),subclass:0x00,name:'DSP media remote',ids:{media:1},note:'consumer control only: volume, play, Home, Back…'},
+  'keyboard + media':{hex:hidKbdDesc(1)+hidConsDesc(2),subclass:0x40,name:'DSP keyboard + media',ids:{kbd:1,media:2},note:'keyboard and media keys, no pointer'},
 };
+const hidIdsText=ids=>Object.keys(ids).map(k=>k+':'+ids[k]).join(' ');
+const hidIdsParse=t=>{ const o={}; for(const m of String(t||'').matchAll(/([a-z]+)\s*[:=]\s*(\d+)/gi)) o[m[1].toLowerCase()]=+m[2]; return o; };
+// строка справочника устройств (запись rec из Table) → {name, hex, subclass, ids} | null
+function hidDeviceFromRow(r){
+  if(!r || typeof r!=='object') return null;
+  const hex=hidBytes(r.descriptor||r.hex); if(!hex.length || hex.length>4096) return null;
+  const ids=hidIdsParse(r.ids);                       // нет ролей — своё устройство: управляется только сырыми отчётами {report, hex}
+  return {name:String(r.title||r.name||'').trim(),hex:hidxHex(hex),subclass:+r.subclass||0,ids};
+}
 // разбор дескриптора: по каждому report id — размеры input / output / feature в байтах (проверка, что отчёты собираются по нему)
 function hidDescInfo(hex){
   const b=hidBytes(hex), reps={}; let id=0, size=0, count=0, i=0, depth=0;
@@ -52,7 +67,7 @@ const hidU8=v=>Math.max(0,Math.min(255,Math.round(+v||0)));
 // ---------- клавиши ----------
 const HID_MOD={ctrl:1,control:1,shift:2,alt:4,option:4,gui:8,win:8,cmd:8,meta:8,super:8,rctrl:16,rshift:32,ralt:64,altgr:64,rgui:128};
 const HID_KEYS={enter:0x28,ok:0x28,return:0x28,esc:0x29,escape:0x29,backspace:0x2A,tab:0x2B,space:0x2C,minus:0x2D,equal:0x2E,
-  caps:0x39,capslock:0x39,printscreen:0x46,scrolllock:0x47,pause:0x48,insert:0x49,home:0x4A,pgup:0x4B,pageup:0x4B,delete:0x4C,del:0x4C,end:0x4D,pgdn:0x4E,pagedown:0x4E,
+  caps:0x39,capslock:0x39,printscreen:0x46,scrolllock:0x47,pausebreak:0x48,insert:0x49,home:0x4A,pgup:0x4B,pageup:0x4B,delete:0x4C,del:0x4C,end:0x4D,pgdn:0x4E,pagedown:0x4E,
   right:0x4F,left:0x50,down:0x51,up:0x52,numlock:0x53,menu:0x65,compose:0x65};
 for(let i=0;i<26;i++) HID_KEYS[String.fromCharCode(97+i)]=0x04+i;
 for(let i=1;i<=9;i++) HID_KEYS[String(i)]=0x1D+i;
@@ -80,6 +95,28 @@ function hidKeySpec(name,alias){
   if(HID_MOD[last] && !mods.length) return {mod:HID_MOD[last],key:0};
   if(Object.prototype.hasOwnProperty.call(HID_KEYS,last)) return {mod,key:HID_KEYS[last]};
   return null;
+}
+// строка справочника кодов (Table «Reference/HID Keys»: name, kind, page, code) или команда {page, code} → то же {mod,key} | {media}
+function hidSpecFromCode(page,code){
+  page=+page; code=+code; if(!(code>=0)) return null;
+  if(page===12) return {media:code};
+  if(page===7) return {mod:0,key:code};
+  if(page===-1) return {mod:code,key:0};                // «page -1» — бит модификатора (kind modifier в справочнике)
+  return null;
+}
+// справочник → строки Table: клавиши, модификаторы, медиа-кнопки (имена, как их понимает hidKeySpec)
+function hidRefKeys(){
+  const rows=[], grp=c=>c>=4&&c<=0x1D?'letters':c>=0x1E&&c<=0x27?'digits':c>=0x3A&&c<=0x45?'function':c>=0x49&&c<=0x52?'navigation':c===0x28||c===0x29||c===0x2A||c===0x2B||c===0x2C?'editing':'other';
+  const add=(name,kind,page,code,group,note)=>rows.push({name,kind,page:String(page),code:String(code),hex:'0x'+code.toString(16),group,note:note||''});
+  for(const k of Object.keys(HID_KEYS)){ const c=HID_KEYS[k]; if(HID_KEYNAME[c]===k || ['ok','return','escape','capslock','pageup','pagedown','del'].includes(k)) add(k,'key',7,c,grp(c),k==='ok'?'= enter (D-pad centre)':''); }
+  for(const k of ['ctrl','shift','alt','gui','rctrl','rshift','ralt','rgui']) add(k,'modifier',-1,HID_MOD[k],'modifier','bit mask in the keyboard report');
+  const mg=u=>u===0xE9||u===0xEA||u===0xE2?'volume':u>=0xB3&&u<=0xB8||u===0xCD?'transport':u===0x223||u===0x224||u===0x225||u===0x221||u===0x22A||u===0x40||u===0x8D||u===0x9C||u===0x9D?'tv':'system';
+  for(const k of Object.keys(HID_MEDIA)){ const u=HID_MEDIA[k]; add(k,'media',12,u,mg(u),k==='power'||k==='sleep' ? 'can switch the host off — use deliberately' : ''); }
+  return rows;
+}
+function hidRefDevices(){
+  return Object.keys(HID_DEVICES).map(k=>{ const d=HID_DEVICES[k], i=hidDescInfo(d.hex);
+    return {name:k,title:d.name,subclass:String(d.subclass),ids:hidIdsText(d.ids),reports:i.reports.map(r=>r.id+': in '+r.input+' B'+(r.output?' / out '+r.output+' B':'')).join('; '),descriptor:d.hex,note:d.note}; });
 }
 
 // символ → [модификатор, код клавиши]; layout 'us' (хост на английской раскладке) или 'ru' (ЙЦУКЕН: клавиши — физические позиции)
@@ -168,8 +205,8 @@ function hidReportParse(device,id,bytes){
 
 // ---------- команды для приложения ----------
 function hidRegisterCmd(device,name){
-  const d=HID_DEVICES[device]||HID_DEVICES.combo;
-  return {cmd:'hid.register',type:'custom',name:String(name||'').trim()||d.name,descriptor:d.hex,subclass:d.subclass};
+  const d=device && typeof device==='object' ? device : (HID_DEVICES[device]||HID_DEVICES.combo);
+  return {cmd:'hid.register',type:'custom',name:String(name||'').trim()||d.name||'DSP HID',descriptor:d.hex,subclass:d.subclass||0};
 }
 const hidReportCmd=(id,bytes,addr)=>({cmd:'hid.report',...(addr?{addr}:{}),id,hex:hidxHex(bytes)});
 
@@ -241,7 +278,7 @@ class HidTouch{
 // Состояние клавиатуры / мыши и очередь отчётов {id, bytes}. Всё без таймеров: узел вызывает pump() по своим часам.
 class HidOut{
   constructor(ids){ this.ids=ids||HID_DEVICES.combo.ids; this.mod=0; this.keys=[]; this.btn=0; this.q=[]; this.media=0; this.carry={dx:0,dy:0,wheel:0,pan:0}; }
-  push(id,bytes){ this.q.push({id,bytes}); }
+  push(id,bytes){ if(id==null) return; this.q.push({id,bytes}); }
   keyDown(spec){
     if(!spec) return false;
     if(spec.media){ this.media=spec.media; this.push(this.ids.media,hidMediaBuild(spec.media)); return true; }
@@ -275,4 +312,31 @@ class HidOut{
     }
   }
   take(){ const q=this.q; this.q=[]; return q; }
+}
+
+// ---------- команды по пину cmd (записи rec: строки Table, Rule, свои) ----------
+// {key:'vol+'} — нажать и отпустить · {key, down:1|0} — держать / отпустить · {page:12, code:233} или строка «Reference/HID Keys» — то же по коду ·
+// {text:'…'} · {dx,dy,wheel,pan} · {click:1|2|3} · {btn:1|2|3, down:1|0} · {report:id, hex:'…'} — сырой отчёт (своё устройство) · {release:1}
+// Возврат — действия для узла: {text}, {register}, {unregister}, {connect:addr}, {error}
+function hidApplyCmd(o,c,alias){
+  const act=[]; if(!c || typeof c!=='object' || c.src==='hidtx' || c.src==='hidrx') return act;
+  const has=k=>c[k]!==undefined && c[k]!==null && c[k]!=='';
+  const dn=has('down') ? (+c.down>0 || c.down===true || c.down==='1') : null;
+  let spec=null;
+  if(has('page') && has('code')) spec=c.kind==='modifier' ? {mod:+c.code,key:0} : hidSpecFromCode(c.page,c.code);
+  else if(has('key')) spec=hidKeySpec(c.key,alias);
+  else if(c.kind==='modifier' && has('code')) spec={mod:+c.code,key:0};
+  else if(has('name') && has('kind') && has('code') && (c.kind==='key'||c.kind==='media')) spec=hidSpecFromCode(c.kind==='media' ? 12 : 7,c.code);
+  if(spec){ if(dn===null) o.tap(spec); else if(dn) o.keyDown(spec); else o.keyUp(spec); }
+  else if(has('key') || has('page')) act.push({error:'key: unknown «'+(has('key') ? c.key : c.page+'/'+c.code)+'»'});
+  if(has('text')) act.push({text:String(c.text)});
+  if(has('dx') || has('dy') || has('wheel') || has('pan')) o.move(+c.dx||0,+c.dy||0,+c.wheel||0,+c.pan||0);
+  if(has('click')) o.click(+c.click||1);
+  if(has('btn')) o.button(+c.btn||1,dn===null ? true : dn);
+  if(has('report') && has('hex')){ const b=hidBytes(c.hex); if(b.length && b.length<=64) o.q.push({id:+c.report&255,bytes:b}); else act.push({error:'report: hex up to 64 bytes'}); }
+  if(c.release) o.releaseAll();
+  if(c.register) act.push({register:true});
+  if(c.unregister) act.push({unregister:true});
+  if(has('connect')) act.push({connect:String(c.connect)});
+  return act;
 }

@@ -786,6 +786,7 @@ const PRESET_CATS={
   'Phone App: HID Device (Phone as Its Own Keyboard / Mouse)':'Network & IoT',
   'Phone App: HID Keyboard + Mouse + Media (Phone as a TV / PC Remote)':'Network & IoT',
   'Phone App: HID Gamepad (Phone as a Bluetooth Gamepad)':'Network & IoT',
+  'Phone App: HID Devices and Key Codes from Tables (Control Over Pins)':'Network & IoT',
   'HID Loopback: Keyboard, Mouse and Media Reports → Decode (No Radio)':'Network & IoT',
   'Phone App: mDNS / DNS-SD Service Discovery (Bonjour)':'Network & IoT',
   'Phone App: Wi-Fi RTT Distance to Access Points':'Maps & Locating',
@@ -2770,6 +2771,22 @@ const dp=addNode('dpad',40,640,{labels:'A,B,X,Y'}); dp.size.w=220; dp.size.h=220
 for(const k of ['x1','y1','x2','y2','b1','b2','b3','b4','b5','b6','b7','b8']) addEdge(js.id,k,hg.id,k);
 for(const k of ['up','down','left','right']) addEdge(dp.id,k,hg.id,k);
 addEdge(dp.id,'a',hg.id,'b9'); addEdge(dp.id,'b',hg.id,'b10'); addEdge(dp.id,'x',hg.id,'b11'); addEdge(dp.id,'y',hg.id,'b12');
+markWiresDirty();
+});
+preset('Phone App: HID Devices and Key Codes from Tables (Control Over Pins)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The HID catalogue lives in Table lists and the control goes over pins. «Reference/HID Devices» (Files → ⇩ offline «HID devices and key codes», it also downloads itself a few seconds after the start) lists the devices the phone can be: name, subclass, report ids (ids: kbd:1 mouse:2 media:3…) and the HID report descriptor in hex — a keyboard + mouse + media remote, a gamepad, keyboard only, mouse only, a media remote only… The selected row (click it, or drive «row» with a number) goes out of the Table\'s «rec» into the node\'s «dev» pin: the node re-registers itself as THAT device (its own descriptor, name and subclass) — add your own row with any descriptor and it becomes a new device. «Reference/HID Keys» lists every key, modifier and media button with its USB-HID usage page and code (page 7 keyboard, page 12 consumer: vol+ = 233, Home = 547, Back = 548). A row of it on the «cmd» pin presses that key — click rows by hand, or feed the Table\'s «row» input from a Rule, a D-pad or a Sequencer. «cmd» takes any record: {key:\'ctrl+c\'} · {key:\'a\', down:1} (hold) / {down:0} · {page:12, code:233} · {text:\'hello\'} · {dx:5, dy:-3, wheel:1} · {click:1|2|3} · {report:5, hex:\'01 02\'} (a raw report of your own device) · {release:1} · {connect:\'AA:BB:CC:DD:EE:FF\'}. A device without the keyboard role ignores key commands instead of sending them to the wrong report. Pair the phone in the host\'s Bluetooth settings first, then press Connect.'});
+nt.size.w=1100; nt.size.h=290; applySize(nt);
+const td=addNode('table',40,360,{list:'Reference/HID Devices',cols:['name','title','subclass','ids','reports','note'],maxRows:50});
+td.size.w=520; td.size.h=300; applySize(td);
+const tk=addNode('table',40,700,{list:'Reference/HID Keys',cols:['name','kind','page','code','group'],maxRows:200,schema:{card:{initial:false}}});
+tk.size.w=520; tk.size.h=360; applySize(tk);
+const hp=addNode('hidpad',620,360,{url:'ws://127.0.0.1:8765'});
+hp.size.w=320; hp.size.h=560; applySize(hp);
+addEdge(td.id,'rec',hp.id,'dev');
+addEdge(tk.id,'rec',hp.id,'cmd');
+const lg=addNode('recLog',1000,360,{}); lg.size.w=380; lg.size.h=360; applySize(lg);
+addEdge(hp.id,'rec',lg.id,'rec');
 markWiresDirty();
 });
 preset('HID Loopback: Keyboard, Mouse and Media Reports → Decode (No Radio)', function(){

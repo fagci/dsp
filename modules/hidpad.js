@@ -24,7 +24,7 @@ function hidStart(n){
     for(const r of Array.isArray(j) ? j : [j]){ gattFeed(n,r); hidFeed(n,r); }
   };
 }
-function hidRegister(n){ gattSend(n,hidRegisterCmd(n.dev,n.p.name)); }
+function hidRegister(n){ gattSend(n,hidRegisterCmd(n.devRow||n.dev,n.p.name||(n.devRow&&n.devRow.name))); }
 function hidFeed(n,r){
   if(!r || typeof r!=='object') return;
   if(r.src==='btdev' && r.addr){ if(!n.bondedAt || Date.now()-n.bondedAt>3000){ n.bonded=[]; } n.bondedAt=Date.now(); n.bonded.push(r.name ? r.name+' '+r.addr : r.addr); return; }
@@ -68,15 +68,16 @@ function hidTypeText(n,text){
   hidKick(n);
 }
 function hidStatus(n){
-  const bits=[n.status];
+  const bits=[(n.devRow&&n.devRow.name ? n.devRow.name+' · ' : '')+n.status];
   if(n.ws && n.status==='connected') bits.push(n.reg ? 'registered' : (n.regErr||'registering…'), n.hosts.size ? 'host '+[...n.hosts].join(', ') : 'no host connected');
+  if(n.err) bits.push('⚠ '+n.err);
   return bits.join(' · ');
 }
 
 /* ---------- Keyboard + Mouse + Media ---------- */
 def({ id:'hidpad', title:'HID Keyboard + Mouse + Media (phone as a Bluetooth remote)', cat:'Sources', touch:true,
   kw:'hid bluetooth keyboard mouse touchpad trackpad remote tv media volume type text air mouse android tv smart tv cursor',
-  ins:[{n:'key',t:'txt'},{n:'text',t:'txt'},{n:'dx',t:'num'},{n:'dy',t:'num'},{n:'wheel',t:'num'},{n:'btn',t:'num'}],
+  ins:[{n:'dev',t:'rec'},{n:'cmd',t:'rec'},{n:'key',t:'txt'},{n:'text',t:'txt'},{n:'dx',t:'num'},{n:'dy',t:'num'},{n:'wheel',t:'num'},{n:'btn',t:'num'}],
   outs:[{n:'rec',t:'rec'},{n:'reg',t:'num'},{n:'hosts',t:'num'},{n:'sent',t:'num'},{n:'caps',t:'num'},{n:'num',t:'num'}],
   view:{h:300}, w:300, resize:true, tall:true,
   groups:[{n:'Typing',open:true},{n:'Touchpad',open:false},{n:'Link',open:false}],
@@ -107,12 +108,27 @@ def({ id:'hidpad', title:'HID Keyboard + Mouse + Media (phone as a Bluetooth rem
     n.val=null; n.hex=''; n.txt=''; n.fresh=0;
     n.reg=false; n.regErr=''; n.hosts=new Set(); n.bonded=[]; n.connTried=false; n.leds=null; n.txRec=[]; n.sent=0; n.typed=0; n.skipped=0;
     n.ho=new HidOut(HID_DEVICES.combo.ids); n.touch=new HidTouch(); n.typeQ=[]; n.typeT=0; n.pumpT=0; n.held=new Map(); n.pads=new Map();
-    n.prevKey=''; n.prevText=''; n.prevBtn=0; n.autoDone=false; n._wcv=null; n.pulse=0;
+    n.prevKey=''; n.prevText=''; n.prevBtn=0; n.autoDone=false; n._wcv=null; n.pulse=0; n.devRow=null; n.lastDev=null; n.lastCmd=null; n.err='';
   },
   dispose:n=>{ clearTimeout(n.pumpT); hidStop(n); },
   process(n,I){
     const p=n.p;
     if(p.auto && !n.autoDone){ n.autoDone=true; hidStart(n); }
+    if(Array.isArray(I.dev) && I.dev!==n.lastDev){                       // строка «Reference/HID Devices» из Table: другое устройство
+      n.lastDev=I.dev; const d=hidDeviceFromRow(I.dev[I.dev.length-1]);
+      if(d){ n.devRow=d; n.ho.ids=d.ids; n.err=''; n.ho.releaseAll(); n.ho.take(); n.touch=new HidTouch();
+        if(n.ws && n.ws.readyState===1 && n.reg){ n.connTried=false; gattSend(n,{cmd:'hid.unregister'}); n.reg=false; n.hosts.clear(); setTimeout(()=>{ if(n.ws && n.ws.readyState===1) hidRegister(n); },400); } }
+      else n.err='dev: a row with a hex «descriptor» is needed (Reference/HID Devices)';
+    }
+    if(Array.isArray(I.cmd) && I.cmd!==n.lastCmd){                        // команды: строки Table (Reference/HID Keys), Rule, свои записи
+      n.lastCmd=I.cmd; const al=hidAlias(p.alias);
+      for(const c of I.cmd) for(const a of hidApplyCmd(n.ho,c,al)){
+        if(a.text) hidTypeText(n,a.text); else if(a.error) n.err=a.error;
+        else if(a.register){ n.connTried=false; if(n.ws && n.ws.readyState===1) hidRegister(n); else hidStart(n); }
+        else if(a.unregister) hidStop(n); else if(a.connect) gattSend(n,{cmd:'hid.connect',addr:plAddr(a.connect)||a.connect});
+      }
+      hidKick(n);
+    }
     const key=typeof I.key==='string' ? I.key : '';
     if(key!==n.prevKey){
       const al=hidAlias(p.alias);
