@@ -1871,7 +1871,7 @@ async function rtlOpenDevice(dev, ppm, gain){
     return real;
   }
   // эпоха перестройки: трансферы, запущенные до её конца, несут отсчёты старой частоты
-  let tuneEpoch=0, fastOn=false;
+  let tuneEpoch=0, fastOn=false, tuneT=0;   // tuneT — момент конца последней перестройки (performance.now)
   async function setCenterFrequency(freq){
     const t0=performance.now();
     await com.i2c.open();
@@ -1880,7 +1880,7 @@ async function rtlOpenDevice(dev, ppm, gain){
     finally{ await com.i2c.close(); }
     // быстрый режим пропускает паузы PLL: до следующего захвата отсчёты идут с недосевшей частотой
     if(fastOn){ const w=15-(performance.now()-t0); if(w>0) await new Promise(r=>setTimeout(r,w)); }
-    tuneEpoch++;
+    tuneEpoch++; tuneT=performance.now();
     return actual-IF;
   }
   async function applyGain(g){ if(g==null) await tuner.setAutoGain(); else if(typeof g==='object') await tuner.setStageGain(g); else await tuner.setManualGain(g); }
@@ -1911,7 +1911,7 @@ async function rtlOpenDevice(dev, ppm, gain){
       await applyGain(curGain);
       actual=await tuner.setFrequencyRobust(freq+IF, freq, ()=>applyGain(curGain));
     }finally{ await com.i2c.close(); }
-    tuneEpoch++;
+    tuneEpoch++; tuneT=performance.now();
     await resetBuffer();
     return {f:actual-IF, locked:tuner.locked()};
   }
@@ -1935,7 +1935,7 @@ async function rtlOpenDevice(dev, ppm, gain){
   const ser=fn=>(...a)=>{ const r=tq.then(()=>fn(...a)); tq=r.then(()=>{},()=>{}); return r; };
   return {setSampleRate:ser(setSampleRate), setCenterFrequency:ser(setCenterFrequency), setGain:ser(setGain), setBiasTee:ser(setBiasTee),
     setFastTune, resetBuffer:ser(resetBuffer), readSamples, close:ser(close), pllLock:ser(pllLock), recover:ser(recover), tunerDump:ser(tunerDump),
-    tunerName:found.name+(isV4?' (Blog V4)':''), kind:'rtl', fmt:'u8', bps:2, rateRange:[900001,3200000], epoch:()=>tuneEpoch};
+    tunerName:found.name+(isV4?' (Blog V4)':''), kind:'rtl', fmt:'u8', bps:2, rateRange:[900001,3200000], epoch:()=>tuneEpoch, tuneT:()=>tuneT};
 }
 
 // ---- HackRF и Airspy: тот же API, что у rtlOpenDevice ----
@@ -2892,10 +2892,11 @@ ${rx888DdcPool}
 ${rx888OpenDevice}
 ${sdrOpenDevice}
 let usb=null, api=null, rate=1024000, streaming=false, rps=40;
+const rtlEpochDone=${rtlEpochDone};
 async function stream(readsPerSec, depth){
   const q=[]; rps=readsPerSec;
   const chunk=()=>Math.max(512, Math.min(131072, 512*Math.ceil(rate/rps/512)));
-  const fill=()=>{ while(streaming && api && q.length<depth){ const e=api.epoch(); q.push(api.readSamples(chunk()*api.bps).then(b=>({b,e}), err=>({err}))); } };
+  const fill=()=>{ while(streaming && api && q.length<depth){ const e=api.epoch(), ms=chunk()/rate*1000; q.push(api.readSamples(chunk()*api.bps).then(b=>({b,e:rtlEpochDone(api,e,ms)}), err=>({err}))); } };
   fill();
   while(streaming && q.length){
     const p=q.shift(); fill();
@@ -4155,6 +4156,15 @@ function rtlActivateChannel(n, ci){
 }
 
 const RTL_MAX_INFLIGHT=8;
+// Эпоха чанка — по моменту завершения, а не постановки в очередь: трансферы, стоявшие в очереди до перестройки, заполняются
+// уже новой частотой (очередь — это ожидание данных, а не буфер старых). Чанк годен, если он целиком начался после конца
+// перестройки (начало ≈ завершение − длительность чанка, запас 5 мс на дрожание); иначе остаётся эпоха постановки и в спектр не идёт.
+// Раньше терялись все чанки очереди (до RTL_USB_QUEUE × 25 мс) — отсюда задержка после смены частоты.
+function rtlEpochDone(dev, e, chunkMs){
+  const cur=dev.epoch();
+  if(cur===e || !dev.tuneT) return e;
+  return performance.now()-chunkMs>=dev.tuneT()+5 ? cur : e;
+}
 const RTL_READS_PER_SEC=40;  // чанк 25мс — меньше пила уровня кольца, можно держать меньший запас
 const RTL_USB_QUEUE=8;       // трансферов в полёте, ~200мс запаса на стопор главного потока
 // Темп чтения колец (rtlPace): держим запас около RTL_TARGET_S — это и есть задержка звука от кольца.
@@ -4393,8 +4403,8 @@ function rtlLocalSource(n){
   const fill=()=>{
     while(n.reading && n.dev===dev && queue.length<RTL_USB_QUEUE){
       const cs=Math.max(512, Math.min(131072, 512*Math.ceil(n.sourceRate/(n.usbRps||RTL_READS_PER_SEC)/512)));
-      const epoch=dev.epoch();
-      queue.push(dev.readSamples(cs*dev.bps).then(buf=>({buf, epoch}), err=>({err})));
+      const epoch=dev.epoch(), ms=cs/n.sourceRate*1000;
+      queue.push(dev.readSamples(cs*dev.bps).then(buf=>({buf, epoch:rtlEpochDone(dev, epoch, ms)}), err=>({err})));
     }
   };
   fill();
@@ -4996,7 +5006,8 @@ function sdrAdaptRps(n){
   if(!n.dev || n.dev.kind!=='rtl' || n.swActive || n.p.sweep) return;     // sweep ведёт скорость чтения сам
   const t=n._tuneT||(n._tuneT=[]), now=performance.now();
   while(t.length && now-t[0]>3000) t.shift();
-  const want=t.length>=3 ? SDR_SCAN_RPS : RTL_READS_PER_SEC;
+  // как SDR++ (чанк 5 мс): после любой перестройки секунду читаем мелко — новая картинка приходит быстрее
+  const want=(t.length>=3 || (t.length && now-t[t.length-1]<1000)) ? SDR_SCAN_RPS : RTL_READS_PER_SEC;
   if((n.usbRps||RTL_READS_PER_SEC)!==want) sdrSetReadRate(n, want);
 }
 function sdrSetReadRate(n, rps){
