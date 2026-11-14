@@ -2078,7 +2078,7 @@ function saPhosphor(n,cx,W,H,ty,fresh,diff){
 // Окно просмотра внутри реально захваченной полосы — это просто прокрутка/зум вида, приёмник не
 // трогаем (звук не рвётся, картинка сдвигается сразу). Вышло за край — перестраиваем приёмник
 // на центр окна (как в SDR++): дальше окно опять внутри полосы.
-// Панорама sweep у USB SDR (sp.sweepView, см. sources.js) с проводом viewLo/viewHi → swLo/swHi: окно просмотра — источник правды
+// Панорама sweep у USB SDR (sp.sweepView, см. sources.js) с проводом viewLo/viewHi → sweepLo/sweepHi: окно просмотра — источник правды
 // и рисуется сразу как есть, диапазон развёртки идёт за ним; границы окна — весь диапазон тюнера, а не уже снятая панорама.
 // Окно к панораме не клэмпим и зум при смене центра не сбрасываем — отсюда ни рывков, ни откатов. Без провода — прежнее поведение.
 const saSv=n=>{ const v=n.s&&n.s.sweepView; return v&&v.wired ? v : null; };
@@ -2284,8 +2284,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
         {n:'db1',t:'num'},
         {n:'snr1',t:'num'},
         {n:'centerFreq',t:'num'},
-        {n:'viewLo',t:'num',tip:'left edge of the view window, Hz (only while zoomed/panned) → USB SDR swLo: the wideband sweep follows the window'},
-        {n:'viewHi',t:'num',tip:'right edge of the view window, Hz → USB SDR swHi'},
+        {n:'viewLo',t:'num',tip:'left edge of the view window, Hz (only while zoomed/panned) → USB SDR sweepLo: the wideband sweep follows the window'},
+        {n:'viewHi',t:'num',tip:'right edge of the view window, Hz → USB SDR sweepHi'},
         {n:'holdF',t:'num'},
         {n:'f2',t:'num'},
         {n:'db2',t:'num'},
@@ -2551,7 +2551,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
       : sp && sp.freqs && sp.freqs.length ? sp.freqs[sp.freqs.length>>1]
       : (n.p.fmin!=null && n.p.fmax!=null ? (n.p.fmin+n.p.fmax)/2 : null);
     n._lastRange=[n.p.fmin,n.p.fmax];
-    o.viewLo=n.zoom ? n.zoom[0] : null; o.viewHi=n.zoom ? n.zoom[1] : null;   // окно просмотра — для sweep USB SDR (swLo/swHi)
+    o.viewLo=n.zoom ? n.zoom[0] : null; o.viewHi=n.zoom ? n.zoom[1] : null;   // окно просмотра — для sweep USB SDR (sweepLo/sweepHi)
     const N=sp? sp.mag.length : 0;
     // peak hold — максимум по каждому бину за всё время, пока включено. Держим на mag из sp
     // (что реально показывается — после averaging'а источника, если он есть), а не на "сырых"

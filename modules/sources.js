@@ -5191,7 +5191,7 @@ function sdrSweepPlan(n, hw){
     lastH:-1, passes:0, began:false, tBlock:performance.now()});
   return n.sw;
 }
-// Окно просмотра 'sa' ведёт диапазон развёртки по проводам viewLo/viewHi → swLo/swHi: перетаскивание — сдвиг, колесо/щипок — масштаб,
+// Окно просмотра 'sa' ведёт диапазон развёртки по проводам viewLo/viewHi → sweepLo/sweepHi: перетаскивание — сдвиг, колесо/щипок — масштаб,
 // вплоть до всего диапазона тюнера. Окно в 'sa' — источник правды и рисуется сразу; сюда приходит только желаемый диапазон, он применяется не чаще раза в
 // SDR_SWEEP_APPLY_MS (последнее значение не теряется). Данные при этом переносятся (см. sdrSweepPlan), поэтому ни рывков, ни откатов.
 const SDR_SWEEP_APPLY_MS=120, SDR_SWEEP_APPLY_HW_MS=500;   // аппаратная развёртка перезапускает прошивку — реже
@@ -5208,7 +5208,7 @@ function sdrTuneRange(n){                          // [мин, макс], Гц �
 // описание панорамы для 'sa': границы тюнера, потолок ширины и wired — есть ли провод viewLo/viewHi (без него окно к панораме привязано)
 function sdrSweepView(n){
   const sv=n._sweepView||(n._sweepView={});
-  if(n._swOrd!==Graph.order){ n._swOrd=Graph.order; n._swW=Graph.edges.some(e=>e.to===n.id && (e.tp==='swLo'||e.tp==='swHi')); }
+  if(n._swOrd!==Graph.order){ n._swOrd=Graph.order; n._swW=Graph.edges.some(e=>e.to===n.id && (e.tp==='sweepLo'||e.tp==='sweepHi')); }
   sv.wired=n._swW;
   [sv.min,sv.max]=sdrTuneRange(n);
   sv.maxSpan=sdrSweepMaxSpan(n);
@@ -5477,8 +5477,8 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
         {n:'sr',t:'num',tip:'sample rate, Hz: snaps to the nearest supported value (e.g. from a Table column of the signal catalog)'},
         {n:'plan',t:'bands',tip:'band plan (Table rows): the most specific range under the tuned frequency sets demodulation, bandwidth (columns demod, bw) and gain (column gain)'},
         {n:'steerFreq',t:'num'},
-        {n:'swLo',t:'num',tip:'wideband sweep: range start, Hz (from Spectrum Analyzer viewLo — the sweep follows its window; without wires the window does not touch the sweep)'},
-        {n:'swHi',t:'num',tip:'wideband sweep: range end, Hz (from Spectrum Analyzer viewHi)'},
+        {n:'sweepLo',t:'num',tip:'wideband sweep: range start, Hz (from Spectrum Analyzer viewLo — the sweep follows its window; without wires the window does not touch the sweep)'},
+        {n:'sweepHi',t:'num',tip:'wideband sweep: range end, Hz (from Spectrum Analyzer viewHi)'},
         {n:'gainDb',t:'num'},
         {n:'demod',t:'val'},
         {n:'bw',t:'num'},
@@ -5750,10 +5750,11 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
       }
     }
 
-    // swLo/swHi — окно 'sa' (выходы viewLo/viewHi) ведёт диапазон развёртки. Только по проводу и по фронту:
-    // держащий старое значение провод не перебивает правку диапазона руками
-    if(typeof I.swLo==='number' && typeof I.swHi==='number'){
-      if(I.swLo!==n._inSwLo || I.swHi!==n._inSwHi){ n._inSwLo=I.swLo; n._inSwHi=I.swHi; if(n.p.sweep) sdrSweepWant(n,I.swLo,I.swHi); }
+    // sweepLo/sweepHi (Гц) — окно 'sa' (выходы viewLo/viewHi) ведёт диапазон развёртки. Только по проводу и по фронту:
+    // держащий старое значение провод не перебивает правку диапазона руками.
+    // Имена НЕ swLo/swHi: параметр узла с тем же именем (МГц) движок сам делает входом и пишет в него значение провода напрямую (applyControlWires)
+    if(typeof I.sweepLo==='number' && typeof I.sweepHi==='number'){
+      if(I.sweepLo!==n._inSwLo || I.sweepHi!==n._inSwHi){ n._inSwLo=I.sweepLo; n._inSwHi=I.sweepHi; if(n.p.sweep) sdrSweepWant(n,I.sweepLo,I.sweepHi); }
     } else n._inSwLo=n._inSwHi=undefined;
     const sweepOn=n.p.sweep && n.connected && !n.dev?.fixedFreq;
     if(!n.p.sweep && n.sw){ n.sw=null; n.swErr=null; n._swWant=null; }
