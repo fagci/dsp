@@ -2152,7 +2152,9 @@ function dashRenderLeaf(t){
   const graphElsewhere=dashLeaves(Graph.dashTree).some(l=>l.tabs.some(x=>x!==tab && x.view==='graph'));
   if(!graphElsewhere) sel.append(new Option('◇ Module graph','@graph'));   // одна на страницу
   const cand=Graph.nodes.filter(x=>x===n || !dashLeafOf(x.id));   // любой модуль, ещё не занявший вкладку
-  for(const pn of cand) sel.append(new Option(pn===n? dashShort(pn) : nodeTitle(pn)+' #'+pn.id, pn.id));   // выбранный — коротко, как вкладка
+  for(const pn of cand){                                  // без единого провода — с пометкой: не спутать с подключённым двойником
+    const bare=pn!==n && !Graph.edges.some(e=>e.from===pn.id||e.to===pn.id);
+    sel.append(new Option(pn===n? dashShort(pn) : nodeTitle(pn)+' #'+pn.id+(bare?' · no wires':''), pn.id)); }   // выбранный — коротко, как вкладка
   if(n) sel.title=nodeTitle(n)+' #'+n.id;
   if(n) sel.value=n.id; else if(isGraph) sel.value='@graph';
   sel.addEventListener('pointerdown',e=>e.stopPropagation());
