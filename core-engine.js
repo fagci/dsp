@@ -193,6 +193,25 @@ const Eng = {
     clearInterval(this._stallTimer); this._stallTimer=0;
     if(!on) return;
     this._stallLastT=performance.now();
+    // Что именно держало главный поток: Long Animation Frames (Chrome 123+) называют скрипты и функции, longtask — длительность.
+    // Пишем только тяжёлое (>=100 мс), чтобы консоль не засорять
+    if(!this._loaf && typeof PerformanceObserver!=='undefined'){
+      this._loaf=true;
+      for(const type of ['long-animation-frame','longtask']){
+        try{
+          new PerformanceObserver(list=>{
+            for(const e of list.getEntries()){
+              if(e.duration<100) continue;
+              const sc=(e.scripts||[]).slice().sort((a,b)=>b.duration-a.duration).slice(0,3)
+                .map(x=>`${x.sourceFunctionName||x.invoker||'?'}@${(x.sourceURL||'').split('/').pop().split('?')[0]}:${x.sourceCharPosition} ${x.duration.toFixed(0)}мс (${x.invokerType||''})`).join(' | ');
+              console.warn(`[Eng] ${type} ${e.duration.toFixed(0)}мс`+(e.blockingDuration!=null?` blocking=${e.blockingDuration.toFixed(0)}`:'')
+                +(e.renderStart?` render=${(e.startTime+e.duration-e.renderStart).toFixed(0)}мс style/layout=${(e.styleAndLayoutStart?e.startTime+e.duration-e.styleAndLayoutStart:0).toFixed(0)}мс`:'')
+                +(sc?' scripts: '+sc:'')+` @ ${e.startTime.toFixed(0)}ms`);
+            }
+          }).observe({type, buffered:false});
+        }catch(err){}
+      }
+    }
     this._stallTimer=setInterval(()=>{
       const now=performance.now(), over=(now-this._stallLastT)-100; this._stallLastT=now;
       // фоновая вкладка: браузер сам душит таймеры до 1/с — это не подвисание
