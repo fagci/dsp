@@ -4355,7 +4355,7 @@ async function rtlReadLoop(n){
         ch.worker.demod(i===lastIdx ? buf : u8.slice().buffer, cnt, fmt)));
       let tDemodDone=0;
       demodPromise.then(()=>{ tDemodDone=performance.now(); }, ()=>{});
-      inFlight++;
+      inFlight++; n._inFlight=inFlight;
       // .then() вешается СРАЗУ по приходу чанка (пока порядок ещё известен), но результат
       // пишется в кольцо только после того, как это же самое сделает предыдущий чанк —
       // appendChain и есть та самая гарантия порядка, о которой комментарий выше.
@@ -4363,7 +4363,7 @@ async function rtlReadLoop(n){
         let results;
         try{ results=await demodPromise; }
         catch(e){ inFlight--; return; }
-        inFlight--;
+        inFlight--; n._inFlight=inFlight;
         if(!n.reading) return;                    // отключились, пока чанк ждал своей очереди
         // wms — весь round-trip до воркера и обратно (структурное клонирование, доставка сообщения,
         // ожидание, пока главный поток дойдёт до обработки ответа) — НЕ то же самое, что реальное
@@ -4375,6 +4375,7 @@ async function rtlReadLoop(n){
         for(let ci=0;ci<active.length;ci++){
           const ch=active[ci], res=results[ci];
           if(res.workerMs>workerMsMax) workerMsMax=res.workerMs;
+          if(res.workerMs>(n._demMs||0)) n._demMs=res.workerMs;
           if(!ch.active || !ch.aring){ ch.worker?.giveBuffer(res.buffer); continue; }  // канал сняли/пересобрали, пока чанк ждал
           const outN=res.cnt;                       // уже децимированное число отсчётов, не cnt (сырых)
           const audio=new Float32Array(res.buffer, 0, outN), audioR=new Float32Array(res.buffer, res.stride*4, outN);
@@ -4560,8 +4561,10 @@ function rtlUpdateSpec(n){
   if(first<L){ I.set(ring.I.subarray(0,L-first),first); Q.set(ring.Q.subarray(0,L-first),first); }
   n.specBusy=true;
   const centerFreq=n.actualFreq??n.p.freq, binHz=n.sourceRate/N, half=N>>1, win=n.p.specWin, tl=iqTl(n);
+  const tSpec=performance.now();
   n.specWorker.compute(I.buffer, Q.buffer, N, L, win, +n.p.specWinP||0).then(({mag})=>{
     n.specBusy=false;
+    const dt=performance.now()-tSpec; n._specMs=Math.max(n._specMs||0, dt);   // для лога ring trend
     // сброс накопления при смене размера/полосы/центра/окна: старые кадры к новой оси не относятся
     const peak=n.p.specMode==='max';
     const key=N+'|'+n.sourceRate+'|'+centerFreq+'|'+win+'|'+(+n.p.specWinP||0)+'|'+peak;
@@ -4679,7 +4682,8 @@ function rtlReadChannelAudio(n, ch, o, oL, oR){
   const nowLog=performance.now();
   if(!ch.lastLagLogT || nowLog-ch.lastLagLogT>3000){
     ch.lastLagLogT=nowLog;
-    console.log(`[rtlsdr] ring trend: lag=${(1000*lag/rate).toFixed(0)}мс avg=${(1000*(ch.lagAvg||0)/rate).toFixed(0)}мс target=${(1000*rtlTargetS(n)).toFixed(0)}мс servo=${(ch.ppm||0).toFixed(0)}ppm mspsIo=${(n.mspsIo||0).toFixed(3)} nominal=${(n.sourceRate/1e6).toFixed(3)} @ ${nowLog.toFixed(0)}ms`);
+    console.log(`[rtlsdr] ring trend: lag=${(1000*lag/rate).toFixed(0)}мс avg=${(1000*(ch.lagAvg||0)/rate).toFixed(0)}мс target=${(1000*rtlTargetS(n)).toFixed(0)}мс servo=${(ch.ppm||0).toFixed(0)}ppm mspsIo=${(n.mspsIo||0).toFixed(3)} nominal=${(n.sourceRate/1e6).toFixed(3)} demod≤${(n._demMs||0).toFixed(1)}мс spec≤${(n._specMs||0).toFixed(0)}мс чанк=${(1000/(n.usbRps||RTL_READS_PER_SEC)).toFixed(0)}мс inFlight=${n._inFlight|0} @ ${nowLog.toFixed(0)}ms`);
+    n._demMs=0; n._specMs=0;
   }
   if(!k){ mute(); return; }
   const step=rate/Eng.sr*k;
@@ -4730,8 +4734,10 @@ async function sdrTune(n){
   const off=sdrDcOff(n), conv=sdrConv(n);
   if(want+off-conv<=0) throw new Error(`tuner frequency ${fmtHz(want+off-conv)}Hz out of range (check converter offset)`);
   if(n._fastDev!==n.dev || n._fast!==!!n.p.fastTune){ n._fastDev=n.dev; n._fast=!!n.p.fastTune; await n.dev.setFastTune?.(n._fast); }
+  const tT0=performance.now();
   const hw=await n.dev.setCenterFrequency(Math.round((want+off-conv)/k));
   (n._tuneT||(n._tuneT=[])).push(performance.now());
+  const tMs=performance.now()-tT0; if(tMs>60) console.warn(`[rtlsdr] перестройка заняла ${tMs.toFixed(0)}мс (fast=${!!n.p.fastTune}) @ ${performance.now().toFixed(0)}ms`);
   n.actualFreq=hw*k+conv; n.dcOff=off; n.appliedFreq=want; n.appliedPpm=ppm; n.appliedConv=conv;
   if(n.dev.fixedFreq){ n.p.freq=hw; n.appliedFreq=hw; }   // у файла центр не перестраивается
 }
