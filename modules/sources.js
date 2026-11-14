@@ -1476,11 +1476,17 @@ function rtlBufToNum(buf){
 function rtlMakeCom(dev){
   const WRITE_FLAG=0x10;
   let fastI2C=false;               // быстрый режим: без «пустого» чтения после записи в демодулятор (open/close I2C)
+  const xs={n:0, ms:0, max:0};     // управляющие передачи: сколько, суммарное и максимальное время (для лога перестройки)
+  const xsAdd=t0=>{ const d=performance.now()-t0; xs.n++; xs.ms+=d; if(d>xs.max) xs.max=d; };
   async function writeCtrl(value,index,buffer){
+    const t0=performance.now();
     await dev.controlTransferOut({requestType:'vendor',recipient:'device',request:0,value,index}, buffer);
+    xsAdd(t0);
   }
   async function readCtrl(value,index,length){
+    const t0=performance.now();
     const res = await dev.controlTransferIn({requestType:'vendor',recipient:'device',request:0,value,index}, Math.max(8,length));
+    xsAdd(t0);
     return res.data.buffer.slice(0,length);
   }
   async function writeReg(block,reg,value,length){ await writeCtrl(reg, block|WRITE_FLAG, rtlNumToBuf(value,length)); }
@@ -1519,6 +1525,7 @@ function rtlMakeCom(dev){
     demod:{readRegister:readDemodReg, writeRegister:writeDemodReg},
     i2c:{open:openI2C, close:closeI2C, readRegister:readI2CReg, writeRegister:writeI2CReg, writeRegisters:writeI2CRegs, readRegBuffer:readI2CRegBuffer},
     setFastI2C:on=>{ /* пустое чтение после записи в демодулятор нужно: без него шлюз I2C не открывается и тюнер не получает частоту */ },
+    xs,
     bulk:{readBuffer:readBulk},
     raw:{write:writeRegBuffer, read:readRegBuffer},                 // произвольный блок: DVB-донглы шлют I2C другими командами
     iface:{claim:()=>dev.claimInterface(0), release:()=>dev.releaseInterface(0).catch(()=>{})},
@@ -1915,8 +1922,10 @@ async function rtlOpenDevice(dev, ppm, gain){
   }
   // эпоха перестройки: трансферы, запущенные до её конца, несут отсчёты старой частоты
   let tuneEpoch=0, fastOn=false, tuneT=0;   // tuneT — момент конца последней перестройки (performance.now)
+  let lastTune=null;
   async function setCenterFrequency(freq){
     const t0=performance.now();
+    com.xs.n=0; com.xs.ms=0; com.xs.max=0;
     await com.i2c.open();
     let actual;
     try{ actual=await tuner.setFrequencyRobust(freq+IF, freq, ()=>applyGain(curGain)); }
@@ -1924,6 +1933,7 @@ async function rtlOpenDevice(dev, ppm, gain){
     // быстрый режим пропускает паузы PLL: до следующего захвата отсчёты идут с недосевшей частотой
     if(fastOn){ const w=15-(performance.now()-t0); if(w>0) await new Promise(r=>setTimeout(r,w)); }
     tuneEpoch++; tuneT=performance.now();
+    lastTune={t:tuneT-t0, n:com.xs.n, ms:com.xs.ms, max:com.xs.max};
     return actual-IF;
   }
   async function applyGain(g){ if(g==null) await tuner.setAutoGain(); else if(typeof g==='object') await tuner.setStageGain(g); else await tuner.setManualGain(g); }
@@ -1978,7 +1988,7 @@ async function rtlOpenDevice(dev, ppm, gain){
   const ser=fn=>(...a)=>{ const r=tq.then(()=>fn(...a)); tq=r.then(()=>{},()=>{}); return r; };
   return {setSampleRate:ser(setSampleRate), setCenterFrequency:ser(setCenterFrequency), setGain:ser(setGain), setBiasTee:ser(setBiasTee),
     setFastTune, resetBuffer:ser(resetBuffer), readSamples, close:ser(close), pllLock:ser(pllLock), recover:ser(recover), tunerDump:ser(tunerDump),
-    tunerName:found.name+(isV4?' (Blog V4)':''), kind:'rtl', fmt:'u8', bps:2, rateRange:[900001,3200000], epoch:()=>tuneEpoch, tuneT:()=>tuneT};
+    tunerName:found.name+(isV4?' (Blog V4)':''), kind:'rtl', fmt:'u8', bps:2, rateRange:[900001,3200000], epoch:()=>tuneEpoch, tuneT:()=>tuneT, tuneInfo:()=>lastTune};
 }
 
 // ---- HackRF и Airspy: тот же API, что у rtlOpenDevice ----
@@ -2972,7 +2982,7 @@ self.onmessage=async e=>{
       r={tunerName:api.tunerName, kind:api.kind, fmt:api.fmt, bps:api.bps, rates:api.rates, rateRange:api.rateRange};
     }
     else if(cmd==='setSampleRate'){ rate=await api.setSampleRate(args.rate); r=rate; }
-    else if(cmd==='setCenterFrequency'){ const f=await api.setCenterFrequency(args.freq); r={f, epoch:api.epoch()}; }
+    else if(cmd==='setCenterFrequency'){ const f=await api.setCenterFrequency(args.freq); r={f, epoch:api.epoch(), info:api.tuneInfo?api.tuneInfo():null}; }
     else if(cmd==='setGain') await api.setGain(args.gain);
     else if(cmd==='dev') r=await api[args.m](...args.a);
     else if(cmd==='resetBuffer') await api.resetBuffer();
@@ -3000,7 +3010,7 @@ async function rtlOpenInWorker(usbDev, gain){
   };
   const call=(cmd,args)=>new Promise((res,rej)=>{ const id=seq++; pend.set(id,{res,rej}); w.postMessage({id,cmd,args}); });
   const drop=()=>{ w.terminate(); URL.revokeObjectURL(url); };
-  let info;
+  let info, tuneInfo=null;
   try{
     if(!await call('probe')){ drop(); return null; }
     const same=(await navigator.usb.getDevices()).filter(d=>d.vendorId===usbDev.vendorId && d.productId===usbDev.productId && (!usbDev.serialNumber || d.serialNumber===usbDev.serialNumber));
@@ -3009,8 +3019,9 @@ async function rtlOpenInWorker(usbDev, gain){
   return {
     worker:true, tunerName:info.tunerName, kind:info.kind, fmt:info.fmt, bps:info.bps, rates:info.rates, rateRange:info.rateRange,
     setSampleRate:rate=>call('setSampleRate',{rate}),
-    setCenterFrequency:async freq=>{ const r=await call('setCenterFrequency',{freq}); epoch=r.epoch; return r.f; },
+    setCenterFrequency:async freq=>{ const r=await call('setCenterFrequency',{freq}); epoch=r.epoch; tuneInfo=r.info||null; return r.f; },
     epoch:()=>epoch,
+    tuneInfo:()=>tuneInfo,
     setGain:gain=>call('setGain',{gain}),
     setBiasTee:on=>call('dev',{m:'setBiasTee',a:[on]}),
     setFastTune:info.kind==='rtl' ? on=>call('dev',{m:'setFastTune',a:[on]}) : undefined,
@@ -4515,6 +4526,7 @@ let reBuf=null, imBuf=null, pwBuf=null, bufN=0; // внутренние, ник�
 self.onmessage=function(e){
   const msg=e.data;
   if(msg.type!=='fft') return;
+  const tW0=performance.now();
   const N=msg.N, L=msg.L, kind=msg.win, wp=msg.winP||0;
   if(!winCache.w || winCache.kind!==kind || winCache.N!==N || winCache.p!==wp){
     const w=window_(kind,N,wp); let sum=0; for(let i=0;i<N;i++) sum+=w[i];
@@ -4542,7 +4554,7 @@ self.onmessage=function(e){
   const half=N>>1, sc=1/(K*winCache.sum*winCache.sum);
   for(let i=0;i<N;i++) mag[i]=Math.sqrt(pw[(i+half)%N]*sc);
   // I/Q дальше никому не нужны — отдаём буферы обратно главному потоку для переиспользования
-  self.postMessage({type:'result', mag:mag.buffer, K, I:I.buffer, Q:Q.buffer}, [mag.buffer, I.buffer, Q.buffer]);
+  self.postMessage({type:'result', mag:mag.buffer, K, ms:performance.now()-tW0, I:I.buffer, Q:Q.buffer}, [mag.buffer, I.buffer, Q.buffer]);
 };
 `;
 
@@ -4555,7 +4567,7 @@ function rtlMakeSpecWorker(){
     if(e.data.type==='result' && pendingResolve){
       const resolve=pendingResolve; pendingResolve=null;
       if(e.data.I && e.data.Q) bufPool.push({I:e.data.I, Q:e.data.Q});
-      resolve({mag:new Float32Array(e.data.mag), K:e.data.K});
+      resolve({mag:new Float32Array(e.data.mag), K:e.data.K, ms:e.data.ms});
     }
   };
   return {
@@ -4583,7 +4595,8 @@ const RTL_SPEC_MAX_FRAMES=64;
 function rtlUpdateSpec(n){
   if(!n.connected || !n.specWorker) return;
   const now=performance.now();
-  const minGap=1000/(+n.p.specFps||25);
+  // кадры не чаще, чем БПФ занимает ≤ ~1/3 ядра (иначе тяжёлый спектр отнимает процессор у демодулятора и звука)
+  const minGap=Math.max(1000/(+n.p.specFps||25), 3*(n._specCost||0));
   if(n.specBusy || (n.spec && now-n.lastSpec<minGap)) return;
   const N=+n.p.specSize, ring=n.specRing;
   if(ring.filled<N) return;
@@ -4605,8 +4618,9 @@ function rtlUpdateSpec(n){
   n.specBusy=true;
   const centerFreq=n.actualFreq??n.p.freq, binHz=n.sourceRate/N, half=N>>1, win=n.p.specWin, tl=iqTl(n);
   const tSpec=performance.now();
-  n.specWorker.compute(I.buffer, Q.buffer, N, L, win, +n.p.specWinP||0).then(({mag})=>{
+  n.specWorker.compute(I.buffer, Q.buffer, N, L, win, +n.p.specWinP||0).then(({mag,ms})=>{
     n.specBusy=false;
+    if(ms>0) n._specCost=n._specCost==null ? ms : n._specCost*0.8+ms*0.2;   // стоимость БПФ в воркере — для частоты кадров
     const dt=performance.now()-tSpec; n._specMs=Math.max(n._specMs||0, dt);   // для лога ring trend
     // сброс накопления при смене размера/полосы/центра/окна: старые кадры к новой оси не относятся
     const peak=n.p.specMode==='max';
@@ -4729,7 +4743,7 @@ function rtlReadChannelAudio(n, ch, o, oL, oR){
   const nowLog=performance.now();
   if(!ch.lastLagLogT || nowLog-ch.lastLagLogT>3000){
     ch.lastLagLogT=nowLog;
-    console.log(`[rtlsdr] ring trend: lag=${(1000*lag/rate).toFixed(0)}мс avg=${(1000*(ch.lagAvg||0)/rate).toFixed(0)}мс target=${(1000*rtlTargetS(n)).toFixed(0)}мс servo=${(ch.ppm||0).toFixed(0)}ppm mspsIo=${(n.mspsIo||0).toFixed(3)} nominal=${(n.sourceRate/1e6).toFixed(3)} demod≤${(n._demMs||0).toFixed(1)}мс spec≤${(n._specMs||0).toFixed(0)}мс чанк=${(1000/(n.usbRps||RTL_READS_PER_SEC)).toFixed(0)}мс inFlight=${n._inFlight|0} @ ${nowLog.toFixed(0)}ms`);
+    console.log(`[rtlsdr] ring trend: lag=${(1000*lag/rate).toFixed(0)}мс avg=${(1000*(ch.lagAvg||0)/rate).toFixed(0)}мс target=${(1000*rtlTargetS(n)).toFixed(0)}мс servo=${(ch.ppm||0).toFixed(0)}ppm mspsIo=${(n.mspsIo||0).toFixed(3)} nominal=${(n.sourceRate/1e6).toFixed(3)} demod≤${(n._demMs||0).toFixed(1)}мс spec≤${(n._specMs||0).toFixed(0)}мс fft~${(n._specCost||0).toFixed(1)}мс размер=${n.p.specSize} чанк=${(1000/(n.usbRps||RTL_READS_PER_SEC)).toFixed(0)}мс inFlight=${n._inFlight|0} @ ${nowLog.toFixed(0)}ms`);
     n._demMs=0; n._specMs=0;
   }
   if(!k){ mute(); return; }
@@ -4784,7 +4798,7 @@ async function sdrTune(n){
   const tT0=performance.now();
   const hw=await n.dev.setCenterFrequency(Math.round((want+off-conv)/k));
   (n._tuneT||(n._tuneT=[])).push(performance.now());
-  const tMs=performance.now()-tT0; n._lastTuneMs=tMs; if(tMs>60) console.warn(`[rtlsdr] перестройка заняла ${tMs.toFixed(0)}мс (fast=${!!n.p.fastTune}) @ ${performance.now().toFixed(0)}ms`);
+  const tMs=performance.now()-tT0; n._lastTuneMs=tMs; if(tMs>60){ const ti=n.dev.tuneInfo?.(); console.warn(`[rtlsdr] перестройка заняла ${tMs.toFixed(0)}мс (fast=${!!n.p.fastTune})`+(ti?` в воркере ${ti.t.toFixed(0)}мс: ${ti.n} передач, ${ti.ms.toFixed(0)}мс, макс ${ti.max.toFixed(0)}мс`:'')+` @ ${performance.now().toFixed(0)}ms`); }
   n.actualFreq=hw*k+conv; n.dcOff=off; n.appliedFreq=want; n.appliedPpm=ppm; n.appliedConv=conv;
   if(n.dev.fixedFreq){ n.p.freq=hw; n.appliedFreq=hw; }   // у файла центр не перестраивается
 }
