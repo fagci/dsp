@@ -1518,7 +1518,7 @@ function rtlMakeCom(dev){
     writeRegister:writeReg, readRegister:readReg, writeRegMask,
     demod:{readRegister:readDemodReg, writeRegister:writeDemodReg},
     i2c:{open:openI2C, close:closeI2C, readRegister:readI2CReg, writeRegister:writeI2CReg, writeRegisters:writeI2CRegs, readRegBuffer:readI2CRegBuffer},
-    setFastI2C:on=>{ fastI2C=!!on; },
+    setFastI2C:on=>{ /* пустое чтение после записи в демодулятор нужно: без него шлюз I2C не открывается и тюнер не получает частоту */ },
     bulk:{readBuffer:readBulk},
     raw:{write:writeRegBuffer, read:readRegBuffer},                 // произвольный блок: DVB-донглы шлют I2C другими командами
     iface:{claim:()=>dev.claimInterface(0), release:()=>dev.releaseInterface(0).catch(()=>{})},
@@ -4319,7 +4319,9 @@ async function rtlReadLoop(n){
       // передаётся воркеру с переносом, один и тот же ArrayBuffer нельзя transfer'ить дважды)
       const active=n.ch.filter(ch=>ch.active&&ch.worker);
       if(!active.length){ rtlTrackMsps(n, cnt, ioMs, 0); continue; }
-      if(inFlight>=MAX_INFLIGHT){
+      // лимит — во времени (RTL_MAX_INFLIGHT чанков по 25 мс), а не в чанках: при мелких чанках после перестройки
+      // он иначе сжимался до 40 мс, и заминка отрисовки при перетаскивании спектра рвала звук тишиной
+      if(inFlight>=Math.max(MAX_INFLIGHT, Math.round(MAX_INFLIGHT*(n.usbRps||RTL_READS_PER_SEC)/RTL_READS_PER_SEC))){
         // демод не поспевает за реальным временем (см. комментарий выше про MAX_INFLIGHT) —
         // этот чанк в воркер не идёт, вместо него в кольцо каждого канала честно дописывается
         // тишина ТОЙ ЖЕ длины, что дал бы демод — round(cnt/n.decim) децимированных отсчётов,
@@ -5001,12 +5003,12 @@ const SDR_SWEEP_MAX_BINS=4e6;
 const sdrSleep=ms=>new Promise(r=>setTimeout(r,ms));
 // сканирование полос (частые перестройки): после перестройки очередь трансферов сначала отдаёт отсчёты прежней частоты —
 // 8 × 25 мс = ~200 мс впустую. Пока перестройки идут часто (≥3 за 3 с), читаем мелкими чанками (5 мс): очередь устаревших ~40 мс
-const SDR_SCAN_RPS=200;
+const SDR_SCAN_RPS=100;
 function sdrAdaptRps(n){
   if(!n.dev || n.dev.kind!=='rtl' || n.swActive || n.p.sweep) return;     // sweep ведёт скорость чтения сам
   const t=n._tuneT||(n._tuneT=[]), now=performance.now();
   while(t.length && now-t[0]>3000) t.shift();
-  // как SDR++ (чанк 5 мс): после любой перестройки секунду читаем мелко — новая картинка приходит быстрее
+  // после любой перестройки секунду читаем мелко (10 мс) — новая картинка приходит быстрее
   const want=(t.length>=3 || (t.length && now-t[t.length-1]<1000)) ? SDR_SCAN_RPS : RTL_READS_PER_SEC;
   if((n.usbRps||RTL_READS_PER_SEC)!==want) sdrSetReadRate(n, want);
 }
