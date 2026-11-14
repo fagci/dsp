@@ -3456,12 +3456,13 @@ const nt=addNode('note',40,40,{text:'Connect the SDR. The Spectrum Analyzer show
   'with exact edges — the bar of a channel spans lo + k·step ± step/2, its level is the peak (or the rms) of the bins inside it. Here: FM broadcast on a 100 kHz raster\n'+
   '(a row without «step» is a 12.5 kHz raster). Change the table — the bars follow; a channel outside the captured span has no bar.\n'+
   'The option is «channel bars» (off / peak / rms) in the Spectrum Analyzer; off — the usual trace. With more channels than half the width in pixels the usual trace is drawn:\n'+
-  'zoom in or narrow the table. The waterfall keeps the full resolution.'});
+  'zoom in or narrow the table. All bars have one width and an even gap. The waterfall shows the same channels as cells (Waterfall → «by channels», the peak of each channel);\n'+
+  'switch it off for the full-resolution waterfall.'});
 nt.size.w=720; nt.size.h=130; applySize(nt);
 const rx=addNode('rtlsdr',40,200,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'WFM',bw:180000,freq:100000000});
 const bp=addNode('table',360,200,{list:'@patch',initial:false,data:'name,lo,hi,step\nFM broadcast,99.1M,100.9M,100k'});
 bp.size.w=340; bp.size.h=170; applySize(bp);
-const sa=addNode('sa',40,420,{chBars:'peak',auto:true,floor:-90,top:-20,split:.55});
+const sa=addNode('sa',40,420,{chBars:'peak',chWf:true,auto:true,floor:-90,top:-20,split:.55});
 sa.size.w=900; sa.size.h=380; applySize(sa);
 const dc=addNode('dac',760,200,{vol:.4});
 addEdge(rx.id,'spec',sa.id,'spec'); addEdge(bp.id,'rows',sa.id,'bands');

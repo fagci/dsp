@@ -183,3 +183,14 @@ function saChanLevel(arr,N,b0,b1,mode){
   let mx=arr[i0]; for(let i=i0+1;i<=i1;i++) if(arr[i]>mx) mx=arr[i];
   return mx;
 }
+
+// Раскладка столбиков по пикселям: у всех каналов одна целая ширина w = floor(шаг в пикселях) − зазор (зазор 1 px, когда шаг от 4 px),
+// центр столбика — на центре канала с точностью до пикселя. Края каждого канала отдельно не округляются — иначе ширина «гуляет» на пиксель.
+// pos(f) — доля ширины [0..1] для частоты, W — ширина в пикселях. Возвращает [{x0,w}] по порядку chs.
+function saChanPx(chs,pos,W){
+  const span=(W-1)||1;
+  return chs.map(c=>{
+    const a=pos(c.lo)*span+.5, b=pos(c.hi)*span+.5, pitch=b-a, gap=pitch>=4 ? 1 : 0, w=Math.max(1,Math.floor(pitch)-gap);
+    return {x0:Math.round((a+b)/2-w/2), w};
+  });
+}
