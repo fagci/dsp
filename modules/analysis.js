@@ -2078,8 +2078,22 @@ function saPhosphor(n,cx,W,H,ty,fresh,diff){
 // Окно просмотра внутри реально захваченной полосы — это просто прокрутка/зум вида, приёмник не
 // трогаем (звук не рвётся, картинка сдвигается сразу). Вышло за край — перестраиваем приёмник
 // на центр окна (как в SDR++): дальше окно опять внутри полосы.
+// Панорама sweep у USB SDR (sp.sweepView, см. sources.js): окно просмотра — источник правды и рисуется сразу как есть,
+// диапазон развёртки идёт за ним сам; границы окна — весь диапазон тюнера, а не уже снятая панорама.
+// Приёмник не «ведём» (steerFreq), окно к панораме не клэмпим и зум при смене центра не сбрасываем — отсюда ни рывков, ни откатов.
+const saSv=n=>n.s&&n.s.sweepView||null;
+function saFullSpan(n){ const sv=saSv(n); return sv ? [sv.min,sv.max] : specSpan(n.s); }
+function saSetWindow(n,lo,hi){                      // новое окно: у sweep — ещё и запрос диапазона развёртки
+  const sv=saSv(n);
+  if(sv){
+    const w=Math.min(hi-lo,sv.max-sv.min,sv.maxSpan||Infinity), c=(lo+hi)/2; lo=clamp(c-w/2,sv.min,sv.max-w); hi=lo+w;
+  }
+  n.zoom=[lo,hi];
+  if(sv) sv.set(lo,hi);
+}
 function saSteerIfOutside(n){
   if(!n.s||!n.zoom) return;
+  if(saSv(n)){ saSv(n).set(n.zoom[0],n.zoom[1]); return; }
   const [lo0,hi0]=specSpan(n.s);
   if(n.zoom[0]>=lo0 && n.zoom[1]<=hi0 && !n._dragPending) return;
   n._steer=(n.zoom[0]+n.zoom[1])/2; n._dragPending=true; n._dragT=performance.now();
@@ -2466,7 +2480,10 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
       }
       // центр источника сменился не из-за нашего драга (ручной ввод, провод, закладка) —
       // зум и цель драга сбрасываем: окно снова во весь новый диапазон
-      if(sp.freqs && sp.freqs.length){
+      if(sp.sweepView){ n._srcCenter=null; n._steer=null;            // панорама sweep: центр меняется вслед за окном — это не повод сбрасывать зум
+        if(!n._svOn){ n._svOn=true; if(n.zoom) sp.sweepView.set(n.zoom[0],n.zoom[1]); }   // зум был до включения sweep — развёртка идёт за ним
+      } else if(sp.freqs && sp.freqs.length){
+        n._svOn=false;
         const src=sp.freqs[sp.freqs.length>>1];
         if(n._srcCenter!=null && src!==n._srcCenter && !n._dragPending){
           const tol=Math.max(2*(hi0-lo0)/(sp.freqs.length-1), 50);
@@ -2501,7 +2518,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
     // снимаем. Иначе он продолжит держать tuneFreq на старой частоте и будет "передёргивать"
     // центр обратно при каждой попытке перестроиться руками: приёмник не даёт себя перетюнить.
     if(sp){
-      const [lo0,hi0]=specSpan(sp);
+      const [lo0,hi0]=sp.sweepView ? [sp.sweepView.min,sp.sweepView.max] : specSpan(sp);   // у sweep — по всему диапазону тюнера: окно ходит за панорамой
       for(let k=0;k<4;k++)
         if(!n.ext[k] && n.mk[k]!=null && (n.mk[k]<lo0 || n.mk[k]>hi0)) n.mk[k]=null;
     }
@@ -2640,7 +2657,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
           }
           return;
         }
-        const [fullLo,fullHi]=specSpan(n.s);
+        const [fullLo,fullHi]=saFullSpan(n), sv=saSv(n);
         const curLo=saFreq(n,0), curHi=saFreq(n,1), curRange=curHi-curLo||1;
         const rc=cv.getBoundingClientRect(), x=(ev.clientX-rc.left)/rc.width;
         const fAtCursor=saFreq(n,x);                 // курсор — по текущей (лог или линейной) шкале
@@ -2648,11 +2665,11 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
         // Shift+колесо — панорама, она как драг двигает и центр приёмника
         if(ev.shiftKey){
           const pan=curRange*0.15*(ev.deltaY>0?1:-1);
-          n.zoom=[curLo+pan, curHi+pan];
-          saSteerIfOutside(n);
+          if(sv) saSetWindow(n,curLo+pan,curHi+pan);
+          else { n.zoom=[curLo+pan, curHi+pan]; saSteerIfOutside(n); }
         } else {
           const zoom=ev.deltaY>0?1.09:1/1.09;         // втрое медленнее прежнего (1.3 → 1.3^(1/3))
-          const newRange=clamp(curRange*zoom, 10, fullHi-fullLo);
+          const newRange=clamp(curRange*zoom, 10, sv ? Math.min(fullHi-fullLo,sv.maxSpan||Infinity) : fullHi-fullLo);
           // репозиция — линейная пропорция от курсора; в лог-режиме центровка чуть неточная,
           // но для целей зума колесом это не критично
           const ratio=(fAtCursor-curLo)/curRange;
@@ -2661,7 +2678,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
           if(newHi>fullHi){ newHi=fullHi; newLo=newHi-newRange; }
           // отзум до упора — весь текущий диапазон приёма: auto, а не старые ручные fmin/fmax,
           // которые после драга/перестройки уже не совпадают с полосой
-          if(Math.abs(newLo-fullLo)<1 && Math.abs(newHi-fullHi)<1){ n.zoom=null; if(!n.p.auto) n.set.auto?.(true); }
+          if(sv) saSetWindow(n,newLo,newHi);
+          else if(Math.abs(newLo-fullLo)<1 && Math.abs(newHi-fullHi)<1){ n.zoom=null; if(!n.p.auto) n.set.auto?.(true); }
           else n.zoom=[newLo,newHi];
         }
       }, {passive:false});
@@ -2672,9 +2690,9 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
           const bx=(n._bpBoxes||[]).filter(b=>mx>=b.x0-2&&mx<=b.x1+2&&my>=b.y0-2&&my<=b.y1+2);
           if(bx.length && n.s){
             const r=bx.sort((a,b)=>(a.r.hi-a.r.lo)-(b.r.hi-b.r.lo))[0].r, pad=(r.hi-r.lo)*.06;
-            const [fl,fh]=specSpan(n.s);
+            const [fl,fh]=saFullSpan(n);
             let lo=Math.max(fl,r.lo-pad), hi=Math.min(fh,r.hi+pad);
-            if(hi-lo>10){ n.zoom=[lo,hi]; saSteerIfOutside(n); return; }
+            if(hi-lo>10){ if(saSv(n)) saSetWindow(n,lo,hi); else { n.zoom=[lo,hi]; saSteerIfOutside(n); } return; }
           }
         }
         n.zoom=null; if(!n.p.auto) n.set.auto?.(true);   // сброс зума — во всю полосу источника
@@ -2794,18 +2812,19 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
         if(pinch && touches.size===2 && touches.has(ev.pointerId)){
           ev.preventDefault();
           if(!n.s) return;
-          const [fullLo,fullHi]=specSpan(n.s);
+          const [fullLo,fullHi]=saFullSpan(n), sv=saSv(n);
           const {mx,d,dy}=pinchState();
           if(pinch.dy0>24 && dy>24 && pinch.cy<(n._hs||0)){      // пальцы разведены по вертикали — масштаб дБ вокруг уровня между ними
             const span0=pinch.tp0-pinch.fl0, ns=clamp(span0*pinch.dy0/dy,2,160), plotH=Math.max(1,(n._hs|0)-14);
             const at=pinch.tp0-(pinch.cy/plotH)*span0, nt=at+(pinch.cy/plotH)*ns;
             saVScale(n,nt-ns,nt);
           }
-          const newRange=clamp(pinch.r0*pinch.d0/d, 10, fullHi-fullLo);
+          const newRange=clamp(pinch.r0*pinch.d0/d, 10, sv ? Math.min(fullHi-fullLo,sv.maxSpan||Infinity) : fullHi-fullLo);
           let newLo=pinch.f0-mx*newRange, newHi=newLo+newRange;
           if(newLo<fullLo){ newLo=fullLo; newHi=newLo+newRange; }
           if(newHi>fullHi){ newHi=fullHi; newLo=newHi-newRange; }
-          if(Math.abs(newLo-fullLo)<1 && Math.abs(newHi-fullHi)<1){ n.zoom=null; if(!n.p.auto) n.set.auto?.(true); }
+          if(sv) saSetWindow(n,newLo,newHi);
+          else if(Math.abs(newLo-fullLo)<1 && Math.abs(newHi-fullHi)<1){ n.zoom=null; if(!n.p.auto) n.set.auto?.(true); }
           else n.zoom=[newLo,newHi];
           return;
         }
@@ -2876,6 +2895,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
           newLo=lo0-range*dt; newHi=hi0-range*dt;
         }
         n._dragActive=true;
+        if(saSv(n)){ saSetWindow(n,newLo,newHi); return; }   // sweep: окно ведёт диапазон развёртки
         n.zoom=[newLo,newHi];
         saSteerIfOutside(n);                         // приёмник — только если окно вышло за захваченную полосу
       }, {passive:false});

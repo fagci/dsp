@@ -5151,17 +5151,97 @@ function sdrSweepPlan(n, hw){
   if(n.sw && n.sw.key===key) return n.sw;
   const total=(hops-1)*stride+use;
   if(total>SDR_SWEEP_MAX_BINS) throw new Error(`too many bins (${(total/1e6).toFixed(1)}M): narrow the range or reduce sweep FFT size`);
-  const mag=new Float32Array(total), freqs=new Float64Array(total);
+  // Диапазон меняют перетаскиванием/зумом в 'sa' — пересборка плана идёт много раз в секунду. Поэтому:
+  //  1) буферы чередуются (старую панораму 'sa' ещё читает) и не выделяются заново, если хватает ёмкости — без мусора для GC;
+  //  2) уже измеренное переносится на новую сетку по частоте — на экране не пустота, а прежняя картина, дорисовываются края;
+  //  3) шаги, чьих бинов не было в старой панораме (fresh), измеряются первыми — иначе при каждой смене плана
+  //     проход начинался бы с шага 0, и правый край, открытый перетаскиванием, никогда не доходил бы до очереди.
+  const old=n.sw, pool=n._swPool||(n._swPool=[null,null]), slot=n._swSlot=(n._swSlot|0)^1;
+  let pb=pool[slot];
+  if(!pb || pb.cap<total){
+    const cap=Math.min(SDR_SWEEP_MAX_BINS, Math.ceil(total*1.25)+16);
+    pb=pool[slot]={cap, mag:new Float32Array(cap), pk:new Float32Array(cap), fr:new Float64Array(cap)};
+  }
+  const mag=pb.mag.subarray(0,total), pk=pb.pk.subarray(0,total), freqs=pb.fr.subarray(0,total);
+  mag.fill(0); pk.fill(0);
   for(let j=0;j<total;j++) freqs[j]=lo+j*binHz;
-  const win=window_('hann',N); let wsum=0; for(let i=0;i<N;i++) wsum+=win[i];
-  n.sw={key, N, use, stride, binHz, lo, hops, k:0, win, wsum, hw:!!hw,
-        hp:hw ? null : new Float32Array(hops*use), hdone:hw ? null : new Uint8Array(hops),
+  const hp=hw ? null : new Float32Array(hops*use);
+  let fresh=null, k0=0;
+  if(old){
+    const om=old.spec.mag, op=old.peak.mag, ob=old.binHz, ol=old.lo, on=om.length;
+    const j0=Math.max(0,Math.ceil((ol-lo)/binHz)), j1=Math.min(total,Math.floor((ol+(on-1)*ob-lo)/binHz)+1);
+    for(let j=j0;j<j1;j++){ const i=Math.round((lo+j*binHz-ol)/ob); if(i>=0 && i<on){ mag[j]=om[i]; pk[j]=op[i]; } }
+    if(!hw){
+      fresh=new Uint8Array(hops); let any=0;
+      for(let h=0;h<hops;h++){
+        const a=h*stride, b=Math.min(total,a+use);
+        if(a<j0 || b>j1){ fresh[h]=1; any=1; }
+      }
+      if(any){ k0=fresh.indexOf(1); } else fresh=null;
+    }
+  }
+  const win=old && old.N===N ? old.win : window_('hann',N); let wsum=0; for(let i=0;i<N;i++) wsum+=win[i];
+  n.sw={key, N, use, stride, binHz, lo, hops, k:k0, win, wsum, hw:!!hw, fresh,
+        hp, hdone:hw ? null : new Uint8Array(hops),
         re:new Float32Array(N), im:new Float32Array(N), pw:new Float64Array(N),
-        spec:{mag, freqs, sr, size:total, rev:1}, tLine:performance.now(), lineMs:null,
-        peak:{mag:new Float32Array(total), freqs, sr, size:total, rev:1}};
+        // rev не обнуляется: смена диапазона — не новая строка водопада (строки добавляются по росту rev)
+        spec:{mag, freqs, sr, size:total, rev:old?old.spec.rev:1, sweepView:sdrSweepView(n)}, tLine:old?old.tLine:performance.now(), lineMs:old?old.lineMs:null,
+        peak:{mag:pk, freqs, sr, size:total, rev:old?old.peak.rev:1}};
   if(hw) Object.assign(n.sw, {parse:{buf:null, n:0, synced:false}, acc:new Float64Array(total), cnt:new Int32Array(hops),
     lastH:-1, passes:0, began:false, tBlock:performance.now()});
   return n.sw;
+}
+// Окно просмотра 'sa' ведёт диапазон развёртки: перетаскивание — сдвиг, колесо/щипок — масштаб, вплоть до всего диапазона тюнера.
+// Окно в 'sa' — источник правды и рисуется сразу; сюда приходит только желаемый диапазон, он применяется не чаще раза в
+// SDR_SWEEP_APPLY_MS (последнее значение не теряется). Данные при этом переносятся (см. sdrSweepPlan), поэтому ни рывков, ни откатов.
+const SDR_SWEEP_APPLY_MS=120, SDR_SWEEP_APPLY_HW_MS=500;   // аппаратная развёртка перезапускает прошивку — реже
+function sdrTuneRange(n){                          // [мин, макс], Гц — в частотах экрана (с учётом конвертера)
+  const d=n.dev, k=d?.kind, c=sdrConv(n);
+  let r;
+  if(k==='hackrf') r=[1e6,6000e6];
+  else if(k==='rtl') r=[/V4/.test(d.tunerName||'') ? .1e6 : 24e6, 1766e6];     // V4 — КВ через апконвертер
+  else if(k==='airspy') r=[24e6,1800e6];
+  else if(k==='airspyhf') r=[.01e6,260e6];
+  else r=[.1e6,6000e6];
+  return [r[0]+c, r[1]+c];
+}
+function sdrSweepView(n){
+  const sv=n._sweepView||(n._sweepView={set:(lo,hi)=>sdrSweepWant(n,lo,hi)});
+  [sv.min,sv.max]=sdrTuneRange(n);
+  sv.maxSpan=sdrSweepMaxSpan(n);
+  return sv;
+}
+// шире этого план не собрать (лимит бинов SDR_SWEEP_MAX_BINS): запрос шире выключил бы sweep по ошибке — режем заранее
+function sdrSweepMaxSpan(n){
+  const hw=!!(n.p.swHw && n.dev?.kind==='hackrf'), N=hw ? Math.min(4096,+n.p.swFft||1024) : +n.p.swFft||1024;
+  return .95*SDR_SWEEP_MAX_BINS*((hw ? SDR_HW_RATE : n.sourceRate||2e6)/N);
+}
+function sdrSweepWant(n, lo, hi){
+  const [mn,mx]=sdrTuneRange(n);
+  if(!(hi>lo) || !(mx>mn)) return;
+  // уже одного шага развёртки диапазон не делаем: узкое окно — шаг вокруг его центра
+  const minSpan=Math.min(mx-mn, Math.max(1e5, (n.sourceRate||2e6)*clamp(+n.p.swUse||.8,.3,1)));
+  const span=clamp(hi-lo, minSpan, Math.max(minSpan, Math.min(mx-mn, sdrSweepMaxSpan(n)))), a=clamp((lo+hi)/2-span/2, mn, mx-span);
+  n._swWant=[a, a+span];
+}
+function sdrSweepApplyWant(n){
+  const w=n._swWant; if(!w) return;
+  const now=performance.now();
+  if(now-(n._swWantT||0)<(n.p.swHw && n.dev?.kind==='hackrf' ? SDR_SWEEP_APPLY_HW_MS : SDR_SWEEP_APPLY_MS)) return;
+  n._swWant=null; n._swWantT=now;
+  const a=Math.round(w[0])/1e6, b=Math.round(w[1])/1e6;
+  if(a===n.p.swLo && b===n.p.swHi) return;
+  if(n.set?.swLo) n.set.swLo(a); else n.p.swLo=a;
+  if(n.set?.swHi) n.set.swHi(b); else n.p.swHi=b;
+}
+// следующий шаг прохода: после смены диапазона сначала шаги без данных (fresh), потом обычный круг
+function sdrSweepNextHop(sw){
+  const H=sw.hops;
+  if(sw.fresh){
+    for(let d=1;d<=H;d++){ const k=(sw.k+d)%H; if(sw.fresh[k] && !sw.hdone[k]) return k; }
+    sw.fresh=null;
+  }
+  return (sw.k+1)%H;
 }
 async function sdrSweepTune(n, f){
   while(n.busy) await sdrSleep(2);
@@ -5365,7 +5445,7 @@ async function sdrSweepLoop(n){
       if(sw2!==sw){ sw=sw2; epoch=await sdrSweepTune(n, center(sw,sw.k)); continue; }   // параметры сменились
       if(!cap){ epoch=await sdrSweepTune(n, center(sw,sw.k)); continue; }             // таймаут — повтор шага
       const kDone=sw.k;
-      sw.k=(sw.k+1)%sw.hops;
+      sw.k=sdrSweepNextHop(sw);
       const tuneP=sdrSweepTune(n, center(sw,sw.k));  // перестройка идёт, пока считаем БПФ
       sdrSweepPlace(n, sw, cap, kDone);
       if(kDone===sw.hops-1){
@@ -5666,7 +5746,8 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     }
 
     const sweepOn=n.p.sweep && n.connected && !n.dev?.fixedFreq;
-    if(!n.p.sweep && n.sw){ n.sw=null; n.swErr=null; }
+    if(!n.p.sweep && n.sw){ n.sw=null; n.swErr=null; n._swWant=null; }
+    if(sweepOn) sdrSweepApplyWant(n);
     if(sweepOn && lf==null && !n.swRunning) (n.p.swHw && n.dev.kind==='hackrf' ? sdrHwSweepLoop : sdrSweepLoop)(n);
     if(!n.swActive) rtlUpdateSpec(n);
     iqRecAuto(n,I);
@@ -5682,6 +5763,9 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
       spOut.chans=n.swActive || n.appliedFreq==null || !Number.isFinite(cf) ? null : rtlChanBands(n, cf, half).map(c=>rtlChanMeter(n, c, !sweepOn));
       // полоса канала для подсказки маркера под курсором в 'sa'
       spOut.pickBw=n.p.demod==='IQ' ? null : {mode:n.p.demod, pass:rtlPlan(n.p.demod, n.sourceRate, n.p.bw).pass};
+      // обратный канал для 'sa': окно просмотра ведёт диапазон развёртки (только у панорамы sweep)
+      if(sweepOn && n.sw) spOut.sweepView=sdrSweepView(n);
+      else if(spOut.sweepView) spOut.sweepView=null;
       // обратный канал для 'sa': перетаскивание края шторки задаёт новую ширину полосы ПЧ
       spOut.setChanBw=n._setChanBw||(n._setChanBw=(mode,w)=>{
         const lim=RTL_BW_LIMITS[mode]; if(lim) setMod(n,'bw',Math.round(clamp(w,lim[0],lim[1])));

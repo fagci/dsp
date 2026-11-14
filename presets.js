@@ -3314,9 +3314,11 @@ clearAll();
 const nt=addNode('note',40,40,{text:'Connect the SDR — it steps across the range, the spectrum shows the whole band,\n'+
   'the waterfall gets one line per full pass.\n'+
   'Tap the spectrum — marker 1 pauses the sweep and tunes to that frequency; remove the marker to resume.\n'+
-  'Use manual gain: with AGC every step has its own level and the waterfall gets striped.'});
-nt.size.w=460; nt.size.h=170; applySize(nt);
-const rx=addNode('rtlsdr',40,260,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'WFM',
+  'Use manual gain: with AGC every step has its own level and the waterfall gets striped.\n'+
+  'Drag the spectrum to move the sweep range, wheel / pinch to zoom: the range follows the window, from a single step up to the whole tuner range\n'+
+  '(Shift+wheel pans). Already measured data stays on screen and only the newly opened edges are filled in.'});
+nt.size.w=460; nt.size.h=230; applySize(nt);
+const rx=addNode('rtlsdr',40,320,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'WFM',
   sweep:true,swLo:88,swHi:108,swFft:'1024',swAvg:8});
 const sa=addNode('sa',540,40,{auto:true,floor:-90,top:-20,split:.3});
 sa.size.w=720; sa.size.h=460; applySize(sa);
