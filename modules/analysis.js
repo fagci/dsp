@@ -2262,7 +2262,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
           {n:'show',t:'select',opts:['both','spectrum','waterfall'],d:'both',label:'show: spectrum and waterfall, only the spectrum, or only the waterfall (drag the boundary between them to the edge)'},
           {n:'fill',t:'select',opts:['flat','gradient','off'],d:'flat',short:'fill',label:'fill under the trace: flat, gradient (brightest at the strongest peak, fading to the floor) or none'},
           {n:'fillAlpha',t:'range',min:0,max:80,step:1,d:22,short:'strength, %',label:'fill strength, % (gradient: at its brightest)',adv:true},
-          {n:'chWf',t:'check',d:false,short:'by channels',label:'waterfall by channels: one cell per channel of the bands input (the same channels as the channel bars, the level is the peak of the bins inside; columns between channels stay dark)',fn:n=>{ n._chc=null; }},
+          {n:'chWf',t:'check',d:false,short:'by channels',label:'waterfall by channels: one cell per channel of the bands input (the same channels as the channel bars, the level is always the peak of the bins inside; columns between channels stay dark)',fn:n=>{ n._chc=null; }},
           {n:'chBars',t:'select',opts:['off','peak','rms'],d:'off',short:'channel bars',label:'channel bars: the spectrum at channel resolution — one bar per channel of the bands input (centres lo + k·step, width = step; a range without step — 12.5 kHz), the level is the peak or the rms of the bins inside the channel. Too many channels for the width — the usual trace'},
           {n:'frange',t:'range2',keys:['fmin','fmax'],min:1,max:6e9,step:1,log:true,d:[0,4000],label:'range, Hz'},
           {n:'dbrange',t:'range2',keys:['floor','top'],min:-140,max:20,step:1,d:[-100,-20],label:'range, dB'},
@@ -2289,7 +2289,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
           {n:'ant',t:'select',opts:['off','antenna','harmonics','both'],d:'off',label:'markers: antenna length / harmonic source f/k'},
           {n:'antVf',t:'range',min:.6,max:1,step:.01,d:.95,label:'antenna shortening factor',adv:true},
           // выключить — тот же жест, что и "очистить": незачем отдельная кнопка (см. fn у 'check' в core-graph.js)
-          {n:'peakHold',t:'check',d:false,label:'peak hold',fn:n=>{ if(!n.p.peakHold){ n.peak=null; if(typeof saPeakClear==='function') saPeakClear(n); } }},
+          {n:'peakHold',t:'check',d:false,label:'peak hold',fn:n=>{ if(!n.p.peakHold){ n.peak=null; n._chPk=null; if(typeof saPeakClear==='function') saPeakClear(n); } }},
           {n:'peakDecay',t:'range',min:0,max:120,step:1,d:0,short:'decay, s',label:'peak decay, s per 60 dB (0 = hold forever)',adv:true},
           {n:'autoDb',t:'button',hidden:true,label:'Auto dB',fn:n=>{ if(typeof saAutoDb==='function') saAutoDb(n); }},
           {n:'adHead',t:'range',min:0,max:40,step:1,d:20,label:'Auto dB: headroom above the strongest signal, dB',adv:true},
@@ -3075,7 +3075,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
         const line=n._line, cw=saChanCols(n,Wp);
         let cl=null;
         if(cw){                                         // уровень каждого канала один раз за кадр
-          const md=n.p.chBars==='rms' ? 'rms' : 'peak';
+          const md='peak';                              // история водопада хранит коды пика — и живая строка по пику, иначе перерисовка меняла бы картинку
           cl=new Float32Array(cw.chs.length);
           for(let k=0;k<cl.length;k++) cl[k]=saChanLevel(m,N,specBin(n.s,cw.chs[k].lo),specBin(n.s,cw.chs[k].hi),md);
         }
@@ -3140,11 +3140,22 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
             const c=chs[k], x0=px[k].x0/kB, w=px[k].w/kB;
             if(c.lo<sLo || c.hi>sHi) continue;                           // канал вне захваченной полосы — без столбика
             const b0=specBin(n.s,c.lo), b1=specBin(n.s,c.hi);
-            barsGeo[k]={x0,w,b0,b1};
-            const lv=saDb(saChanLevel(t1,N,b0,b1,n.p.chBars));
+            const lin=saChanLevel(t1,N,b0,b1,n.p.chBars), lv=saDb(lin);
+            barsGeo[k]={x0,w,f:c.f,lin};
             const y=plotH-clamp((lv-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1;
             cx.fillStyle=n.colTS; cx.globalAlpha=Math.max(.18,fa*2.2); cx.fillRect(x0,y,w,plotH-y);
             cx.globalAlpha=1; cx.fillRect(x0,y,w,Math.min(2,plotH-y));      // верх столбика — плотной полоской
+          }
+          // peak hold каналов — максимум во времени уровня самого столбика (peak или rms канала), а не уровень канала по максимумам бинов:
+          // иначе в режиме rms полоска стояла бы заметно выше любого столбика
+          if(n.p.peakHold){
+            const fr=n.s.freqs||null, pk=(n._chPk && n._chPk.mode===n.p.chBars && n._chPk.fr===fr) ? n._chPk : (n._chPk={mode:n.p.chBars,fr,m:new Map(),t:0});
+            if(fresh || !pk.t){
+              const now=performance.now(), dt=pk.t ? Math.min(5,(now-pk.t)/1000) : 0, kd=n.p.peakDecay>0 ? Math.pow(10,-3*dt/n.p.peakDecay) : 1;
+              if(kd<1) for(const [f,v] of pk.m) pk.m.set(f,v*kd);
+              for(const g of barsGeo) if(g) pk.m.set(g.f,Math.max(pk.m.get(g.f)||0,g.lin));
+              pk.t=now;
+            }
           }
         }
       }
@@ -3174,12 +3185,12 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
       if(diff){ cx.strokeStyle=themeColor('--scr-hi')+'22'; cx.beginPath();
         cx.moveTo(0,plotH/2); cx.lineTo(W,plotH/2); cx.stroke(); }
       // peak hold — тонкая линия максимума поверх обычной трассы
-      if(n.p.peakHold && n.peak && n.peak.length===N && barsGeo){
-        // столбики каналов — максимум тоже полоской на уровне пика канала, по ширине столбика
+      if(n.p.peakHold && barsGeo){
+        // столбики каналов — максимум полоской на уровне максимума канала во времени, по ширине столбика
         cx.fillStyle=themeColor('--acc');
         for(const g of barsGeo){
-          if(!g) continue;
-          const v=saDb(saChanLevel(n.peak,N,g.b0,g.b1,n.p.chBars)), y=plotH-clamp((v-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1;
+          if(!g || !n._chPk) continue;
+          const v=saDb(n._chPk.m.get(g.f) ?? g.lin), y=plotH-clamp((v-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1;
           cx.fillRect(g.x0,Math.max(0,y-1),g.w,2);
         }
       } else if(n.p.peakHold && n.peak && n.peak.length===N){
