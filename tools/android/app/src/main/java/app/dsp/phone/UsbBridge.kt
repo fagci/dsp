@@ -85,6 +85,22 @@ class UsbSession(private val sock: Socket, private val backend: UsbBackend) {
     @Volatile private var alive = true
     private val out: OutputStream = sock.getOutputStream()
     private val pool = Executors.newCachedThreadPool { r -> Thread(r, "dsp-usb").also { it.isDaemon = true } }
+    // Чтения и записи одной конечной точки идут строго по очереди, в порядке прихода. Страница держит несколько чтений в полёте (очередь
+    // трансферов, как у librtlsdr), а в общем пуле они шли параллельно и растаскивали поток по 16 КБ: куски IQ перемешивались — хрип в звуке
+    private val lanes = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ExecutorService>()
+    private fun lane(key: String) = lanes.getOrPut(key) { Executors.newSingleThreadExecutor { r -> Thread(r, "dsp-usb-ep").also { it.isDaemon = true } } }
+    private fun dispatch(m: ByteArray) {
+        val key = try {
+            if (m.size < 4) null else {
+                val hl = ((m[0].toInt() and 255) shl 24) or ((m[1].toInt() and 255) shl 16) or ((m[2].toInt() and 255) shl 8) or (m[3].toInt() and 255)
+                if (hl < 2 || 4 + hl > m.size) null else JSONObject(String(m, 4, hl, Charsets.UTF_8)).let { h ->
+                    val op = h.optString("op")
+                    if (op == "in" || op == "out") h.optString("dev") + "#" + (h.optInt("ep") and 0xff) else null
+                }
+            }
+        } catch (e: Exception) { null }
+        if (key != null) lane(key).execute { handle(m) } else pool.execute { handle(m) }
+    }
     // События приходят из BroadcastReceiver на главном потоке: запись в сокет там бросает NetworkOnMainThreadException, и send
     // закрывал соединение — страница видела «the USB bridge is closed» вместо отключения устройства. Пишем из своего потока, по порядку
     private val evq = Executors.newSingleThreadExecutor { r -> Thread(r, "dsp-usb-ev").also { it.isDaemon = true } }
@@ -114,7 +130,7 @@ class UsbSession(private val sock: Socket, private val backend: UsbBackend) {
                 when (op) {
                     8 -> break
                     9 -> synchronized(out) { out.write(BridgeServer.frame(pl, 10)); out.flush() }
-                    0, 1, 2 -> { msg.write(pl); if (fin) { val m = msg.toByteArray(); msg.reset(); pool.execute { handle(m) } } }
+                    0, 1, 2 -> { msg.write(pl); if (fin) { val m = msg.toByteArray(); msg.reset(); dispatch(m) } }
                 }
             }
         } catch (e: Exception) { /* обрыв */ }
@@ -123,6 +139,7 @@ class UsbSession(private val sock: Socket, private val backend: UsbBackend) {
             backend.unlisten(ev)
             pool.shutdownNow()
             evq.shutdownNow()
+            for (l in lanes.values) l.shutdownNow()
         }
     }
 
