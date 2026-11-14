@@ -2896,7 +2896,7 @@ const rtlEpochDone=${rtlEpochDone};
 async function stream(readsPerSec, depth){
   const q=[]; rps=readsPerSec;
   const chunk=()=>Math.max(512, Math.min(131072, 512*Math.ceil(rate/rps/512)));
-  const fill=()=>{ while(streaming && api && q.length<depth){ const e=api.epoch(), ms=chunk()/rate*1000; q.push(api.readSamples(chunk()*api.bps).then(b=>({b,e:rtlEpochDone(api,e,ms)}), err=>({err}))); } };
+  const fill=()=>{ while(streaming && api && q.length<depth){ const a=api, e=a.epoch(), ms=chunk()/rate*1000; q.push(a.readSamples(chunk()*a.bps).then(b=>({b,e:rtlEpochDone(a,e,ms)}), err=>({err}))); } };
   fill();
   while(streaming && q.length){
     const p=q.shift(); fill();
@@ -4161,6 +4161,7 @@ const RTL_MAX_INFLIGHT=8;
 // перестройки (начало ≈ завершение − длительность чанка, запас 5 мс на дрожание); иначе остаётся эпоха постановки и в спектр не идёт.
 // Раньше терялись все чанки очереди (до RTL_USB_QUEUE × 25 мс) — отсюда задержка после смены частоты.
 function rtlEpochDone(dev, e, chunkMs){
+  if(!dev) return e;
   const cur=dev.epoch();
   if(cur===e || !dev.tuneT) return e;
   return performance.now()-chunkMs>=dev.tuneT()+5 ? cur : e;
