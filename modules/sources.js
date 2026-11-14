@@ -1673,6 +1673,48 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
     if(arr[2]&0x40){ hasPllLock=true; return; }
     hasPllLock=false;
   }
+  // Записать регистры from..to по новым значениям nw (индекс = регистр−5): только изменившиеся, пачками до 7 байт одной передачей;
+  // неизменившиеся байты в зазоре между двумя изменившимися дописываются теми же значениями (дешевле отдельной передачи)
+  async function writeSpans(from, to, nw){
+    let r=from;
+    while(r<=to){
+      while(r<=to && shadow[r-5]===nw[r-5]) r++;
+      if(r>to) break;
+      let e=r;
+      for(let k=r+1; k<=to && k<r+7; k++) if(shadow[k-5]!==nw[k-5]) e=k;
+      const part=Array.from(nw.subarray(r-5,e-5+1));
+      await com.i2c.writeRegisters(i2cAddr,r,part);
+      for(let i=0;i<part.length;i++) shadow[r-5+i]=part[i];
+      r=e+1;
+    }
+  }
+  // fast: то же, что setMux + setPll, но регистры считаются заранее и пишутся минимумом передач (по ~4 мс каждая в WebUSB):
+  // сперва мультиплексор и автонастройка 128 кГц (0x08–0x09, 0x17–0x1b), последним — PLL (0x10–0x16), как и раньше; после захвата — 8 кГц
+  async function setFastBatch(freq, rf){
+    const mhz=freq/1e6; let i=0;
+    for(i=0;i<MUX_CFGS.length-1;i++) if(mhz<MUX_CFGS[i+1][0]) break;
+    const c=MUX_CFGS[i];
+    const pllRef=Math.floor(xtalFreq), vcoPowerRef=isR828D?1:2;
+    let mixDiv=2, divNum=0;
+    while(mixDiv<=64 && !(freq*mixDiv>=1770000000 && freq*mixDiv<3540000000)) mixDiv<<=1;
+    for(let d=mixDiv; d>2; d>>=1) divNum++;
+    const vcoFreq=freq*mixDiv, nint=Math.floor(vcoFreq/(2*pllRef)), vcoFra=vcoFreq%(2*pllRef);
+    if(nint>(128/vcoPowerRef-1)){ hasPllLock=false; return null; }
+    const ni=Math.floor((nint-13)/4), si=(nint-13)%4, sdm=Math.min(65535, Math.floor(32768*vcoFra/pllRef));
+    const nw=Uint8Array.from(shadow), set=(reg,v,mask)=>{ nw[reg-5]=(nw[reg-5]&~mask)|(v&mask); };
+    set(0x17,c[1],0x08); set(0x1a,c[2],0xc3); set(0x1b,c[3],0xff); set(0x10,0x00,0x0b); set(0x08,0x00,0x3f); set(0x09,0x00,0x3f);
+    set(0x1a,0x00,0x0c);                                      // автонастройка 128 кГц: быстрый захват
+    if(isV4) set(0x17, v4OpenD(rf), 0x08);                    // вход V4 выбирается тем же регистром — сразу итоговое значение
+    nw[0x10-5]=(nw[0x10-5]&~0xf0)|((divNum<<5)&0xe0);
+    nw[0x12-5]=0x06|(vcoFra===0?0x08:0x00);
+    nw[0x14-5]=ni+(si<<6);
+    nw[0x15-5]=sdm&0xff; nw[0x16-5]=sdm>>8;
+    await writeSpans(0x08,0x09,nw); await writeSpans(0x17,0x1b,nw); await writeSpans(0x10,0x16,nw);
+    await new Promise(res=>setTimeout(res,4));                // как в быстром setPll: бит захвата ещё от прежней частоты
+    await getPllLock(true);
+    await writeRegMask(0x1a, 0x08, 0x08);                     // автонастройка 8 кГц — точная подстройка после захвата
+    return 2*pllRef*(nint+sdm/65536)/mixDiv;
+  }
   // GPIO RTL2832U (блок SYS): GPO 0x3001, GPOE 0x3003, GPD 0x3004 — как rtlsdr_set_bias_tee_gpio
   async function setGpio(bit, on){
     const m=1<<bit;
@@ -1706,8 +1748,9 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
     // константы — так делает и официальный драйвер (dev->tun_xtal).
     const upconvert=(isV4 && rf<=28.8e6) ? xtalFreq : 0;
     const loFreq=freq+upconvert;
-    await setMux(loFreq);
-    let r=await setPll(loFreq);
+    let r;
+    if(fast) r=await setFastBatch(loFreq, rf);
+    else { await setMux(loFreq); r=await setPll(loFreq); }
     if(!hasPllLock && fast){ fast=false; try{ r=await setPll(loFreq); } finally{ fast=true; } }   // быстрый путь не захватил — полный
     // та же засада, что была с калибровкой фильтра: PLL иногда не успевает заблокироваться
     // с первой попытки на реальной частоте приёма, не только на калибровочных 56МГц. Раньше
@@ -1725,9 +1768,9 @@ function rtlMakeR820T(com, xtalFreq, i2cAddr, isV4){
   }
   // Blog V4: R828D разведён через триплексер на три физических входа (HF/VHF/UHF) —
   // без явного переключения регистров антенна не подключена к активному тракту тюнера.
+  const v4OpenD=freq=>(freq<=2.2e6 || (freq>=85e6&&freq<=112e6) || (freq>=172e6&&freq<=242e6)) ? 0x00 : 0x08;
   async function setV4Input(freq){
-    const openD = (freq<=2.2e6 || (freq>=85e6&&freq<=112e6) || (freq>=172e6&&freq<=242e6)) ? 0x00 : 0x08;
-    await writeRegMask(0x17, openD, 0x08);
+    await writeRegMask(0x17, v4OpenD(freq), 0x08);
     const band = freq<=28.8e6 ? 1 : (freq<250e6 ? 2 : 3); // 1=HF 2=VHF 3=UHF
     if(band===curBand) return;
     curBand=band;
