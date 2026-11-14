@@ -5014,8 +5014,9 @@ function sdrAdaptRps(n){
   if(!n.dev || n.dev.kind!=='rtl' || n.swActive || n.p.sweep) return;     // sweep ведёт скорость чтения сам
   const t=n._tuneT||(n._tuneT=[]), now=performance.now();
   while(t.length && now-t[0]>3000) t.shift();
-  // после любой перестройки секунду читаем мелко (10 мс) — новая картинка приходит быстрее
-  const want=(t.length>=3 || (t.length && now-t[t.length-1]<1000)) ? SDR_SCAN_RPS : RTL_READS_PER_SEC;
+  // мелкие чанки — только в режиме «fast retune» (сканирование): с эпохой по завершению трансфера устаревшие чанки не теряются,
+  // а при перетаскивании спектра (перестройки подряд) 100 чанков/с загружали демод-воркер на 60–80% и рвали звук
+  const want=(n.p.fastTune && t.length>=3) ? SDR_SCAN_RPS : RTL_READS_PER_SEC;
   if((n.usbRps||RTL_READS_PER_SEC)!==want) sdrSetReadRate(n, want);
 }
 function sdrSetReadRate(n, rps){
