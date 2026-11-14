@@ -1504,7 +1504,7 @@ function rtlMakeCom(dev){
   async function writeI2CRegs(addr,reg,bytes){ await writeRegBuffer(RTL_BLOCK.I2C, addr, new Uint8Array([reg,...bytes]).buffer); }
   async function readI2CReg(addr,reg){ await writeRegBuffer(RTL_BLOCK.I2C, addr, new Uint8Array([reg]).buffer); return await readReg(RTL_BLOCK.I2C, addr, 1); }
   async function writeI2CReg(addr,reg,value){ await writeRegBuffer(RTL_BLOCK.I2C, addr, new Uint8Array([reg,value]).buffer); }
-  async function readI2CRegBuffer(addr,reg,len){ await writeRegBuffer(RTL_BLOCK.I2C, addr, new Uint8Array([reg]).buffer); return await readRegBuffer(RTL_BLOCK.I2C, addr, len); }
+  async function readI2CRegBuffer(addr,reg,len){ if(reg) await writeRegBuffer(RTL_BLOCK.I2C, addr, new Uint8Array([reg]).buffer); return await readRegBuffer(RTL_BLOCK.I2C, addr, len); }   // с регистра 0 — без записи указателя: R82xx читает с 0 сам (r82xx_read в librtlsdr), на передачу меньше за перестройку
   async function readBulk(length){ const res=await dev.transferIn(1,length); return res.data.buffer; }
   async function writeEach(arr){
     for(const line of arr){
@@ -4176,7 +4176,7 @@ const RTL_USB_QUEUE=8;       // трансферов в полёте, ~200мс �
 const RTL_TARGET_S=0.08;
 const RTL_FILE_TARGET_S=0.3;  // файл: задержка не важна, нужен запас на заминки чтения и главного потока
 const RTL_DROP_S=0.3;
-const RTL_SERVO_PPM=500;
+const RTL_SERVO_PPM=2500;     // 500 упиралось в потолок (серво 417–488 ppm), запас держался ~2× target и периодически сбрасывался щелчком
 const RTL_EXCESS=2;         // средний запас выше target×RTL_EXCESS — сброс до target
 const RTL_SERVO_G=0.01;      // EMA уровня кольца на блок движка, τ ≈ 1с при BLOCK=512/48к
 
@@ -4615,8 +4615,11 @@ function rtlSafeSr(v){
 // Общий регулятор чтения кольца. st: {rebuffering, lagAvg}; lag и need — в отсчётах кольца,
 // rateIn — их частота. Возвращает {k, drop}: k — множитель шага (0 = отдать тишину),
 // drop — сколько отсчётов пропустить перед чтением.
-const rtlTargetS=n=>n.dev?.kind==='file' ? RTL_FILE_TARGET_S : RTL_TARGET_S;
+// Адаптивный запас: перестройка по USB (60–150 мс при смене частоты) дольше базовых 80 мс — после обрыва (starve) запас растёт
+// на 60 мс (до 250 мс) и держится; без обрывов 60 с — снова понемногу убывает (серво успевает следом)
+const rtlTargetS=n=>n.dev?.kind==='file' ? RTL_FILE_TARGET_S : RTL_TARGET_S+(n._tgtBoost||0);
 function rtlPace(n, st, lag, rateIn, need, tag){
+  if(n._tgtBoost){ const t=performance.now(); if(t-n._tgtBoostT>60000){ n._tgtBoost=Math.max(0,n._tgtBoost-0.03); n._tgtBoostT=t-30000; } }
   const target=Math.max(need*2, rateIn*rtlTargetS(n));
   let drop=0;
   if(lag>Math.max(target*2, rateIn*RTL_DROP_S)){
@@ -4629,6 +4632,7 @@ function rtlPace(n, st, lag, rateIn, need, tag){
   }
   if(lag<need){
     st.rebuffering=true; n.underrunsStarve++;
+    if(n.dev && n.dev.kind!=='file'){ n._tgtBoost=Math.min(0.25,(n._tgtBoost||0)+0.06); n._tgtBoostT=performance.now(); }
     console.warn(`[rtlsdr] ${tag} ring starve, lag=${lag.toFixed(0)} need=${need.toFixed(0)} @ ${performance.now().toFixed(0)}ms`);
     return {k:0, drop};
   }
@@ -4737,7 +4741,7 @@ async function sdrTune(n){
   const tT0=performance.now();
   const hw=await n.dev.setCenterFrequency(Math.round((want+off-conv)/k));
   (n._tuneT||(n._tuneT=[])).push(performance.now());
-  const tMs=performance.now()-tT0; if(tMs>60) console.warn(`[rtlsdr] перестройка заняла ${tMs.toFixed(0)}мс (fast=${!!n.p.fastTune}) @ ${performance.now().toFixed(0)}ms`);
+  const tMs=performance.now()-tT0; n._lastTuneMs=tMs; if(tMs>60) console.warn(`[rtlsdr] перестройка заняла ${tMs.toFixed(0)}мс (fast=${!!n.p.fastTune}) @ ${performance.now().toFixed(0)}ms`);
   n.actualFreq=hw*k+conv; n.dcOff=off; n.appliedFreq=want; n.appliedPpm=ppm; n.appliedConv=conv;
   if(n.dev.fixedFreq){ n.p.freq=hw; n.appliedFreq=hw; }   // у файла центр не перестраивается
 }
@@ -5461,7 +5465,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
       }
     } else if(typeof I.steerFreq!=='number') n._inSteer=I.steerFreq;
     if(n.p.sweep) n._steerPending=null;             // панорама не "ведёт" приёмник
-    if(!target && n._steerPending!=null && now-(n._lastSteerRetune||0)>=80){
+    if(!target && n._steerPending!=null && now-(n._lastSteerRetune||0)>=Math.max(80, 1.3*(n._lastTuneMs||0))){
       target=n._steerPending-(n.dcOff||0); prio=3; n._steerPending=null; n._lastSteerRetune=now;   // троттлинг физической перестройки при драге
     }
     // tuneFreq: смена значения — новая частота канала; за пределами полосы — ещё и перестройка центра
