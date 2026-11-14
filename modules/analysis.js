@@ -2109,7 +2109,7 @@ function saHistPush(n, s){
     lv.push(a=b);
   }
   let bytes=0; for(const a of lv) bytes+=a.length;
-  h.rows.push({lo, bin, lv}); h.bytes+=bytes;
+  h.rows.push({lo, bin, lv, id:h.seq=(h.seq||0)+1}); h.bytes+=bytes;
   const maxRows=Math.max(1, n.wfH||1000);
   while(h.rows.length>maxRows){ const r=h.rows.shift(); for(const a of r.lv) if(a) h.bytes-=a.length; h.spare=r.lv; }
   for(let i=0; h.bytes>budget && i<h.rows.length;){
@@ -2138,9 +2138,14 @@ function saChanCols(n,W){
   }
   return c.map ? c : null;
 }
-function saHistRender(n, Wp, H, top){
-  const rows=n.hist.rows, buf=new Uint8ClampedArray(Wp*H*4);
-  for(let i=3;i<buf.length;i+=4) buf[i]=255;
+// Перерисовка водопада из истории — по частям: целиком это 40–70 мс в одном кадре, и вставало всё (отрисовка, звук).
+// Задание собирает строки с бюджетом мс на кадр (newest first), буфер переиспользуется (раньше — несколько МБ мусора на каждую
+// перерисовку → Major GC). Строки, пришедшие за время сборки, в конце дорисовываются со сдвигом буфера.
+function saHistJob(n, Wp, H, top, fresh){
+  const h=n.hist, rows=h.rows;
+  const buf=!fresh && n._hbuf && n._hbuf.length===Wp*H*4 ? n._hbuf : new Uint8ClampedArray(Wp*H*4);
+  if(!fresh) n._hbuf=buf;
+  new Uint32Array(buf.buffer).fill(0xff000000);     // чёрный, alpha 255
   const fE=new Float64Array(Wp+1);
   for(let x=0;x<=Wp;x++) fE[x]=saFreq(n,(x-.5)/Math.max(1,Wp-1));
   let dMin=Infinity; for(let x=0;x<Wp;x++){ const d=Math.abs(fE[x+1]-fE[x]); if(d<dMin) dMin=d; }
@@ -2149,36 +2154,54 @@ function saHistRender(n, Wp, H, top){
   for(let c=0;c<256;c++){ const hk=heatIdx((SA_H_DB0+c*SA_H_STEP-wLo)/rng)*3;
     col[c*3]=pal[hk]; col[c*3+1]=pal[hk+1]; col[c*3+2]=pal[hk+2]; }
   const cnt=Math.min(H, rows.length), cw=saChanCols(n,Wp), rv=cw ? new Int16Array(cw.chs.length) : null;
-  for(let a=0;a<cnt;a++){
-    const r=rows[rows.length-1-a], y=top ? a : H-1-a;
+  const snap=rows.slice(rows.length-cnt), seq=cnt ? snap[cnt-1].id : 0;
+  // код уровня по диапазону бинов [b0,b1] строки; -1 — вне полосы строки (чёрное)
+  const code=(arr,len,b0,b1)=>{
+    if(b0>b1){ const t=b0; b0=b1; b1=t; }
+    if(b1<-.5 || b0>len-.5) return -1;
+    if(b1-b0>1){
+      const i0=Math.max(0,Math.ceil(b0)), i1=Math.min(len-1,Math.floor(b1));
+      let v=arr[clamp(Math.round((b0+b1)*.5),0,len-1)];
+      for(let i=i0;i<=i1;i++) if(arr[i]>v) v=arr[i];
+      return v;
+    }
+    const bf=clamp((b0+b1)*.5,0,len-1), i0=bf|0, i1=Math.min(len-1,i0+1);
+    return Math.round(arr[i0]+(arr[i1]-arr[i0])*(bf-i0));
+  };
+  const renderRow=(r,a)=>{
+    const y=top ? a : H-1-a;
     let L=clamp(Math.floor(Math.log(Math.max(1,dMin/r.bin))/Math.log(4)), 0, r.lv.length-1);
     while(!r.lv[L]) L++;
-    const arr=r.lv[L], len=arr.length, sc=Math.pow(4,L), off=(sc-1)/2, kb=1/(r.bin*sc);
+    const arr=r.lv[L], len=arr.length, sc=Math.pow(4,L), off=(sc-1)/2, kb=1/(r.bin*sc), oc=off/sc;
     let o=y*Wp*4;
-    // код уровня по диапазону бинов [b0,b1] строки; -1 — вне полосы строки (чёрное)
-    const code=(b0,b1)=>{
-      if(b0>b1){ const t=b0; b0=b1; b1=t; }
-      if(b1<-.5 || b0>len-.5) return -1;
-      let v;
-      if(b1-b0>1){
-        const i0=Math.max(0,Math.ceil(b0)), i1=Math.min(len-1,Math.floor(b1));
-        v=arr[clamp(Math.round((b0+b1)*.5),0,len-1)];
-        for(let i=i0;i<=i1;i++) if(arr[i]>v) v=arr[i];
-      } else {
-        const bf=clamp((b0+b1)*.5,0,len-1), i0=bf|0, i1=Math.min(len-1,i0+1);
-        v=Math.round(arr[i0]+(arr[i1]-arr[i0])*(bf-i0));
-      }
-      return v;
-    };
-    if(cw) for(let k=0;k<rv.length;k++){ const c=cw.chs[k]; rv[k]=code((c.lo-r.lo)*kb-off/sc,(c.hi-r.lo)*kb-off/sc); }
+    if(cw) for(let k=0;k<rv.length;k++){ const c=cw.chs[k]; rv[k]=code(arr,len,(c.lo-r.lo)*kb-oc,(c.hi-r.lo)*kb-oc); }
     for(let x=0;x<Wp;x++,o+=4){
-      const v=cw ? (cw.map[x]<0 ? -1 : rv[cw.map[x]]) : code((fE[x]-r.lo)*kb-off/sc,(fE[x+1]-r.lo)*kb-off/sc);
+      const v=cw ? (cw.map[x]<0 ? -1 : rv[cw.map[x]]) : code(arr,len,(fE[x]-r.lo)*kb-oc,(fE[x+1]-r.lo)*kb-oc);
       if(v<0) continue;
       buf[o]=col[v*3]; buf[o+1]=col[v*3+1]; buf[o+2]=col[v*3+2];
     }
-  }
-  return buf;
+  };
+  const J={buf, h, Wp, H, bad:false, a:0};
+  // true — готово (J.buf), false — продолжить в следующем кадре; J.bad — история слишком убежала, начать заново
+  J.step=ms=>{
+    const t0=performance.now();
+    while(J.a<cnt){
+      renderRow(snap[cnt-1-J.a], J.a); J.a++;
+      if(ms<Infinity && (J.a&7)===0 && performance.now()-t0>ms) return false;
+    }
+    if(n.hist!==h){ J.bad=true; return false; }
+    const late=[]; for(let i=h.rows.length-1; i>=0 && h.rows[i].id>seq; i--) late.push(h.rows[i]);
+    if(late.length>=H){ J.bad=true; return false; }
+    if(late.length){
+      const d=late.length, last=h.rows[h.rows.length-1].id, rb=Wp*4;
+      if(top) buf.copyWithin(d*rb, 0, (H-d)*rb); else buf.copyWithin(0, d*rb, H*rb);
+      for(const r of late) renderRow(r, last-r.id);
+    }
+    return true;
+  };
+  return J;
 }
+function saHistRender(n, Wp, H, top){ const J=saHistJob(n,Wp,H,top,true); J.step(Infinity); return J.buf; }
 // перерисованная история целиком в GL-кольцо: голова — последняя строка, все строки в окне [lo,hi]
 function saWfGlLoadRaw(glp, buf, lo, hi){
   const {gl}=glp;
@@ -3098,9 +3121,13 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
           const now=performance.now();
           if(key!==n._histPendKey){ n._histPendKey=key; n._histPendT=now; }
           else if(now-n._histPendT>=90){
-            n._histKey=key;
-            if(n.wfGl) saWfGlLoadRaw(n.wfGl, saHistRender(n,Wp,hwP,false), bLo, bHi);
-            else n.ocx.putImageData(new ImageData(saHistRender(n,Wp,hwP,true),Wp,hwP),0,0);
+            let J=n._hjob;
+            if(!J || J.key!==key || J.h!==n.hist || J.bad){ J=n._hjob=saHistJob(n,Wp,hwP,!n.wfGl); J.key=key; }
+            if(J.step(6)){                                  // по 6 мс на кадр, пока не соберётся
+              n._hjob=null; n._histKey=key;
+              if(n.wfGl) saWfGlLoadRaw(n.wfGl, J.buf, bLo, bHi);
+              else n.ocx.putImageData(new ImageData(J.buf,Wp,hwP),0,0);
+            }
           }
         }
       }
