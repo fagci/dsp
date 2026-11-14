@@ -4220,6 +4220,9 @@ function rtlEpochDone(dev, e, chunkMs){
   if(cur===e || !dev.tuneT) return e;
   return performance.now()-chunkMs>=dev.tuneT()+5 ? cur : e;
 }
+// Уступить циклу событий (макрозадача): ответы демод-воркеров, тик движка звука и отрисовка получают очередь. Один общий канал на все вызовы
+const rtlYield=(()=>{ let q=[]; const mc=new MessageChannel(); mc.port1.onmessage=()=>{ const f=q; q=[]; for(const r of f) r(); };
+  return ()=>new Promise(r=>{ q.push(r); mc.port2.postMessage(0); }); })();
 const RTL_READS_PER_SEC=40;  // чанк 25мс — меньше пила уровня кольца, можно держать меньший запас
 const RTL_USB_QUEUE=8;       // трансферов в полёте, ~200мс запаса на стопор главного потока
 // Темп чтения колец (rtlPace): держим запас около RTL_TARGET_S — это и есть задержка звука от кольца.
@@ -4279,7 +4282,7 @@ async function rtlReadLoop(n){
   // они всё равно лягут в правильном порядке — без этого возможна перестановка кусков звука
   // местами, которая на слух звучит как случайные щелчки/затыки, а не как чистая тишина.
   let appendChain=Promise.resolve();
-  let inFlight=0;
+  let inFlight=0, lastYieldT=0;
   // Бэкпрешер НИКОГДА не тормозит само чтение USB — это живой АЦП, который передаёт данные
   // независимо от того, готов ли софт их принять. Пауза здесь — это не "подождать немного",
   // это реальная потеря сэмплов на стороне хоста/устройства, причём НЕЗАМЕЧЕННАЯ: n.written
@@ -4320,6 +4323,9 @@ async function rtlReadLoop(n){
         continue;
       }
       errStreak=0;
+      // После заминки главного потока накопившиеся чанки шли подряд цепочкой микрозадач: одна задача на 70+ мс, в которую
+      // не вклинивались ни тик движка звука, ни отрисовка (Long Animation Frame: Worker.onmessage@sources.js). Каждые ~10 мс уступаем
+      if(performance.now()-lastYieldT>10){ await rtlYield(); lastYieldT=performance.now(); if(n.dev!==dev || !n.reading) break; }
       const buf=res.buf, t1=performance.now();
       // ioMs — интервал между приходами чанков, в среднем = реальное время чанка
       const ioMs=prevReadEnd!=null ? t1-prevReadEnd : chunkPeriodMs;
@@ -4798,7 +4804,7 @@ async function sdrTune(n){
   const tT0=performance.now();
   const hw=await n.dev.setCenterFrequency(Math.round((want+off-conv)/k));
   (n._tuneT||(n._tuneT=[])).push(performance.now());
-  const tMs=performance.now()-tT0; n._lastTuneMs=tMs; if(tMs>60){ const ti=n.dev.tuneInfo?.(); console.warn(`[rtlsdr] перестройка заняла ${tMs.toFixed(0)}мс (fast=${!!n.p.fastTune})`+(ti?` в воркере ${ti.t.toFixed(0)}мс: ${ti.n} передач, ${ti.ms.toFixed(0)}мс, макс ${ti.max.toFixed(0)}мс`:'')+` @ ${performance.now().toFixed(0)}ms`); }
+  const tMs=performance.now()-tT0; n._lastTuneMs=tMs; if(tMs>60){ const ti=n.dev.tuneInfo?.(); console.log(`[rtlsdr] перестройка заняла ${tMs.toFixed(0)}мс (fast=${!!n.p.fastTune})`+(ti?` в воркере ${ti.t.toFixed(0)}мс: ${ti.n} передач, ${ti.ms.toFixed(0)}мс, макс ${ti.max.toFixed(0)}мс`:'')+` @ ${performance.now().toFixed(0)}ms`); }
   n.actualFreq=hw*k+conv; n.dcOff=off; n.appliedFreq=want; n.appliedPpm=ppm; n.appliedConv=conv;
   if(n.dev.fixedFreq){ n.p.freq=hw; n.appliedFreq=hw; }   // у файла центр не перестраивается
 }
