@@ -200,7 +200,97 @@ class UsbSession(private val sock: Socket, private val backend: UsbBackend) {
 /** USB Host API Android: устройства, доступ, передачи. Один UsbDeviceConnection на устройство. */
 class AndroidUsb(private val ctx: Context) : UsbBackend {
     private val um = ctx.getSystemService(Context.USB_SERVICE) as UsbManager
-    private class Conn(val dev: UsbDevice, val c: UsbDeviceConnection, val raw: UsbDesc.Parsed?, val other: UsbDesc.Parsed? = null) { val claimed = HashMap<Int, UsbInterface>() }
+    private class Conn(val dev: UsbDevice, val c: UsbDeviceConnection, val raw: UsbDesc.Parsed?, val other: UsbDesc.Parsed? = null) { val claimed = HashMap<Int, UsbInterface>(); val pumps = HashMap<Int, Pump>() }
+
+    /**
+     * Потоковое чтение bulk IN: SLOTS запросов UsbRequest всегда стоят в очереди ядра, поэтому между передачами нет «дыр» (как очередь URB
+     * у libusb в SDR++). Синхронный bulkTransfer по 16 КБ оставлял донглу паузу на каждый кусок — на 2.4+ МС/с его FIFO переполнялся, звук хрипел.
+     * Принятые куски копятся в очереди (не больше CAP: дальше выбрасывается старое), страница забирает их по порядку.
+     */
+    private class Pump(val c: UsbDeviceConnection, val ep: android.hardware.usb.UsbEndpoint) {
+        private val reqs = ArrayList<android.hardware.usb.UsbRequest>()
+        private val bufs = ArrayList<java.nio.ByteBuffer>()
+        private val q = java.util.concurrent.LinkedBlockingQueue<ByteArray>()
+        private val bytes = java.util.concurrent.atomic.AtomicInteger(0)
+        @Volatile var stopped = false
+        @Volatile private var error: String? = null
+        private var lastTake = 0L
+        private var carry: ByteArray? = null
+        private var off = 0
+        private var thread: Thread? = null
+
+        fun start(): Boolean {
+            try {
+                for (i in 0 until SLOTS) {
+                    val r = android.hardware.usb.UsbRequest()
+                    reqs.add(r)
+                    if (!r.initialize(c, ep)) { stop(); return false }
+                    val b = java.nio.ByteBuffer.allocateDirect(CHUNK); bufs.add(b)
+                    r.clientData = i
+                    if (!r.queue(b)) { stop(); return false }
+                }
+            } catch (e: Exception) { stop(); return false }
+            thread = Thread({ loop() }, "dsp-usb-rx").also { it.isDaemon = true; it.start() }
+            return true
+        }
+
+        private fun loop() {
+            var bad = 0
+            try {
+                while (!stopped) {
+                    val r = c.requestWait() ?: break
+                    val i = r.clientData as? Int ?: continue
+                    val b = bufs[i]
+                    val n = b.position()
+                    if (n > 0) {
+                        bad = 0
+                        val a = ByteArray(n); b.flip(); b.get(a)
+                        q.add(a)
+                        if (bytes.addAndGet(n) > CAP) q.poll()?.let { bytes.addAndGet(-it.size) }
+                    } else if (++bad > 200) { error = "the device stopped answering"; break }
+                    else Thread.sleep(2)
+                    if (stopped) break
+                    b.clear()
+                    if (!r.queue(b)) { error = "cannot queue the transfer"; break }
+                }
+            } catch (e: Exception) { if (!stopped) error = e.message ?: "usb error" }
+            finally {
+                stopped = true
+                for (r in reqs) try { r.cancel(); r.close() } catch (e: Exception) {}
+            }
+        }
+
+        fun stop() {
+            stopped = true
+            for (r in reqs) try { r.cancel() } catch (e: Exception) {}       // отменённые запросы возвращаются из requestWait — поток выходит
+            if (thread == null) for (r in reqs) try { r.close() } catch (e: Exception) {}
+        }
+
+        /** Ровно len байт по порядку (или меньше, если поток встал после части данных). Читает один поток — страница ждёт ответа по точке по очереди. */
+        fun read(len: Int, alive: () -> Boolean): ByteArray {
+            val now = System.currentTimeMillis()
+            if (now - lastTake > 1500) { q.clear(); bytes.set(0); carry = null }      // долго не читали — в очереди старое
+            val out = ByteArray(len)
+            var got = 0
+            while (got < len) {
+                var cur = carry
+                if (cur == null) {
+                    cur = q.poll(500, TimeUnit.MILLISECONDS)
+                    if (cur == null) {
+                        if (got > 0) break
+                        if (stopped || !alive()) throw UsbError("NetworkError", error ?: "the device is closed")
+                        continue
+                    }
+                    bytes.addAndGet(-cur.size); off = 0
+                }
+                val n = minOf(cur.size - off, len - got)
+                System.arraycopy(cur, off, out, got, n); got += n; off += n
+                carry = if (off >= cur.size) null else cur
+            }
+            lastTake = System.currentTimeMillis()
+            return out.copyOf(got)
+        }
+    }
     private val conns = HashMap<String, Conn>()
     private val listeners = CopyOnWriteArraySet<(String, JSONObject) -> Unit>()
     private val answers = HashMap<String, CountDownLatch>()
@@ -217,7 +307,7 @@ class AndroidUsb(private val ctx: Context) : UsbBackend {
                     answers.remove(d.deviceName)?.countDown()
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
-                    synchronized(this@AndroidUsb) { lost[d.deviceName] = System.currentTimeMillis(); conns.remove(d.deviceName)?.let { try { it.c.close() } catch (e: Exception) {} } }
+                    synchronized(this@AndroidUsb) { lost[d.deviceName] = System.currentTimeMillis(); conns.remove(d.deviceName)?.let { stopPumps(it); try { it.c.close() } catch (e: Exception) {} } }
                     for (l in listeners) l("disconnect", JSONObject().put("id", d.deviceName))
                 }
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> if (um.hasPermission(d)) for (l in listeners) l("connect", describe(d))
@@ -239,13 +329,26 @@ class AndroidUsb(private val ctx: Context) : UsbBackend {
 
     fun close() {
         synchronized(this) {
-            for (c in conns.values) try { c.c.close() } catch (e: Exception) {}
+            for (c in conns.values) { stopPumps(c); try { c.c.close() } catch (e: Exception) {} }
             conns.clear()
             if (receiving) { receiving = false; try { ctx.unregisterReceiver(rx) } catch (e: IllegalArgumentException) {} }
         }
     }
 
     private fun find(id: String): UsbDevice = um.deviceList[id] ?: throw UsbError("NotFoundError", "device is gone")
+
+    @Synchronized
+    private fun stopPumps(c: Conn) { for (p in c.pumps.values) p.stop(); c.pumps.clear() }
+
+    @Synchronized
+    private fun pumpFor(c: Conn, addr: Int): Pump? {
+        c.pumps[addr]?.let { if (!it.stopped) return it; c.pumps.remove(addr) }
+        return try {
+            val ep = endpoint(c, addr)
+            if (ep.type != UsbConstants.USB_ENDPOINT_XFER_BULK) null
+            else Pump(c.c, ep).takeIf { it.start() }?.also { c.pumps[addr] = it }
+        } catch (e: Exception) { null }
+    }
 
     @Synchronized
     private fun conn(id: String): Conn = conns[id] ?: throw (
@@ -346,12 +449,13 @@ class AndroidUsb(private val ctx: Context) : UsbBackend {
     @Synchronized
     override fun close(id: String) {
         val c = conns.remove(id) ?: return
+        stopPumps(c)
         for (f in c.claimed.values) try { c.c.releaseInterface(f) } catch (e: Exception) {}
         try { c.c.close() } catch (e: Exception) {}
     }
 
     override fun config(id: String, value: Int) {
-        val c = conn(id)
+        val c = conn(id); stopPumps(c)
         // Android открывает устройство с первой конфигурацией; переключаем, только если просят другую
         val want = (0 until c.dev.configurationCount).map { c.dev.getConfiguration(it) }.firstOrNull { it.id == value }
             ?: throw UsbError("NotFoundError", "no configuration $value")
@@ -376,13 +480,13 @@ class AndroidUsb(private val ctx: Context) : UsbBackend {
     }
 
     override fun release(id: String, num: Int) {
-        val c = conn(id)
+        val c = conn(id); stopPumps(c)
         val f = synchronized(this) { c.claimed.remove(num) } ?: return
         c.c.releaseInterface(f)
     }
 
     override fun alt(id: String, num: Int, alt: Int) {
-        val c = conn(id)
+        val c = conn(id); stopPumps(c)
         if (!c.claimed.containsKey(num)) throw UsbError("InvalidStateError", "interface $num is not claimed")
         val known = try { iface(c, num, alt) } catch (e: UsbError) { null }
         // настройки, которых нет в модели Android, переключаем запросом SET_INTERFACE напрямую
@@ -423,6 +527,7 @@ class AndroidUsb(private val ctx: Context) : UsbBackend {
 
     override fun bulkIn(id: String, addr: Int, len: Int, alive: () -> Boolean): ByteArray {
         val c = conn(id)
+        if (len >= PUMP_MIN) pumpFor(c, addr)?.let { return it.read(len, alive) }      // потоковое чтение: очередь запросов в ядре без пауз
         val ep = endpoint(c, addr)
         val out = ByteArray(len)
         var got = 0
@@ -461,13 +566,16 @@ class AndroidUsb(private val ctx: Context) : UsbBackend {
     }
 
     override fun reset(id: String) {
-        val c = conn(id)
+        val c = conn(id); stopPumps(c)
         try { UsbDeviceConnection::class.java.getMethod("resetDevice").invoke(c.c) } catch (e: Exception) { /* не у всех версий */ }
     }
 
     companion object {
         const val ACTION_PERM = "app.dsp.phone.USB_PERMISSION"
         private const val CHUNK = 16384
+        private const val SLOTS = 16                    // запросов в очереди: 16 × 16 КБ ≈ 50 мс потока при 4.8 МБ/с
+        private const val CAP = 4 shl 20                // накопленное для страницы; больше — выбрасываем старое
+        private const val PUMP_MIN = 32768              // короткие чтения (команды, ответы) идут синхронно
         private const val GONE = "the device dropped off the USB bus (not enough OTG power or a loose cable) — replug it, use a powered hub"
     }
 }
