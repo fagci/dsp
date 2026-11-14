@@ -1842,7 +1842,8 @@ preset('Phone App: USB SDR over OTG (RTL-SDR, HackRF…)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Android app (tools/android): the app WebView has no WebUSB, so the app gives the phone USB to the page itself — navigator.usb is built on the bridge (modules/usb-bridge.js), and every USB module works: RTL-SDR, HackRF, Airspy, RX888, logic analysers, USB serial adapters.\n'+
   'Plug the SDR with an OTG cable, press Connect in the SDR node and allow the device in the Android dialog (it is asked once per device; tick «use by default» to skip it). Isochronous transfers are not available (no device here needs them).\n'+
-  'The phone keeps the dongle powered from its battery: an RTL-SDR takes about 300 mA.'});
+  'The phone keeps the dongle powered from its battery: an RTL-SDR takes about 300 mA.\n'+
+  'Sample rate: the list in the SDR node is what the connected dongle supports (RTL-SDR up to 3.2 MS/s, HackRF from 2 MS/s, Airspy / Airspy HF+ — the rates the device reports); a rate this dongle lacks snaps to the nearest one on connect.'});
 nt.size.w=720; nt.size.h=150; applySize(nt);
 const rx=addNode('rtlsdr',40,220,{sr:'1024000',auto:false,gainDb:30,demod:'WFM',freq:100000000});
 const sa=addNode('sa',40,560,{auto:true,floor:-90,top:-20,split:.3});
