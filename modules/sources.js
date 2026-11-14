@@ -4321,7 +4321,13 @@ async function rtlReadLoop(n){
       if(!active.length){ rtlTrackMsps(n, cnt, ioMs, 0); continue; }
       // лимит — во времени (RTL_MAX_INFLIGHT чанков по 25 мс), а не в чанках: при мелких чанках после перестройки
       // он иначе сжимался до 40 мс, и заминка отрисовки при перетаскивании спектра рвала звук тишиной
-      if(inFlight>=Math.max(MAX_INFLIGHT, Math.round(MAX_INFLIGHT*(n.usbRps||RTL_READS_PER_SEC)/RTL_READS_PER_SEC))){
+      const inLimit=()=>Math.max(MAX_INFLIGHT, Math.round(MAX_INFLIGHT*(n.usbRps||RTL_READS_PER_SEC)/RTL_READS_PER_SEC));
+      // после заминки главного потока накопившиеся чанки идут подряд из микрозадач, а ответы демод-воркеров — макрозадачи:
+      // inFlight не успевает убыть, и в звук подряд вставлялась тишина (16 чанков за 50 мс). Уступаем циклу событий, потом решаем
+      for(let y=0; y<3 && inFlight>=inLimit(); y++)
+        await new Promise(r=>{ const mc=new MessageChannel(); mc.port1.onmessage=()=>{ mc.port1.close(); r(); }; mc.port2.postMessage(0); });
+      if(n.dev!==dev || !n.reading) break;
+      if(inFlight>=inLimit()){
         // демод не поспевает за реальным временем (см. комментарий выше про MAX_INFLIGHT) —
         // этот чанк в воркер не идёт, вместо него в кольцо каждого канала честно дописывается
         // тишина ТОЙ ЖЕ длины, что дал бы демод — round(cnt/n.decim) децимированных отсчётов,
