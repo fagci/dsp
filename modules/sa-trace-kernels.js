@@ -157,3 +157,29 @@ function saAutoRange(mag,i0,i1,o){
   const lo=Math.min(Math.max(Math.floor(noise-margin),-140),0), tp=Math.min(Math.max(Math.ceil((pdb+head)/5)*5,lo+minSpan),20);
   return {floor:lo, top:Math.max(tp,lo+10), noise, peak:pdb};
 }
+
+// ---- спектр по каналам: один столбик на канал (каналы — из входа bands, как у Band Scanner) ----
+// Центры lo + k·step, ширина канала = step (диапазон без step — 12.5 кГц); точки без диапазона — не каналы. Берём только то,
+// что попадает в окно [vlo,vhi]. Одинаковые центры из разных строк — один канал.
+function saChanBars(bands,vlo,vhi){
+  const m=new Map();
+  for(const b of (Array.isArray(bands)?bands:[])){
+    if(!b || b.sig || !isFinite(b.lo) || !(b.hi>b.lo)) continue;
+    const st=b.step>0 ? b.step : 12500, cnt=Math.min(5000,Math.floor((b.hi-b.lo)/st+1e-6)+1);
+    const k0=Math.max(0,Math.floor((vlo-st/2-b.lo)/st)), k1=Math.min(cnt-1,Math.ceil((vhi+st/2-b.lo)/st));
+    for(let k=k0;k<=k1;k++){ const f=Math.round(b.lo+k*st); if(!m.has(f)) m.set(f,st); }
+  }
+  return [...m].map(([f,w])=>({f,w,lo:f-w/2,hi:f+w/2})).filter(c=>c.hi>=vlo && c.lo<=vhi).sort((a,b)=>a.f-b.f);
+}
+// уровень канала по бинам [b0,b1] (дробные): peak — максимум, rms — среднеквадратичное (в шкале спектра, как у отдельного бина).
+// Канал уже бина — линейная интерполяция в его центре.
+function saChanLevel(arr,N,b0,b1,mode){
+  const lo=Math.min(b0,b1), hi=Math.max(b0,b1), i0=Math.max(0,Math.ceil(lo)), i1=Math.min(N-1,Math.floor(hi));
+  if(i1<i0){
+    const bf=Math.min(N-1,Math.max(0,(lo+hi)/2)), j=Math.min(N-2,bf|0);
+    return N<2 ? arr[0] : arr[j]+(arr[j+1]-arr[j])*(bf-j);
+  }
+  if(mode==='rms'){ let s=0; for(let i=i0;i<=i1;i++) s+=arr[i]*arr[i]; return Math.sqrt(s/(i1-i0+1)); }
+  let mx=arr[i0]; for(let i=i0+1;i<=i1;i++) if(arr[i]>mx) mx=arr[i];
+  return mx;
+}

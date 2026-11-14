@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float32Array,Float64Array,Object,String,Number,Array});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/sa-trace-kernels.js'),'utf8')+
-  ';this.K={saRbwMerge,saDetect,saTraceStep,saTraceArr,saChanPower,saObw,saXdbBw,saNoiseDensity,saAcpr,saTraceCsv,saRefParse,saRefResample,saAutoRange};',ctx);
+  ';this.K={saRbwMerge,saDetect,saTraceStep,saTraceArr,saChanPower,saObw,saXdbBw,saNoiseDensity,saAcpr,saTraceCsv,saRefParse,saRefResample,saAutoRange,saChanBars,saChanLevel};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const db=x=>20*Math.log10(x+1e-12), near=(a,b,e=.05)=>Math.abs(a-b)<=e;
@@ -117,5 +117,19 @@ const db=x=>20*Math.log10(x+1e-12), near=(a,b,e=.05)=>Math.abs(a-b)<=e;
   ok('auto: tiny window → null',K.saAutoRange(m,5,5)===null);
   const pk=new Float32Array(N); pk[10]=Math.pow(10,-20/20);
   ok('auto: peak hold raises only the ceiling',K.saAutoRange(m,0,N-1,{extra:pk}).top>r.top && K.saAutoRange(m,0,N-1,{extra:pk}).floor===r.floor);
+}
+// каналы из bands: центры lo + k·step, ширина = step; только окно просмотра; дубли центров сливаются
+{
+  const bands=[{lo:100e6,hi:100.4e6,step:100e3},{lo:100.2e6,hi:100.4e6,step:100e3},{lo:450e6,hi:450e6},{lo:1e6,hi:2e6,step:5e5,sig:true}];
+  const c=K.saChanBars(bands,99.9e6,100.5e6);
+  ok('chans: 5 centres, deduped, points and signals skipped',c.length===5 && c[0].f===100e6 && c[4].f===100.4e6 && c.every(x=>x.w===100e3),JSON.stringify(c.map(x=>x.f)));
+  ok('chans: edges = centre ± step/2',c[1].lo===100.05e6 && c[1].hi===100.15e6);
+  ok('chans: only the visible window',K.saChanBars(bands,100.16e6,100.24e6).map(x=>x.f).join()==='100200000',JSON.stringify(K.saChanBars(bands,100.16e6,100.24e6).map(x=>x.f)));
+  ok('chans: range without step — 12.5 kHz',K.saChanBars([{lo:446e6,hi:446.025e6}],445.9e6,446.1e6).length===3);
+  const m=new Float32Array(100).fill(.01); m[40]=1; m[41]=.5;
+  ok('chan level: peak = the tone',K.saChanLevel(m,100,38,43,'peak')===1);
+  ok('chan level: rms below peak, above noise',K.saChanLevel(m,100,38,43,'rms')<1 && K.saChanLevel(m,100,38,43,'rms')>.01);
+  ok('chan level: narrower than a bin — interpolated',near(K.saChanLevel(m,100,40.2,40.4,'peak'),1-.3*.5,.001),K.saChanLevel(m,100,40.2,40.4,'peak'));
+  ok('chan level: edge of the spectrum',near(K.saChanLevel(m,100,98,105,'peak'),.01,1e-6));
 }
 console.log(bad?'FAILED '+bad:'all ok'); process.exit(bad?1:0);

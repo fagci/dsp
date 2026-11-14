@@ -2187,7 +2187,7 @@ function saSkipDraw(n,cv){
   return false;
 }
 def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
-  pack:['auto log grid','show layout','fill fillAlpha','peakHold peakDecay'],
+  pack:['auto log grid','show layout','fill fillAlpha chBars','peakHold peakDecay'],
   ins:[
         {n:'spec',t:'spec'},
         {n:'bands',t:'bands'},
@@ -2241,6 +2241,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
           {n:'show',t:'select',opts:['both','spectrum','waterfall'],d:'both',label:'show: spectrum and waterfall, only the spectrum, or only the waterfall (drag the boundary between them to the edge)'},
           {n:'fill',t:'select',opts:['flat','gradient','off'],d:'flat',short:'fill',label:'fill under the trace: flat, gradient (brightest at the strongest peak, fading to the floor) or none'},
           {n:'fillAlpha',t:'range',min:0,max:80,step:1,d:22,short:'strength, %',label:'fill strength, % (gradient: at its brightest)',adv:true},
+          {n:'chBars',t:'select',opts:['off','peak','rms'],d:'off',short:'channel bars',label:'channel bars: the spectrum at channel resolution — one bar per channel of the bands input (centres lo + k·step, width = step; a range without step — 12.5 kHz), the level is the peak or the rms of the bins inside the channel. Too many channels for the width — the usual trace'},
           {n:'frange',t:'range2',keys:['fmin','fmax'],min:1,max:6e9,step:1,log:true,d:[0,4000],label:'range, Hz'},
           {n:'dbrange',t:'range2',keys:['floor','top'],min:-140,max:20,step:1,d:[-100,-20],label:'range, dB'},
           // слайдера больше нет — граница спектр/водопад тащится прямо на графике (см. resize в drag ниже)
@@ -3098,8 +3099,24 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
                     : saDb(mv);
         const lo=diff? -40 : n.p.floor, hiv=diff? 40 : n.p.top;
         traceY[x]=n._inX[x] ? plotH-clamp((v-lo)/((hiv-lo)||1),0,1)*(plotH-2)-1 : plotH; }
-      let lineY=traceY;
-      if(n.p.phosphor) lineY=saPhosphor(n,cx,W,plotH,traceY,fresh,diff);
+      let lineY=traceY, barsOn=false;
+      if(n.p.chBars && n.p.chBars!=='off' && !diff && Array.isArray(n.bandsData) && !n.p.phosphor){
+        const [vlo,vhi]=saBounds(n), chs=saChanBars(n.bandsData,vlo,vhi), [sLo,sHi]=specSpan(n.s);
+        if(chs.length && chs.length*2<=W){
+          barsOn=true;
+          const fa=clamp((+n.p.fillAlpha>=0 ? +n.p.fillAlpha : 22)/100,0,1), span=(W-1)||1;
+          for(const c of chs){
+            if(c.lo<sLo || c.hi>sHi) continue;                           // канал вне захваченной полосы — без столбика
+            const lv=saDb(saChanLevel(t1,N,specBin(n.s,c.lo),specBin(n.s,c.hi),n.p.chBars));
+            const y=plotH-clamp((lv-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1;
+            const x0=Math.round(saPos(n,c.lo)*span+.5), x1=Math.round(saPos(n,c.hi)*span+.5), w=Math.max(1,x1-x0-(x1-x0>=4?1:0));
+            cx.fillStyle=n.colTS; cx.globalAlpha=Math.max(.18,fa*2.2); cx.fillRect(x0,y,w,plotH-y);
+            cx.globalAlpha=1; cx.fillRect(x0,y,w,Math.min(2,plotH-y));      // верх столбика — плотной полоской
+          }
+        }
+      }
+      if(barsOn){}
+      else if(n.p.phosphor) lineY=saPhosphor(n,cx,W,plotH,traceY,fresh,diff);
       else {
         // заливка под трассой — чуть плотнее (темнее), чем у полос band plan/приёма (там alpha .14)
         const fm=n.p.fill||'flat', fa=clamp((+n.p.fillAlpha>=0 ? +n.p.fillAlpha : 22)/100,0,1);
@@ -3115,10 +3132,12 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
           } else { cx.fillStyle=n.colTS; cx.globalAlpha=fa; cx.fill(); cx.globalAlpha=1; }
         }
       }
-      if(n.p.phosphor) cx.globalAlpha=.7;             // сглаженная трасса поверх тепловой карты
-      cx.beginPath(); cx.moveTo(0,lineY[0]);
-      for(let x=1;x<W;x++) cx.lineTo(x,lineY[x]);
-      cx.stroke(); cx.globalAlpha=1;
+      if(!barsOn){
+        if(n.p.phosphor) cx.globalAlpha=.7;             // сглаженная трасса поверх тепловой карты
+        cx.beginPath(); cx.moveTo(0,lineY[0]);
+        for(let x=1;x<W;x++) cx.lineTo(x,lineY[x]);
+        cx.stroke(); cx.globalAlpha=1;
+      }
       if(diff){ cx.strokeStyle=themeColor('--scr-hi')+'22'; cx.beginPath();
         cx.moveTo(0,plotH/2); cx.lineTo(W,plotH/2); cx.stroke(); }
       // peak hold — тонкая линия максимума поверх обычной трассы
