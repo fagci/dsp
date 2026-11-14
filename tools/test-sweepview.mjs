@@ -15,7 +15,7 @@ function grab(name){
 const consts=src.match(/^const SDR_SWEEP_MAX_BINS=[^\n]*\n/m)[0]+src.match(/^const SDR_SWEEP_APPLY_MS=[^\n]*\n/m)[0]+src.match(/^const SDR_HW_RATE=[^\n]*\n/m)[0];
 let now=1000;
 const ctx=vm.createContext({Math,Number,Float32Array,Float64Array,Uint8Array,Array,Infinity,Error,
-  performance:{now:()=>now}, clamp:(v,a,b)=>Math.min(b,Math.max(a,v)), window_:(k,N)=>new Float32Array(N).fill(1), sdrConv:()=>0});
+  performance:{now:()=>now}, Graph:{order:1,edges:[]}, clamp:(v,a,b)=>Math.min(b,Math.max(a,v)), window_:(k,N)=>new Float32Array(N).fill(1), sdrConv:()=>0});
 vm.runInContext(consts+['sdrSweepPlan','sdrSweepNextHop','sdrTuneRange','sdrSweepView','sdrSweepMaxSpan','sdrSweepWant','sdrSweepApplyWant'].map(grab).join('\n')+
   ';this.K={sdrSweepPlan,sdrSweepNextHop,sdrTuneRange,sdrSweepView,sdrSweepWant,sdrSweepApplyWant};',ctx);
 const K=ctx.K;
@@ -45,7 +45,12 @@ const mkNode=(over={})=>{
   ok('шаги правого края — fresh, левого — нет', b.fresh && b.fresh[b.hops-1]===1 && b.fresh[0]===0);
   ok('проход начинается с первого fresh-шага', b.k===b.fresh.indexOf(1) && b.k>0, b.k);
   ok('оси согласованы', b.spec.freqs.length===b.spec.mag.length && b.spec.size===b.spec.mag.length && b.peak.mag.length===b.spec.size);
-  ok('канал назад у спектра', b.spec.sweepView && typeof b.spec.sweepView.set==='function' && b.spec.sweepView.min>0);
+  ok('описание панорамы у спектра: границы тюнера и потолок ширины', b.spec.sweepView && b.spec.sweepView.min>0 && b.spec.sweepView.maxSpan>0);
+  ok('без провода wired=false (окно к панораме привязано)', b.spec.sweepView.wired===false);
+  n.id=5; ctx.Graph.edges.push({from:9,fp:'viewLo',to:5,tp:'swLo'}); ctx.Graph.order++;
+  ok('провод viewLo→swLo включает wired', K.sdrSweepView(n).wired===true);
+  ctx.Graph.edges.length=0; ctx.Graph.order++;
+  ok('провод убрали — wired снова false', K.sdrSweepView(n).wired===false);
   // третий план — ёмкость первого буфера переиспользуется (без новой аллокации)
   const buf0=a.spec.mag.buffer;
   n.p.swLo=100; n.p.swHi=120;

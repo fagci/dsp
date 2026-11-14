@@ -2078,22 +2078,21 @@ function saPhosphor(n,cx,W,H,ty,fresh,diff){
 // Окно просмотра внутри реально захваченной полосы — это просто прокрутка/зум вида, приёмник не
 // трогаем (звук не рвётся, картинка сдвигается сразу). Вышло за край — перестраиваем приёмник
 // на центр окна (как в SDR++): дальше окно опять внутри полосы.
-// Панорама sweep у USB SDR (sp.sweepView, см. sources.js): окно просмотра — источник правды и рисуется сразу как есть,
-// диапазон развёртки идёт за ним сам; границы окна — весь диапазон тюнера, а не уже снятая панорама.
-// Приёмник не «ведём» (steerFreq), окно к панораме не клэмпим и зум при смене центра не сбрасываем — отсюда ни рывков, ни откатов.
-const saSv=n=>n.s&&n.s.sweepView||null;
+// Панорама sweep у USB SDR (sp.sweepView, см. sources.js) с проводом viewLo/viewHi → swLo/swHi: окно просмотра — источник правды
+// и рисуется сразу как есть, диапазон развёртки идёт за ним; границы окна — весь диапазон тюнера, а не уже снятая панорама.
+// Окно к панораме не клэмпим и зум при смене центра не сбрасываем — отсюда ни рывков, ни откатов. Без провода — прежнее поведение.
+const saSv=n=>{ const v=n.s&&n.s.sweepView; return v&&v.wired ? v : null; };
 function saFullSpan(n){ const sv=saSv(n); return sv ? [sv.min,sv.max] : specSpan(n.s); }
 function saSetWindow(n,lo,hi){                      // новое окно: у sweep — ещё и запрос диапазона развёртки
   const sv=saSv(n);
   if(sv){
     const w=Math.min(hi-lo,sv.max-sv.min,sv.maxSpan||Infinity), c=(lo+hi)/2; lo=clamp(c-w/2,sv.min,sv.max-w); hi=lo+w;
   }
-  n.zoom=[lo,hi];
-  if(sv) sv.set(lo,hi);
+  n.zoom=[lo,hi];                                   // у sweep диапазон возьмёт приёмник с выходов viewLo/viewHi
 }
 function saSteerIfOutside(n){
   if(!n.s||!n.zoom) return;
-  if(saSv(n)){ saSv(n).set(n.zoom[0],n.zoom[1]); return; }
+  if(saSv(n)) return;
   const [lo0,hi0]=specSpan(n.s);
   if(n.zoom[0]>=lo0 && n.zoom[1]<=hi0 && !n._dragPending) return;
   n._steer=(n.zoom[0]+n.zoom[1])/2; n._dragPending=true; n._dragT=performance.now();
@@ -2285,6 +2284,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
         {n:'db1',t:'num'},
         {n:'snr1',t:'num'},
         {n:'centerFreq',t:'num'},
+        {n:'viewLo',t:'num',tip:'left edge of the view window, Hz (only while zoomed/panned) → USB SDR swLo: the wideband sweep follows the window'},
+        {n:'viewHi',t:'num',tip:'right edge of the view window, Hz → USB SDR swHi'},
         {n:'holdF',t:'num'},
         {n:'f2',t:'num'},
         {n:'db2',t:'num'},
@@ -2480,10 +2481,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
       }
       // центр источника сменился не из-за нашего драга (ручной ввод, провод, закладка) —
       // зум и цель драга сбрасываем: окно снова во весь новый диапазон
-      if(sp.sweepView){ n._srcCenter=null; n._steer=null;            // панорама sweep: центр меняется вслед за окном — это не повод сбрасывать зум
-        if(!n._svOn){ n._svOn=true; if(n.zoom) sp.sweepView.set(n.zoom[0],n.zoom[1]); }   // зум был до включения sweep — развёртка идёт за ним
+      if(sp.sweepView && sp.sweepView.wired){ n._srcCenter=null; n._steer=null;   // панорама sweep: центр меняется вслед за окном — это не повод сбрасывать зум
       } else if(sp.freqs && sp.freqs.length){
-        n._svOn=false;
         const src=sp.freqs[sp.freqs.length>>1];
         if(n._srcCenter!=null && src!==n._srcCenter && !n._dragPending){
           const tol=Math.max(2*(hi0-lo0)/(sp.freqs.length-1), 50);
@@ -2518,7 +2517,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
     // снимаем. Иначе он продолжит держать tuneFreq на старой частоте и будет "передёргивать"
     // центр обратно при каждой попытке перестроиться руками: приёмник не даёт себя перетюнить.
     if(sp){
-      const [lo0,hi0]=sp.sweepView ? [sp.sweepView.min,sp.sweepView.max] : specSpan(sp);   // у sweep — по всему диапазону тюнера: окно ходит за панорамой
+      const [lo0,hi0]=sp.sweepView&&sp.sweepView.wired ? [sp.sweepView.min,sp.sweepView.max] : specSpan(sp);   // у sweep — по всему диапазону тюнера: окно ходит за панорамой
       for(let k=0;k<4;k++)
         if(!n.ext[k] && n.mk[k]!=null && (n.mk[k]<lo0 || n.mk[k]>hi0)) n.mk[k]=null;
     }
@@ -2552,6 +2551,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
       : sp && sp.freqs && sp.freqs.length ? sp.freqs[sp.freqs.length>>1]
       : (n.p.fmin!=null && n.p.fmax!=null ? (n.p.fmin+n.p.fmax)/2 : null);
     n._lastRange=[n.p.fmin,n.p.fmax];
+    o.viewLo=n.zoom ? n.zoom[0] : null; o.viewHi=n.zoom ? n.zoom[1] : null;   // окно просмотра — для sweep USB SDR (swLo/swHi)
     const N=sp? sp.mag.length : 0;
     // peak hold — максимум по каждому бину за всё время, пока включено. Держим на mag из sp
     // (что реально показывается — после averaging'а источника, если он есть), а не на "сырых"

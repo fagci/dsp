@@ -3316,15 +3316,17 @@ const nt=addNode('note',40,40,{text:'Connect the SDR — it steps across the ran
   'Tap the spectrum — marker 1 pauses the sweep and tunes to that frequency; remove the marker to resume.\n'+
   'Use manual gain: with AGC every step has its own level and the waterfall gets striped.\n'+
   'Drag the spectrum to move the sweep range, wheel / pinch to zoom: the range follows the window, from a single step up to the whole tuner range\n'+
-  '(Shift+wheel pans). Already measured data stays on screen and only the newly opened edges are filled in.'});
-nt.size.w=460; nt.size.h=230; applySize(nt);
-const rx=addNode('rtlsdr',40,320,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'WFM',
+  '(Shift+wheel pans). It works through the wires viewLo → swLo and viewHi → swHi — remove them and the window no longer touches the sweep.\n'+
+  'Already measured data stays on screen and only the newly opened edges are filled in.'});
+nt.size.w=460; nt.size.h=260; applySize(nt);
+const rx=addNode('rtlsdr',40,350,{sr:'2400000',auto:false,gainDb:30,dcShift:true,demod:'WFM',
   sweep:true,swLo:88,swHi:108,swFft:'1024',swAvg:8});
 const sa=addNode('sa',540,40,{auto:true,floor:-90,top:-20,split:.3});
 sa.size.w=720; sa.size.h=460; applySize(sa);
 const dc=addNode('dac',540,560,{vol:.4});
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(sa.id,'f1',rx.id,'tuneFreq');
+addEdge(sa.id,'viewLo',rx.id,'swLo'); addEdge(sa.id,'viewHi',rx.id,'swHi');
 addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
 markWiresDirty();
 });
