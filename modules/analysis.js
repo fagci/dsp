@@ -3133,7 +3133,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
         const [vlo,vhi]=saBounds(n), chs=saChanBars(n.bandsData,vlo,vhi), [sLo,sHi]=specSpan(n.s);
         if(chs.length && chs.length*2<=W){
           barsOn=true;
-          const fa=clamp((+n.p.fillAlpha>=0 ? +n.p.fillAlpha : 22)/100,0,1), px=saChanPx(chs,f=>saPos(n,f),W);
+          const fa=clamp((+n.p.fillAlpha>=0 ? +n.p.fillAlpha : 22)/100,0,1), px=saChanPx(chs,f=>saPos(n,f),W,(cv.pxW&&cv.width)?cv.pxW/cv.width:1);
           for(let k=0;k<chs.length;k++){
             const c=chs[k], x0=px[k].x0, w=px[k].w;
             if(c.lo<sLo || c.hi>sHi) continue;                           // канал вне захваченной полосы — без столбика
