@@ -2265,7 +2265,7 @@ function saBounds(n){                              // границы отобр�
   const [lo0,hi0]=specSpan(n.s);                    // (обрезанные под реальный охват спектра), либо весь
   // зум/панорама мышью — отдельное окно просмотра поверх auto/ручного диапазона (не сохраняется)
   if(n.zoom){
-    const sv=n.s&&n.s.sweepView;                         // sweep: окно свободно в пределах диапазона тюнера (рисует пустоту, пока развёртка догоняет)
+    const sv=n.s&&n.s.sweepView&&n.s.sweepView.wired ? n.s.sweepView : null;                         // sweep: окно свободно в пределах диапазона тюнера (рисует пустоту, пока развёртка догоняет)
     if(sv){ const lo=clamp(n.zoom[0],sv.min,sv.max), hi=clamp(n.zoom[1],sv.min,sv.max); return lo<hi ? [lo,hi] : [lo0,hi0]; }
     if(n._dragPending) return n.zoom;               // окно нарочно обгоняет ещё не перестроенный приёмник
     const lo=clamp(n.zoom[0],lo0,hi0), hi=clamp(n.zoom[1],lo0,hi0);
