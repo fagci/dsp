@@ -3274,7 +3274,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
         cx.clearRect(0,hs,W,hw);           // зона водопада прозрачна; нарисованное туда выше раньше перекрывал водопад
       } else cx.drawImage(n.off,0,hs,W,hw);  // без dw/dh источник (физ. пиксели) масштабируется на dpr лишний раз
     } else if(n.p.grid) saGrid(n,cx,W,hs,H,plotH);
-    cx.strokeStyle=themeColor('--grid'); cx.beginPath(); cx.moveTo(0,hs+.5); cx.lineTo(W,hs+.5); cx.stroke();
+    cx.strokeStyle=themeColor('--grid'); cx.beginPath(); cx.moveTo(0,hs-.5); cx.lineTo(W,hs-.5); cx.stroke();   // граница — последний пиксель зоны спектра: на hs+.5 она закрывала первую строку водопада (она 1 px)
     saBands(n,cx,W,H);
     saDbLabels(n,cx);                                 // подписи уровня — поверх трассы
     saOvDraw(n,cv);                                   // интерактивный слой: маркеры, шторки, подсказка
