@@ -3128,16 +3128,20 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
                     : saDb(mv);
         const lo=diff? -40 : n.p.floor, hiv=diff? 40 : n.p.top;
         traceY[x]=n._inX[x] ? plotH-clamp((v-lo)/((hiv-lo)||1),0,1)*(plotH-2)-1 : plotH; }
-      let lineY=traceY, barsOn=false;
+      let lineY=traceY, barsOn=false, barsGeo=null;
       if(n.p.chBars && n.p.chBars!=='off' && !diff && Array.isArray(n.bandsData) && !n.p.phosphor){
         const [vlo,vhi]=saBounds(n), chs=saChanBars(n.bandsData,vlo,vhi), [sLo,sHi]=specSpan(n.s);
         if(chs.length && chs.length*2<=W){
           barsOn=true;
-          const fa=clamp((+n.p.fillAlpha>=0 ? +n.p.fillAlpha : 22)/100,0,1), px=saChanPx(chs,f=>saPos(n,f),W,(cv.pxW&&cv.width)?cv.pxW/cv.width:1);
+          // раскладка — в физических пикселях ширины водопада (Wp) и ровно та же, что у его ячеек: столбики и ячейки совпадают до пикселя
+          const fa=clamp((+n.p.fillAlpha>=0 ? +n.p.fillAlpha : 22)/100,0,1), WpB=cv.pxW||W, kB=WpB/W, px=saChanPx(chs,f=>saPos(n,f),WpB);
+          barsGeo=chs.map(()=>null);
           for(let k=0;k<chs.length;k++){
-            const c=chs[k], x0=px[k].x0, w=px[k].w;
+            const c=chs[k], x0=px[k].x0/kB, w=px[k].w/kB;
             if(c.lo<sLo || c.hi>sHi) continue;                           // канал вне захваченной полосы — без столбика
-            const lv=saDb(saChanLevel(t1,N,specBin(n.s,c.lo),specBin(n.s,c.hi),n.p.chBars));
+            const b0=specBin(n.s,c.lo), b1=specBin(n.s,c.hi);
+            barsGeo[k]={x0,w,b0,b1};
+            const lv=saDb(saChanLevel(t1,N,b0,b1,n.p.chBars));
             const y=plotH-clamp((lv-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1;
             cx.fillStyle=n.colTS; cx.globalAlpha=Math.max(.18,fa*2.2); cx.fillRect(x0,y,w,plotH-y);
             cx.globalAlpha=1; cx.fillRect(x0,y,w,Math.min(2,plotH-y));      // верх столбика — плотной полоской
@@ -3170,7 +3174,15 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
       if(diff){ cx.strokeStyle=themeColor('--scr-hi')+'22'; cx.beginPath();
         cx.moveTo(0,plotH/2); cx.lineTo(W,plotH/2); cx.stroke(); }
       // peak hold — тонкая линия максимума поверх обычной трассы
-      if(n.p.peakHold && n.peak && n.peak.length===N){
+      if(n.p.peakHold && n.peak && n.peak.length===N && barsGeo){
+        // столбики каналов — максимум тоже полоской на уровне пика канала, по ширине столбика
+        cx.fillStyle=themeColor('--acc');
+        for(const g of barsGeo){
+          if(!g) continue;
+          const v=saDb(saChanLevel(n.peak,N,g.b0,g.b1,n.p.chBars)), y=plotH-clamp((v-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1;
+          cx.fillRect(g.x0,Math.max(0,y-1),g.w,2);
+        }
+      } else if(n.p.peakHold && n.peak && n.peak.length===N){
         cx.strokeStyle=themeColor('--acc'); cx.lineWidth=1; cx.beginPath();
         for(let x=0;x<W;x++){
           const v=saDb(magReduce(n.peak,edgeX[x],edgeX[x+1]));
