@@ -4598,13 +4598,17 @@ function rtlMakeSpecWorker(){
 // усреднение — экспоненциальное сглаживание мощности по кадрам (specAvg — длина в кадрах).
 // process() синхронный по контракту движка: заказывает расчёт и отдаёт n.spec, какой есть.
 const RTL_SPEC_MAX_FRAMES=64;
+const RTL_SPEC_DRAG_N=16384;     // размер БПФ спектра, пока идут перестройки подряд (перетаскивание)
 function rtlUpdateSpec(n){
   if(!n.connected || !n.specWorker) return;
   const now=performance.now();
   // кадры не чаще, чем БПФ занимает ≤ ~1/3 ядра (иначе тяжёлый спектр отнимает процессор у демодулятора и звука)
   const minGap=Math.max(1000/(+n.p.specFps||25), 3*(n._specCost||0));
   if(n.specBusy || (n.spec && now-n.lastSpec<minGap)) return;
-  const N=+n.p.specSize, ring=n.specRing;
+  // пока тянут спектр (перестройки подряд), крупное БПФ (60–150 мс на кадр при 131072) вместе с сопутствующей работой даёт остановки
+  // главного потока 100+ мс и обрывы звука; на время жеста считаем не больше RTL_SPEC_DRAG_N, в покое — выставленный размер
+  const tt=n._tuneT, dragging=tt && tt.length && now-tt[tt.length-1]<1500;
+  const N=dragging ? Math.min(+n.p.specSize, RTL_SPEC_DRAG_N) : +n.p.specSize, ring=n.specRing;
   if(ring.filled<N) return;
   const av=n.p.specAvg, frames=av==='off'? 1 : av==='all'? RTL_SPEC_MAX_FRAMES : (+av||1);
   // Уэлч: K сегментов с перекрытием 50% в одном кадре — шум падает в ~sqrt(K) раз без размазывания по кадрам
