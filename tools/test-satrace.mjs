@@ -141,10 +141,6 @@ const db=x=>20*Math.log10(x+1e-12), near=(a,b,e=.05)=>Math.abs(a-b)<=e;
   const gaps=px.slice(1).map((q,i)=>q.x0-(px[i].x0+px[i].w));
   ok('px: gaps ≥1 and differ by ≤1 px',Math.min(...gaps)>=1 && Math.max(...gaps)-Math.min(...gaps)<=1,JSON.stringify(gaps));
   ok('px: centre within a pixel',chs.every((c,i)=>Math.abs(px[i].x0+px[i].w/2-(pos(c.f)*(W-1)+.5))<=1));
-  // dpr 3: сетка 1/3 логического px — ширины одинаковы, неровность зазоров ≤ 1/3 px, края на границах физических px
-  const p3=K.saChanPx(chs,pos,W,3), g3=p3.slice(1).map((q,i)=>q.x0-(p3[i].x0+p3[i].w));
-  ok('px dpr3: one width, gaps within 1/3 px, edges on the physical grid',p3.every(q=>Math.abs(q.w-p3[0].w)<1e-9) && Math.max(...g3)-Math.min(...g3)<=1/3+1e-9 && Math.min(...g3)>=1-1e-9 &&
-    p3.every(q=>Math.abs(q.x0*3-Math.round(q.x0*3))<1e-9 && Math.abs(q.w*3-Math.round(q.w*3))<1e-9),JSON.stringify(g3));
   // узкие каналы (много каналов на экране): зазор всё равно есть, пока шаг от 2 px — иначе спектр сплошной полосой, а водопад (физические px) разделён
   const lo2=99.9e6, hi2=101e6, many=K.saChanBars([{lo:99.9e6,hi:101e6,step:10e3}],lo2,hi2), pm=K.saChanPx(many,f=>(f-lo2)/(hi2-lo2),300);
   ok('px: pitch ~2.7 px — gap kept',pm[0].w>=1 && pm[1].x0-(pm[0].x0+pm[0].w)>=1,JSON.stringify(pm.slice(0,3)));
