@@ -4351,7 +4351,8 @@ async function rtlReadLoop(n){
       // чанк, запущенный до последней перестройки, несёт отсчёты старой частоты — в спектр его не пускаем,
       // иначе картинка мечется между старым и новым местом, а за ней и окно 'sa' со steerFreq
       if(res.epoch==null || res.epoch>=(n._specEpoch||0))
-      { let w=specRing.w, filled=specRing.filled; const I=specRing.I, Q=specRing.Q, size=specRing.size;
+      { if(res.epoch!=null && res.epoch>(n._ringEp||0)) n._ringEp=res.epoch;   // самая новая перестройка, чьи отсчёты уже в кольце
+ let w=specRing.w, filled=specRing.filled; const I=specRing.I, Q=specRing.Q, size=specRing.size;
         for(let k=0;k<cnt;k++){
           if(s16){ I[w]=s16[2*k]/32768; Q[w]=s16[2*k+1]/32768; } else { I[w]=(u8[2*k]-127.5)/127.5; Q[w]=(u8[2*k+1]-127.5)/127.5; }
           w++; if(w>=size) w=0;
@@ -4603,8 +4604,17 @@ function rtlUpdateSpec(n){
   if(!n.connected || !n.specWorker) return;
   const now=performance.now();
   // кадры не чаще, чем БПФ занимает ≤ ~1/3 ядра (иначе тяжёлый спектр отнимает процессор у демодулятора и звука)
-  const minGap=Math.max(1000/(+n.p.specFps||25), 3*(n._specCost||0));
-  if(n.specBusy || n._tuning || (n.spec && now-n.lastSpec<minGap)) return;
+  const tt0=n._tuneT, drag0=tt0 && tt0.length && now-tt0[tt0.length-1]<1500;
+  const minGap=Math.max(drag0 ? Math.min(20, 1000/(+n.p.specFps||25)) : 1000/(+n.p.specFps||25), 3*(n._specCost||0));   // при перетаскивании до 50 кадров/с (стоимость БПФ по-прежнему ≤ 1/3 ядра)
+  // в кольце уже отсчёты новой частоты, а главный поток об этой перестройке ещё не узнал (центр старый) — кадр лёг бы на старое место;
+  // пропускаем только это короткое окно (перестройка целиком идёт 60–100 мс, а при перетаскивании они встык — блокировать её всю нельзя)
+  if((n._ringEp||0)>(n._specEpoch||0)){
+    if(!n._ringAheadT) n._ringAheadT=now;
+    if(now-n._ringAheadT<300) return;
+    n._specEpoch=n._ringEp;                       // за 300 мс перестройка так и не дошла (перезапуск тюнера, сканирование) — доверяем кольцу, не зависаем
+  }
+  n._ringAheadT=0;
+  if(n.specBusy || (n.spec && now-n.lastSpec<minGap)) return;
   // пока тянут спектр (перестройки подряд), крупное БПФ (60–150 мс на кадр при 131072) вместе с сопутствующей работой даёт остановки
   // главного потока 100+ мс и обрывы звука; на время жеста считаем не больше RTL_SPEC_DRAG_N, в покое — выставленный размер
   const tt=n._tuneT, dragging=tt && tt.length && now-tt[tt.length-1]<1500;
@@ -4867,7 +4877,7 @@ async function rtlStart(n, sr){
   // уже терминированы в rtlDisconnect, но на всякий случай подчистим прежде, чем ресайзить кольца
   for(const ch of n.ch){ if(ch.worker) ch.worker.terminate(); ch.worker=null; ch.aring=null; ch.active=false; }
   rtlResetRing(n);
-  n._specEpoch=0;
+  n._specEpoch=0; n._ringEp=0;
   n.annSt={list:[]}; n.trg=null; n.preQ=null; n.preN=0;
   if(n.dev.annots) n.annSt.list.push(...n.dev.annots);
   rtlActivateChannel(n, 0);                        // channel 1 — always, as before
@@ -5066,8 +5076,7 @@ async function rtlApplyPending(n){
   n.busy=true;
   try{
     if(freqStale){
-      n._tuning=true;                               // пока идёт перестройка, новые расчёты спектра не заказываем: в кольце отсчёты перехода, а центр ещё старый
-      try{ await sdrTune(n); } finally{ n._tuning=false; }
+      await sdrTune(n);
       // спектр — только с отсчётов новой частоты: кольцо с нуля, старые чанки отсекает эпоха
       n._specEpoch=n.dev.epoch?.()||0; n.specRing.filled=0;
       n._specSeq=(n._specSeq|0)+1;                 // расчёты спектра, заказанные до перестройки, отбрасываются (см. rtlUpdateSpec)
@@ -5307,7 +5316,7 @@ async function sdrHwSweepLoop(n){
     if(n.dev===dev){
       sdrSetReadRate(n, RTL_READS_PER_SEC);
       n.appliedFreq=null;                          // rtlApplyPending вернёт тюнер на n.p.freq
-      n._specEpoch=dev.epoch?.()||0;
+      n._specEpoch=dev.epoch?.()||0; n._ringEp=0;
     }
   }
 }
