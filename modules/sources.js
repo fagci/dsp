@@ -4604,7 +4604,7 @@ function rtlUpdateSpec(n){
   const now=performance.now();
   // кадры не чаще, чем БПФ занимает ≤ ~1/3 ядра (иначе тяжёлый спектр отнимает процессор у демодулятора и звука)
   const minGap=Math.max(1000/(+n.p.specFps||25), 3*(n._specCost||0));
-  if(n.specBusy || (n.spec && now-n.lastSpec<minGap)) return;
+  if(n.specBusy || n._tuning || (n.spec && now-n.lastSpec<minGap)) return;
   // пока тянут спектр (перестройки подряд), крупное БПФ (60–150 мс на кадр при 131072) вместе с сопутствующей работой даёт остановки
   // главного потока 100+ мс и обрывы звука; на время жеста считаем не больше RTL_SPEC_DRAG_N, в покое — выставленный размер
   const tt=n._tuneT, dragging=tt && tt.length && now-tt[tt.length-1]<1500;
@@ -4627,10 +4627,12 @@ function rtlUpdateSpec(n){
   if(first<L){ I.set(ring.I.subarray(0,L-first),first); Q.set(ring.Q.subarray(0,L-first),first); }
   n.specBusy=true;
   const centerFreq=n.actualFreq??n.p.freq, binHz=n.sourceRate/N, half=N>>1, win=n.p.specWin, tl=iqTl(n);
-  const tSpec=performance.now();
+  const tSpec=performance.now(), specSeq=n._specSeq|0;
   n.specWorker.compute(I.buffer, Q.buffer, N, L, win, +n.p.specWinP||0).then(({mag,ms})=>{
     n.specBusy=false;
     if(ms>0) n._specCost=n._specCost==null ? ms : n._specCost*0.8+ms*0.2;   // стоимость БПФ в воркере — для частоты кадров
+    // заказан до перестройки: отсчёты старой частоты — на экране спектр откатывался на шаг назад (и строка водопада уходила не туда)
+    if(specSeq!==(n._specSeq|0)) return;
     const dt=performance.now()-tSpec; n._specMs=Math.max(n._specMs||0, dt);   // для лога ring trend
     // сброс накопления при смене размера/полосы/центра/окна: старые кадры к новой оси не относятся
     const peak=n.p.specMode==='max';
@@ -5064,9 +5066,11 @@ async function rtlApplyPending(n){
   n.busy=true;
   try{
     if(freqStale){
-      await sdrTune(n);
+      n._tuning=true;                               // пока идёт перестройка, новые расчёты спектра не заказываем: в кольце отсчёты перехода, а центр ещё старый
+      try{ await sdrTune(n); } finally{ n._tuning=false; }
       // спектр — только с отсчётов новой частоты: кольцо с нуля, старые чанки отсекает эпоха
       n._specEpoch=n.dev.epoch?.()||0; n.specRing.filled=0;
+      n._specSeq=(n._specSeq|0)+1;                 // расчёты спектра, заказанные до перестройки, отбрасываются (см. rtlUpdateSpec)
     }
     if(gainStale){
       if(n.dev.kind==='hackrf') await n.dev.setHackrfGain(+n.p.lna, +n.p.vga, !!n.p.amp);
