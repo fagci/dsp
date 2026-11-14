@@ -229,6 +229,16 @@ continue;
 mark(n.el?.querySelector( `.prm[data-param="${s.n}"]` ),s.n);
 }
 for(const dir of ['ins','outs']) for(const p of portsOf(n,dir)) if(p.hide) mark(null,p.n);    // скрытые пины (старые I/Q) — видны, пока подключены
+// p.need:'имя входа' — пин появляется, когда этот вход подключён (каналы 2–4 USB SDR: выходы — по своему tuneFreqN,
+// сам tuneFreq3 — после tuneFreq2); подключённый сам пин остаётся виден всегда
+let moved=false;
+for(const [dir,key] of [['ins','i'],['outs','o']]) for(const p of portsOf(n,dir)){
+if(!p.need) continue;
+const el=n.ports?.[key]?.[p.n]; if(!el) continue;
+const on=Graph.edges.some(e=>e.to===n.id && e.tp===p.need);
+if(el.classList.contains('ctrl')===on){ el.classList.toggle('ctrl',!on); moved=true; }
+}
+if(moved) markWiresDirty();
 }
 function retopo(){
 Graph.order=topoOrder(Graph.nodes,Graph.edges,Graph.map);
@@ -395,7 +405,7 @@ e.addEventListener('dblclick',ev=>pinPicker(ev,n,p.n,dir)); };
 // появление/исчезновение пина параметра сдвигало бы соседние базовые порты туда-сюда.
 const paramNames=mergeableParamNames(d);
 // .sort() стабилен (ES2019+) — внутри каждой группы относительный порядок из module.ins/outs сохраняется
-const lowPri=p=>paramNames.has(p.n) || !!p.hide;               // hide:true — пин скрыт, пока не подключён (старые I/Q при едином iq)
+const lowPri=p=>paramNames.has(p.n) || !!p.hide || !!p.need;               // hide:true — пин скрыт, пока не подключён (старые I/Q при едином iq)
 const baseFirst=ps=>[...ps].sort((a,b)=>lowPri(a)-lowPri(b));
 for(const p of baseFirst(portsOf(n,'ins'))){
 const e=portEl(p,'i'); ci.append(e); n.ports.i[p.n]=e; wire(e,p,'i');
