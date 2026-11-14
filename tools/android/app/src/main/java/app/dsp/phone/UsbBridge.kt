@@ -188,6 +188,7 @@ class AndroidUsb(private val ctx: Context) : UsbBackend {
     private val listeners = CopyOnWriteArraySet<(String, JSONObject) -> Unit>()
     private val answers = HashMap<String, CountDownLatch>()
     private val granted = HashMap<String, Boolean>()
+    private val lost = HashMap<String, Long>()                 // когда Android сообщил об отключении: по нему ошибка отличает «отвалилось» от «не открывали»
     private var receiving = false
 
     private val rx = object : BroadcastReceiver() {
@@ -199,7 +200,7 @@ class AndroidUsb(private val ctx: Context) : UsbBackend {
                     answers.remove(d.deviceName)?.countDown()
                 }
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> {
-                    synchronized(this@AndroidUsb) { conns.remove(d.deviceName)?.let { try { it.c.close() } catch (e: Exception) {} } }
+                    synchronized(this@AndroidUsb) { lost[d.deviceName] = System.currentTimeMillis(); conns.remove(d.deviceName)?.let { try { it.c.close() } catch (e: Exception) {} } }
                     for (l in listeners) l("disconnect", JSONObject().put("id", d.deviceName))
                 }
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> if (um.hasPermission(d)) for (l in listeners) l("connect", describe(d))
@@ -230,7 +231,10 @@ class AndroidUsb(private val ctx: Context) : UsbBackend {
     private fun find(id: String): UsbDevice = um.deviceList[id] ?: throw UsbError("NotFoundError", "device is gone")
 
     @Synchronized
-    private fun conn(id: String): Conn = conns[id] ?: throw UsbError("InvalidStateError", "the device must be opened first")
+    private fun conn(id: String): Conn = conns[id] ?: throw (
+        if (lost[id]?.let { System.currentTimeMillis() - it < 60_000 } == true)
+            UsbError("NetworkError", "Android reported the device detached " + (System.currentTimeMillis() - lost[id]!!) + " ms ago: it left the USB bus (re-enumerated, lost power or the cable moved)")
+        else UsbError("InvalidStateError", "the device must be opened first"))
 
     /** Устройство отвалилось от шины посреди передачи (питание по OTG, кабель): соединение уже снято обработчиком отключения. */
     @Synchronized
@@ -313,9 +317,12 @@ class AndroidUsb(private val ctx: Context) : UsbBackend {
         val c = um.openDevice(d) ?: throw UsbError("NetworkError", "cannot open the device")
         val raw = try { c.rawDescriptors?.let { UsbDesc.parse(it) } } catch (e: Exception) { null }
         // GET_DESCRIPTOR(OTHER_SPEED_CONFIGURATION): что устройство отдало бы на другой скорости — по нему видно, что порт не дал high-speed
-        val other = try { val buf = ByteArray(512); val n = c.controlTransfer(0x80, 6, 7 shl 8, 0, buf, buf.size, 1000); if (n > 0) UsbDesc.parse(buf.copyOf(n)) else null } catch (e: Exception) { null }
+        // Спрашиваем, только когда скорость не видна по своим дескрипторам: лишний запрос сразу после открытия нужен не всем, а устройство,
+        // которое его не знает, обязано ответить STALL — не все прошивки делают это чисто (RTL-SDR после открытия пропадал с шины)
+        val other = if (raw == null || raw.speedHint.isNotEmpty()) null else
+            try { val buf = ByteArray(512); val n = c.controlTransfer(0x80, 6, 7 shl 8, 0, buf, buf.size, 1000); if (n > 0) UsbDesc.parse(buf.copyOf(n)) else null } catch (e: Exception) { null }
         val cn = Conn(d, c, raw, other)
-        conns[id] = cn
+        conns[id] = cn; lost.remove(id)
         return rawJson(cn, id)
     }
 
