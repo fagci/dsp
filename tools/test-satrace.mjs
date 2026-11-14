@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float32Array,Float64Array,Object,String,Number,Array});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/sa-trace-kernels.js'),'utf8')+
-  ';this.K={saRbwMerge,saDetect,saTraceStep,saTraceArr,saChanPower,saObw,saXdbBw,saNoiseDensity,saAcpr,saTraceCsv,saRefParse,saRefResample,saAutoRange,saChanBars,saChanLevel};',ctx);
+  ';this.K={saRbwMerge,saDetect,saTraceStep,saTraceArr,saChanPower,saObw,saXdbBw,saNoiseDensity,saAcpr,saTraceCsv,saRefParse,saRefResample,saAutoRange,saChanBars,saChanLevel,saChanPx};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const db=x=>20*Math.log10(x+1e-12), near=(a,b,e=.05)=>Math.abs(a-b)<=e;
@@ -131,5 +131,17 @@ const db=x=>20*Math.log10(x+1e-12), near=(a,b,e=.05)=>Math.abs(a-b)<=e;
   ok('chan level: rms below peak, above noise',K.saChanLevel(m,100,38,43,'rms')<1 && K.saChanLevel(m,100,38,43,'rms')>.01);
   ok('chan level: narrower than a bin — interpolated',near(K.saChanLevel(m,100,40.2,40.4,'peak'),1-.3*.5,.001),K.saChanLevel(m,100,40.2,40.4,'peak'));
   ok('chan level: edge of the spectrum',near(K.saChanLevel(m,100,98,105,'peak'),.01,1e-6));
+}
+// раскладка столбиков: одна ширина и ровный зазор у всех каналов, центр канала в пределах пикселя
+{
+  const chs=K.saChanBars([{lo:100e6,hi:100.9e6,step:100e3}],99.9e6,101e6), W=523, lo=99.9e6, hi=101e6;
+  const pos=f=>(f-lo)/(hi-lo), px=K.saChanPx(chs,pos,W);
+  ok('px: all bars of one width',px.every(q=>q.w===px[0].w),JSON.stringify(px.map(q=>q.w)));
+  ok('px: width = pitch − 1 px gap',px[0].w===Math.floor(100e3/(hi-lo)*(W-1))-1,px[0].w);
+  const gaps=px.slice(1).map((q,i)=>q.x0-(px[i].x0+px[i].w));
+  ok('px: gaps ≥1 and differ by ≤1 px',Math.min(...gaps)>=1 && Math.max(...gaps)-Math.min(...gaps)<=1,JSON.stringify(gaps));
+  ok('px: centre within a pixel',chs.every((c,i)=>Math.abs(px[i].x0+px[i].w/2-(pos(c.f)*(W-1)+.5))<=1));
+  const nar=K.saChanPx(K.saChanBars([{lo:100e6,hi:100.9e6,step:100e3}],99.9e6,101e6),pos,100);
+  ok('px: narrow channels — no gap, width ≥1',nar.every(q=>q.w>=1) && nar[1].x0-nar[0].x0>=1);
 }
 console.log(bad?'FAILED '+bad:'all ok'); process.exit(bad?1:0);

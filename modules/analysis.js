@@ -2123,6 +2123,21 @@ function saWfWin(n){
   const lo=n.p.floor, hi=n.p.top, b=+n.p.wfBright||0, c=Math.max(.25,+n.p.wfContrast||1), mid=(lo+hi)/2, half=(hi-lo)/2/c;
   return [mid-half-b, mid+half-b];
 }
+// столбцы водопада по каналам bands: map[x] — индекс канала под столбцом или -1 (между каналами); null — режим выключен
+// или каналов слишком много для ширины. Пересчёт при смене окна, оси, ширины или списка.
+function saChanCols(n,W){
+  if(!n.p.chWf || !Array.isArray(n.bandsData)) return null;
+  const [lo,hi]=saBounds(n), key=[lo,hi,W,n.p.log,chanSig(n.bandsData)].join('|'), c=n._chc||(n._chc={});
+  if(c.key!==key){
+    c.key=key; c.map=null; c.chs=saChanBars(n.bandsData,lo,hi);
+    if(c.chs.length && c.chs.length*2<=W){
+      const map=new Int32Array(W).fill(-1), px=saChanPx(c.chs,f=>saPos(n,f),W);   // та же раскладка, что у столбиков спектра
+      px.forEach((q,k)=>{ for(let x=Math.max(0,q.x0); x<Math.min(W,q.x0+q.w); x++) map[x]=k; });
+      c.map=map;
+    }
+  }
+  return c.map ? c : null;
+}
 function saHistRender(n, Wp, H, top){
   const rows=n.hist.rows, buf=new Uint8ClampedArray(Wp*H*4);
   for(let i=3;i<buf.length;i+=4) buf[i]=255;
@@ -2133,17 +2148,17 @@ function saHistRender(n, Wp, H, top){
   const [wLo,wHi]=saWfWin(n), pal=paletteLut(n.p.palette), rng=(wHi-wLo)||1, col=new Uint8Array(256*3);
   for(let c=0;c<256;c++){ const hk=heatIdx((SA_H_DB0+c*SA_H_STEP-wLo)/rng)*3;
     col[c*3]=pal[hk]; col[c*3+1]=pal[hk+1]; col[c*3+2]=pal[hk+2]; }
-  const cnt=Math.min(H, rows.length);
+  const cnt=Math.min(H, rows.length), cw=saChanCols(n,Wp), rv=cw ? new Int16Array(cw.chs.length) : null;
   for(let a=0;a<cnt;a++){
     const r=rows[rows.length-1-a], y=top ? a : H-1-a;
     let L=clamp(Math.floor(Math.log(Math.max(1,dMin/r.bin))/Math.log(4)), 0, r.lv.length-1);
     while(!r.lv[L]) L++;
     const arr=r.lv[L], len=arr.length, sc=Math.pow(4,L), off=(sc-1)/2, kb=1/(r.bin*sc);
     let o=y*Wp*4;
-    for(let x=0;x<Wp;x++,o+=4){
-      let b0=(fE[x]-r.lo)*kb-off/sc, b1=(fE[x+1]-r.lo)*kb-off/sc;
+    // код уровня по диапазону бинов [b0,b1] строки; -1 — вне полосы строки (чёрное)
+    const code=(b0,b1)=>{
       if(b0>b1){ const t=b0; b0=b1; b1=t; }
-      if(b1<-.5 || b0>len-.5) continue;              // вне полосы строки — чёрное
+      if(b1<-.5 || b0>len-.5) return -1;
       let v;
       if(b1-b0>1){
         const i0=Math.max(0,Math.ceil(b0)), i1=Math.min(len-1,Math.floor(b1));
@@ -2153,6 +2168,12 @@ function saHistRender(n, Wp, H, top){
         const bf=clamp((b0+b1)*.5,0,len-1), i0=bf|0, i1=Math.min(len-1,i0+1);
         v=Math.round(arr[i0]+(arr[i1]-arr[i0])*(bf-i0));
       }
+      return v;
+    };
+    if(cw) for(let k=0;k<rv.length;k++){ const c=cw.chs[k]; rv[k]=code((c.lo-r.lo)*kb-off/sc,(c.hi-r.lo)*kb-off/sc); }
+    for(let x=0;x<Wp;x++,o+=4){
+      const v=cw ? (cw.map[x]<0 ? -1 : rv[cw.map[x]]) : code((fE[x]-r.lo)*kb-off/sc,(fE[x+1]-r.lo)*kb-off/sc);
+      if(v<0) continue;
       buf[o]=col[v*3]; buf[o+1]=col[v*3+1]; buf[o+2]=col[v*3+2];
     }
   }
@@ -2241,6 +2262,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
           {n:'show',t:'select',opts:['both','spectrum','waterfall'],d:'both',label:'show: spectrum and waterfall, only the spectrum, or only the waterfall (drag the boundary between them to the edge)'},
           {n:'fill',t:'select',opts:['flat','gradient','off'],d:'flat',short:'fill',label:'fill under the trace: flat, gradient (brightest at the strongest peak, fading to the floor) or none'},
           {n:'fillAlpha',t:'range',min:0,max:80,step:1,d:22,short:'strength, %',label:'fill strength, % (gradient: at its brightest)',adv:true},
+          {n:'chWf',t:'check',d:false,short:'by channels',label:'waterfall by channels: one cell per channel of the bands input (the same channels as the channel bars, the level is the peak of the bins inside; columns between channels stay dark)',fn:n=>{ n._chc=null; }},
           {n:'chBars',t:'select',opts:['off','peak','rms'],d:'off',short:'channel bars',label:'channel bars: the spectrum at channel resolution — one bar per channel of the bands input (centres lo + k·step, width = step; a range without step — 12.5 kHz), the level is the peak or the rms of the bins inside the channel. Too many channels for the width — the usual trace'},
           {n:'frange',t:'range2',keys:['fmin','fmax'],min:1,max:6e9,step:1,log:true,d:[0,4000],label:'range, Hz'},
           {n:'dbrange',t:'range2',keys:['floor','top'],min:-140,max:20,step:1,d:[-100,-20],label:'range, dB'},
@@ -3050,11 +3072,18 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
         // старая история водопада хранит только готовые RGBA-пиксели, её перекрашивать задним
         // числом не из чего (см. n.off ниже).
         const pal=paletteLut(n.p.palette), [wLo,wHi]=saWfWin(n);
-        const line=n._line;
+        const line=n._line, cw=saChanCols(n,Wp);
+        let cl=null;
+        if(cw){                                         // уровень каждого канала один раз за кадр
+          const md=n.p.chBars==='rms' ? 'rms' : 'peak';
+          cl=new Float32Array(cw.chs.length);
+          for(let k=0;k<cl.length;k++) cl[k]=saChanLevel(m,N,specBin(n.s,cw.chs[k].lo),specBin(n.s,cw.chs[k].hi),md);
+        }
         for(let x=0;x<Wp;x++){
-          const v=clamp((saDb(magReduce(m,edgeXwf[x],edgeXwf[x+1]))-wLo)/((wHi-wLo)||1),0,1);
+          const ci=cw ? cw.map[x] : 0;
+          const v=ci<0 ? 0 : clamp((saDb(cw ? cl[ci] : magReduce(m,edgeXwf[x],edgeXwf[x+1]))-wLo)/((wHi-wLo)||1),0,1);
           const hk=heatIdx(v)*3, k=x*4;
-          if(!n._inXwf[x]){ line[k]=line[k+1]=line[k+2]=0; line[k+3]=255; continue; }
+          if(!n._inXwf[x] || ci<0){ line[k]=line[k+1]=line[k+2]=0; line[k+3]=255; continue; }
           line[k]=pal[hk]; line[k+1]=pal[hk+1]; line[k+2]=pal[hk+2]; line[k+3]=255; }
         if(n.wfGl){ const [wl,wh]=saBounds(n); saWfGlWrite(n.wfGl,Wp,line,wl,wh); }
         else { n.ocx.drawImage(n.off,0,1); n.ocx.putImageData(new ImageData(line,Wp,1),0,0); }
@@ -3064,7 +3093,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
       // окно/шкала/палитра сменились — перерисовать водопад из истории, когда жест затих
       // (пока тянут — шейдер растягивает старые строки как превью)
       if(n.hist && n.hist.rows.length){
-        const key=[bLo,bHi,Wp,hwP,n.p.log,n.p.floor,n.p.top,n.p.wfBright,n.p.wfContrast,n.p.palette,!!n.wfGl].join('|');
+        const key=[bLo,bHi,Wp,hwP,n.p.log,n.p.floor,n.p.top,n.p.wfBright,n.p.wfContrast,n.p.palette,!!n.wfGl,n.p.chWf?chanSig(n.bandsData):0].join('|');
         if(key!==n._histKey){
           const now=performance.now();
           if(key!==n._histPendKey){ n._histPendKey=key; n._histPendT=now; }
@@ -3104,12 +3133,12 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
         const [vlo,vhi]=saBounds(n), chs=saChanBars(n.bandsData,vlo,vhi), [sLo,sHi]=specSpan(n.s);
         if(chs.length && chs.length*2<=W){
           barsOn=true;
-          const fa=clamp((+n.p.fillAlpha>=0 ? +n.p.fillAlpha : 22)/100,0,1), span=(W-1)||1;
-          for(const c of chs){
+          const fa=clamp((+n.p.fillAlpha>=0 ? +n.p.fillAlpha : 22)/100,0,1), px=saChanPx(chs,f=>saPos(n,f),W);
+          for(let k=0;k<chs.length;k++){
+            const c=chs[k], x0=px[k].x0, w=px[k].w;
             if(c.lo<sLo || c.hi>sHi) continue;                           // канал вне захваченной полосы — без столбика
             const lv=saDb(saChanLevel(t1,N,specBin(n.s,c.lo),specBin(n.s,c.hi),n.p.chBars));
             const y=plotH-clamp((lv-n.p.floor)/((n.p.top-n.p.floor)||1),0,1)*(plotH-2)-1;
-            const x0=Math.round(saPos(n,c.lo)*span+.5), x1=Math.round(saPos(n,c.hi)*span+.5), w=Math.max(1,x1-x0-(x1-x0>=4?1:0));
             cx.fillStyle=n.colTS; cx.globalAlpha=Math.max(.18,fa*2.2); cx.fillRect(x0,y,w,plotH-y);
             cx.globalAlpha=1; cx.fillRect(x0,y,w,Math.min(2,plotH-y));      // верх столбика — плотной полоской
           }
@@ -4637,10 +4666,10 @@ def({ id:'spectral', title:'Spectral Descriptors', cat:'Analysis',
     'centroid '+n.centroid.toFixed(0)+' Hz · spread '+n.spread.toFixed(0)+' Hz · flux '+
     n.flux.toFixed(3)+' · rolloff '+n.rolloff.toFixed(0)+' Hz'; }});
 defGroups('sa',[
-  {n:'View', p:'show auto frange dbrange fill fillAlpha log grid peakHold peakDecay layout'},
+  {n:'View', p:'show auto frange dbrange fill fillAlpha chBars log grid peakHold peakDecay layout'},
   {n:'Level', p:'vscale refLvl dbDiv autoDb adHead adMargin adTrack unit lvlOff', open:false},
   {n:'Markers', p:'snap trk trkBw wfMk ant antVf markMode markLabels tickSec clearMarks bandFilter', open:false},
-  {n:'Waterfall', p:'wfBright wfContrast rowMs palette wfMem phosphor phDecay phGain', open:false},
+  {n:'Waterfall', p:'wfBright wfContrast rowMs palette wfMem chWf phosphor phDecay phGain', open:false},
   {n:'Traces', p:'tr1 tr2 tr3 tr4 avgN det rbw rbwHz mkTrace clrTr tol band ref take refSave refLoad', open:false},
   {n:'Measure & export', p:'dRef meas measBw measPct measX acpOff calMk slice sliceSec saveCsv savePng', open:false},
   {n:'Panes', p:'panes follow edge paneFrom holdMarker avg ageFade', open:false}],
