@@ -1478,10 +1478,15 @@ function rtlMakeCom(dev){
   let fastI2C=false;               // быстрый режим: без «пустого» чтения после записи в демодулятор (open/close I2C)
   const xs={n:0, ms:0, max:0};     // управляющие передачи: сколько, суммарное и максимальное время (для лога перестройки)
   const xsAdd=t0=>{ const d=performance.now()-t0; xs.n++; xs.ms+=d; if(d>xs.max) xs.max=d; };
+  // конвейер (pipeBegin…pipeEnd): записи и подтверждающие чтения не ждут завершения — их передачи уходят подряд (на EP0 они выполняются
+  // по порядку), ждём только чтения, чей результат нужен (захват PLL), и всех в конце. Ошибки собираются и бросаются в pipeEnd
+  let pipe=null, pipeErr=null;
+  const pipeAdd=p=>{ p.catch(e=>{ if(!pipeErr) pipeErr=e; }); pipe.push(p); };
   async function writeCtrl(value,index,buffer){
     const t0=performance.now();
-    await dev.controlTransferOut({requestType:'vendor',recipient:'device',request:0,value,index}, buffer);
-    xsAdd(t0);
+    const p=dev.controlTransferOut({requestType:'vendor',recipient:'device',request:0,value,index}, buffer).then(()=>xsAdd(t0));   // передача уходит синхронно, до первого await
+    if(pipe){ pipeAdd(p); return; }
+    await p;
   }
   async function readCtrl(value,index,length){
     const t0=performance.now();
@@ -1501,9 +1506,23 @@ function rtlMakeCom(dev){
   async function readDemodReg(page,addr){ return await readReg(page,(addr<<8)|0x20,1); }
   async function writeDemodReg(page,addr,value,len){
     await writeRegBuffer(page,(addr<<8)|0x20, rtlNumToBuf(value,len,true));
-    return await readDemodReg(0x0a,0x01);
+    const ack=readDemodReg(0x0a,0x01);                 // «пустое» чтение защёлкивает запись; результат не нужен
+    if(pipe){ pipeAdd(ack); return 0; }
+    return await ack;
   }
   async function writeDemodRegNoAck(page,addr,value,len){ await writeRegBuffer(page,(addr<<8)|0x20, rtlNumToBuf(value,len,true)); }
+  function pipeBegin(){ pipe=[]; pipeErr=null; }
+  async function pipeEnd(){
+    const p=pipe; pipe=null;
+    if(p && p.length) await Promise.all(p.map(x=>x.catch(()=>{})));
+    const e=pipeErr; pipeErr=null; if(e) throw e;
+  }
+  // I2C-шлюз тюнера на время fn: открыть → fn → закрыть; pipeOn — передачи без ожидания каждой (конец — по pipeEnd)
+  async function withI2C(fn, pipeOn){
+    if(pipeOn) pipeBegin();
+    try{ await openI2C(); return await fn(); }
+    finally{ try{ await closeI2C(); } finally{ if(pipeOn) await pipeEnd(); } }
+  }
   async function openI2C(){ await (fastI2C ? writeDemodRegNoAck : writeDemodReg)(1,1,0x18,1); }
   async function closeI2C(){ await (fastI2C ? writeDemodRegNoAck : writeDemodReg)(1,1,0x10,1); }
   // несколько регистров подряд одним I2C-сообщением (адрес + до 7 байт, лимит RTL2832 — 8 байт на сообщение)
@@ -1525,7 +1544,7 @@ function rtlMakeCom(dev){
     demod:{readRegister:readDemodReg, writeRegister:writeDemodReg},
     i2c:{open:openI2C, close:closeI2C, readRegister:readI2CReg, writeRegister:writeI2CReg, writeRegisters:writeI2CRegs, readRegBuffer:readI2CRegBuffer},
     setFastI2C:on=>{ /* пустое чтение после записи в демодулятор нужно: без него шлюз I2C не открывается и тюнер не получает частоту */ },
-    xs,
+    xs, withI2C, pipeBegin, pipeEnd,
     bulk:{readBuffer:readBulk},
     raw:{write:writeRegBuffer, read:readRegBuffer},                 // произвольный блок: DVB-донглы шлют I2C другими командами
     iface:{claim:()=>dev.claimInterface(0), release:()=>dev.releaseInterface(0).catch(()=>{})},
@@ -1921,19 +1940,17 @@ async function rtlOpenDevice(dev, ppm, gain){
     return real;
   }
   // эпоха перестройки: трансферы, запущенные до её конца, несут отсчёты старой частоты
-  let tuneEpoch=0, fastOn=false, tuneT=0;   // tuneT — момент конца последней перестройки (performance.now)
+  let tuneEpoch=0, fastOn=false, pipeOpt=false, tuneT=0;   // tuneT — момент конца последней перестройки (performance.now)
   let lastTune=null;
   async function setCenterFrequency(freq){
     const t0=performance.now();
     com.xs.n=0; com.xs.ms=0; com.xs.max=0;
-    await com.i2c.open();
-    let actual;
-    try{ actual=await tuner.setFrequencyRobust(freq+IF, freq, ()=>applyGain(curGain)); }
-    finally{ await com.i2c.close(); }
+    const pipeOn=fastOn && pipeOpt;
+    const actual=await com.withI2C(()=>tuner.setFrequencyRobust(freq+IF, freq, ()=>applyGain(curGain)), pipeOn);
     // быстрый режим пропускает паузы PLL: до следующего захвата отсчёты идут с недосевшей частотой
     if(fastOn){ const w=15-(performance.now()-t0); if(w>0) await new Promise(r=>setTimeout(r,w)); }
     tuneEpoch++; tuneT=performance.now();
-    lastTune={t:tuneT-t0, n:com.xs.n, ms:com.xs.ms, max:com.xs.max};
+    lastTune={t:tuneT-t0, n:com.xs.n, ms:com.xs.ms, max:com.xs.max, pipe:pipeOn};
     return actual-IF;
   }
   async function applyGain(g){ if(g==null) await tuner.setAutoGain(); else if(typeof g==='object') await tuner.setStageGain(g); else await tuner.setManualGain(g); }
@@ -1969,7 +1986,7 @@ async function rtlOpenDevice(dev, ppm, gain){
     return {f:actual-IF, locked:tuner.locked()};
   }
   // быстрая перестройка: без пустых чтений после записи в демодулятор и без необязательных шагов PLL (см. rtlMakeR820T)
-  function setFastTune(on){ fastOn=!!on; tuner.setFast(on); com.setFastI2C(on); }
+  function setFastTune(on, pipe){ fastOn=!!on; pipeOpt=!!pipe; tuner.setFast(on); com.setFastI2C(on); }
   async function resetBuffer(){
     await com.writeEach([[RTL_CMD.REG,RTL_BLOCK.USB,RTL_REG.EPA_CTL,0x0210,2],[RTL_CMD.REG,RTL_BLOCK.USB,RTL_REG.EPA_CTL,0x0000,2]]);
   }
@@ -3024,7 +3041,7 @@ async function rtlOpenInWorker(usbDev, gain){
     tuneInfo:()=>tuneInfo,
     setGain:gain=>call('setGain',{gain}),
     setBiasTee:on=>call('dev',{m:'setBiasTee',a:[on]}),
-    setFastTune:info.kind==='rtl' ? on=>call('dev',{m:'setFastTune',a:[on]}) : undefined,
+    setFastTune:info.kind==='rtl' ? (on,pipe)=>call('dev',{m:'setFastTune',a:[on,pipe]}) : undefined,
     pllLock:info.kind==='rtl' ? ()=>call('dev',{m:'pllLock',a:[]}) : undefined,
     tunerDump:info.kind==='rtl' ? ()=>call('dev',{m:'tunerDump',a:[]}) : undefined,
     recover:info.kind==='rtl' ? async(freq,gain)=>{ const r=await call('dev',{m:'recover',a:[freq,gain]}); epoch=await call('dev',{m:'epoch',a:[]}).catch(()=>epoch); return r; } : undefined,
@@ -4816,11 +4833,11 @@ async function sdrTune(n){
   const want=Math.round(n.p.freq), ppm=+n.p.ppm||0, k=n.dev.fixedFreq ? 1 : 1+ppm*1e-6;
   const off=sdrDcOff(n), conv=sdrConv(n);
   if(want+off-conv<=0) throw new Error(`tuner frequency ${fmtHz(want+off-conv)}Hz out of range (check converter offset)`);
-  if(n._fastDev!==n.dev || n._fast!==!!n.p.fastTune){ n._fastDev=n.dev; n._fast=!!n.p.fastTune; await n.dev.setFastTune?.(n._fast); }
+  if(n._fastDev!==n.dev || n._fast!==!!n.p.fastTune || n._fastPipe!==!!n.p.fastPipe){ n._fastDev=n.dev; n._fast=!!n.p.fastTune; n._fastPipe=!!n.p.fastPipe; await n.dev.setFastTune?.(n._fast, n._fastPipe); }
   const tT0=performance.now();
   const hw=await n.dev.setCenterFrequency(Math.round((want+off-conv)/k));
   (n._tuneT||(n._tuneT=[])).push(performance.now());
-  const tMs=performance.now()-tT0; n._lastTuneMs=tMs; if(tMs>60){ const ti=n.dev.tuneInfo?.(); console.log(`[rtlsdr] перестройка заняла ${tMs.toFixed(0)}мс (fast=${!!n.p.fastTune})`+(ti?` в воркере ${ti.t.toFixed(0)}мс: ${ti.n} передач, ${ti.ms.toFixed(0)}мс, макс ${ti.max.toFixed(0)}мс`:'')+` @ ${performance.now().toFixed(0)}ms`); }
+  const tMs=performance.now()-tT0; n._lastTuneMs=tMs; if(tMs>60){ const ti=n.dev.tuneInfo?.(); console.log(`[rtlsdr] перестройка заняла ${tMs.toFixed(0)}мс (fast=${!!n.p.fastTune}${ti&&ti.pipe?', конвейер':''})`+(ti?` в воркере ${ti.t.toFixed(0)}мс: ${ti.n} передач, ${ti.ms.toFixed(0)}мс, макс ${ti.max.toFixed(0)}мс`:'')+` @ ${performance.now().toFixed(0)}ms`); }
   n.actualFreq=hw*k+conv; n.dcOff=off; n.appliedFreq=want; n.appliedPpm=ppm; n.appliedConv=conv;
   if(n.dev.fixedFreq){ n.p.freq=hw; n.appliedFreq=hw; }   // у файла центр не перестраивается
 }
@@ -5472,6 +5489,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'bias',t:'check',d:false,label:'bias-tee',adv:true},
     {n:'dcShift',t:'check',d:false,label:'shift center off DC (always for AM/SAM/SSB)',adv:true},
     {n:'fastTune',t:'check',d:false,label:'fast retune (RTL-SDR: fewer USB transfers per tuning — for scanning)',adv:true},
+    {n:'fastPipe',t:'check',d:false,label:'pipeline USB transfers on retune (experimental, with fast retune: ~2× faster tuning; turn off if the signal does not appear after tuning)',short:'pipeline',adv:true},
     {n:'ppm',t:'range',min:-100,max:100,step:.1,d:0,label:'frequency correction, ppm',adv:true},
     // up/down-конвертер: эфирная частота = частота тюнера + смещение (−125 для апконвертера 125 МГц, +9750 для LNB)
     {n:'conv',t:'num',d:0,label:'converter offset, MHz (RF = tuner + offset)',adv:true},
@@ -7802,7 +7820,7 @@ function captureImgSrc(n){                          // картинка стат
 defGroups('rtlsdr',[
   {n:'Receiver', p:'sr demod bw auto gainDb lna vga amp sql sqlSnr sqlLvl'},
   {n:'Audio', p:'deemph samSb stereo agc nb anf sqlHang', open:false},
-  {n:'Tuner', p:'gainMode stLna stLnaAuto stMix stMixAuto stVga ppm conv bias dcShift fastTune planMode planGain', open:false},
+  {n:'Tuner', p:'gainMode stLna stLnaAuto stMix stMixAuto stVga ppm conv bias dcShift fastTune fastPipe planMode planGain', open:false},
   {n:'Spectrum & sweep', p:'specSize specWin specWinP specFps specAvg specWelch specMode sweep swLo swHi swHw swFft swAvg swMode swUse swOvl swSmooth swDecay swSettle', open:false},
   {n:'Record & files', p:'openStored recDest recFolder rec recStop recFmt recBand recBw recF tag markTime recTrig recPre recMax iqFmt loop seek', open:false}],
   {pri:'demod bw sql auto gainDb'});
