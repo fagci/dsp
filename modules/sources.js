@@ -1935,7 +1935,7 @@ async function rtlOpenDevice(dev, ppm, gain){
   const ser=fn=>(...a)=>{ const r=tq.then(()=>fn(...a)); tq=r.then(()=>{},()=>{}); return r; };
   return {setSampleRate:ser(setSampleRate), setCenterFrequency:ser(setCenterFrequency), setGain:ser(setGain), setBiasTee:ser(setBiasTee),
     setFastTune, resetBuffer:ser(resetBuffer), readSamples, close:ser(close), pllLock:ser(pllLock), recover:ser(recover), tunerDump:ser(tunerDump),
-    tunerName:found.name+(isV4?' (Blog V4)':''), kind:'rtl', fmt:'u8', bps:2, epoch:()=>tuneEpoch};
+    tunerName:found.name+(isV4?' (Blog V4)':''), kind:'rtl', fmt:'u8', bps:2, rateRange:[900001,3200000], epoch:()=>tuneEpoch};
 }
 
 // ---- HackRF и Airspy: тот же API, что у rtlOpenDevice ----
@@ -2097,7 +2097,7 @@ async function hackrfOpenDevice(dev, gain){
   await setGain(gain);
   return {setSampleRate, setCenterFrequency, setGain, setHackrfGain, setBiasTee, resetBuffer, readSamples, close,
     startSweep, stopSweep, setTxGain, txStart, txStop, txPush, txStats,
-    tunerName:dev.productName||'HackRF', kind:'hackrf', fmt:'u8', bps:2, epoch:()=>tuneEpoch};
+    tunerName:dev.productName||'HackRF', kind:'hackrf', fmt:'u8', bps:2, rateRange:[2e6,20e6], epoch:()=>tuneEpoch};
 }
 
 // Airspy R2/Mini: АЦП отдаёт вещественные 12-битные отсчёты (uint16, смещение 2048) на удвоенной
@@ -2229,7 +2229,7 @@ async function airspyOpenDevice(dev, gain){
   }
   await setGain(gain);
   return {setSampleRate, setCenterFrequency, setGain, setBiasTee, resetBuffer, readSamples, close,
-    tunerName:hydra?'HydraSDR RFOne':rates.includes(6000000)?'Airspy Mini':'Airspy', kind:'airspy', fmt:'s16', bps:4, epoch:()=>tuneEpoch};
+    tunerName:hydra?'HydraSDR RFOne':rates.includes(6000000)?'Airspy Mini':'Airspy', kind:'airspy', fmt:'s16', bps:4, rates:rates.slice(), epoch:()=>tuneEpoch};
 }
 
 // Airspy HF+ (Dual / Discovery / Ranger): наружу идёт int16 IQ (в паре первым слово Q, вторым I) на
@@ -2363,7 +2363,7 @@ async function airspyhfOpenDevice(dev, gain){
   await setSampleRate(rates[0]);
   await setGain(gain);
   return {setSampleRate, setCenterFrequency, setGain, setBiasTee, resetBuffer, readSamples, close,
-    tunerName:'Airspy HF+', kind:'airspyhf', fmt:'s16', bps:4, epoch:()=>tuneEpoch};
+    tunerName:'Airspy HF+', kind:'airspyhf', fmt:'s16', bps:4, rates:rates.slice(), epoch:()=>tuneEpoch};
 }
 
 // SDRplay RSP1 и донглы на Mirics MSi2500 + MSi001. Протокол — по libmirisdr-4 (Slugen, SM5BSZ).
@@ -2556,7 +2556,7 @@ async function mirisdrOpenDevice(dev, gain){
   await setSampleRate(rate);
   await setGain(gain);
   return {setSampleRate, setCenterFrequency, setGain, setBiasTee, resetBuffer, readSamples, close,
-    tunerName:dev.productName||'MSi2500', kind:'miri', fmt:'s16', bps:4, epoch:()=>tuneEpoch};
+    tunerName:dev.productName||'MSi2500', kind:'miri', fmt:'s16', bps:4, rateRange:[1300000,15e6], epoch:()=>tuneEpoch};
 }
 
 // RX-888 (и прочие SDDC на Cypress FX3): 16-битный АЦП без тюнера на КВ, R8xx/RDA5815 — на УКВ.
@@ -2833,7 +2833,7 @@ async function rx888OpenDevice(dev, gain){
     await dev.close();
   }
   return {setSampleRate, setCenterFrequency, setGain, setBiasTee, resetBuffer, readSamples, close,
-    tunerName:NAMES[model]+' fw '+fw, kind:'sddc', fmt:'s16', bps:4, epoch:()=>tuneEpoch};
+    tunerName:NAMES[model]+' fw '+fw, kind:'sddc', fmt:'s16', bps:4, rateRange:[250000,ADC_MAX/2], epoch:()=>tuneEpoch};
 }
 
 // MSi2500: SDRplay RSP1 (2500/3000), RSP2 (3010), RSP1A (3020) — последние два не проверены, ТВ-донглы Hauppauge/AverMedia/IO-DATA/Logitec
@@ -2925,7 +2925,7 @@ self.onmessage=async e=>{
       if(!usb) throw new Error('device is not visible from the worker');
       try{ api=await sdrOpenDevice(usb, 0, args.gain); }
       catch(err){ try{ await usb.close(); }catch(e2){} usb=null; throw err; }
-      r={tunerName:api.tunerName, kind:api.kind, fmt:api.fmt, bps:api.bps};
+      r={tunerName:api.tunerName, kind:api.kind, fmt:api.fmt, bps:api.bps, rates:api.rates, rateRange:api.rateRange};
     }
     else if(cmd==='setSampleRate'){ rate=await api.setSampleRate(args.rate); r=rate; }
     else if(cmd==='setCenterFrequency'){ const f=await api.setCenterFrequency(args.freq); r={f, epoch:api.epoch()}; }
@@ -2963,7 +2963,7 @@ async function rtlOpenInWorker(usbDev, gain){
     info=await call('open', {vendorId:usbDev.vendorId, productId:usbDev.productId, serial:usbDev.serialNumber, gain, index:Math.max(0,same.indexOf(usbDev))});
   }catch(e){ drop(); throw e; }
   return {
-    worker:true, tunerName:info.tunerName, kind:info.kind, fmt:info.fmt, bps:info.bps,
+    worker:true, tunerName:info.tunerName, kind:info.kind, fmt:info.fmt, bps:info.bps, rates:info.rates, rateRange:info.rateRange,
     setSampleRate:rate=>call('setSampleRate',{rate}),
     setCenterFrequency:async freq=>{ const r=await call('setCenterFrequency',{freq}); epoch=r.epoch; return r.f; },
     epoch:()=>epoch,
@@ -4744,8 +4744,11 @@ async function rtlConnect(n, choose){
     n.dev=await rtlOpenInWorker(usbDev, gain).catch(e=>{
       console.warn('[rtlsdr] USB-воркер не открыл донгл, читаем с главного потока:', e.message); return null; })
       || await sdrOpenDevice(usbDev, 0, gain);
-    const srSafe=rtlSafeSr(n.p.sr);
-    if(srSafe!==+n.p.sr) n.status='sample rate in settings is stale, using '+srSafe+' Hz';
+    let srSafe=rtlSafeSr(n.p.sr);
+    // частота, которой у этого донгла нет (список общий для всех, настройка осталась от другого), — ближайшая из его списка
+    const own=sdrRateSnap(sdrRateOpts(n.dev,RTL_SR_OPTS),srSafe);
+    if(own!==srSafe){ srSafe=own; n.p.sr=String(own); n.set?.sr?.(); n.status='sample rate '+own+' Hz: the nearest one this dongle supports'; }
+    else if(srSafe!==+n.p.sr) n.status='sample rate in settings is stale, using '+srSafe+' Hz';
     n.p.usbId=sdrUsbId(usbDev);
     await rtlStart(n, srSafe);
   }catch(e){
@@ -5317,7 +5320,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     // только файл: повтор и позиция
     {n:'loop',t:'check',d:true,label:'loop playback'},
     {n:'seek',t:'range',min:0,max:100,step:.1,d:0,label:'position, %'},
-    {n:'sr',t:'select',opts:RTL_SR_OPTS.map(String),d:'1024000',label:'sample rate',
+    {n:'sr',t:'select',opts:n=>sdrRateOpts(n.dev,RTL_SR_OPTS).map(String),d:'1024000',label:'sample rate (the list is what the connected dongle supports)',
      fn:async n=>{ if(n.dev){ try{ n.sourceRate=await n.dev.setSampleRate(rtlSafeSr(n.p.sr)); rtlResetRing(n); }
        catch(e){ n.status='sample rate change error: '+e.message; } } }},
     // режим демодуляции/полоса/де-эмфазис — ОБЩИЕ на все 4 канала (проще UI); частота у каждого своя
@@ -5479,7 +5482,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     // провод не укажет на другое значение (та же идея, что у freq/steerFreq выше, общим хелпером).
     setModWired(n,'gainDb', I.gainDb, typeof I.gainDb==='number');
     if(typeof I.gainDb==='number' && n.p.auto){ if(n.set?.auto) n.set.auto(false); else n.p.auto=false; }   // провод на gain — ручной режим
-    { const w=typeof I.sr==='number' && I.sr>0 ? String(RTL_SR_OPTS.reduce((a,b)=>Math.abs(b-I.sr)<Math.abs(a-I.sr)?b:a)) : null;
+    { const w=typeof I.sr==='number' && I.sr>0 ? String(sdrRateSnap(sdrRateOpts(n.dev,RTL_SR_OPTS),I.sr)) : null;
       setModWired(n,'sr', w, w!==null); }                 // вход sr: ближайшая из поддерживаемых
     setModWired(n,'demod', I.demod, typeof I.demod==='string' && DEMOD_OPTS.includes(I.demod));
     setModWired(n,'bw', I.bw, typeof I.bw==='number');
