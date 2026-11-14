@@ -3617,8 +3617,10 @@ for(const n of toDraw){
 const d=MOD[n.type];
 if(d.lazy) drawnLazy(n,ts);                        // до draw(): он может сам попросить следующий кадр
 const pa=Prof.on?performance.now():0;
+const tD0=performance.now();
 try{ d.draw(n,n.cv,n.cx); if(pa){ const dt=performance.now()-pa; n._dAcc=(n._dAcc||0)+dt; Prof.tot.d+=dt; } }
 catch(e){ if(!n.drawErr){ n.drawErr=1; console.error('draw '+n.type+':',e); } }
+{ const dd=performance.now()-tD0; if(dd>40) console.warn(`[Gfx] отрисовка узла ${n.type} #${n.id} заняла ${dd.toFixed(0)}мс (канва ${n.cv?.width||0}×${n.cv?.height||0}) @ ${performance.now().toFixed(0)}ms`); }   // найти узел, держащий главный поток
 }
 if(toDraw.length) drawEma=drawEma*.9+(performance.now()-tDraw)*.1;
 if(Eng.running &&!Eng.paused){
