@@ -2290,10 +2290,14 @@ function saBounds(n){                              // границы отобр�
   const lo=clamp(n.p.fmin,lo0,hi0), hi=clamp(n.p.fmax,lo0,hi0);
   return lo<hi ? [lo,hi] : [lo0,hi0];
 }
-function saFreq(n,t){                              // доля ширины → частота
-  const [lo,hi]=saBounds(n);
+// доля ширины → частота при уже известных границах окна [lo,hi] (saBounds каждый раз делает два массива — в циклах по пикселям считаем их один раз)
+function saFreqB(n,lo,hi,t){
   if(!n.p.log) return lo+(hi-lo)*t;
   const l=Math.max(lo,10); return l*Math.pow(hi/l,t);
+}
+function saFreq(n,t){                              // доля ширины → частота
+  const [lo,hi]=saBounds(n);
+  return saFreqB(n,lo,hi,t);
 }
 function saPos(n,f){
   const [lo,hi]=saBounds(n);

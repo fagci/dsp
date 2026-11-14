@@ -1763,6 +1763,14 @@ function saTrackCarrier(n,sp){
 // Тот же приём, что у 'persist': GPU только красит уже посчитанное на CPU, рендерится в
 // OffscreenCanvas и одним drawImage уходит на обычную 2D-канву узла — трасса/сетка/маркеры/драг
 // в остальной отрисовке sa не тронуты.
+// Первый WebGL-контекст страницы и первая компиляция шейдеров водопада — десятки мс в первом кадре спектра (на GPU — больше, чем в headless):
+// звук при запуске приёма обрывался. Прогреваем заранее, в простое, пока граф ещё загружается (контекст тут же отдаём)
+let saGlWarm=false;
+function saWfGlWarm(){
+  if(saGlWarm) return; saGlWarm=true;
+  const run=()=>{ try{ const g=saWfGlInit(16,16); g && g.gl.getExtension('WEBGL_lose_context')?.loseContext(); }catch(e){} };
+  if(typeof requestIdleCallback==='function') requestIdleCallback(run,{timeout:4000}); else setTimeout(run,1500);
+}
 function saWfGlInit(W,H){
   // обычная DOM-канва, а не OffscreenCanvas: она сама стоит слоем под канвой узла (saWfLayer)
   const oc = Object.assign(document.createElement('canvas'),{width:W,height:H});
@@ -2147,7 +2155,8 @@ function saHistJob(n, Wp, H, top, fresh){
   if(!fresh) n._hbuf=buf;
   new Uint32Array(buf.buffer).fill(0xff000000);     // чёрный, alpha 255
   const fE=new Float64Array(Wp+1);
-  for(let x=0;x<=Wp;x++) fE[x]=saFreq(n,(x-.5)/Math.max(1,Wp-1));
+  const [bl,bh]=saBounds(n);
+  for(let x=0;x<=Wp;x++) fE[x]=saFreqB(n,bl,bh,(x-.5)/Math.max(1,Wp-1));
   let dMin=Infinity; for(let x=0;x<Wp;x++){ const d=Math.abs(fE[x+1]-fE[x]); if(d<dMin) dMin=d; }
   // цвет на каждый код уровня — один раз
   const [wLo,wHi]=saWfWin(n), pal=paletteLut(n.p.palette), rng=(wHi-wLo)||1, col=new Uint8Array(256*3);
@@ -2375,7 +2384,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
   // mkPhase/mkBin/mkRev — состояние фазового уточнения частоты (fr1..fr4): сравниваем фазу
   // пика с предыдущим кадром спектра и по сдвигу фазы меряем частоту точнее ширины бина —
   // работает, только если источник спектра отдаёт sp.phase/sp.hop ('fft'/'zfft' это делают).
-  init:n=>{n.userMarks=[];n.mk=[null,null,null,null];n.db=[-120,-120,-120,-120];n.snr=[0,0,0,0];n.active=1;
+  init:n=>{saWfGlWarm(); n.userMarks=[];n.mk=[null,null,null,null];n.db=[-120,-120,-120,-120];n.snr=[0,0,0,0];n.active=1;
            n.ext=[0,0,0,0];n.pickT=null;n.peak=null;n.peakFreqs=null;n._dragPending=false;n._dragActive=false;
            n.mkPhase=[0,0,0,0];n.mkBin=[null,null,null,null];n.mkRev=[-1,-1,-1,-1];
            n.zoom=null;n._steer=null;n._srcCenter=null;n._lastRange=null;},
@@ -3050,14 +3059,15 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
          n._bFmin!==bLo || n._bFmax!==bHi || n._bFreqs!==(n.s.freqs||null)){
         n._bW=W; n._bWp=Wp; n._bN=N; n._bLog=n.p.log; n._bAuto=n.p.auto;
         n._bFmin=bLo; n._bFmax=bHi; n._bFreqs=n.s.freqs||null;
+        const fq=t=>saFreqB(n,bLo,bHi,t);            // границы окна уже известны (saBounds выше), в циклах не пересчитываем
         n._binEdgeX=new Float32Array(W+1);
-        for(let x=0;x<=W;x++) n._binEdgeX[x]=clamp(specBin(n.s,saFreq(n,(x-.5)/(W-1))),0,N-1);
+        for(let x=0;x<=W;x++) n._binEdgeX[x]=clamp(specBin(n.s,fq((x-.5)/(W-1))),0,N-1);
         // столбцы вне реально захваченной полосы (окно обогнало перестройку) — пустые, а не край, размазанный вбок
         const [sLo,sHi]=specSpan(n.s);
-        n._inX=new Uint8Array(W); for(let x=0;x<W;x++){ const f=saFreq(n,x/(W-1)); n._inX[x]=f>=sLo&&f<=sHi?1:0; }
-        n._inXwf=new Uint8Array(Wp); for(let x=0;x<Wp;x++){ const f=saFreq(n,x/(Wp-1)); n._inXwf[x]=f>=sLo&&f<=sHi?1:0; }
+        n._inX=new Uint8Array(W); for(let x=0;x<W;x++){ const f=fq(x/(W-1)); n._inX[x]=f>=sLo&&f<=sHi?1:0; }
+        n._inXwf=new Uint8Array(Wp); for(let x=0;x<Wp;x++){ const f=fq(x/(Wp-1)); n._inXwf[x]=f>=sLo&&f<=sHi?1:0; }
         n._binEdgeXwf=new Float32Array(Wp+1);
-        for(let x=0;x<=Wp;x++) n._binEdgeXwf[x]=clamp(specBin(n.s,saFreq(n,(x-.5)/(Wp-1))),0,N-1);
+        for(let x=0;x<=Wp;x++) n._binEdgeXwf[x]=clamp(specBin(n.s,fq((x-.5)/(Wp-1))),0,N-1);
       }
       const edgeX=n._binEdgeX, edgeXwf=n._binEdgeXwf;
       // При крупном БПФ (много бинов) и небольшой ширине канвы на один столбец пикселей приходится
