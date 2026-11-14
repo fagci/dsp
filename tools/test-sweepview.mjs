@@ -47,8 +47,8 @@ const mkNode=(over={})=>{
   ok('оси согласованы', b.spec.freqs.length===b.spec.mag.length && b.spec.size===b.spec.mag.length && b.peak.mag.length===b.spec.size);
   ok('описание панорамы у спектра: границы тюнера и потолок ширины', b.spec.sweepView && b.spec.sweepView.min>0 && b.spec.sweepView.maxSpan>0);
   ok('без провода wired=false (окно к панораме привязано)', b.spec.sweepView.wired===false);
-  n.id=5; ctx.Graph.edges.push({from:9,fp:'viewLo',to:5,tp:'swLo'}); ctx.Graph.order++;
-  ok('провод viewLo→swLo включает wired', K.sdrSweepView(n).wired===true);
+  n.id=5; ctx.Graph.edges.push({from:9,fp:'viewLo',to:5,tp:'sweepLo'}); ctx.Graph.order++;
+  ok('провод viewLo→sweepLo включает wired', K.sdrSweepView(n).wired===true);
   ctx.Graph.edges.length=0; ctx.Graph.order++;
   ok('провод убрали — wired снова false', K.sdrSweepView(n).wired===false);
   // третий план — ёмкость первого буфера переиспользуется (без новой аллокации)
