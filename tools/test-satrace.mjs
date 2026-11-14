@@ -141,6 +141,9 @@ const db=x=>20*Math.log10(x+1e-12), near=(a,b,e=.05)=>Math.abs(a-b)<=e;
   const gaps=px.slice(1).map((q,i)=>q.x0-(px[i].x0+px[i].w));
   ok('px: gaps ≥1 and differ by ≤1 px',Math.min(...gaps)>=1 && Math.max(...gaps)-Math.min(...gaps)<=1,JSON.stringify(gaps));
   ok('px: centre within a pixel',chs.every((c,i)=>Math.abs(px[i].x0+px[i].w/2-(pos(c.f)*(W-1)+.5))<=1));
+  // узкие каналы (много каналов на экране): зазор всё равно есть, пока шаг от 2 px — иначе спектр сплошной полосой, а водопад (физические px) разделён
+  const lo2=99.9e6, hi2=101e6, many=K.saChanBars([{lo:99.9e6,hi:101e6,step:10e3}],lo2,hi2), pm=K.saChanPx(many,f=>(f-lo2)/(hi2-lo2),300);
+  ok('px: pitch ~2.7 px — gap kept',pm[0].w>=1 && pm[1].x0-(pm[0].x0+pm[0].w)>=1,JSON.stringify(pm.slice(0,3)));
   const nar=K.saChanPx(K.saChanBars([{lo:100e6,hi:100.9e6,step:100e3}],99.9e6,101e6),pos,100);
   ok('px: narrow channels — no gap, width ≥1',nar.every(q=>q.w>=1) && nar[1].x0-nar[0].x0>=1);
 }
