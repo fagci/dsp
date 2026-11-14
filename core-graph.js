@@ -2300,10 +2300,51 @@ function dashGraphFit(){ requestAnimationFrame(()=>requestAnimationFrame(()=>{ c
 let modPickEl=null;
 const modPickBack=()=>{ modPickEl?.remove(); modPickEl=null; };
 function closeModPicker(){ if(modPickEl){ modPickBack(); Back.drop(modPickBack); } }
+/* цепочка в пикере модулей («fft>sa», «sa>(dac,scope)»): та же запись, что в палитре (cmdk), но сразу в точку at.
+   from — пин, от которого тянули провод: выход питает первый модуль цепочки, вход получает от её хвоста. */
+function modPickChainOn(q){ return q.includes('>') || !!chunkGet(q.trim().toLowerCase()); }
+function modPickChain(q,at,from){
+  const r=cmdkParse(q), leaves=chainLeaves(r.ast).filter(l=>l.m);
+  if(!leaves.length) return false;
+  const was=Undo.busy, notes=[]; let made=[]; Undo.busy=true;
+  try{
+    for(const lf of leaves){
+      const cz=lf.params ? chainCoerce(lf.m.id,lf.params,notes) : null;
+      lf.node=addNodeUI(lf.m.id,0,0,cz&&Object.keys(cz.known).length ? cz.known : undefined);
+      if(lf.node && cz) chainApplyRest(lf.node,cz.rest,notes);
+    }
+    made=leaves.filter(lf=>lf.node);
+    if(!made.length) return false;
+    const sz=lf=>({w:lf.node.el.offsetWidth||lf.node.size.w||180, h:lf.node.el.offsetHeight||lf.node.size.h||120});
+    const lay=chainLayout(r.ast), cw=[];
+    for(const lf of made) cw[lf.col]=Math.max(cw[lf.col]||0,sz(lf).w);
+    const colX=[]; let ax=0;
+    for(let c=0;c<lay.w;c++){ colX[c]=ax; ax+=(cw[c]||0)+70; }
+    chainPlaceY(r.ast,lf=>lf.node?sz(lf):{w:0,h:0},24);
+    const x0=at.x-(from&&from.dir==='i' ? ax-70+60 : 0), y0=at.y;   // вход пина — цепочка левее него
+    for(const lf of made){ lf.node.x=Math.round(x0+colX[lf.col]); lf.node.y=Math.round(y0+lf.y); posNode(lf.node); }
+    const srcLeaf=from&&from.dir==='o' ? {node:from.n} : null;
+    const e=chainEdges(r.ast,srcLeaf?[srcLeaf]:[],(f,t,pins)=>{
+      if(!f.node||!t.node) return;
+      if(f===srcLeaf && !(pins&&pins.length)){                    // пин, с которого тянули, — именно он, а не автоподбор
+        const cp=compatPort(t.m,from.type,'o'); if(cp) connect(from.n.id,from.port,t.node.id,cp.n); return; }
+      chainLink(f.node,t.node,pins,notes);
+    });
+    if(from&&from.dir==='i') for(const tl of e.tails){
+      if(!tl.node) continue;
+      const cp=compatPort(tl.m,from.type,'i'); if(!cp) continue;
+      const n0=Graph.edges.length; connect(tl.node.id,cp.n,from.n.id,from.port);
+      if(Graph.edges.length>n0) break;
+    }
+  } finally { Undo.busy=was; }
+  Sel.clear(); made.forEach(lf=>Sel.add(lf.node.id)); syncSel(); markWiresDirty(); Undo.push();
+  stat.textContent='chain: '+made.map(lf=>shortLabel(lf.m.title)).join(' → ');
+  return true;
+}
 function openModPicker(clientX,clientY,at,from){
   closeModPicker();
   const box=document.createElement('div'); box.className='modpick panzoom-exclude';
-  const inp=document.createElement('input'); inp.type='search'; inp.placeholder='Add module…';
+  const inp=document.createElement('input'); inp.type='search'; inp.placeholder='Add module… or chain: fft>sa';
   const list=document.createElement('div'); list.className='mp-list';
   if(from){ const h=document.createElement('div'); h.className='mp-from';          // провод ищет, к чему подключиться
     h.innerHTML=`<span class="pin" style="background:${TYPE_COLOR[from.type]}"></span>${from.type} ${from.dir==='o'?'→':'←'} <i></i>`;
@@ -2312,7 +2353,7 @@ function openModPicker(clientX,clientY,at,from){
   const t0=performance.now();    // попап открывается на pointerup — следом приходит синтетический click по тому, что оказалось под пальцем
   const mods=Object.values(MOD).filter(m=>!String(m.id).startsWith('custom:') && !hostcapsHidden(m.id))
     .sort((a,b)=>catRank(a.cat)-catRank(b.cat)||a.title.localeCompare(b.title));
-  let items=[], cur=0;
+  let items=[], cur=0, chain=false;
   const pick=m=>{ closeModPicker();
     const cp=from && compatPort(m,from.type,from.dir);
     const n=addNodeUI(m.id,Math.round(at.x-(from&&from.dir==='i'?220:0)),Math.round(at.y)); if(!n) return;
@@ -2328,6 +2369,16 @@ function openModPicker(clientX,clientY,at,from){
   const build=()=>{
     const q=inp.value.trim(), words=queryWords(q);
     items=[]; cur=0; let cat=null;
+    chain=modPickChainOn(q);
+    if(chain){                                          // «fft>sa» — цепочка: превью текстом, Enter — построить
+      const full=chainParse(q); full.ast=chainExpand(full.ast,chunkGet);
+      const total=chainLeaves(full.ast).length, {ast}=cmdkParse(q), found=chainLeaves(ast).length;
+      const lab=lf=>'<b>'+esc(lf.m.title)+'</b>';
+      list.innerHTML=found ? '<div class="cmdk-chain"><div class="cmdk-step tree">'+(from ? '<span class="cmdk-dim">'+from.type+(from.dir==='o'?' → ':' ← ')+'</span>' : '')+chainText(ast,lab)+'</div>'+
+        '<div class="cmdk-hint">'+(found<total ? '<span class="cmdk-bad">'+(total-found)+' part(s) have no match — the chain stops there.</span> ' : '')+'Enter — add the chain</div></div>'
+        : '<div class="mp-cat">nothing found</div>';
+      list.scrollTop=0; return;
+    }
     // с поиском — плоский список по релевантности, без — по категориям
     // порт того же типа — выше, чем через автоадаптер (iq ↔ sig)
     const exact=m=>!from || compatPort(m,from.type,from.dir)?.t===from.type;
@@ -2361,7 +2412,9 @@ function openModPicker(clientX,clientY,at,from){
   inp.addEventListener('keydown',e=>{
     if(e.key==='ArrowDown'){ e.preventDefault(); flush(); cur=Math.min(items.length-1,cur+1); hl(); }
     else if(e.key==='ArrowUp'){ e.preventDefault(); flush(); cur=Math.max(0,cur-1); hl(); }
-    else if(e.key==='Enter'){ e.preventDefault(); flush(); if(items[cur]) pick(items[cur].m); }
+    else if(e.key==='Enter'){ e.preventDefault(); flush();
+      if(chain){ const q=inp.value; closeModPicker(); modPickChain(q,at,from); }
+      else if(items[cur]) pick(items[cur].m); }
     else if(e.key==='Escape'){ e.preventDefault(); closeModPicker(); }
   });
   build();
