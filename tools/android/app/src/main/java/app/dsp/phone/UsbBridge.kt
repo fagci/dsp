@@ -85,7 +85,13 @@ class UsbSession(private val sock: Socket, private val backend: UsbBackend) {
     @Volatile private var alive = true
     private val out: OutputStream = sock.getOutputStream()
     private val pool = Executors.newCachedThreadPool { r -> Thread(r, "dsp-usb").also { it.isDaemon = true } }
-    private val ev: (String, JSONObject) -> Unit = { name, j -> send(JSONObject(j.toString()).put("ev", name), null) }
+    // События приходят из BroadcastReceiver на главном потоке: запись в сокет там бросает NetworkOnMainThreadException, и send
+    // закрывал соединение — страница видела «the USB bridge is closed» вместо отключения устройства. Пишем из своего потока, по порядку
+    private val evq = Executors.newSingleThreadExecutor { r -> Thread(r, "dsp-usb-ev").also { it.isDaemon = true } }
+    private val ev: (String, JSONObject) -> Unit = { name, j ->
+        val h = JSONObject(j.toString()).put("ev", name)
+        try { evq.execute { send(h, null) } } catch (e: java.util.concurrent.RejectedExecutionException) { /* сессия закрыта */ }
+    }
 
     fun run() {
         backend.listen(ev)
@@ -116,6 +122,7 @@ class UsbSession(private val sock: Socket, private val backend: UsbBackend) {
             alive = false
             backend.unlisten(ev)
             pool.shutdownNow()
+            evq.shutdownNow()
         }
     }
 
@@ -224,6 +231,10 @@ class AndroidUsb(private val ctx: Context) : UsbBackend {
 
     @Synchronized
     private fun conn(id: String): Conn = conns[id] ?: throw UsbError("InvalidStateError", "the device must be opened first")
+
+    /** Устройство отвалилось от шины посреди передачи (питание по OTG, кабель): соединение уже снято обработчиком отключения. */
+    @Synchronized
+    private fun gone(id: String, c: Conn): Boolean = conns[id] !== c || um.deviceList[id] == null
 
     private fun typeName(t: Int) = when (t) {
         UsbConstants.USB_ENDPOINT_XFER_BULK -> "bulk"; UsbConstants.USB_ENDPOINT_XFER_INT -> "interrupt"
@@ -360,7 +371,7 @@ class AndroidUsb(private val ctx: Context) : UsbBackend {
         val inDir = (rt and 0x80) != 0
         val buf = if (inDir) ByteArray(len) else (data ?: ByteArray(0))
         val n = c.c.controlTransfer(rt, req, value, index, buf, if (inDir) len else buf.size, 5000)
-        if (n < 0) throw UsbError("NetworkError", "control transfer failed")
+        if (n < 0) throw UsbError("NetworkError", if (gone(id, c)) GONE else "control transfer failed")
         return if (inDir) buf.copyOf(n) else ByteArray(0)
     }
 
@@ -413,7 +424,7 @@ class AndroidUsb(private val ctx: Context) : UsbBackend {
         while (sent < data.size) {
             val chunk = minOf(data.size - sent, CHUNK)
             val n = c.c.bulkTransfer(ep, data.copyOfRange(sent, sent + chunk), chunk, 5000)
-            if (n < 0) throw UsbError("NetworkError", "transfer failed after $sent bytes")
+            if (n < 0) throw UsbError("NetworkError", if (gone(id, c)) GONE else "transfer failed after $sent bytes")
             sent += n
         }
         return sent
@@ -433,5 +444,6 @@ class AndroidUsb(private val ctx: Context) : UsbBackend {
     companion object {
         const val ACTION_PERM = "app.dsp.phone.USB_PERMISSION"
         private const val CHUNK = 16384
+        private const val GONE = "the device dropped off the USB bus (not enough OTG power or a loose cable) — replug it, use a powered hub"
     }
 }
