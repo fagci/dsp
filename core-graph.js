@@ -3579,7 +3579,8 @@ if(c){ n._cvRef=c; n._pxGen=c.pxGen; n._cvW=c.width; n._cvH=c.height; }
 n._pSnap=Object.assign(n._pSnap||{},n.p);
 }
 matchMedia('(prefers-color-scheme: light)').addEventListener?.('change',redrawAll);
-let drawEma=30;                                     // скользящая стоимость кадра отрисовки, мс (старт — осторожно, как раньше)
+let rtlStep=-1;                                     // ступень шага кадра при живом SDR (индекс RTL_STEPS)
+let drawEma=30;                                    // скользящая стоимость кадра отрисовки, мс (старт — осторожно, как раньше)
 // Параметр с if:n=>bool виден только в своём режиме (скрытое значение остаётся в n.p и работает как раньше)
 function syncParamVis(n){
 const d=MOD[n.type], vs=d._vs||(d._vs=(d.params||[]).filter(q=>typeof q.if==='function'));
@@ -3608,11 +3609,17 @@ const rtlBusy=Graph.nodes.some(n=>n.type==='rtlsdr' && n.connected);
 // без ввода интерфейс только показывает данные: после 2 с — 30 к/с, после 10 с — 20 к/с
 const still = ts-lastInput>2000 && !activeInteractions && !panzooming && !zooming;
 // при живом SDR шаг кадра следует за реальной стоимостью отрисовки: лёгкая (≤3 мс) — 30 к/с, тяжёлая — до прежних 10 к/с
-const rtlDt = clamp(Math.round(drawEma)*10, 33, 100);
+// Шаг — ступенями по кадрам экрана (2…6 кадров по 16.7 мс) и с гистерезисом: раньше он следовал за drawEma
+// с шагом 10 мс, EMA колебалась около целых миллисекунд, и реальный интервал скакал 33/50/67/83 мс (картинка дёргалась).
+const RTL_STEPS=[33,50,67,83,100], want=clamp(drawEma*10, 33, 100);
+if(!(rtlStep>=0)) rtlStep=RTL_STEPS.findIndex(s=>s>=want);
+else if(want>RTL_STEPS[rtlStep]+8) rtlStep=RTL_STEPS.findIndex(s=>s>=want);                  // дороже ступени — вверх сразу
+else if(rtlStep>0 && want<RTL_STEPS[rtlStep-1]+4) rtlStep--;                                // дешевле нижней ступени — вниз на одну
+const rtlDt = RTL_STEPS[rtlStep];
 const autoDt = TOUCH?33 : (rtlBusy?rtlDt : still ? (ts-lastInput>10000?50:33) : 16);   // на тач-экранах хватает 30 к/с
 const fpsMode=fpsSel.value;                         // переключатель в панели: max — всегда 60 к/с, min — 10 к/с
 const minDt = fpsMode==='turbo' ? 7 : fpsMode==='max' ? 16 : fpsMode==='min' ? 100 : autoDt;   // turbo — без потолка 60 к/с, для экранов 120 Гц
-if(ts-lastDraw >=minDt  && !activeInteractions  && !panzooming  && !zooming){
+if(ts-lastDraw >=minDt-5  && !activeInteractions  && !panzooming  && !zooming){
 lastDraw=ts;
 const toDraw=[];
 for(const n of Graph.nodes){
