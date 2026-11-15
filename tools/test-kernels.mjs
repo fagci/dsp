@@ -304,6 +304,10 @@ const cases=[
     for(let i=5000;i<5200;i++){ const p=2*Math.PI*.25*i; I[i]=.8*Math.cos(p); Q[i]=.8*Math.sin(p); }
     SPECW_RUN(src,w,{type:'fft',I:I.buffer,Q:Q.buffer,N,L,win:'hann'}); const m=new Float32Array(w.out.mag), x=new Float32Array(w.out.mx), b=Math.round(N/2+.25*N);
     let pk=0; for(let i=0;i<N;i++) if(x[i]>x[pk]) pk=i; return [w.out.K===K, Math.abs(pk-b)<=1, x[b]/m[b]>2.5, x[b]>=m[b]].join(); })()`,'true,true,true,true'],
+  // Лёгкий режим: hop=N (без перекрытия) и stride (каждый k-й кадр от самого свежего) — число БПФ как у плана, тон на месте
+  ['Воркер спектра: hop и stride уменьшают число БПФ, тон остаётся в бине',`(()=>{ const src=SPECW_SRC, N=1024, L=N+7*(N>>1), run=(hop,stride)=>{ const w={postMessage(m){ w.out=m; }, onmessage:null}, I=new Float32Array(L), Q=new Float32Array(L); for(let i=0;i<L;i++){ const p=2*Math.PI*.25*i; I[i]=.5*Math.cos(p); Q[i]=.5*Math.sin(p); }
+    SPECW_RUN(src,w,{type:'fft',I:I.buffer,Q:Q.buffer,N,L,win:'hann',hop,stride}); const m=new Float32Array(w.out.mag); let pk=0; for(let i=0;i<N;i++) if(m[i]>m[pk]) pk=i; return [w.out.K, pk===N/2+N/4]; };
+    const a=run(0,1), b=run(0,2), c=run(N,1), d=run(0,0); return [a[0],b[0],c[0],d[0],a[1]&&b[1]&&c[1]].join(); })()`,'8,4,4,8,true'],
   ['Окна: Дольф—Чебышев 100 дБ — боковые −100±1 дБ; Кайзер/Хэнн/Бартлетт — известная шумовая полоса; центр = 1',`(()=>{ const Z=65536, psl=(k,p)=>{ const N=1024, w=window_(k,N,p), re=new Float32Array(Z), im=new Float32Array(Z); re.set(w); fft(re,im); const m=new Float64Array(Z/2); let mx=0; for(let i=0;i<Z/2;i++){ m[i]=Math.hypot(re[i],im[i]); if(m[i]>mx) mx=m[i]; } let j=1; while(m[j+1]<m[j]) j++; let sl=0; for(let i=j;i<Z/2;i++) if(m[i]>sl) sl=m[i]; return 20*Math.log10(sl/mx); };
     const en=(k,p)=>{ const w=window_(k,4096,p); let a=0,b=0; for(const v of w){ a+=v; b+=v*v; } return 4096*b/(a*a); };
     return [Math.abs(psl('dolph-chebyshev',100)+100)<1, Math.abs(en('hann')-1.5)<.01, Math.abs(en('bartlett')-1.333)<.01, Math.abs(en('hft144d')-4.5386)<.01, WINDOW_KINDS.every(k=>Math.abs(window_(k,1024)[512]-1)<.01)].join(); })()`,'true,true,true,true,true'],

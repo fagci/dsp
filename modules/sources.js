@@ -4563,9 +4563,12 @@ self.onmessage=function(e){
   for(let i=0;i<L;i++){ mI+=I[i]; mQ+=Q[i]; }
   mI/=L; mQ/=L;
   // кадры выровнены по концу блока — последний кадр всегда самые свежие отсчёты
-  const hop=N>>1, K=Math.max(1, Math.floor((L-N)/hop)+1), o0=L-N-(K-1)*hop;
+  // hop/stride (по умолчанию N/2 и 1): шаг кадров и «каждый stride-й» — лёгкий режим; считаем от самого свежего кадра назад
+  const hop=msg.hop>0 ? msg.hop : N>>1, stride=Math.max(1,msg.stride|0||1), Kf=Math.max(1, Math.floor((L-N)/hop)+1), o0=L-N-(Kf-1)*hop;
+  let K=0;
   pw.fill(0); mxp.fill(0);
-  for(let k=0;k<K;k++){
+  for(let k=Kf-1;k>=0;k-=stride){
+    K++;
     const o=o0+k*hop;
     for(let i=0;i<N;i++){ re[i]=(I[o+i]-mI)*w[i]; im[i]=(Q[o+i]-mQ)*w[i]; }
     fft(re,im);
@@ -4601,10 +4604,10 @@ function rtlMakeSpecWorker(){
       while(bufPool.length){ const b=bufPool.pop(); if(b.I.byteLength>=L*4) return b; }
       return null;
     },
-    compute(iBuf, qBuf, N, L, win, winP){
+    compute(iBuf, qBuf, N, L, win, winP, hop, stride){
       return new Promise((resolve)=>{
         pendingResolve=resolve;
-        worker.postMessage({type:'fft', I:iBuf, Q:qBuf, N, L, win, winP}, [iBuf, qBuf]);
+        worker.postMessage({type:'fft', I:iBuf, Q:qBuf, N, L, win, winP, hop, stride}, [iBuf, qBuf]);
       });
     },
     terminate(){ worker.terminate(); URL.revokeObjectURL(url); }
@@ -4645,7 +4648,7 @@ function rtlUpdateSpec(n){
   if(ring.filled<N) return;
   const av=n.p.specAvg, frames=av==='off'? 1 : av==='all'? RTL_SPEC_MAX_FRAMES : (+av||1);
   const lim=Math.min(ring.filled,ring.size);
-  let L, K;
+  let L, K, wHop=0, wStride=1;
   if(cont){
     // доля ядра под спектр уступает звуку: пошли обрывы (dry) — режем вдвое-втрое, без обрывов 20 с — возвращаем
     const st=n.underrunsStarve|0;
@@ -4653,11 +4656,13 @@ function rtlUpdateSpec(n){
     if(st>n._ldSt){ n._ldSt=st; n._specLoad=Math.max(.08,(n._specLoad||.3)*.6); n._ldT=now; }
     else if((n._specLoad||.3)<.3 && now-(n._ldT||0)>20000){ n._specLoad=Math.min(.3,n._specLoad*1.25); n._ldT=now; }
     const fresh0=Math.min(ring.written-(n.specTaken||0), lim);
-    const pl=specAccPlan(fresh0, lim, N, specAccKmax(n._fftMs, pumpMs, n._specLoad||.3));
-    L=pl.L; K=pl.K;
+    const hop=n.p.specHop==='none' ? N : N>>1, stride0=Math.max(1,Math.round(100/(+n.p.specCover||100)));
+    const pl=specAccPlan(fresh0, lim, N, specAccKmax(n._fftMs, pumpMs, n._specLoad||.3), hop, stride0);
+    L=pl.L; K=pl.K; wHop=hop; wStride=pl.stride;
     if(!(K>0)) return;
-    // воркер не успевает за потоком (виден в статусе); первый проход после старта/перестройки забирает всё кольцо — это не перегруз
-    if(pl.lost>0 && n._specPrimed && pl.lost>.1*fresh0 && fresh0<ring.size*.5) n._specLostT=now;
+    n._specCover=pl.cover;                                   // доля времени под окном БПФ — в статусе
+    // воркер не успевает: шаг вырос сам (виден в статусе); первый проход после старта/перестройки забирает всё кольцо — это не перегруз
+    if(pl.auto && n._specPrimed && fresh0<ring.size*.5) n._specAutoT=now;
     n._specPrimed=true;
   } else {
     // Уэлч: K сегментов с перекрытием 50% в одном кадре — шум падает в ~sqrt(K) раз без размазывания по кадрам
@@ -4678,7 +4683,7 @@ function rtlUpdateSpec(n){
   n.specBusy=true;
   const centerFreq=n.actualFreq??n.p.freq, binHz=n.sourceRate/N, half=N>>1, win=n.p.specWin, tl=iqTl(n);
   const tSpec=performance.now(), specSeq=n._specSeq|0;
-  n.specWorker.compute(I.buffer, Q.buffer, N, L, win, +n.p.specWinP||0).then(({mag,mx,K:kDone,ms})=>{
+  n.specWorker.compute(I.buffer, Q.buffer, N, L, win, +n.p.specWinP||0, wHop, wStride).then(({mag,mx,K:kDone,ms})=>{
     n.specBusy=false;
     if(ms>0){ n._specCost=n._specCost==null ? ms : n._specCost*0.8+ms*0.2; const f=ms/Math.max(1,kDone); n._fftMs=n._fftMs==null ? f : n._fftMs*0.8+f*0.2; }   // стоимость БПФ в воркере — для частоты кадров
     // заказан до перестройки: отсчёты старой частоты — на экране спектр откатывался на шаг назад (и строка водопада уходила не туда)
@@ -5630,6 +5635,8 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
     {n:'specWinP',t:'range',min:0,max:200,step:.1,d:0,label:'window parameter (0 = default): kaiser β 8, gaussian σ 0.4, tukey α 0.5, Chebyshev dB 100, Hann-Poisson α 2',adv:true},
     {n:'specFps',t:'select',opts:['0.2','0.5','1','2','5','10','15','25','30','60','120'],d:'25',label:'spectrum rate, fps (output only: with continuous FFT every sample is processed and the frame keeps the peak and the mean over its whole interval; 120 needs the redraw rate “fps 120”)',adv:true},
     {n:'specCont',t:'check',d:true,label:'continuous FFT: process every sample (hop N/2), a frame keeps the per-bin peak of the whole interval — short bursts between frames are not lost (off: one FFT of the latest N samples per frame, the rest is dropped)',short:'continuous',adv:true},
+    {n:'specHop',t:'select',opts:['half','none'],d:'half',label:'continuous FFT frame step: half = 50 % overlap (every burst sits fully in some window), none = no overlap (half the CPU; a burst on the edge of a window is weakened by the taper)',short:'overlap',adv:true},
+    {n:'specCover',t:'select',opts:['100','50','25','10'],d:'100',label:'continuous FFT: % of the time the FFT runs. The CPU load follows it (25 % → a quarter). The skipped part is spread evenly; a burst longer than the gap is still caught, a shorter one with that probability per occurrence. It also thins itself when the CPU is short',short:'coverage, %',adv:true},
     {n:'specDet',t:'select',opts:['avg','peak'],d:'avg',label:'spectrum detector: mean power of the frame, or the per-bin peak over all its FFTs (bursts; noise sits higher). The raw avg/max of a frame are always in spec.avg / spec.max',short:'detector',adv:true},
     // усреднение по кадрам (EMA, 64 кадра для all); off — каждый кадр как есть
     {n:'specAvg',t:'select',opts:['off','4','16','64','all'],d:'off',label:'spectrum averaging, frames',adv:true},
@@ -5913,7 +5920,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
       ? `${n.dev?n.dev.tunerName:'?'} · ${n.p.demod} · ${fmtHz(cf,3)} ±${fmtHz(n.sourceRate/2)} · tune ${fmtHz(tune,3)} · `+
         `${(n.mspsIo||0).toFixed(2)} Msps · ch ${chCount}`+
         (n.specK>1 ? ` · fft avg ×${n.specK}` : '')+
-        (n.p.specCont!==false && n.specFft>1 ? ` · ${n.specFft} fft/frame` : '')+(performance.now()-(n._specLostT||-1e9)<3000 ? ' · spectrum thinned: CPU is short (some samples skipped)' : '')+
+        (n.p.specCont!==false && n.specFft>1 ? ` · ${n.specFft} fft/frame` : '')+(n.p.specCont!==false && n._specCover<.99 ? ` · FFT covers ${Math.round(n._specCover*100)} % of the time`+(performance.now()-(n._specAutoT||-1e9)<3000 ? ' (thinned: CPU is short)' : '') : '')+
         (sdrConv(n) ? ` · conv ${sdrConv(n)>0?'+':''}${fmtHz(sdrConv(n),3)}` : '')+
         (sdrStages(n) ? ` · gain L${n.p.stLnaAuto?'a':n.p.stLna} M${n.p.stMixAuto?'a':n.p.stMix} V${n.p.stVga}`+
           ((n.p.stLnaAuto||n.p.stMixAuto) ? '' : ` ≈ ${r82xxStageDb({lna:n.p.stLna,mix:n.p.stMix,vga:n.p.stVga}).toFixed(1)} dB`) : '')+
@@ -7964,7 +7971,7 @@ defGroups('rtlsdr',[
   {n:'Receiver', p:'sr demod bw auto gainDb lna vga amp sql sqlSnr sqlLvl'},
   {n:'Audio', p:'deemph samSb stereo agc nb anf sqlHang', open:false},
   {n:'Tuner', p:'gainMode stLna stLnaAuto stMix stMixAuto stVga ppm conv bias dcShift fastTune fastPipe planMode planGain', open:false},
-  {n:'Spectrum & sweep', p:'specSize specWin specWinP specFps specCont specDet specAvg specWelch specMode sweep swLo swHi swHw swFft swAvg swMode swUse swOvl swSmooth swDecay swSettle', open:false},
+  {n:'Spectrum & sweep', p:'specSize specWin specWinP specFps specCont specHop specCover specDet specAvg specWelch specMode sweep swLo swHi swHw swFft swAvg swMode swUse swOvl swSmooth swDecay swSettle', open:false},
   {n:'Record & files', p:'openStored recDest recFolder rec recStop recFmt recBand recBw recF tag markTime recTrig recPre recMax iqFmt loop seek', open:false}],
   {pri:'demod bw sql auto gainDb'});
 defGroups('cam',[
