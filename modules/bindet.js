@@ -16,6 +16,7 @@ function markOf(x,now){
   return {kind:x.kind, id:x.id, f:x.f, bw:x.bw, exc:x.exc, from:x.lo, to:x.hi, t, dur:c ? x.dur : 0, color:c ? '#4caf50' : '#ffb300',
     label:(c ? '■ ' : '▶ ')+fmtHz(x.f,4)+(c ? ' '+x.dur.toFixed(1)+' s' : '')};
 }
+const bdCol=id=>'hsl('+Math.round((id*137.5)%360)+' 85% 56%)';          // свой цвет у каждого сигнала: прямоугольники соседних не сливаются
 def({ id:'binDet', title:'Signal Detector (per-bin floor)', cat:'Analysis', readout:true, tall:true, resize:true, w:420,
   kw:'noise floor per bin modulation carrier open channel scanner vfo multiscan record all signals slots lockout',
   pack:['thr tau','confM confN minW','modK settle hold'],
@@ -28,21 +29,21 @@ def({ id:'binDet', title:'Signal Detector (per-bin floor)', cat:'Analysis', read
            ...Array.from({length:+n.p.K||4},(_,k)=>({n:'g'+(k+1),t:'num',tip:'slot '+(k+1)+': 1 while the channel is open (go for IQ Recorder)'}))],
   params:[{n:'K',t:'select',opts:BD_K,d:'4',label:'slots (outputs f1…, g1…): how many open channels are handed on at once',fn:bdPorts},
           {n:'thr',t:'range',min:3,max:30,step:.5,d:10,label:'threshold over own noise, dB'},
-          {n:'tau',t:'range',min:20,max:2000,step:10,log:true,d:200,label:'noise floor memory, frames'},
-          {n:'learn',t:'range',min:5,max:200,step:1,d:30,label:'learn the floor first, frames'},
-          {n:'confM',t:'range',min:1,max:8,step:1,d:2,label:'confirm: hits (M)'},
-          {n:'confN',t:'range',min:1,max:8,step:1,d:4,label:'confirm: of last frames (N) — a one-frame wideband spike does not pass'},
-          {n:'minW',t:'range',min:1,max:32,step:1,d:2,label:'min width, bins'},
-          {n:'gap',t:'range',min:0,max:8,step:1,d:2,label:'join bins with gaps up to, bins'},
-          {n:'bwDb',t:'range',min:6,max:40,step:1,d:20,label:'channel width: dB below its peak'},
+          {n:'tau',t:'range',min:20,max:2000,step:10,log:true,d:200,label:'noise floor memory, frames',adv:true},
+          {n:'learn',t:'range',min:5,max:200,step:1,d:30,label:'learn the floor first, frames',adv:true},
+          {n:'confM',t:'range',min:1,max:8,step:1,d:2,label:'confirm: hits (M)',adv:true},
+          {n:'confN',t:'range',min:1,max:8,step:1,d:4,label:'confirm: of last frames (N) — a one-frame wideband spike does not pass',adv:true},
+          {n:'minW',t:'range',min:1,max:32,step:1,d:2,label:'min width, bins',adv:true},
+          {n:'gap',t:'range',min:0,max:8,step:1,d:2,label:'join bins with gaps up to, bins',adv:true},
+          {n:'bwDb',t:'range',min:6,max:40,step:1,d:20,label:'channel width: dB below its peak',adv:true},
           {n:'modMode',t:'select',opts:['modulation','any signal'],d:'modulation',label:'open on: modulation (an unmodulated carrier stays closed) · any signal over the threshold'},
-          {n:'carBins',t:'range',min:1,max:16,step:1,d:4,label:'narrower than this (bins) is a carrier line; wider is already modulated'},
-          {n:'modK',t:'range',min:1,max:10,step:.1,d:3,label:'modulation: level jitter between frames vs a steady carrier at the same SNR, ×'},
-          {n:'settle',t:'range',min:1,max:60,step:1,d:8,label:'frames in place before opening'},
-          {n:'hold',t:'range',min:0,max:10000,step:100,d:1500,label:'close after no modulation for, ms'},
-          {n:'maxBw',t:'range',min:0,max:5000,step:5,d:0,label:'wider than this, kHz — not a channel (0 — no limit)'},
-          {n:'edge',t:'range',min:0,max:40,step:1,d:0,label:'trim edges, % (receiver windows sag at the edges)'},
-          {n:'carriers',t:'check',d:true,label:'show closed carriers / signals (grey)'},
+          {n:'carBins',t:'range',min:1,max:16,step:1,d:4,label:'narrower than this (bins) is a carrier line; wider is already modulated',adv:true},
+          {n:'modK',t:'range',min:1,max:10,step:.1,d:3,label:'modulation: level jitter between frames vs a steady carrier at the same SNR, ×',adv:true},
+          {n:'settle',t:'range',min:1,max:60,step:1,d:8,label:'frames in place before opening',adv:true},
+          {n:'hold',t:'range',min:0,max:10000,step:100,d:1500,label:'close after no modulation for, ms',adv:true},
+          {n:'maxBw',t:'range',min:0,max:5000,step:5,d:0,label:'wider than this, kHz — not a channel (0 — no limit)',adv:true},
+          {n:'edge',t:'range',min:0,max:40,step:1,d:0,label:'trim edges, % (receiver windows sag at the edges)',adv:true},
+          {n:'carriers',t:'check',d:true,label:'show closed carriers / signals (grey)',adv:true},
           {n:'clr',t:'button',label:'Relearn floor',fn:n=>{ n.st=bdNew(); n.text='relearning'; n.bnd=[]; }}],
   init:n=>{ n.st=bdNew(); n.text='connect a spectrum'; n.bnd=[]; n.recs=[]; n.mk=[]; n.slots={f:[],go:[],lost:0}; n.floorDb=null; n.nOpen=0; },
   process(n,I){
@@ -64,16 +65,22 @@ def({ id:'binDet', title:'Signal Detector (per-bin floor)', cat:'Analysis', read
         else if(t.open && t.seenAt===now) t.modAt=now;
       for(const x of r.recs) n.recs.push(markOf(x,now));
       if(n.recs.length>1000) n.recs.splice(0,n.recs.length-1000);
-      // идущие сигналы — прямоугольники водопада: запись с тем же id продлевает метку (SA: marksRec), закрытый — последняя запись
-      const ep=Date.now(), rect=(t,end)=>({id:'bd'+t.id+'.'+Math.round(t.openAt), from:t.lo, to:t.hi, t:(ep-(now-t.openAt))/1000, dur:((end??now)-t.openAt)/1000, color:'#43a047', fill:.85});
-      for(const t of n.st.tracks) if(t.open && t.seenAt===now) n.mk.push(rect(t));
-      for(const x of r.recs) if(x.kind==='close') n.mk.push(rect({id:x.id,lo:x.lo,hi:x.hi,openAt:x.t0},x.t));
+      // идущие сигналы — прямоугольники водопада (marksRec): запись с тем же id продлевает метку. Сегмент живёт, пока сигнал
+      // реально есть в кадрах: пауза внутри hold рвёт прямоугольник (промежуток не закрашивается), конец — по последнему кадру
+      // с сигналом, начало — по первому подтверждённому кадру (а не по моменту открытия)
+      const ep=Date.now(), dt=n._dt=now-(n._tf||now-80)<2000 ? (n._dt||80)*.8+(now-(n._tf||now-80))*.2 : 80; n._tf=now;
+      for(const t of n.st.tracks){
+        if(!t.open || t.liveAt!==now) continue;
+        if(!t.seg || now-t.segEnd>Math.max(250,dt*3)) t.seg={start:t.seg ? now : t.t0, id:'bd'+t.id+'.'+Math.round(t.seg ? now : t.t0)};
+        t.segEnd=now;
+        n.mk.push({id:t.seg.id, from:t.lo, to:t.hi, t:(ep-(now-t.seg.start))/1000, dur:(now-t.seg.start)/1000, color:bdCol(t.id), fill:.9});
+      }
       if(n.mk.length>2000) n.mk.splice(0,n.mk.length-2000);
       n.slots=bdSlots(n.st.tracks,K);
       const tr=n.st.tracks.filter(t=>t.seenAt!=null);
       n.nOpen=tr.filter(t=>t.open).length;
       const mk=t=>({lo:t.lo, hi:t.hi, f:t.f, sig:true, db:t.abs, conf:t.open ? 1 : .4,
-        color:t.open ? (t.slot ? '#4caf50' : '#ffb300') : '#9e9e9e',
+        color:t.open ? bdCol(t.id) : '#9e9e9e',
         label:(t.open ? (t.slot ? t.slot+' ' : '! ') : 'carrier ')+fmtHz(t.f,4)+' +'+t.pk.toFixed(0)+' dB'});
       const shown=tr.filter(t=>t.open || p.carriers);
       n.bnd=shown.map(mk);

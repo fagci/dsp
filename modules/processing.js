@@ -1715,7 +1715,14 @@ function saUserMarks(n,cx,W,hs,hw,dpr){
       const yy=(dTop+Math.floor(dH/2)+.5)/dpr;
       cx.globalAlpha=.9; cx.beginPath(); cx.moveTo(0,yy); cx.lineTo(W,yy); cx.stroke();
     } else {
-      cx.globalAlpha=m.fill>0 ? m.fill : .14; cx.fillStyle=col; cx.fillRect(x1,y,x2-x1,h);
+      if(m.fill>0){                               // сплошной скруглённый прямоугольник с светлой обводкой (идущий сигнал на водопаде)
+        cx.beginPath(); const rr=Math.min(3,(x2-x1)/2,h/2); if(cx.roundRect) cx.roundRect(x1,y,x2-x1,h,rr); else cx.rect(x1,y,x2-x1,h);
+        cx.globalAlpha=m.fill; cx.fillStyle=col; cx.fill();
+        cx.globalAlpha=.8; cx.strokeStyle='#fff'; cx.lineWidth=1; cx.stroke(); cx.strokeStyle=col;
+        if(m!==n._umDrag) n._umBoxes.push({x0:x1,x1:x2,y0:y,y1:y+h,m});
+        continue;
+      }
+      cx.globalAlpha=.14; cx.fillStyle=col; cx.fillRect(x1,y,x2-x1,h);
       const xa=(Math.floor(x1*dpr)+.5)/dpr, xb=(Math.max(Math.floor(x1*dpr)+1,Math.floor(x2*dpr))+.5)/dpr, ya=(dTop+.5)/dpr, yb=(dTop+dH-.5)/dpr;
       cx.globalAlpha=m.fill>0 ? .5 : .95; cx.beginPath(); cx.moveTo(xa,ya); cx.lineTo(xb,ya); cx.lineTo(xb,yb); cx.lineTo(xa,yb); cx.lineTo(xa,ya); cx.stroke();
     }
