@@ -2258,7 +2258,7 @@ function saSkipDraw(n,cv){
   return false;
 }
 def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
-  pack:['auto log grid','show layout','fill fillAlpha chBars','peakHold peakDecay'],
+  pack:['auto log grid','show layout','fill fillAlpha chBars','clean cleanDb','peakHold peakDecay'],
   ins:[
         {n:'spec',t:'spec'},
         {n:'bands',t:'bands'},
@@ -2354,7 +2354,8 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
           {n:'rbwHz',t:'select',opts:['native','1k','3k','10k','30k','100k','300k','1M'],d:'native',label:'RBW, Hz (tinySA style: bins are merged up to it; not below the native bin; overrides ×k)',adv:true},
           {n:'markMode',t:'check',d:false,label:'mark mode: drag on the waterfall to label a part of a signal (Alt+drag works always)'},
           {n:'markLabels',t:'text',d:'preamble, data, voice',label:'mark labels (comma list; 1, 2, 3 … picks one in the dialog)'},
-          {n:'tickSec',t:'select',opts:['off','1','5','10','30','60'],d:'off',label:'time ticks on the waterfall, s'},
+          {n:'wfRow',t:'select',opts:['0','0.5','1','2','5','10','30','60','300'],d:'0',short:'row every, s',label:'waterfall row interval, s (0 — a row per spectrum frame). A row is the per-bin PEAK over its interval, so a burst between rows is not lost; the trace stays live. The waterfall shows as many rows as it is pixels tall: at 60 s per row a 600 px waterfall is 10 hours, at 300 s — two days',adv:true},
+          {n:'tickSec',t:'select',opts:['off','1','5','10','30','60','300','600','3600'],d:'off',label:'time ticks on the waterfall, s'},
           {n:'clearMarks',t:'button',label:'Clear marks',fn:n=>{ n.userMarks=[]; n._umDrag=null; }},
           // трассы: 1 — основная (по умолчанию живая), 2–4 — дополнительные; усреднение по мощности, удержание максимума/минимума, заморозка
           {n:'tr1',t:'select',opts:['live','average','max hold','min hold','view'],d:'live',label:'trace 1'},
@@ -2517,6 +2518,12 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
       if(!n._fm || n._fm.length!==N0 || n._fmFreqs!==sp.freqs){ n._fm=Float32Array.from(src); n._fmFreqs=sp.freqs; }
       else { const f=n._fm; for(let i=0;i<N0;i++) if(src[i]>f[i]) f[i]=src[i]; }
     }
+    // wfRow: строка водопада — раз в N секунд, и это пик по бину за весь интервал (трасса при этом живая и быстрая) — длинный мониторинг без потери всплесков
+    if(sp && sp.mag && +n.p.wfRow>0 && (sp.rev==null || sp.rev!==n._wfAccRev)){
+      n._wfAccRev=sp.rev; const src=sp.max||sp.mag, N1=src.length;
+      if(!n._wfAcc || n._wfAcc.length!==N1 || n._wfAccF!==sp.freqs){ n._wfAcc=Float32Array.from(src); n._wfAccF=sp.freqs; }
+      else { const f=n._wfAcc; for(let i=0;i<N1;i++) if(src[i]>f[i]) f[i]=src[i]; }
+    } else if(!(+n.p.wfRow>0)) n._wfAcc=null;
     // список полос/закладок с узла 'bandplan' (или совместимого) — держим последний известный,
     // если сейчас не подключено (или на секунду пропало между тиками), а не мигаем пустым списком
     if(Array.isArray(I.bands)) n.bandsData=I.bands;
@@ -2642,6 +2649,10 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
       const sp=n.s, key=sp.freqs+'|'+sp.det+'|'+sp.mag.length;
       if(!n._fl || n._flKey!==key){ n._fl={}; n._flKey=key; n._flRev=undefined; }
       if(sp.rev==null || sp.rev!==n._flRev){ n._flRev=sp.rev; saFloorStep(n._fl,sp.mag,.3,+n.p.cleanRate||3,performance.now()); }
+      if(+n.p.wfRow>0 && (sp.rev==null || sp.rev!==n._flRowRev)){          // строки водопада — пик: свой пол (шум у пика выше)
+        if(!n._flRow || n._flRowKey!==key){ n._flRow={}; n._flRowKey=key; }
+        n._flRowRev=sp.rev; saFloorStep(n._flRow,sp.max||sp.mag,.3,+n.p.cleanRate||3,performance.now());
+      }
       if(n._fl.lin) n.s=Object.assign({},sp,{mag:saCleanApply(sp.mag,new Float32Array(sp.mag.length),n._fl,+n.p.cleanDb,n.p.clean==='flat')});
     }
     const hs=n.p.show==='spectrum' ? Math.max(1,H-2) : n.p.show==='waterfall' ? Math.min(H-2,24) : Math.round(H*n.p.split), hw=H-hs;   // скрытая часть — полоска в пару пикселей (спектр: шкала частот и подписи остаются)
@@ -3145,6 +3156,18 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
       // у кого rev нет (на всякий случай) — сверяем ссылку самого объекта.
       let fresh = n.s.rev!=null ? n.s.rev!==n._lastRev : n.s!==n._lastSpecRef;
       const live=n.s.live;
+      // wfRow>0: новая строка не чаще раза в wfRow с, из пика за интервал (с «чистым» полом строк, если включён clean)
+      let rowSp=null;
+      if(+n.p.wfRow>0 && !live && n._wfAcc && n._wfAcc.length===n.s.mag.length){
+        const now0=performance.now(), due=now0-(n._wfRowT||0)>=n.p.wfRow*1000;
+        fresh=due;
+        if(due){
+          let mg=n._wfAcc; n._wfAcc=null; n._wfRowT=now0;
+          if(n.p.clean!=='off' && n._flRow && n._flRow.lin && n._flRow.lin.length===mg.length) mg=saCleanApply(mg,new Float32Array(mg.length),n._flRow,+n.p.cleanDb,n.p.clean==='flat');
+          rowSp=Object.assign({},n.s,{mag:mg});
+        }
+      }
+      const rs=rowSp||n.s, rm=rs.mag;
       // слушаем маркер: панорама обновляется на каждом кадре живого спектра, а строка водопада — не чаще rowMs (ось времени ровная)
       if(fresh && live && n._wfInited){ const t=performance.now(); if(t-(n._liveRowT||0)<Math.max(100,+n.p.rowMs||400)) fresh=false; else n._liveRowT=t; }
       if(fresh || !n._wfInited){
@@ -3159,17 +3182,17 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
         if(cw){                                         // уровень каждого канала один раз за кадр
           const md='peak';                              // история водопада хранит коды пика — и живая строка по пику, иначе перерисовка меняла бы картинку
           cl=new Float32Array(cw.chs.length);
-          for(let k=0;k<cl.length;k++) cl[k]=saChanLevel(m,N,specBin(n.s,cw.chs[k].lo),specBin(n.s,cw.chs[k].hi),md);
+          for(let k=0;k<cl.length;k++) cl[k]=saChanLevel(rm,N,specBin(rs,cw.chs[k].lo),specBin(rs,cw.chs[k].hi),md);
         }
         for(let x=0;x<Wp;x++){
           const ci=cw ? cw.map[x] : 0;
-          const v=ci<0 ? 0 : clamp((saDb(cw ? cl[ci] : magReduce(m,edgeXwf[x],edgeXwf[x+1]))-wLo)/((wHi-wLo)||1),0,1);
+          const v=ci<0 ? 0 : clamp((saDb(cw ? cl[ci] : magReduce(rm,edgeXwf[x],edgeXwf[x+1]))-wLo)/((wHi-wLo)||1),0,1);
           const hk=heatIdx(v)*3, k=x*4;
           if(!n._inXwf[x] || ci<0 || (live && !saInLive(live,saFreqB(n,bLo,bHi,x/(Wp-1))))){ line[k]=line[k+1]=line[k+2]=0; line[k+3]=255; continue; }
           line[k]=pal[hk]; line[k+1]=pal[hk+1]; line[k+2]=pal[hk+2]; line[k+3]=255; }
         if(n.wfGl){ const [wl,wh]=saBounds(n); saWfGlWrite(n.wfGl,Wp,line,wl,wh); }
         else { n.ocx.drawImage(n.off,0,1); n.ocx.putImageData(new ImageData(line,Wp,1),0,0); }
-        if(fresh){ saHistPush(n, n.s); saWfStamp(n); }
+        if(fresh){ saHistPush(n, rs); saWfStamp(n); }
         n._lastRev=n.s.rev; n._lastSpecRef=n.s; n._wfInited=true;
       }
       // окно/шкала/палитра сменились — перерисовать водопад из истории, когда жест затих
@@ -4775,14 +4798,15 @@ def({ id:'spectral', title:'Spectral Descriptors', cat:'Analysis',
     'centroid '+n.centroid.toFixed(0)+' Hz · spread '+n.spread.toFixed(0)+' Hz · flux '+
     n.flux.toFixed(3)+' · rolloff '+n.rolloff.toFixed(0)+' Hz'; }});
 defGroups('sa',[
-  {n:'View', p:'show auto frange dbrange fill fillAlpha chBars log grid peakHold peakDecay layout'},
-  {n:'Level', p:'vscale refLvl dbDiv autoDb adHead adMargin adTrack unit lvlOff', open:false},
-  {n:'Markers', p:'snap trk trkBw wfMk ant antVf markMode markLabels tickSec clearMarks bandFilter', open:false},
-  {n:'Waterfall', p:'wfBright wfContrast rowMs palette wfMem chWf phosphor phDecay phGain', open:false},
+  {n:'View', p:'show auto frange dbrange log grid fill fillAlpha chBars layout bandFilter'},
+  {n:'Level', p:'vscale refLvl dbDiv autoDb adHead adMargin adTrack unit lvlOff calMk', open:false},
+  {n:'Clean & bursts', p:'clean cleanDb cleanRate cleanReset frameMax peakHold peakDecay', open:false},
   {n:'Traces', p:'tr1 tr2 tr3 tr4 avgN det rbw rbwHz mkTrace clrTr tol band ref take refSave refLoad', open:false},
-  {n:'Measure & export', p:'dRef meas measBw measPct measX acpOff calMk slice sliceSec saveCsv savePng', open:false},
+  {n:'Waterfall', p:'wfBright wfContrast palette wfRow rowMs tickSec wfMem chWf phosphor phDecay phGain slice sliceSec', open:false},
+  {n:'Markers', p:'snap trk trkBw wfMk ant antVf markMode markLabels clearMarks dRef', open:false},
+  {n:'Measure & export', p:'meas measBw measPct measX acpOff saveCsv savePng', open:false},
   {n:'Panes', p:'panes follow edge paneFrom holdMarker avg ageFade', open:false}],
-  {pri:'auto frange dbrange peakHold layout'});
+  {pri:'auto frange dbrange clean peakHold layout'});
 defGroups('scope',[
   {n:'Scale', p:'span gain ofs cursors grid stack meas'},
   {n:'Trigger', p:'trig tlev tpos tmode slope tsrc hyst hold'},
