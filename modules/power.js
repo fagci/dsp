@@ -8,7 +8,8 @@
     '<div id="ppTot"></div><canvas id="ppSpark" width="260" height="34"></canvas><div id="ppBat"></div>'+
     '<div class="pp-s"><button data-by="now" class="on">now</button><button data-by="peak">peak</button>'+
     '<label title="Outline modules on the canvas by load"><input type="checkbox" id="ppHeat" checked> heat</label></div><div id="ppList"></div>'+
-    '<div class="pp-f">% of one CPU core: <i class="pp-pc"></i>processing <i class="pp-dc"></i>drawing. Click a row — show the module; ❄ — freeze / resume.</div>';
+    '<div class="pp-f"><div class="pp-lg"><span>% of one CPU core:</span><span><i class="pp-pc"></i>processing</span><span><i class="pp-dc"></i>drawing</span></div>'+
+    '<div class="pp-hint">Click a row — show the module on the canvas. ❄ — freeze / resume it.</div></div>';
   document.body.append(panel);
   const skip=panel.querySelector('#ppSkip'); skip.checked=Prof.skip;
   skip.onchange=()=>{ Prof.skip=skip.checked; try{ localStorage.setItem('dsp-skip',Prof.skip?'1':'0'); }catch(e){} };
