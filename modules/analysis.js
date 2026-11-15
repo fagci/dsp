@@ -2362,6 +2362,10 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
           {n:'tr3',t:'select',opts:['off','live','average','max hold','min hold','view'],d:'off',label:'trace 3'},
           {n:'tr4',t:'select',opts:['off','live','average','max hold','min hold','view'],d:'off',label:'trace 4'},
           {n:'avgN',t:'range',min:2,max:200,step:1,d:16,label:'average: frames (a true mean first, then a sliding window)'},
+          {n:'clean',t:'select',opts:['off','floor','flat'],d:'off',short:'clean',label:'clean picture: the noise floor is learned per bin; bins that do not rise above it by the gate sit exactly on the floor line (the waterfall shows no speckle), real signals stay as they are. flat — also levels the floor (tuner roll-off, humps), a signal keeps its margin over the noise. Markers and measurements read the real data'},
+          {n:'cleanDb',t:'range',min:0,max:20,step:1,d:9,short:'gate, dB',label:'clean: gate above the noise floor, dB (noise peaks reach ~8 dB above the floor; lower shows weaker signals and some noise)',adv:true},
+          {n:'cleanRate',t:'range',min:.5,max:30,step:.5,d:3,short:'floor adapt, dB/s',label:'clean: how fast the floor follows a changing noise level, dB/s (a steady carrier is not taken for noise at the default)',adv:true},
+          {n:'cleanReset',t:'button',label:'Relearn noise floor',adv:true,fn:n=>{ n._fl=null; n._flKey=null; }},
           {n:'frameMax',t:'check',d:true,short:'frame peak',label:'peak of every spectrum frame between two redraws (the source may deliver more frames than the screen draws: a burst in a skipped frame is kept)',adv:true},
           {n:'det',t:'select',opts:['auto','peak','negpeak','sample','rms','average'],d:'auto',label:'detector (a pixel column that holds several bins; auto = peak)'},
           {n:'rbw',t:'select',opts:['native','×2','×4','×8','×16','×32','×64'],d:'native',label:'RBW: bins merged (carriers keep the level, noise grows by 10·lg k)'},
@@ -2634,6 +2638,12 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
       n._fm=null;
     }
     if(saSkipDraw(n,cv)) return;                     // ничего не изменилось — канва держит прошлый кадр
+    if(n.p.clean!=='off' && n.s && n.s.mag && n.s.mag.length>8){      // чистая картина: бины в шуме ложатся на пол (маркеры/измерения в process() читают исходный спектр)
+      const sp=n.s, key=sp.freqs+'|'+sp.det+'|'+sp.mag.length;
+      if(!n._fl || n._flKey!==key){ n._fl={}; n._flKey=key; n._flRev=undefined; }
+      if(sp.rev==null || sp.rev!==n._flRev){ n._flRev=sp.rev; saFloorStep(n._fl,sp.mag,.3,+n.p.cleanRate||3,performance.now()); }
+      if(n._fl.lin) n.s=Object.assign({},sp,{mag:saCleanApply(sp.mag,new Float32Array(sp.mag.length),n._fl,+n.p.cleanDb,n.p.clean==='flat')});
+    }
     const hs=n.p.show==='spectrum' ? Math.max(1,H-2) : n.p.show==='waterfall' ? Math.min(H-2,24) : Math.round(H*n.p.split), hw=H-hs;   // скрытая часть — полоска в пару пикселей (спектр: шкала частот и подписи остаются)
     n._hs=hs;                                          // для перетаскивания границы — см. pointerdown ниже
     // AXIS_H — зона под подписи оси частот снизу зоны спектра: сама трасса (амплитуда/фаза/PSD/

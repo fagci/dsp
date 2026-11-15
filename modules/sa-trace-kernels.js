@@ -196,3 +196,43 @@ function saChanPx(chs,pos,W){
     return {x0:Math.round((a+b)/2-w/2), w};
   });
 }
+
+// ---- чистая картина: пол шума по бинам и вывод без шума ----
+// fl={db,s,lin,ref,n,t}: db — оценка пола, дБ на бин; s — она же, сглаженная по соседям; lin — амплитуда пола; ref — средний пол (для flat).
+// Оценка — стохастический квантиль: при x выше пола шаг вверх q·st, ниже — вниз (1−q)·st; равновесие — доля бинов ниже пола = q
+// (q 0.3: пол чуть ниже медианы шума, редкий сигнал его не тянет вверх). Шаг st = rate·dt (дБ/с × секунды между кадрами), первые кадры — быстрее
+// (6/n дБ), поэтому пол находится за секунды, а потом плывёт медленно и не зависит от частоты кадров.
+// mag — амплитуды ТОГО ЖЕ детектора, что рисуется (avg или peak): пол сам встаёт на нужный уровень (у пика шум выше на 10·lg K).
+function saFloorStep(fl,mag,q,rate,tNow){
+  const N=mag.length;
+  if(!fl.db || fl.db.length!==N){ fl.db=new Float32Array(N); fl.s=new Float32Array(N); fl.lin=new Float32Array(N); fl.n=0; fl.t=tNow; fl.sm=0; }
+  const dt=Math.min(2,Math.max(0.001,(tNow-fl.t)/1000)); fl.t=tNow;
+  const db=fl.db; fl.n++;
+  if(fl.n===1){                                     // старт: квантиль q по блокам из 64 бинов — несущая, стоящая с первого кадра, пол не задирает
+    const B=64, tmp=new Float32Array(B);
+    for(let a=0;a<N;a+=B){ const e=Math.min(N,a+B), L=e-a; for(let i=0;i<L;i++) tmp[i]=20*Math.log10(mag[a+i]+1e-12);
+      const v=tmp.subarray(0,L).sort()[Math.min(L-1,Math.floor(q*L))]; for(let i=a;i<e;i++) db[i]=v; }
+  }
+  else {
+    const st=Math.max(rate*dt, 6/fl.n), up=q*st, dn=(1-q)*st;
+    for(let i=0;i<N;i++){ const x=20*Math.log10(mag[i]+1e-12); db[i]+= x>db[i] ? up : -dn; }
+  }
+  // сглаживание по 5 бинам и перевод в амплитуду — не каждый кадр: пол плывёт медленно (в начале — каждый, пока находится)
+  if(fl.n<=8 || ++fl.sm>=8){
+    fl.sm=0; const s=fl.s, lin=fl.lin; let sum=0;
+    for(let i=0;i<N;i++){
+      const a=i>1?db[i-2]:db[i], b=i>0?db[i-1]:db[i], c=i<N-1?db[i+1]:db[i], d=i<N-2?db[i+2]:db[i];
+      const v=(a+b+db[i]+c+d)*.2; s[i]=v; sum+=v; lin[i]=Math.pow(10,v/20);
+    }
+    fl.ref=sum/N; fl.refLin=Math.pow(10,fl.ref/20);
+  }
+  return fl;
+}
+// Вывод: бины ниже пола + thrDb дБ → ровно на уровне пола (flat: на общем среднем уровне — наклон полосы и горбы приёмника убираются),
+// выше — как есть (flat: минус форма пола, сигнал сохраняет свой запас над шумом). out — Float32Array той же длины.
+function saCleanApply(mag,out,fl,thrDb,flat){
+  const N=mag.length, t=Math.pow(10,thrDb/20), lin=fl.lin, ref=fl.refLin;
+  if(flat){ for(let i=0;i<N;i++){ const m=mag[i], f=lin[i]; out[i]= m<f*t ? ref : m*ref/f; } }
+  else    { for(let i=0;i<N;i++){ const m=mag[i], f=lin[i]; out[i]= m<f*t ? f : m; } }
+  return out;
+}

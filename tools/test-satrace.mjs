@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Float32Array,Float64Array,Object,String,Number,Array});
 vm.runInContext(fs.readFileSync(path.join(root,'modules/sa-trace-kernels.js'),'utf8')+
-  ';this.K={saRbwMerge,saDetect,saTraceStep,saTraceArr,saChanPower,saObw,saXdbBw,saNoiseDensity,saAcpr,saTraceCsv,saRefParse,saRefResample,saAutoRange,saChanBars,saChanLevel,saChanPx};',ctx);
+  ';this.K={saRbwMerge,saDetect,saTraceStep,saTraceArr,saChanPower,saObw,saXdbBw,saNoiseDensity,saAcpr,saTraceCsv,saRefParse,saRefResample,saAutoRange,saChanBars,saChanLevel,saChanPx,saFloorStep,saCleanApply};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,info='')=>{ if(!c){ bad++; console.log('FAIL',n,info); } else console.log('ok  ',n); };
 const db=x=>20*Math.log10(x+1e-12), near=(a,b,e=.05)=>Math.abs(a-b)<=e;
@@ -146,5 +146,28 @@ const db=x=>20*Math.log10(x+1e-12), near=(a,b,e=.05)=>Math.abs(a-b)<=e;
   ok('px: pitch ~2.7 px — gap kept',pm[0].w>=1 && pm[1].x0-(pm[0].x0+pm[0].w)>=1,JSON.stringify(pm.slice(0,3)));
   const nar=K.saChanPx(K.saChanBars([{lo:100e6,hi:100.9e6,step:100e3}],99.9e6,101e6),pos,100);
   ok('px: narrow channels — no gap, width ≥1',nar.every(q=>q.w>=1) && nar[1].x0-nar[0].x0>=1);
+}
+
+// чистая картина: пол шума находится за секунды, несущая его не тянет, шум ложится на пол, сигнал остаётся как есть
+{
+  const N=512; let x=7; const rnd=()=>{ x=(x*1664525+1013904223)>>>0; return x/4294967296; };
+  // шум: амплитуда Рэлея, пол −60 дБ с наклоном 10 дБ по полосе; несущая в бине 100 (−30 дБ) всё время
+  const slope=i=>-60+10*i/N;
+  const frame=()=>{ const m=new Float32Array(N); for(let i=0;i<N;i++){ const r=Math.sqrt(-2*Math.log(1-rnd()+1e-12)); m[i]=r*Math.pow(10,slope(i)/20)*.7; } m[100]=Math.pow(10,-30/20); return m; };
+  const fl={}; let tt=0;
+  for(let k=0;k<400;k++){ K.saFloorStep(fl,frame(),.3,3,tt); tt+=40; }          // 25 к/с, 16 с
+  const mid=K.saFloorStep(fl,frame(),.3,3,tt).s;
+  ok('floor: follows the tilted noise (±3 dB)',[50,250,450].every(i=>Math.abs(mid[i]-(slope(i)-3))<3.5),[50,250,450].map(i=>mid[i].toFixed(1)+'/'+slope(i)).join(' '));
+  ok('floor: a steady carrier lifts it only locally (≤ 8 dB at the bin, ~0 beside)',mid[100]-slope(100)<8 && Math.abs(mid[110]-(slope(110)-3))<3.5,mid[100].toFixed(1));
+  const m=frame(), o=new Float32Array(N); K.saCleanApply(m,o,fl,9,false);
+  const noisy=[...Array(N).keys()].filter(i=>i<95||i>105);
+  ok('clean: noise bins lie on the floor',noisy.every(i=>o[i]>=m[i]*.999 || Math.abs(db(o[i])-fl.s[i])<.01) && noisy.filter(i=>o[i]!==m[i]).length>.8*noisy.length);
+  ok('clean: the carrier is untouched',o[100]===m[100]);
+  const of=new Float32Array(N); K.saCleanApply(m,of,fl,6,true);
+  ok('flat: floor becomes level, tilt gone',Math.abs(db(of[20])-db(of[480]))<.5 || Math.abs(db(of[20])-db(of[480]))<1,db(of[20])+' '+db(of[480]));
+  // частота кадров не меняет скорость: 120 к/с и 1 к/с приходят к тому же полу
+  const f2={}, f3={}; tt=0; for(let k=0;k<16*120;k++){ K.saFloorStep(f2,frame(),.3,3,tt); tt+=1000/120; }
+  tt=0; for(let k=0;k<60;k++){ K.saFloorStep(f3,frame(),.3,3,tt); tt+=1000; }
+  ok('floor: independent of the frame rate',Math.abs(f2.ref-fl.ref)<2 && Math.abs(f3.ref-fl.ref)<4,[f2.ref,f3.ref,fl.ref].map(v=>v.toFixed(1)).join(' '));
 }
 console.log(bad?'FAILED '+bad:'all ok'); process.exit(bad?1:0);

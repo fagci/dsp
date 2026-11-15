@@ -1870,10 +1870,11 @@ clearAll();
 const nt=addNode('note',40,40,{text:'Catching very short signal bursts. The old spectrum took one FFT of the latest N samples per frame and dropped everything between frames (at 2.4 MS/s, N 4096, 25 fps — about 4 % of the time). Now the USB SDR runs the FFT over EVERY sample (hop N/2, “continuous FFT”) and a frame keeps the per-bin PEAK and the mean over its whole interval, so a burst between two frames is not lost.\n'+
   'Detector = peak: the trace and the waterfall show that peak (noise sits higher than in the mean — the price of seeing everything). Spectrum Analyzer “frame peak” also keeps the peak of the frames that the screen did not draw (source 120 fps, screen 60).\n'+
   'Rates: “spectrum rate” goes 120 → 0.2 fps; slow rates (1 fps and below, long monitoring) show the peak of the whole second(s). 120 fps also needs Redraw rate “fps 120” in the toolbar and a 120 Hz screen. A small FFT (256–1024) gives the time resolution for bursts of 100 µs; a large one gives the frequency resolution.\n'+
+  'Clean picture (Spectrum Analyzer “clean”): the noise floor is learned per bin and everything that does not rise above it by the gate (“gate, dB”) lies on the floor line — no noise speckle in the trace and the waterfall, real signals untouched; “flat” also levels tuner roll-off and humps. Markers and measurements read the real data. “Relearn noise floor” restarts the learning (after a gain or antenna change).\n'+
   'Status line of the SDR node: “N fft/frame” — how many FFTs fill a frame; “spectrum overload” — the worker cannot keep up with the stream (lower the sample rate or enlarge the FFT). For real hardware only: plug in a dongle and press connect.'});
 nt.size.w=720; nt.size.h=190; applySize(nt);
 const rx=addNode('rtlsdr',40,260,{sr:'2400000',auto:false,gainDb:30,demod:'IQ',freq:433920000,specSize:'1024',specFps:'60',specAvg:'off',specCont:true,specDet:'peak'});
-const sa=addNode('sa',40,600,{auto:true,floor:-90,top:-20,split:.4,frameMax:true,peakHold:false});
+const sa=addNode('sa',40,600,{auto:true,floor:-90,top:-20,split:.4,frameMax:true,peakHold:false,clean:'floor',cleanDb:6});
 sa.size.w=620; sa.size.h=320; applySize(sa);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(sa.id,'f1',rx.id,'tuneFreq');
