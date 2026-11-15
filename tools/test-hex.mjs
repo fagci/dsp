@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Uint8Array,DataView,ArrayBuffer,TextEncoder,TextDecoder,Array,Map,Set,Error,String,Number,BigInt,Object,Date,JSON,isNaN,parseInt});
 for(const f of ['hex-kernels.js','hex-formats.js','hex-gsm.js','wifisniff-kernels.js','radiobridge-kernels.js','pcap-kernels.js']) vm.runInContext(fs.readFileSync(path.join(root,'modules',f),'utf8'),ctx,{filename:f});
-vm.runInContext('this.H={HexAisAsm,hexAisPayload,pcapRead,pcapWrite,PCAP_SCHEMA,hexDetect,wifiLine,wifiRec,radioLine,radioStatus,radioRec,radioLineBuild,radioFtmRec,radioFtmCmd,radioStatRec,radioCsiRec,radioTx,radioProbeResp,hexParse,hexBuild,hexToRec,wifiFromPkt,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
+vm.runInContext('this.H={HexAisAsm,hexAisPayload,pcapRead,pcapWrite,PCAP_SCHEMA,hexDetect,wifiLine,wifiRec,radioLine,radioStatus,radioRec,radioLineBuild,radioWifiEnc,radioFtmRec,radioFtmCmd,radioStatRec,radioCsiRec,radioTx,radioProbeResp,hexParse,hexBuild,hexToRec,wifiFromPkt,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
 const H=ctx.H;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 const hex=s=>H.hexFromHex(s), toHex=b=>H.hexToHex(b);
@@ -267,6 +267,15 @@ const rsnIe='0100'+'000fac04'+'0100'+'000fac04'+'0100'+'000fac02'+'0c00';
   const zl2=H.radioLine('RX ZB 15 -60 200 '+'61880562 1a0000 3412 4800 0000 3412 1e11 4001 0600 0401 0107 012202'.replace(/ /g,'')), r3=H.radioRec(zl2,5);
   ok('bridge zigbee line',zl2.proto==='zb' && zl2.chan===15 && zl2.lqi===200 && r3.src==='1234' && r3.net==='1a62' && r3.zb_cluster===6 && r3.zcl_cmd===2,JSON.stringify(r3));
   ok('bridge tx lines',H.radioTx('aabbcc','WIFI')==='TX WIFI aabbcc' && H.radioTx('zb 01 02 03','WIFI',true)==='TX ZB 010203 CSMA' && H.radioTx({hex:'0a0b',proto:'ble'},'WIFI')==='TX BLE 0a0b' && H.radioTx(hex('ff00'),'ble')==='TX BLE ff00' && H.radioTx('zz','WIFI')===null && H.radioTx('aa','XX')===null); }
+  // ENC / CIPHER / AUTH как в airodump-ng: из RSN, вендорного WPA и бита Privacy
+  { const E=H.radioWifiEnc;
+    ok('enc: open / WEP by privacy bit',JSON.stringify(E({'body.capab':0x0401}))==='{"enc":"OPN","cipher":"","auth":"OPN"}' && E({'body.capab':0x0411}).enc==='WEP');
+    ok('enc: WPA2 PSK CCMP',JSON.stringify(E({'ie.rsn.version':1,'ie.rsn.akm':'000fac02','ie.rsn.pairwise':'000fac04'}))==='{"enc":"WPA2","cipher":"CCMP","auth":"PSK"}');
+    ok('enc: WPA3 SAE, transition and OWE',E({'ie.rsn.version':1,'ie.rsn.akm':'000fac08','ie.rsn.pairwise':'000fac04'}).enc==='WPA3' && E({'ie.rsn.version':1,'ie.rsn.akm':'000fac02000fac08','ie.rsn.pairwise':'000fac04'}).enc==='WPA2/WPA3' && E({'ie.rsn.version':1,'ie.rsn.akm':'000fac12','ie.rsn.pairwise':'000fac04'}).enc==='OWE');
+    ok('enc: enterprise, TKIP+CCMP, WPA vendor IE',E({'ie.rsn.version':1,'ie.rsn.akm':'000fac01','ie.rsn.pairwise':'000fac02000fac04'}).auth==='MGT' && E({'ie.rsn.version':1,'ie.rsn.akm':'000fac01','ie.rsn.pairwise':'000fac02000fac04'}).cipher==='TKIP/CCMP' && E({'ie.wpa.oui':1,'body.capab':0x0411}).enc==='WPA' && E({'ie.rsn.version':1,'ie.wpa.oui':1,'ie.rsn.akm':'000fac02'}).enc==='WPA2/WPA');
+    const bc=H.hexBuild('wifi',{type:0,subtype:8,addr1:'ff:ff:ff:ff:ff:ff',addr2:'aa:bb:cc:dd:ee:01',addr3:'aa:bb:cc:dd:ee:01','body.ts':0,'body.interval':100,'body.capab':0x0411,'ie.ssid':'Home','ie.channel':6}).bytes;
+    const br=H.radioRec({proto:'wifi',chan:6,rssi:-40,bytes:bc},5);
+    ok('beacon record carries enc / cipher / auth',br.kind==='beacon' && br.enc==='WEP' && br.auth==='' && br.cipher==='',JSON.stringify([br.enc,br.cipher,br.auth])); }
   // META: RXM WIFI — формат, MCS, ширина, шум, метка времени; круг «собрали → разобрали»
   { const prb='4000 0000 ffffffffffff aabbccddee09 ffffffffffff 1000'.replace(/ /g,'')+ie(0,'')+ie(1,'8284');
     const ml=H.radioLine('RXM WIFI 36 -50 4 7 40 -92 123456 '+prb), mr=H.radioRec(ml,5);

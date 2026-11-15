@@ -1535,7 +1535,7 @@ function tblRenderList(n,inc){
 // колонки списка, которых там нет, дописываются в конец. p.rules = [{q, bg, on}] — первое совпавшее правило красит строку
 // (q — тот же язык, что у фильтра). Не совпало ни одно — цвет по умолчанию (p.tint): колонка color → ошибка (err ≠ 0) → severity (err / warn) →
 // значение колонки типа (proto, type, kind, mode…), у каждого значения свой оттенок; '-' — без раскраски.
-const TBL_FMTS=['auto','text','hz','time','hex','num','swatch'];
+const TBL_FMTS=['auto','text','hz','time','ago','hex','num','swatch'];
 const TBL_ERR=['err','error','errors','crc_err','crc_fail','bad'];
 const TBL_SEV=['level','severity','lvl','sev','status'], TBL_CAT=['proto','protocol','type','kind','mode','service','modulation','demod','class','category','dir'];
 function tblViewCols(n){
@@ -1551,6 +1551,18 @@ const tblTime=(v,local)=>{
   const d=new Date(ms), z=(k,w=2)=>String(k).padStart(w,'0');
   return z(d.getHours())+':'+z(d.getMinutes())+':'+z(d.getSeconds())+'.'+z(d.getMilliseconds(),3);
 };
+// ячейки формата ago тикают раз в секунду без перерисовки таблицы: один таймер на страницу, живёт, пока такие ячейки есть
+let tblAgoTimer=0;
+function tblAgoStart(){
+  if(tblAgoTimer) return;
+  tblAgoTimer=setInterval(()=>{
+    if(document.hidden) return;
+    const els=document.querySelectorAll('.tbl-c[data-ago]');
+    if(!els.length){ clearInterval(tblAgoTimer); tblAgoTimer=0; return; }
+    const now=Date.now();
+    for(const el of els){ const t=tblAgo(+el.dataset.ago,now); if(t && el.firstChild && el.firstChild.nodeType===3 && el.firstChild.data!==t) el.firstChild.data=t; }
+  },1000);
+}
 function tblCell(x,v,local){
   if(v===''||v==null) return '';
   const low=x.c.toLowerCase(), f=x.fmt||'auto';
@@ -1566,6 +1578,7 @@ function tblCell(x,v,local){
   }
   if(f==='hz'){ const h=tblHz(v); return isFinite(h) ? fmtHz(h,3)+'Hz' : recFmt(v); }
   if(f==='time') return typeof v==='number' ? tblTime(v,local) : recFmt(v);
+  if(f==='ago') return typeof v==='number' ? (tblAgo(v) || tblTime(v,local)) : recFmt(v);
   if(f==='hex') return typeof v==='number' && Number.isInteger(v) ? (v<0?'-':'')+'0x'+Math.abs(v).toString(16) : recFmt(v,true);
   if(f==='num'){ const k=typeof v==='number' ? v : parseFloat(v); return isFinite(k) ? String(+k.toFixed(3)) : recFmt(v); }
   return recFmt(v);
@@ -1573,6 +1586,7 @@ function tblCell(x,v,local){
 function tblCellEl(n,x,v,text){
   const el=document.createElement('span'), low=x.c.toLowerCase();
   el.className='tbl-c'; el.title=text;
+  if(x.fmt==='ago' && typeof v==='number'){ el.dataset.ago=v; el.title=tblTime(v,n.p.tz==='local'); tblAgoStart(); }
   const ph=x.ty==='photo', fl=x.ty==='file', ids=ph ? phIds(v) : fl ? tcFileIds(v) : x.ty==='audio' ? auIds(v) : null;
   if(ids && x.fmt==='auto'){
     if(ids.length){

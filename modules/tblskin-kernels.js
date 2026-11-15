@@ -42,3 +42,19 @@ function tblSkinParse(css){
 }
 // итоговые переменные списка: скин, поверх — свои
 const tblSkinVars=(id,css)=>({...tblSkin(id).vars,...tblSkinParse(css)});
+
+// «сколько назад»: метка времени (мс, либо секунды Unix) → «12 s ago» / «3 min 05 s ago» / «2 h 10 min ago» / «3 d 4 h ago»; будущее и пустое — ''
+function tblAgo(v,now){
+  if(typeof v!=='number' || !isFinite(v)) return '';
+  const ms=v>1e11 ? v : v>1e8 ? v*1000 : null;
+  if(ms==null) return '';
+  const s=Math.round(((now==null ? Date.now() : now)-ms)/1000);
+  if(s<-2) return '';
+  if(s<2) return 'now';
+  if(s<60) return s+' s ago';
+  const z=k=>String(k).padStart(2,'0'), m=Math.floor(s/60);
+  if(m<60) return m+' min '+z(s%60)+' s ago';
+  const h=Math.floor(m/60);
+  if(h<24) return h+' h '+z(m%60)+' min ago';
+  return Math.floor(h/24)+' d '+(h%24)+' h ago';
+}
