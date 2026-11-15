@@ -5278,7 +5278,7 @@ function sdrSweepLineDone(n, sw){
   const m=sw.spec.mag, pk=sw.peak.mag, d=Math.pow(10, -(+n.p.swDecay||0)/20);
   for(let i=0;i<m.length;i++){ const v=pk[i]*d; pk[i]=m[i]>v ? m[i] : v; }
   sw.peak.rev++;
-  const now=performance.now(); sw.lineMs=now-sw.tLine; sw.tLine=now; sw.spec.live=null; sw.spec.rev++;
+  const now=performance.now(); sw.lineMs=now-sw.tLine; sw.tLine=now; sw.spec.live=null; sw.ovEma=null; sw.spec.rev++;
 }
 // M кадров БПФ шага k → средняя (или максимальная) мощность → центральные use бинов в панораму
 function sdrSweepPlace(n, sw, cap, k){
@@ -5339,7 +5339,12 @@ function sdrSweepOverlay(n, sw, sp){
       if(ov>0) acc[j-j0]+=p*ov/w;
     }
   }
-  for(let j=j0;j<j1;j++) mag[j]=Math.sqrt(acc[j-j0]);
+  // сглаживание по времени (экспонента по мощности, τ = rowMs/2): линия не скачет на каждом кадре, а строка водопада — среднее за свой интервал
+  const now=performance.now(), L2=j1-j0, tau=clamp((+n.p.rowMs||400)/2, 50, 1000);
+  const ok=sw.ovEma && sw.ovEma.length===L2 && sw.ovJ0===j0;
+  const al=ok ? 1-Math.exp(-Math.min(1000,now-(sw.ovT||0))/tau) : 1, em=ok ? sw.ovEma : (sw.ovEma=new Float64Array(L2));
+  sw.ovJ0=j0; sw.ovT=now;
+  for(let j=j0;j<j1;j++){ const e=em[j-j0]+=(acc[j-j0]-em[j-j0])*al; mag[j]=Math.sqrt(e); }
   // свежий участок панорамы: остальное — остатки прошлого прохода, 'sa' красит его в водопаде как «нет данных» и не чаще rowMs ставит строку
   sw.spec.live=[sw.lo+j0*b, sw.lo+(j1-1)*b];
   // новый кадр панорамы: без смены rev 'sa' считает картинку прежней и перерисовывает её лишь раз в 500 мс (при маркере спектр «замирал»)
