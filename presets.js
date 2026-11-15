@@ -345,6 +345,7 @@ const PRESET_CATS={
   'Echo Repeater: Record the Transmission, Play It Back (USB SDR)':'SDR Receivers',
   'USB SDR: Channel Scan (Channel Scanner + squelch)':'SDR Receivers',
   'USB SDR: Burst Monitor (peak per frame, 120 → 0.2 fps)':'SDR Receivers',
+  'USB SDR: Burst Monitor, light (phone: no overlap, 50 % coverage)':'SDR Receivers',
   'USB SDR: Long Monitor (waterfall row per minute = peak)':'SDR Receivers',
   'USB SDR: Chain by Typing (Ctrl+K, usb>(dac,sa,…))':'SDR Receivers',
   'Spectrum Analyzer: Gradient Fill and Waterfall Brightness':'Analysis & Measurement',
@@ -1876,6 +1877,19 @@ const nt=addNode('note',40,40,{text:'Catching very short signal bursts. The old 
 nt.size.w=720; nt.size.h=190; applySize(nt);
 const rx=addNode('rtlsdr',40,260,{sr:'2400000',auto:false,gainDb:30,demod:'IQ',freq:433920000,specSize:'1024',specFps:'60',specAvg:'off',specCont:true,specDet:'peak'});
 const sa=addNode('sa',40,600,{auto:true,floor:-90,top:-20,split:.4,frameMax:true,peakHold:false,clean:'floor',cleanDb:6});
+sa.size.w=620; sa.size.h=320; applySize(sa);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(sa.id,'f1',rx.id,'tuneFreq');
+markWiresDirty();
+});
+preset('USB SDR: Burst Monitor, light (phone: no overlap, 50 % coverage)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The same burst monitor for a weak CPU (a phone). The CPU load of the continuous FFT follows the number of FFTs per second, so it can be cut by two settings of the SDR node (Spectrum & sweep): “overlap” = none (frames step by N instead of N/2: half the FFTs) and “coverage, %” (the FFT runs that share of the time, the rest is skipped evenly: 50 → half, 25 → a quarter). Here: no overlap + 50 % coverage = a quarter of the default load.\n'+
+  'Measured in a headless browser at 2.4 MS/s, N 1024 (worker CPU): overlap half / 100 % — 14 %, none / 100 % — 8.3 %, none / 50 % — 4.3 %, none / 25 % — 2.8 %, none / 10 % — 1.7 %. The price: a burst shorter than the gap between FFT windows is seen only with the probability of the coverage (a burst longer than the window — always), and without overlap a burst on the edge of a window is weakened by the Hann taper.\n'+
+  'The status line shows “FFT covers N % of the time”; when the CPU is short the step grows by itself (“thinned: CPU is short”) — the skipped part is spread evenly. Spectrum rate, detector and the Spectrum Analyzer “clean” work as in “Burst Monitor”. For real hardware only.'});
+nt.size.w=720; nt.size.h=190; applySize(nt);
+const rx=addNode('rtlsdr',40,260,{sr:'1024000',auto:false,gainDb:30,demod:'NFM',freq:433920000,specSize:'1024',specFps:'15',specAvg:'off',specCont:true,specHop:'none',specCover:'50',specDet:'peak'});
+const sa=addNode('sa',40,600,{auto:true,floor:-90,top:-20,split:.4,frameMax:true,clean:'floor',cleanDb:6});
 sa.size.w=620; sa.size.h=320; applySize(sa);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(sa.id,'f1',rx.id,'tuneFreq');
