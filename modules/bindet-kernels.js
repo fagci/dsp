@@ -89,7 +89,9 @@ function bdFrame(st,v,hz,o){
     const rs=[]; for(let i=l;i<=h;i++) rs.push(dev[i]/Math.max(6.9/Math.sqrt(Math.max(Math.pow(10,exc[i]/10),1)),.05));
     rs.sort((x,y)=>x-y); const ratio=rs[rs.length>>1];
     const wide=wBins>(o.carBins>0 ? o.carBins : 4), mod=o.modK>0 ? ratio>=o.modK : false;
-    chans.push({lo:hz(ga2)-binHz/2, hi:hz(gb)+binHz/2, f, bw, pk, bins:wBins, ratio, mod, wide, p, l, h, abs:v[p]});
+    let mx=-1e9; for(let i=l;i<=h;i++) if(exc[i]>mx) mx=exc[i];
+    const live=mx>=thr;                                           // сигнал есть В ЭТОМ кадре (подтверждение M из N держит канал ещё пару кадров)
+    chans.push({live, lo:hz(ga2)-binHz/2, hi:hz(gb)+binHz/2, f, bw, pk, bins:wBins, ratio, mod, wide, p, l, h, abs:v[p]});
   }
 
   // привязка к дорожкам, жизненный цикл (открыт / закрыт), записи
@@ -99,6 +101,7 @@ function bdFrame(st,v,hz,o){
     for(const x of tr){ const dz=Math.abs(x.f-c.f); if(dz<=Math.max(x.bw,c.bw)/2+binHz && dz<best){ best=dz; t=x; } }
     if(!t){ t={id:st.nextId++, f:c.f, t0:now, open:false, slot:0, modAt:-1e18, lastMod:false}; tr.push(t); for(let i=Math.max(0,c.l-2);i<=Math.min(N-1,c.h+2);i++) dev[i]=0; }   // дрожь от скачка включения — не в счёт
     seen.add(t);
+    if(c.live) t.liveAt=now;
     t.n=t.lf===st.frames-1 ? (t.n|0)+1 : 1; t.lf=st.frames;                // кадров подряд на месте
     t.f=t.f*.5+c.f*.5; t.lo=c.lo; t.hi=c.hi; t.bw=c.bw; t.pk=c.pk; t.abs=c.abs; t.ratio=t.n>1 && t.born ? t.ratio+.25*(c.ratio-t.ratio) : (t.born=1, 1); t.seenAt=now;     // сглаженное отношение дрожи
     // открытие — только у «осевшей» дорожки (settle кадров подряд): скачок включения несущей выглядит дрожью, а случайные
@@ -112,7 +115,7 @@ function bdFrame(st,v,hz,o){
     const t=tr[k];
     // открыт: держим, пока есть модуляция (модуляции нет дольше hold — закрываем, даже если несущая осталась)
     if(t.open && now-t.modAt>o.hold){
-      t.open=false; recs.push({t:now, kind:'close', id:t.id, f:t.f, lo:t.lo, hi:t.hi, bw:t.bw, exc:t.pk, dur:(now-t.openAt)/1000, t0:t.openAt}); t.closeAt=now;
+      t.open=false; recs.push({t:now, kind:'close', id:t.id, f:t.f, lo:t.lo, hi:t.hi, bw:t.bw, exc:t.pk, dur:((t.liveAt??now)-t.openAt)/1000, t0:t.openAt}); t.closeAt=now;
     }
     if(!t.open && !seen.has(t) && now-(t.seenAt||0)>Math.max(500,o.hold)) tr.splice(k,1);
   }
