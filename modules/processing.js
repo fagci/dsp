@@ -1929,6 +1929,10 @@ function saSigTags(n,cx,W,plotH){
     tags.push({b,x1,x2:Math.max(x2,x1+3),y});
   }
   if(!tags.length) return;
+  // зоны (b.zone — прозрачность): цветная заливка полосы сигнала на всю высоту графика — «открытые» каналы псевдоспектра и т.п.
+  for(const t of tags){ const z=+t.b.zone; if(!(z>0)) continue;
+    cx.globalAlpha=Math.min(.6,z); cx.fillStyle=t.b.color||'#b0bec5'; cx.fillRect(t.x1,TOPN,Math.max(t.x2-t.x1,2),plotH-TOPN); }
+  cx.globalAlpha=1;
   const hx=n._hoverX!=null ? n._hoverX*W : null, hy=n._hoverY;
   // нужная полоса приёма (sigid, «need»): тонкие пунктирные края у всех, заливка и подпись ширины —
   // у того, над кем курсор (или если сигналов мало); подпись стоит над лентой полос, не на ней
