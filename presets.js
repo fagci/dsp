@@ -639,6 +639,7 @@ const PRESET_CATS={
   'Hex: PCAP File → Packets → HEX Structure':'Network & IoT',
   'Wi-Fi: ESP32 Sniffer → Table and HEX Structure':'Network & IoT',
   'Radio: ESP32-C5 Bridge → Network Map (Wi-Fi / BLE / Zigbee)':'Network & IoT',
+  'Radio: ESP32-C5 Wi-Fi 6 PHY · BLE 5 · FTM ranging':'Network & IoT',
   'Radio: Wi-Fi Network Map (nodes · links · packets · notes)':'Network & IoT',
   'Radio: Wi-Fi channel level · occupancy · CSI (Table Chart)':'Network & IoT',
   'Gamepad: Axes to Tone and Lamps':'Network & IoT',
@@ -9461,6 +9462,28 @@ addEdge(tx.id,'text',rb.id,'text');
 addEdge(rb.id,'stat',tC.id,'rec'); addEdge(rb.id,'csi',tS.id,'rec');
 addEdge(tC.id,'all',c1.id,'rows'); addEdge(tC.id,'all',c2.id,'rows');
 addEdge(tS.id,'all',c3.id,'rows'); addEdge(tS.id,'all',c4.id,'rows');
+markWiresDirty();
+});
+preset('Radio: ESP32-C5 Wi-Fi 6 PHY · BLE 5 · FTM ranging', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Three extras of the ESP32-C5 bridge (tools/radio-bridge-esp32c5). (1) «PHY meta» (firmware META ON): every Wi-Fi record gets phy (11b · 11a/g · 11n · 11ac · 11ax), mcs, bw, noise, snr and a hardware timestamp ts_us. (2) «BLE 5 ext» (BLEEXT ON / CODED): extended advertising and LE Coded PHY — records ext_adv with phy, sid, partial. (3) FTM (802.11mc): the ftm input takes «mac [frames] [channel]» (or press Range), the ftmr output gives distance in metres — calibrate with «FTM cal»; the second C5 can be the responder («answer FTM», the reply shows its MAC).\n'+
+  'Without hardware the Text Source plays sample lines (RXM WIFI …, RX BLEX …, FTM …). FTM accuracy is metres, not centimetres: walls, multipath and the responder\u0027s clock all add error — average several bursts. Use only on your own network or with permission. Not tested on hardware (the line formats are covered by node tools/test-hex.mjs).'});
+nt.size.w=1100; nt.size.h=150; applySize(nt);
+const tx=addNode('textsrc',40,230,{text:'RXM WIFI 36 -48 4 9 40 -92 1000100 40000000ffffffffffffaabbccddee11ffffffffffff1000000001028284\nRXM WIFI 36 -61 2 7 20 -92 1000900 40000000ffffffffffffaabbccddee12ffffffffffff1000000001028284\nRXM WIFI 6 -70 0 3 20 -95 1001700 40000000ffffffffffffaabbccddee09ffffffffffff1000000001028284\nRX BLEX 11:22:33:44:55:66 -91 0 1 3 3 5 0 0201060c094d794c6f6e6752616e6765\nRX BLEX 11:22:33:44:55:77 -58 19 0 1 1 0 0 02010605094d794150\nFTM aa:bb:cc:dd:ee:01 0 400 380 450\nFTM aa:bb:cc:dd:ee:01 0 420 405 480\nFTM aa:bb:cc:dd:ee:02 0 1250 1210 1820\nFTM aa:bb:cc:dd:ee:03 3 0 0 0'});
+tx.size.w=300; tx.size.h=300; applySize(tx);
+const rb=addNode('radioBridge',380,230,{mode:'WIFI',meta:true,bleExt:true,ftmPeer:'aa:bb:cc:dd:ee:01'});
+rb.size.w=320; rb.size.h=360; applySize(rb);
+const tR=addNode('table',740,230,{list:'@patch',key:'id',initial:false});
+tR.size.w=520; tR.size.h=260; applySize(tR);
+const tF=addNode('table',740,520,{list:'@patch',key:'id',initial:false});
+tF.size.w=520; tF.size.h=220; applySize(tF);
+const c1=addNode('tblchart',1300,230,{kind:'bar',x:'id',y:'dist_m',auto:true});
+c1.size.w=520; c1.size.h=260; applySize(c1);
+const c2=addNode('tblchart',1300,520,{kind:'bar',x:'id',y:'snr',auto:true});
+c2.size.w=520; c2.size.h=220; applySize(c2);
+addEdge(tx.id,'text',rb.id,'text');
+addEdge(rb.id,'rec',tR.id,'rec'); addEdge(rb.id,'ftmr',tF.id,'rec');
+addEdge(tF.id,'all',c1.id,'rows'); addEdge(tR.id,'all',c2.id,'rows');
 markWiresDirty();
 });
 preset('Joystick: Gamepad → Frame → MQTT', function(){
