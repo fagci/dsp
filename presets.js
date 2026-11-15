@@ -349,6 +349,7 @@ const PRESET_CATS={
   'USB SDR: Long Monitor (waterfall row per minute = peak)':'SDR Receivers',
   'USB SDR: Chain by Typing (Ctrl+K, usb>(dac,sa,…))':'SDR Receivers',
   'Spectrum Analyzer: Gradient Fill and Waterfall Brightness':'Analysis & Measurement',
+  'Spectrum Analyzer: Palette Fill and Pro Waterfall Palettes':'Analysis & Measurement',
   'USB SDR: Channel Scan + Decoder Switch (digital voice / analog)':'SDR Receivers',
   'Signal Catalog: Pick a Type, the SDR Tunes and Decodes (USB SDR)':'SDR Receivers',
   'Signal Database: What Is It and How to Decode (USB SDR)':'SDR Receivers',
@@ -1932,6 +1933,18 @@ nt.size.w=720; nt.size.h=130; applySize(nt);
 const os=addNode('osc',40,200,{});
 const ff=addNode('fft',300,200,{size:'4096'});
 const sa=addNode('sa',560,180,{auto:true,floor:-110,top:-20,fill:'gradient',fillAlpha:35,wfBright:12,wfContrast:1.5});
+sa.size.w=640; sa.size.h=360; applySize(sa);
+addEdge(os.id,'out',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
+markWiresDirty();
+});
+preset('Spectrum Analyzer: Palette Fill and Pro Waterfall Palettes', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Spectrum Analyzer › View: «fill colours» (advanced) paints the area under the trace with any palette — the level runs floor→top along the palette, like the waterfall; «fill» chooses flat or gradient (fading to the floor).\n'+
+  'Waterfall › «palette» now also has palettes in the style of professional analyzers: rs_fsw, keysight, keysight_gray, tek_dpx, anritsu, spectran, sdrsharp, hdsdr, thermal, night_red, phosphor_green, amber, ice. Try them on this signal.'});
+nt.size.w=720; nt.size.h=120; applySize(nt);
+const os=addNode('osc',40,200,{});
+const ff=addNode('fft',300,200,{size:'4096'});
+const sa=addNode('sa',560,180,{auto:true,floor:-110,top:-20,fill:'gradient',fillPal:'keysight',fillAlpha:40,palette:'tek_dpx'});
 sa.size.w=640; sa.size.h=360; applySize(sa);
 addEdge(os.id,'out',ff.id,'in'); addEdge(ff.id,'spec',sa.id,'spec');
 markWiresDirty();
