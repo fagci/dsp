@@ -7,6 +7,9 @@
  * CSI ON [ms]|OFF (WiFi channel state info); BLESCAN PASSIVE|ACTIVE; TX WIFI hex; TX BLE hex; TX ZB hex [CSMA]; INFO; HELP
  * META ON|OFF (WiFi RX lines carry PHY format / MCS / bandwidth / noise floor / hardware timestamp);
  * BLEEXT ON|CODED|OFF (BLE 5 extended advertising scan, CODED adds the LE Coded PHY; needs CONFIG_BT_NIMBLE_EXT_ADV in NimBLE-Arduino nimconfig.h);
+ * FMT BIN|TEXT (RX WIFI / BLE / ZB as binary packets  A5 len16 type body crc16-ccitt: about half the USB traffic, timestamps for every protocol; other lines stay text);
+ * ZED ON [ms]|OFF (802.15.4 energy scan 11..26: lines ZED, MODE ZB); MODE WIFI+BLE | ZB+BLE (BLE scan next to Wi-Fi / 802.15.4, the radio coexistence arbiter shares the antenna);
+ * CSIMODE ALL|LEG (CSI of HT / VHT / HE-SU / HE-MU frames instead of legacy + HT20 only)
  * FTM <mac> [frames 8..64] [ch] (802.11mc ranging to an FTM responder, WIFI mode, HOP OFF); FTMRESP ON|OFF (our AP answers FTM, visible SSID "bridge")
  * RX lines (hex without FCS):
  *   RX WIFI <ch> <rssi> <hex>              (RX WIFI! - cut by SNAP)
@@ -18,6 +21,7 @@
  *   RX BLEX <addr> <rssi> <props> <atype> <phy1> <phy2> <sid> <status> <hex>   (BLEEXT; props 1 conn 2 scan 4 direct 8 scan-rsp 16 legacy;
  *       phy 1 1M 2 2M 3 coded; status 0 complete 1 more follows 2 truncated)
  *   FTM <mac> <status> <rtt_raw 0.1ns> <rtt_est 0.1ns> <dist cm>      (status 0 = success)
+ *   ZED <ch> <ms> <samples> <max dBm> <avg dBm> <busy permille>       (busy = samples above -75 dBm)
  * Capture: frames go through a variable-length ring buffer (no 540-byte copies), output is one write per line,
  * DATA frames are cut to DSNAP bytes. STAT counts every frame the driver delivers (all types), regardless of TYPES.
  * WiFi RX: up to MAX_PKT bytes. TX: 24..1500 without FCS.
@@ -36,6 +40,7 @@
 #include "nvs_flash.h"
 #include "esp_ieee802154.h"
 #include "freertos/ringbuf.h"
+#include "esp_timer.h"
 #define MAX_PKT 512
 #define EV_MAX 640                                  // CSI can be longer than a SNAP
 #define ZB_MAX 125
@@ -74,6 +79,17 @@ static uint8_t wifiTypes = 3;                       // bit0 mgmt, bit1 ctrl, bit
 static uint16_t snapLen = 320, dataSnap = 96;
 static bool bleActive = false;
 static bool metaOn = false, bleExt = false, bleCoded = false, ftmResp = false;
+static bool binMode = false, coBle = false, bleRunning = false, csiAll = false;
+static bool zedOn = false, zedPending = false, zedFailed = false;
+static uint16_t zedMs = 100;
+static volatile bool zedDone = false;
+static volatile int8_t zedPower = 0;
+static uint8_t zedCh = 11;
+static uint32_t zedT = 0, zedN = 0, zedBusy = 0;
+static int32_t zedSum = 0;
+static int8_t zedMax = -127;
+#define ZED_SYMBOLS 32                              // one energy sample: 32 symbols = 512 us
+#define ZED_BUSY_DBM -75
 static bool hopOn = false;
 static uint16_t hopMs = 250;
 static uint32_t hopT = 0;
@@ -155,11 +171,10 @@ static void IRAM_ATTR queueZbStatusFromISR(bool ok, uint8_t code) {
 static void stopRadio() {
   if (mode == MODE_WIFI) {
     esp_wifi_set_promiscuous(false); esp_wifi_stop(); esp_wifi_deinit();
-  } else if (mode == MODE_BLE) {
-    ble_gap_disc_cancel(); ble_gap_adv_stop(); NimBLEDevice::deinit();
   } else if (mode == MODE_ZB) {
-    esp_ieee802154_disable(); clearZbBusy();
+    zedOn = false; zedPending = false; esp_ieee802154_disable(); clearZbBusy();
   }
+  if (bleRunning) { ble_gap_disc_cancel(); ble_gap_adv_stop(); NimBLEDevice::deinit(); bleRunning = false; }
   mode = MODE_OFF;
 }
 
@@ -212,6 +227,17 @@ static void statFlush() {
   statT = now; statCh = wifiChan; statDrop0 = dropped;
 }
 #if WITH_CSI
+// optional acquisition flags: fields differ between SDK versions, each is set only if the struct has it
+struct CsiSet {
+  template <class T> static auto he(T &c, int) -> decltype((void)c.acquire_csi_su, void()) { c.acquire_csi_su = 1; }
+  template <class T> static void he(T &, ...) {}
+  template <class T> static auto mu(T &c, int) -> decltype((void)c.acquire_csi_mu, void()) { c.acquire_csi_mu = 1; }
+  template <class T> static void mu(T &, ...) {}
+  template <class T> static auto vht(T &c, int) -> decltype((void)c.acquire_csi_vht, void()) { c.acquire_csi_vht = 1; }
+  template <class T> static void vht(T &, ...) {}
+  template <class T> static auto ht40(T &c, int) -> decltype((void)c.acquire_csi_ht40, void()) { c.acquire_csi_ht40 = 1; }
+  template <class T> static void ht40(T &, ...) {}
+};
 static void wifiCsiCb(void *, wifi_csi_info_t *info) {
   if (!csiOn || !info || !info->buf || info->len <= 0) return;
   uint32_t now = millis();
@@ -229,6 +255,7 @@ static bool applyCsi() {
   if (!csiOn) return checkEsp("esp_wifi_set_csi", esp_wifi_set_csi(false));
   wifi_csi_config_t cc = {};
   cc.enable = 1; cc.acquire_csi_legacy = 1; cc.acquire_csi_ht20 = 1;
+  if (csiAll) { CsiSet::he(cc, 0); CsiSet::mu(cc, 0); CsiSet::vht(cc, 0); CsiSet::ht40(cc, 0); }
   return checkEsp("esp_wifi_set_csi_config", esp_wifi_set_csi_config(&cc)) &&
          checkEsp("esp_wifi_set_csi_rx_cb", esp_wifi_set_csi_rx_cb(wifiCsiCb, NULL)) &&
          checkEsp("esp_wifi_set_csi", esp_wifi_set_csi(true));
@@ -296,6 +323,7 @@ static bool startBle() {
     rc = ble_gap_disc(BLE_OWN_ADDR_PUBLIC, BLE_HS_FOREVER, &dp, bleGapEventCb, NULL);
   }
   if (rc != 0) { Serial.printf("ERR BLE SCAN %d\r\n", rc); NimBLEDevice::deinit(); return false; }
+  bleRunning = true;
   return true;
 }
 static bool startZb() {
@@ -316,17 +344,24 @@ static bool applyMode(RadioMode m) {
   else if (m == MODE_BLE) ok = startBle();
   else if (m == MODE_ZB) ok = startZb();
   if (ok) mode = m;
+  if (ok && coBle && (m == MODE_WIFI || m == MODE_ZB) && !startBle()) Serial.println("ERR BLE COEX");   // BLE next to Wi-Fi / 802.15.4: the coex arbiter shares the antenna
   return ok;
 }
-static void cmdMode(const char *m) {
+static void cmdMode(const char *arg) {
   RadioMode nm;
+  char m[16]; strncpy(m, arg, sizeof(m) - 1); m[sizeof(m) - 1] = 0;
+  char *plus = strchr(m, '+');
+  bool wantBle = false;
+  if (plus) { if (strcasecmp(plus, "+BLE")) { Serial.println("ERR MODE NAME"); return; } wantBle = true; *plus = 0; }
   if (!strcasecmp(m, "OFF")) nm = MODE_OFF;
   else if (!strcasecmp(m, "WIFI")) nm = MODE_WIFI;
   else if (!strcasecmp(m, "BLE")) nm = MODE_BLE;
   else if (!strcasecmp(m, "ZB") || !strcasecmp(m, "ZIGBEE")) nm = MODE_ZB;
   else { Serial.println("ERR MODE NAME"); return; }
   if (mode == MODE_ZB && zbBusy()) { Serial.println("ERR TX BUSY"); return; }
-  if (applyMode(nm)) Serial.printf("OK MODE %s\r\n", modeName(mode));
+  if (wantBle && nm != MODE_WIFI && nm != MODE_ZB) { Serial.println("ERR MODE NAME (+BLE goes with WIFI or ZB)"); return; }
+  coBle = wantBle;
+  if (applyMode(nm)) Serial.printf("OK MODE %s%s\r\n", modeName(mode), bleRunning && mode != MODE_BLE ? "+BLE" : "");
   else Serial.println("ERR MODE START");
 }
 static void cmdChannel(int ch) {
@@ -410,8 +445,63 @@ static void cmdBleScan(const char *a) {
   if (!strcasecmp(a, "ACTIVE")) bleActive = true;
   else if (!strcasecmp(a, "PASSIVE")) bleActive = false;
   else { Serial.println("ERR BLESCAN"); return; }
-  if (mode == MODE_BLE && !applyMode(MODE_BLE)) { Serial.println("ERR MODE START"); return; }
+  if (bleRunning && !applyMode(mode)) { Serial.println("ERR MODE START"); return; }
   Serial.printf("OK BLESCAN %s\r\n", bleActive ? "ACTIVE" : "PASSIVE");
+}
+static void cmdFmt(const char *a) {
+  if (!strcasecmp(a, "BIN")) binMode = true;
+  else if (!strcasecmp(a, "TEXT")) binMode = false;
+  else { Serial.println("ERR FMT"); return; }
+  Serial.printf("OK FMT %s\r\n", binMode ? "BIN" : "TEXT");
+}
+static void cmdCsiMode(const char *a) {
+  if (!strcasecmp(a, "ALL")) csiAll = true;
+  else if (!strcasecmp(a, "LEG")) csiAll = false;
+  else { Serial.println("ERR CSIMODE"); return; }
+#if WITH_CSI
+  if (mode == MODE_WIFI && csiOn && !applyCsi()) { Serial.println("ERR CSI SDK"); return; }
+#endif
+  Serial.printf("OK CSIMODE %s\r\n", csiAll ? "ALL" : "LEG");
+}
+static void zedFlush() {
+  int avgDb = zedN ? (int)(zedSum / (int32_t)zedN) : -127;
+  Serial.printf("ZED %u %u %lu %d %d %lu\r\n", zedCh, (unsigned)zedMs, (unsigned long)zedN, zedN ? zedMax : -127, avgDb,
+    (unsigned long)(zedN ? zedBusy * 1000UL / zedN : 0));
+  zedN = 0; zedSum = 0; zedMax = -127; zedBusy = 0;
+}
+static void cmdZed(char *a) {
+  char *ms = splitToken(a);
+  if (!strcasecmp(a, "OFF")) {
+    if (zedOn && mode == MODE_ZB && !zbBusy()) esp_ieee802154_receive();
+    zedOn = false; zedPending = false;
+    Serial.println("OK ZED OFF"); return;
+  }
+  if (strcasecmp(a, "ON")) { Serial.println("ERR ZED"); return; }
+  if (mode != MODE_ZB) { Serial.println("ERR NOT ZB MODE"); return; }
+  if (*ms) { long v = strtol(ms, NULL, 10); if (v < 20 || v > 5000) { Serial.println("ERR ZED 20..5000 ms"); return; } zedMs = (uint16_t)v; }
+  hopOn = false; zedFailed = false; zedPending = false; zedDone = false;
+  zedCh = 11; zedN = 0; zedSum = 0; zedMax = -127; zedBusy = 0; zedT = millis();
+  if (!checkEsp("esp_ieee802154_set_channel", esp_ieee802154_set_channel(zedCh))) return;
+  zedOn = true;
+  Serial.printf("OK ZED ON %u\r\n", (unsigned)zedMs);
+}
+// energy scan: one sample = one esp_ieee802154_energy_detect; the done callback only stores the value, the loop does the rest
+static void zedStep() {
+  if (!zedOn || mode != MODE_ZB || zbBusy()) return;
+  if (zedDone) {
+    zedDone = false; zedPending = false;
+    int8_t p = zedPower; zedN++; zedSum += p; if (p > zedMax) zedMax = p; if (p >= ZED_BUSY_DBM) zedBusy++;
+  }
+  uint32_t now = millis();
+  if (now - zedT >= zedMs) {
+    zedFlush(); zedT = now;
+    zedCh = zedCh >= 26 ? 11 : zedCh + 1;
+    esp_ieee802154_set_channel(zedCh); zbChan = zedCh;
+  }
+  if (!zedPending) {
+    if (esp_ieee802154_energy_detect(ZED_SYMBOLS) == ESP_OK) zedPending = true;
+    else if (!zedFailed) { zedFailed = true; zedOn = false; Serial.println("ERR ZED SDK (energy detect refused)"); }
+  }
 }
 static void cmdMeta(const char *a) {
   if (!strcasecmp(a, "ON")) metaOn = true;
@@ -425,7 +515,7 @@ static void cmdBleExt(const char *a) {
   else if (!strcasecmp(a, "CODED")) { bleExt = true; bleCoded = true; }
   else if (!strcasecmp(a, "OFF")) { bleExt = false; bleCoded = false; }
   else { Serial.println("ERR BLEEXT"); return; }
-  if (mode == MODE_BLE && !applyMode(MODE_BLE)) { Serial.println("ERR MODE START"); return; }
+  if (bleRunning && !applyMode(mode)) { Serial.println("ERR MODE START"); return; }
   Serial.printf("OK BLEEXT %s\r\n", !bleExt ? "OFF" : bleCoded ? "CODED" : "ON");
 #else
   Serial.println("ERR BLEEXT SDK (enable CONFIG_BT_NIMBLE_EXT_ADV in NimBLE-Arduino nimconfig.h)");
@@ -519,7 +609,7 @@ static void cmdTxWifi(const char *hex) {
   else Serial.println("ERR TX WIFI");
 }
 static void cmdTxBle(const char *hex) {
-  if (mode != MODE_BLE) { Serial.println("ERR NOT BLE MODE"); return; }
+  if (!bleRunning) { Serial.println("ERR NOT BLE MODE"); return; }
   uint8_t buf[31]; int n = parseHex(hex, buf, sizeof(buf));
   if (n < 1) { Serial.println("ERR HEX"); return; }
   ble_gap_adv_stop();
@@ -550,8 +640,9 @@ static void cmdInfo() {
   Serial.printf("MODE %s", modeName(mode));
   if (mode == MODE_WIFI) Serial.printf(" CH %d BAND %s TYPES %u SNAP %u DSNAP %u STAT %s CSI %s", wifiChan, wifi5g ? "5G" : "2G", (unsigned)wifiTypes, (unsigned)snapLen, (unsigned)dataSnap, statOn ? "ON" : "OFF", csiOn ? "ON" : "OFF");
   if (mode == MODE_ZB) Serial.printf(" CH %d", zbChan);
-  if (mode == MODE_BLE) Serial.printf(" SCAN %s EXT %s", bleActive ? "ACTIVE" : "PASSIVE", !bleExt ? "OFF" : bleCoded ? "CODED" : "ON");
-  Serial.printf(" META %s FTMRESP %s", metaOn ? "ON" : "OFF", ftmResp ? "ON" : "OFF");
+  if (bleRunning) Serial.printf(" SCAN %s EXT %s", bleActive ? "ACTIVE" : "PASSIVE", !bleExt ? "OFF" : bleCoded ? "CODED" : "ON");
+  Serial.printf(" META %s FTMRESP %s FMT %s CSIMODE %s ZED %s", metaOn ? "ON" : "OFF", ftmResp ? "ON" : "OFF", binMode ? "BIN" : "TEXT", csiAll ? "ALL" : "LEG", zedOn ? "ON" : "OFF");
+  if (coBle && mode != MODE_BLE) Serial.print(" +BLE");
   Serial.printf(" HOP %s %u", hopOn ? "ON" : "OFF", (unsigned)hopMs);
   Serial.printf(" DROPPED %lu RINGFREE %u\r\n", (unsigned long)(dropped + zbDropped), (unsigned)xRingbufferGetCurFreeSize(evRing));
 }
@@ -566,6 +657,10 @@ static void printHelp() {
   Serial.println("STAT <ms>|OFF - WIFI per-channel lines: frames, bytes, max/avg RSSI, airtime (counts all frame types)");
   Serial.println("CSI ON [min ms between reports]|OFF - WIFI channel state info");
   Serial.println("BLESCAN PASSIVE|ACTIVE - ACTIVE also returns scan responses");
+  Serial.println("FMT BIN|TEXT - RX WIFI/BLE/ZB as binary packets A5 len16 type body crc16 (other lines stay text)");
+  Serial.println("ZED ON [ms]|OFF - 802.15.4 energy scan over channels 11..26 (MODE ZB), line per channel window");
+  Serial.println("MODE WIFI+BLE | ZB+BLE - BLE scan alongside Wi-Fi / 802.15.4");
+  Serial.println("CSIMODE ALL|LEG - CSI of HT/VHT/HE frames too (default legacy + HT20)");
   Serial.println("META ON|OFF - WIFI lines RXM: PHY format, MCS, bandwidth, noise floor, hardware timestamp");
   Serial.println("BLEEXT ON|CODED|OFF - BLE 5 extended advertising scan (CODED: + LE Coded PHY); restarts active BLE");
   Serial.println("FTM <mac> [frames 8..64] [ch] - 802.11mc ranging to an FTM responder (WIFI mode, HOP OFF)");
@@ -605,6 +700,9 @@ static void handleLine(char *line) {
   else if (!strcasecmp(line, "CSI") && *args) cmdCsi(args);
   else if (!strcasecmp(line, "BLESCAN") && *args) cmdBleScan(args);
   else if (!strcasecmp(line, "META") && *args) cmdMeta(args);
+  else if (!strcasecmp(line, "FMT") && *args) cmdFmt(args);
+  else if (!strcasecmp(line, "CSIMODE") && *args) cmdCsiMode(args);
+  else if (!strcasecmp(line, "ZED") && *args) cmdZed(args);
   else if (!strcasecmp(line, "BLEEXT") && *args) cmdBleExt(args);
   else if (!strcasecmp(line, "FTMRESP") && *args) cmdFtmResp(args);
   else if (!strcasecmp(line, "FTM") && *args) cmdFtm(args);
@@ -617,13 +715,14 @@ extern "C" void IRAM_ATTR esp_ieee802154_receive_done(uint8_t *frame, esp_ieee80
   e.len = frame[0] >= 2 ? frame[0] - 2 : 0;          // PSDU length includes the 2-byte FCS
   if (e.len > MAX_PKT) e.len = MAX_PKT;
   e.origLen = e.len;
-  e.rssi = info->rssi; e.lqi = info->lqi;
+  e.rssi = info->rssi; e.lqi = info->lqi; e.ts = (uint32_t)esp_timer_get_time();
   memcpy(e.data, frame + 1, e.len);
   BaseType_t woken = pdFALSE;
   if (xRingbufferSendFromISR(evRing, &e, EV_HDR + e.len, &woken) != pdTRUE) zbDropped++;
   esp_ieee802154_receive_handle_done(frame);
   if (woken) portYIELD_FROM_ISR();
 }
+extern "C" void IRAM_ATTR esp_ieee802154_energy_detect_done(int8_t power) { zedPower = power; zedDone = true; }
 extern "C" void IRAM_ATTR esp_ieee802154_transmit_done(const uint8_t *frame, const uint8_t *ack, esp_ieee802154_frame_info_t *info) {
   portENTER_CRITICAL_ISR(&zbMux); zbTxPending = false; portEXIT_CRITICAL_ISR(&zbMux);
   if (ack) esp_ieee802154_receive_handle_done(ack);
@@ -660,7 +759,7 @@ extern "C" int bleGapEventCb(struct ble_gap_event *event, void *arg) {
   if (event->type == BLE_GAP_EVENT_DISC) {
     const struct ble_gap_disc_desc *d = &event->disc;
     Event e; memset(&e, 0, EV_HDR); e.proto = P_BLE; e.rssi = d->rssi; e.origLen = d->length_data;
-    e.evtype = d->event_type; e.atype = d->addr.type;
+    e.evtype = d->event_type; e.atype = d->addr.type; e.ts = (uint32_t)esp_timer_get_time();
     e.len = e.origLen > MAX_PKT ? MAX_PKT : e.origLen;
     memcpy(e.data, d->data, e.len);
     snprintf(e.addr, sizeof(e.addr), "%02x:%02x:%02x:%02x:%02x:%02x",
@@ -671,6 +770,7 @@ extern "C" int bleGapEventCb(struct ble_gap_event *event, void *arg) {
   else if (event->type == BLE_GAP_EVENT_EXT_DISC) {
     const struct ble_gap_ext_disc_desc *d = &event->ext_disc;
     Event e; memset(&e, 0, EV_HDR); e.type = 4; e.proto = P_BLE; e.rssi = d->rssi; e.origLen = d->length_data;
+    e.ts = (uint32_t)esp_timer_get_time();
     e.evtype = d->props; e.atype = d->addr.type; e.x1 = d->prim_phy; e.x2 = d->sec_phy; e.ch = d->sid; e.lqi = d->data_status;
     e.len = e.origLen > MAX_PKT ? MAX_PKT : e.origLen;
     memcpy(e.data, d->data, e.len);
@@ -681,7 +781,38 @@ extern "C" int bleGapEventCb(struct ble_gap_event *event, void *arg) {
 #endif
   return 0;
 }
+static uint16_t crc16ccitt(const uint8_t *p, size_t n) {
+  uint16_t c = 0xFFFF;
+  while (n--) { c ^= (uint16_t)(*p++) << 8; for (int k = 0; k < 8; ++k) c = (c & 0x8000) ? (c << 1) ^ 0x1021 : (c << 1); }
+  return c;
+}
+// binary packet: A5 len16 | type body | crc16 (type..body); RX WIFI / BLE / ZB only, the rest of the lines stay text
+static bool printBinary(const Event &e) {
+  if (e.type != 0 && e.type != 4) return false;
+  uint8_t *o = (uint8_t *)outBuf; size_t n = 3;
+  auto u32 = [&](uint32_t v) { o[n++] = v; o[n++] = v >> 8; o[n++] = v >> 16; o[n++] = v >> 24; };
+  bool trunc = e.origLen > e.len;
+  if (e.proto == P_WIFI) {
+    o[n++] = 1; o[n++] = (trunc ? 1 : 0) | 2; o[n++] = e.ch; o[n++] = (uint8_t)e.rssi; u32(e.ts);
+    o[n++] = e.fmt; o[n++] = e.mcs; o[n++] = e.bw; o[n++] = (uint8_t)e.noise;
+  } else if (e.proto == P_BLE) {
+    unsigned a[6];
+    if (sscanf(e.addr, "%x:%x:%x:%x:%x:%x", &a[0], &a[1], &a[2], &a[3], &a[4], &a[5]) != 6) return false;
+    o[n++] = 2; o[n++] = (trunc ? 1 : 0) | (e.type == 4 ? 2 : 0);
+    for (int i = 0; i < 6; ++i) o[n++] = (uint8_t)a[i];
+    o[n++] = (uint8_t)e.rssi; o[n++] = e.type == 4 ? 0 : e.evtype; o[n++] = e.atype; u32(e.ts);
+    if (e.type == 4) { o[n++] = e.evtype; o[n++] = e.x1; o[n++] = e.x2; o[n++] = e.ch; o[n++] = e.lqi; }   // props, phys, sid, data status
+  } else if (e.proto == P_ZB) {
+    o[n++] = 3; o[n++] = e.ch; o[n++] = (uint8_t)e.rssi; o[n++] = e.lqi; u32(e.ts);
+  } else return false;
+  memcpy(o + n, e.data, e.len); n += e.len;
+  uint16_t len = n - 3, crc = crc16ccitt(o + 3, len);
+  o[0] = 0xA5; o[1] = len; o[2] = len >> 8; o[n++] = crc; o[n++] = crc >> 8;
+  Serial.write(o, n);
+  return true;
+}
 static void printEvent(const Event &e) {
+  if (binMode && printBinary(e)) return;
   if (e.type == 1) {
     if (e.len == 0) Serial.println("TXZB OK"); else Serial.printf("TXZB ERR %u\r\n", e.lqi);
     return;
@@ -748,6 +879,7 @@ void loop() {
   }
   if (hopOn && (mode == MODE_WIFI || mode == MODE_ZB) && millis() - hopT >= hopMs) { hopT = millis(); hopStep(); }
   if (statOn && mode == MODE_WIFI && millis() - statT >= statMs) statFlush();
+  zedStep();
   static uint32_t droppedShown = 0;
   uint32_t total = dropped + zbDropped;
   if (total != droppedShown) { Serial.printf("WARN DROPPED %lu\r\n", (unsigned long)total); droppedShown = total; }

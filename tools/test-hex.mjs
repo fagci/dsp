@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Uint8Array,DataView,ArrayBuffer,TextEncoder,TextDecoder,Array,Map,Set,Error,String,Number,BigInt,Object,Date,JSON,isNaN,parseInt});
 for(const f of ['hex-kernels.js','hex-formats.js','hex-gsm.js','wifisniff-kernels.js','radiobridge-kernels.js','pcap-kernels.js']) vm.runInContext(fs.readFileSync(path.join(root,'modules',f),'utf8'),ctx,{filename:f});
-vm.runInContext('this.H={HexAisAsm,hexAisPayload,pcapRead,pcapWrite,PCAP_SCHEMA,hexDetect,wifiLine,wifiRec,radioLine,radioStatus,radioRec,radioLineBuild,radioWifiEnc,radioFtmRec,radioFtmCmd,radioStatRec,radioCsiRec,radioTx,radioProbeResp,hexParse,hexBuild,hexToRec,wifiFromPkt,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
+vm.runInContext('this.H={HexAisAsm,hexAisPayload,pcapRead,pcapWrite,PCAP_SCHEMA,hexDetect,wifiLine,wifiRec,radioLine,radioStatus,radioRec,radioLineBuild,radioWifiEnc,radioCrc16,radioBinBuild,radioBinParse,radioDemux,radioZedRec,radioCsiMotion,radioCsiRec,radioFtmRec,radioFtmCmd,radioStatRec,radioCsiRec,radioTx,radioProbeResp,hexParse,hexBuild,hexToRec,wifiFromPkt,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
 const H=ctx.H;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 const hex=s=>H.hexFromHex(s), toHex=b=>H.hexToHex(b);
@@ -302,6 +302,43 @@ const rsnIe='0100'+'000fac04'+'0100'+'000fac04'+'0100'+'000fac02'+'0c00';
     ok('bridge FTM build/parse round trip',H.radioLineBuild(fl)==='FTM aa:bb:cc:dd:ee:ff 0 400 380 450' && JSON.stringify(H.radioLine(H.radioLineBuild(fl)))===JSON.stringify(fl));
     ok('bridge FTM command',H.radioFtmCmd('AA:BB:CC:DD:EE:FF','16',0)==='FTM aa:bb:cc:dd:ee:ff 16' && H.radioFtmCmd('aa:bb:cc:dd:ee:ff 64 36',16,0)==='FTM aa:bb:cc:dd:ee:ff 64 36' &&
       H.radioFtmCmd({src:'aa:bb:cc:dd:ee:ff',chan:11},16,0)==='FTM aa:bb:cc:dd:ee:ff 16 11' && H.radioFtmCmd('aa:bb:cc:dd:ee:ff 3',16,0)==='FTM aa:bb:cc:dd:ee:ff 8' && H.radioFtmCmd('zz',16,0)===null && H.radioFtmCmd('',16,0)===null); }
+  // ZED: энергия на каналах 802.15.4
+  { const zl=H.radioLine('ZED 15 100 480 -52 -88 125'), zr=H.radioZedRec(zl,5);
+    ok('bridge ZED line and record',zl.zed===true && zl.chan===15 && zr.kind==='zb-ed' && zr.id==='zch15' && zr.rssi_max===-52 && zr.rssi_avg===-88 && zr.busy===12.5 && zr.samples===480,JSON.stringify(zr));
+    ok('bridge ZED silent channel and build round trip',H.radioZedRec(H.radioLine('ZED 11 100 0 -127 -127 0'),5).rssi_max===-127 && H.radioLineBuild(zl)==='ZED 15 100 480 -52 -88 125' && JSON.stringify(H.radioLine(H.radioLineBuild(zl)))===JSON.stringify(zl)); }
+  // двоичный режим: CRC, круг «собрали → разобрали», смесь с текстом, битые пакеты
+  { ok('bridge crc16 check value',H.radioCrc16(Uint8Array.from('123456789',c=>c.charCodeAt(0)))===0x29b1);
+    const prb='4000 0000 ffffffffffff aabbccddee09 ffffffffffff 1000'.replace(/ /g,'')+ie(0,'')+ie(1,'8284');
+    const fw=H.radioLine('RXM WIFI! 36 -50 4 7 40 -92 123456 '+prb), fb=H.radioLine('RX BLEX 11:22:33:44:55:66 -91 0 1 3 3 5 1 0201060509'+'4d794150'), fz=H.radioLine('RX ZB 15 -60 200 6188056200003412');
+    fb.ts=777; fz.ts=424242;
+    const rt=f=>{ const bin=H.radioBinBuild(f); return JSON.stringify(H.radioBinParse(bin.slice(3,bin.length-2))); };
+    const norm=f=>JSON.stringify(f,(k,v)=>v&&v.constructor===Uint8Array ? Array.from(v) : v&&typeof v==='object'&&!Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(x=>[x,v[x]])) : v);
+    const eqf=f=>{ const bin=H.radioBinBuild(f), g=H.radioBinParse(bin.slice(3,bin.length-2)); return norm({...g,bytes:Array.from(g.bytes)})===norm({...f,bytes:Array.from(f.bytes)}); };
+    ok('bridge bin: wifi (meta, truncated) / ble ext / zb round trip',eqf(fw) && eqf(fb) && eqf(fz),[eqf(fw),eqf(fb),eqf(fz)].join());
+    const wifiNoMeta=H.radioLine('RX WIFI 6 -48 '+prb); wifiNoMeta.ts=99;
+    ok('bridge bin: wifi without meta keeps ts',eqf(wifiNoMeta));
+    const bw=H.radioBinBuild(fw), bb=H.radioBinBuild(fb), bz=H.radioBinBuild(fz);
+    ok('bridge bin is shorter than the hex line',bw.length<('RXM WIFI! 36 -50 4 7 40 -92 123456 '+prb).length);
+    const txt=s=>Uint8Array.from(s,c=>c.charCodeAt(0)), cat=(...a)=>{ const o=new Uint8Array(a.reduce((n,x)=>n+x.length,0)); let k=0; for(const x of a){ o.set(x,k); k+=x.length; } return o; };
+    { const st={}, r=H.radioDemux(st,cat(txt('OK MODE WIFI\r\n'),bw,txt('STAT 6 250 40 5200 -42 -61 125 3\n'),bb,bz));
+      ok('bridge demux: text lines and packets in one stream',r.lines.length===2 && r.lines[0]==='OK MODE WIFI\r' && r.frames.length===3 && r.frames[0].proto==='wifi' && r.frames[1].ext.sid===5 && r.frames[2].lqi===200 && r.bad===0,JSON.stringify(r.lines)); }
+    { const st={}, all=cat(txt('ERR X\n'),bw,bz), got={lines:[],frames:[],bad:0};
+      for(let i=0;i<all.length;i+=7){ const r=H.radioDemux(st,all.slice(i,i+7)); got.lines.push(...r.lines); got.frames.push(...r.frames); got.bad+=r.bad; }
+      ok('bridge demux: any chunking',got.lines.length===1 && got.frames.length===2 && got.bad===0,JSON.stringify([got.lines.length,got.frames.length,got.bad])); }
+    { const broken=bw.slice(); broken[10]^=0xff; const st={}, r=H.radioDemux(st,cat(broken,bz,txt('OK\n')));
+      ok('bridge demux: bad CRC is skipped, the stream recovers',r.frames.length===1 && r.frames[0].proto==='zb' && r.lines.length===1 && r.bad>=1,JSON.stringify([r.frames.length,r.lines.length,r.bad])); }
+    { const st={}, r=H.radioDemux(st,cat(Uint8Array.from([0xa5,0xff,0xff]),txt('OK\n')));
+      ok('bridge demux: absurd length is skipped, junk bytes leave the text',r.lines.length===1 && r.lines[0]==='OK' && r.frames.length===0,JSON.stringify(r)); }
+    const rec=H.radioRec(H.radioBinParse(bz.slice(3,bz.length-2)),5);
+    ok('bridge bin: zigbee record gets the hardware timestamp',rec.proto==='zb' && rec.ts_us===424242 && rec.lqi===200,JSON.stringify([rec.ts_us,rec.lqi])); }
+  // CSI: индекс движения
+  { const mk=a=>H.radioCsiRec({chan:6,rssi:-50,src:'aa:bb:cc:00:11:22',bytes:Uint8Array.from(a.flatMap(x=>[0,x]))},5);
+    const st=new Map(); const base=[40,42,45,47,50,48,46,44], moved=base.map((x,i)=>x*(i%2?1.4:0.7));
+    let last; for(let k=0;k<8;k++) last=H.radioCsiMotion(st,mk(base.map(x=>x+(k%2?0.3:-0.3))),0.1);
+    ok('csi motion: still room stays below the threshold',last.motion<0.05 && last.present===0,JSON.stringify([last.motion,last.present]));
+    let mv; for(let k=0;k<8;k++) mv=H.radioCsiMotion(st,mk(k%2 ? moved : base),0.1);
+    ok('csi motion: a changing channel raises the index and the presence flag',mv.motion>0.1 && mv.present===1,JSON.stringify([mv.motion,mv.present]));
+    ok('csi motion: first report and a length change reset',H.radioCsiMotion(new Map(),mk(base),0.1).motion===0 && H.radioCsiMotion(st,mk([1,2,3,4,5]),0.1).motion===0); }
   const sl=H.radioLine('STAT 6 250 40 5200 -42 -61 125 3'), sr=H.radioStatRec(sl,5);
   ok('bridge STAT window → record',sl.stat && sr.kind==='chan-stat' && sr.id==='ch6' && sr.chan===6 && sr.rssi_max===-42 && sr.busy===12.5 && sr.fps===160 && sr.drop===3);
   ok('bridge STAT empty channel',H.radioStatRec(H.radioLine('STAT 11 250 0 0 -127 -127 0 0'),5).rssi_max===-127);
