@@ -1334,7 +1334,7 @@ select.aed-b{padding:0 6px}
 #powerPanel .pp-r:hover{background:#ffffff0d}
 #powerPanel .pp-b{position:absolute;left:0;top:1px;bottom:1px;right:0;display:flex;pointer-events:none;opacity:.55}
 #powerPanel .pp-pc,#powerPanel .pp-dc{display:inline-block;height:100%}
-#powerPanel .pp-pc{background:var(--acc,#4da3ff)} #powerPanel .pp-dc{background:#e8a33d}
+#powerPanel .pp-pc{background:#3d9bff} #powerPanel .pp-dc{background:repeating-linear-gradient(135deg,#ff8a3d 0 3px,#c4501a 3px 6px)}
 #powerPanel .pp-f i.pp-pc,#powerPanel .pp-f i.pp-dc{width:8px;height:8px;margin:0 4px 0 0;border-radius:2px}
 #powerPanel .pp-b .pp-pc:first-child{border-radius:2px 0 0 2px} #powerPanel .pp-b{border-radius:2px;overflow:hidden}
 #powerPanel .pp-lg{display:flex;gap:12px;align-items:center;flex-wrap:wrap} #powerPanel .pp-lg span{display:inline-flex;align-items:center}
