@@ -642,6 +642,7 @@ const PRESET_CATS={
   'Radio: ESP32-C5 Wi-Fi 6 PHY · BLE 5 · FTM ranging':'Network & IoT',
   'Radio: ESP32-C5 802.15.4 energy scan (Zigbee / Thread channels)':'Network & IoT',
   'Radio: ESP32-C5 CSI presence (motion index)':'Network & IoT',
+  'Radio: ESP32-C5 who is here · highlight devices (Wi-Fi · Zigbee · BLE)':'Network & IoT',
   'Radio: Wi-Fi airodump (APs · stations · last seen ago)':'Network & IoT',
   'Radio: Wi-Fi Network Map (nodes · links · packets · notes)':'Network & IoT',
   'Radio: Wi-Fi channel level · occupancy · CSI (Table Chart)':'Network & IoT',
@@ -9566,6 +9567,38 @@ c2.size.w=520; c2.size.h=200; applySize(c2);
 addEdge(tx.id,'text',rb.id,'text');
 addEdge(rb.id,'csi',tS.id,'rec');
 addEdge(tS.id,'all',c1.id,'rows'); addEdge(tS.id,'all',c2.id,'rows');
+markWiresDirty();
+});
+preset('Radio: ESP32-C5 who is here · highlight devices (Wi-Fi · Zigbee · BLE)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The ESP32-C5 bridge can transmit, so the map can ask «who is here?» and point at a device. Wi-Fi: the button sends a Probe request on every channel, access points answer (Probe response) and light up on the graph. Zigbee (switch «radio» to ZB): a Beacon request on channels 11…26 makes coordinators and routers answer; a Touchlink scan (11 / 15 / 20 / 25) finds lamps and other Touchlink devices close by — click its row in the «Touchlink» table and the device blinks (Touchlink Identify; there is no reset command). BLE: with «BLE scan = ACTIVE» the chip asks every advertiser for a scan response, and a tag that supports Find Me (Immediate Alert) beeps when you click its row in the «BLE» table (the chip connects for a moment).\n'+
+  'The graph below is the usual Wi-Fi / BLE / Zigbee map; devices that answered are highlighted for a minute (Rec → Entities with «show an entity for 1 min» feeds the highlight list). Limits: Touchlink answers only when the device is within a few metres and has Touchlink on; Zigbee commands to a device inside a secured network need its network key, so this does not blink lamps that are already paired and do not answer Touchlink; Wi-Fi stations do not answer probes (only access points do). Use it on your own devices or with permission. Not tested on hardware.\n'+
+  'Without hardware the Text Source plays sample answers (RX WIFI / BLE / ZB lines): the graph lights up, the Touchlink and BLE tables fill; the buttons need a connected board.'});
+nt.size.w=1300; nt.size.h=210; applySize(nt);
+const tx=addNode('textsrc',40,290,{text:'RX WIFI 6 -48 5000000002c500000001aabbccddee01aabbccddee0110000000000000000000640031040007486f6d654e6574010482848b9603010630140100000fac040100000fac040100000fac020c00\nRX WIFI 6 -55 5000000002c500000001aabbccddee03aabbccddee03100000000000000000006400310400064f6666696365010482848b9603010630140100000fac040100000fac040100000fac020c00\nRX WIFI 6 -61 5000000002c500000001aabbccddee02aabbccddee021000000000000000000064003104000443616665010482848b9603010630140100000fac040100000fac040100000fac020c00\nRX BLE 11:22:33:44:55:66 -58 4 1 06094d79546167\nRX BLE 11:22:33:44:55:66 -57 0 1 020106\nRX BLE aa:bb:cc:dd:ee:77 -72 0 0 0201060809486561646572\nRX ZB 15 -55 255 008001621a0000ffcf00000022841122334455667788ffffff00\nRX ZB 15 -60 200 618805621a000034124800000034121e114001060004010107012202\nRX ZB 15 -42 230 41cc21ffff01c500000000000205040302018817000300105ec0180901efbeaddefe051300004433221144332211ddccbbaa010f621a34120100'});
+tx.size.w=300; tx.size.h=300; applySize(tx);
+const rb=addNode('radioBridge',380,290,{mode:'WIFI',withBle:true,bleScan:'ACTIVE',chan:6,tag:'c5'});
+rb.size.w=340; rb.size.h=420; applySize(rb);
+const ent=addNode('recEnt',760,290,{rules:ENT_TEMPLATES['Radio (Wi-Fi / BLE / Zigbee)']+'\n# список для выбора устройства: BLE (Find Me) и Zigbee (Touchlink)\nblelist!: proto=ble src | id={src}, src, addr_type, name, rssi\ntl!: proto=zb kind=touchlink-scan-resp ieee | id={ieee}, ieee, net, src, lch, chan, dev, factory_new, rssi'});
+ent.size.w=480; ent.size.h=300; applySize(ent);
+const ent2=addNode('recEnt',760,620,{keep:1,rules:'# подсветка: кто ответил на запрос — id совпадает с узлом графа; через минуту молчания строка уходит, подсветка гаснет\nhit!: proto=wifi kind=probe-resp bssid | id={bssid}\nhit!: proto=zb kind=beacon src net | id=zb:{net}:{src}\nhit!: proto=zb kind=touchlink-scan-resp src net | id=zb:{net}:{src}\nhit!: proto=ble kind=scan_rsp src | id={src}'});
+ent2.size.w=480; ent2.size.h=190; applySize(ent2);
+const col=addNode('table',1280,290,{list:'@patch',key:'id',initial:false});
+col.size.w=340; col.size.h=300; applySize(col);
+const g=addNode('graphview',1660,290,{directed:true});
+g.size.w=620; g.size.h=420; applySize(g);
+const tHit=addNode('table',1280,620,{list:'@patch',key:'id',initial:false});
+tHit.size.w=340; tHit.size.h=190; applySize(tHit);
+const tTl=addNode('table',40,740,{list:'@patch',key:'id',initial:false});
+tTl.size.w=480; tTl.size.h=240; applySize(tTl);
+const tBle=addNode('table',560,740,{list:'@patch',key:'id',initial:false});
+tBle.size.w=480; tBle.size.h=240; applySize(tBle);
+addEdge(tx.id,'text',rb.id,'text');
+addEdge(rb.id,'rec',ent.id,'rec'); addEdge(rb.id,'rec',ent2.id,'rec');
+addEdge(ent.id,'rec',col.id,'rec'); addEdge(col.id,'rows',g.id,'rows');
+addEdge(ent2.id,'hit',tHit.id,'rec'); addEdge(tHit.id,'all',g.id,'hl');
+addEdge(ent.id,'tl',tTl.id,'rec'); addEdge(tTl.id,'rec',rb.id,'identify');
+addEdge(ent.id,'blelist',tBle.id,'rec'); addEdge(tBle.id,'rec',rb.id,'find');
 markWiresDirty();
 });
 preset('Joystick: Gamepad → Frame → MQTT', function(){
