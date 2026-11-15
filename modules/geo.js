@@ -630,12 +630,22 @@ link!: proto=wifi kind=beacon bssid dst | id={bssid}>{dst}:beacon, from={bssid},
 link!: proto=wifi kind~^(qos-)?data$ tods=0 fromds=0 src dst~^([0-9a-f][02468ace]:|ff:ff:ff:ff:ff:ff$) | id={src}>{dst}:data, from={src}, to={dst}, label=data, type=data
 pkt!: proto=wifi src | id={t}:{src}:{seq|len}, t, kind, src, dst, ap={bssid}, chan, rssi, len`,
   'Wi-Fi airodump (APs · stations)':
-`# как airodump-ng: два порта. ap — точки (bssid, pwr, beacons, ch, enc, cipher, auth, ssid), sta — станции (station, bssid точки, pwr, frames, probe); время последнего кадра даёт колонка last самой Table с key=id (формат ago)
+`# как airodump-ng: четыре порта: ap и sta — списки, node и link — граф «кто с кем разговаривает» (толщина линии растёт с числом кадров: count у Table с key=id).
+#  ap — точки (bssid, pwr, beacons, ch, enc, cipher, auth, ssid), sta — станции (station, bssid точки, pwr, frames, probe); время последнего кадра даёт колонка last самой Table с key=id (формат ago)
 # счётчики {@n} общие на сущность: beacons = beacon + probe-resp точки, frames = data + probe-req станции; скрытая сеть — пустой ssid; enc/cipher/auth считает Radio Bridge из RSN / WPA / бита Privacy
 ap!: proto=wifi kind=beacon|probe-resp bssid | id={bssid}, bssid, pwr={rssi}, beacons={@n}, ch={ie.channel|chan}, enc, cipher, auth, ssid
 sta!: proto=wifi kind~^(qos-)?data$ tods=1 src~^[0-9a-f][02468ace]: bssid | id={src}, station={src}, bssid, pwr={rssi}, frames={@n}, ch={chan}
 sta!: proto=wifi kind=probe-req src ie.ssid | id={src}, station={src}, pwr={rssi}, frames={@n}, ch={chan}, probe={ie.ssid}
-sta!: proto=wifi kind=probe-req src !ie.ssid | id={src}, station={src}, pwr={rssi}, frames={@n}, ch={chan}`,
+sta!: proto=wifi kind=probe-req src !ie.ssid | id={src}, station={src}, pwr={rssi}, frames={@n}, ch={chan}
+# граф: точки ★, станции ●, искомые станциями сети □ (пунктир — probe), сплошные линии — data-трафик в обе стороны
+node!: proto=wifi kind=beacon|probe-resp bssid | id={bssid}, type=ap, label={ssid|bssid}, shape=star, color=#e8a200, ssid, chan, rssi
+node!: proto=wifi kind~^(qos-)?data$ tods=1 src~^[0-9a-f][02468ace]: bssid | id={src}, type=station, label={src}, shape=dot, color=#2a9df4, ap={bssid}, chan, rssi
+node!: proto=wifi kind~^(qos-)?data$ fromds=1 dst~^[0-9a-f][02468ace]: bssid | id={dst}, type=station, label={dst}, shape=dot, color=#2a9df4, ap={bssid}, chan
+node!: proto=wifi kind=probe-req src~^[0-9a-f][02468ace]: | id={src}, type=station, label={src}, shape=dot, color=#2a9df4, chan, rssi
+node!: proto=wifi kind=probe-req src ie.ssid | id=net:{ie.ssid}, type=ssid, label={ie.ssid}, shape=box, color=#8a8a8a
+link!: proto=wifi kind~^(qos-)?data$ tods=1 src~^[0-9a-f][02468ace]: bssid | id={src}>{bssid}:data, from={src}, to={bssid}, label=data, type=data
+link!: proto=wifi kind~^(qos-)?data$ fromds=1 dst~^[0-9a-f][02468ace]: bssid | id={bssid}>{dst}:data, from={bssid}, to={dst}, label=data, type=data
+link!: proto=wifi kind=probe-req src~^[0-9a-f][02468ace]: ie.ssid | id={src}>net:{ie.ssid}:probe, from={src}, to=net:{ie.ssid}, label=probe, type=probe, dashes=1`,
   'Phone radios (Wi-Fi · BLE · Bluetooth)':
 `# записи приложения DSP (Phone sensors): три выхода — gw (Wi-Fi), gb (BLE), gt (Bluetooth classic); узлы и связи вместе, таблица с key=id. Phone — центр каждого графа
 gw: src=wifi | id=Phone, type=me, label=Phone, shape=star, color=#e8a200

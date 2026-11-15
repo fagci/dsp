@@ -9490,6 +9490,7 @@ markWiresDirty();
 preset('Radio: Wi-Fi airodump (APs · stations · last seen ago)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'An airodump-ng screen from the ESP32-C5 bridge (tools/radio-bridge-esp32c5, Radio Bridge, mode WIFI; set channel 0 to hop, tick «data» for the stations table). Rec → Entities (rules «Wi-Fi airodump») turns every frame into two lists: access points (BSSID, PWR, Beacons, CH, ENC, CIPHER, AUTH, ESSID — enc / cipher / auth come from the RSN and WPA elements and the Privacy bit) and stations (STATION, the AP it talks to, PWR, Frames, the probed network). The «last» column (the Table keeps count / first / last per key) has the format ago: how long ago the device was heard, it ticks every second; sort by it, or set «show an entity for … min» in Rec → Entities to drop devices that went silent.\n'+
+  'The Graph (nodes: ★ access points, ● stations, □ networks that stations ask for; lines: data traffic — thicker the more frames, dashed — probe) is drawn from the same frames; click a node to filter the lists, a filter in a list lights the matches on the graph. The «vendor» column is the OEM from the MAC prefix (Reference list «MAC vendors (OUI)», Files → ⇩ offline; a randomised address has none).\n'+
   'Without hardware the Text Source plays sample frames (RX WIFI <channel> <rssi> <hex>). Passive listening only; use it on your own network or with permission — the frames of other networks are not yours to analyse.'});
 nt.size.w=1100; nt.size.h=150; applySize(nt);
 const tx=addNode('textsrc',40,230,{text:'RX WIFI 6 -48 80000000ffffffffffffaabbccddee01aabbccddee0110000000000000000000640031040007486f6d654e6574010482848b9603010630140100000fac040100000fac040100000fac020c00\nRX WIFI 11 -60 80000000ffffffffffffaabbccddee02aabbccddee021000000000000000000064002104000443616665010482848b9603010b\nRX WIFI 36 -52 80000000ffffffffffffaabbccddee03aabbccddee03100000000000000000006400310400064f6666696365010482848b9630180100000fac040100000fac040200000fac02000fac080c00\nRX WIFI 1 -71 80000000ffffffffffffaabbccddee04aabbccddee04100000000000000000006400310400095365637572654c6162010482848b9603010130140100000fac040100000fac040100000fac080c00\nRX WIFI 44 -66 80000000ffffffffffffaabbccddee05aabbccddee0510000000000000000000640031040004436f7270010482848b9630140100000fac040100000fac040100000fac010c00\nRX WIFI 9 -75 80000000ffffffffffffaabbccddee06aabbccddee0610000000000000000000640031040000010482848b96030109\nRX WIFI 6 -47 80000000ffffffffffffaabbccddee01aabbccddee0110000000000000000000640031040007486f6d654e6574010482848b9603010630140100000fac040100000fac040100000fac020c00\nRX WIFI 6 -49 80000000ffffffffffffaabbccddee01aabbccddee0110000000000000000000640031040007486f6d654e6574010482848b9603010630140100000fac040100000fac040100000fac020c00\nRX WIFI 6 -42 08010000aabbccddee01aabbccddee10ffffffffffff1000aaaa03000000080045000014000100004011000000000000000000000000\nRX WIFI 6 -41 08010000aabbccddee01aabbccddee10ffffffffffff1000aaaa03000000080045000014000100004011000000000000000000000000\nRX WIFI 6 -63 08010000aabbccddee01aabbccddee11ffffffffffff1000aaaa03000000080045000014000100004011000000000000000000000000\nRX WIFI 36 -58 08010000aabbccddee03aabbccddee12ffffffffffff1000aaaa03000000080045000014000100004011000000000000000000000000\nRX WIFI 6 -70 40000000ffffffffffffaabbccddee13ffffffffffff10000007486f6d654e6574010482848b96\nRX WIFI 6 -69 40000000ffffffffffffaabbccddee13ffffffffffff10000000010482848b96\nRX WIFI 11 -80 40000000ffffffffffffaabbccddee14ffffffffffff1000000c416972706f72745f46726565010482848b96\nRX WIFI 11 -62 40000000ffffffffffffaabbccddee11ffffffffffff1000000443616665010482848b96'});
@@ -9498,15 +9499,31 @@ const rb=addNode('radioBridge',380,230,{mode:'WIFI',tData:true});
 rb.size.w=300; rb.size.h=300; applySize(rb);
 const ent=addNode('recEnt',720,230,{rules:ENT_TEMPLATES['Wi-Fi airodump (APs · stations)']});
 ent.size.w=520; ent.size.h=300; applySize(ent);
+const OUI="lookup('MAC vendors (OUI)','prefix',[id],'vendor','mac')";
 const tA=addNode('table',40,560,{list:'@patch',key:'id',initial:false,sortCol:'last',sortDir:-1,
-  vcols:[{c:'id',hide:true},{c:'count',hide:true},{c:'first',hide:true},{c:'t',hide:true},{c:'bssid',w:140},{c:'pwr',w:50},{c:'beacons',w:70},{c:'ch',w:40},{c:'enc',w:80},{c:'cipher',w:80},{c:'auth',w:60},{c:'ssid',w:140},{c:'last',fmt:'ago',w:110}]});
+  data:'id,count,first,last,t,bssid,pwr,beacons,ch,enc,cipher,auth,ssid,vendor',
+  schema:{types:{vendor:{t:'calc',expr:OUI}},card:{}},
+  vcols:[{c:'id',hide:true},{c:'count',hide:true},{c:'first',hide:true},{c:'t',hide:true},{c:'bssid',w:140},{c:'pwr',w:50},{c:'beacons',w:70},{c:'ch',w:40},{c:'enc',w:80},{c:'cipher',w:80},{c:'auth',w:60},{c:'ssid',w:130},{c:'vendor',w:140},{c:'last',fmt:'ago',w:100}]});
 tA.size.w=760; tA.size.h=340; applySize(tA);
 const tS=addNode('table',840,560,{list:'@patch',key:'id',initial:false,sortCol:'last',sortDir:-1,
-  vcols:[{c:'id',hide:true},{c:'count',hide:true},{c:'first',hide:true},{c:'t',hide:true},{c:'station',w:140},{c:'bssid',w:140},{c:'pwr',w:50},{c:'frames',w:60},{c:'ch',w:40},{c:'probe',w:130},{c:'last',fmt:'ago',w:110}]});
+  data:'id,count,first,last,t,station,bssid,pwr,frames,ch,probe,vendor',
+  schema:{types:{vendor:{t:'calc',expr:OUI}},card:{}},
+  vcols:[{c:'id',hide:true},{c:'count',hide:true},{c:'first',hide:true},{c:'t',hide:true},{c:'station',w:140},{c:'bssid',w:140},{c:'pwr',w:50},{c:'frames',w:60},{c:'ch',w:40},{c:'probe',w:120},{c:'vendor',w:140},{c:'last',fmt:'ago',w:100}]});
 tS.size.w=760; tS.size.h=340; applySize(tS);
 addEdge(tx.id,'text',rb.id,'text');
 addEdge(rb.id,'rec',ent.id,'rec');
+const tN=addNode('table',40,930,{list:'@patch',key:'id',initial:false,
+  data:'id,count,first,last,type,label,shape,color,ssid,ap,chan,rssi,t,note',schema:{types:{note:{t:'calc',expr:"if(contains([id],':') && !contains([id],'net:'),"+OUI+",'')"}},card:{}}});
+tN.size.w=760; tN.size.h=280; applySize(tN);
+const tL=addNode('table',840,930,{list:'@patch',key:'id',initial:false});
+tL.size.w=760; tL.size.h=280; applySize(tL);
+const g=addNode('graphview',1280,230,{directed:true,weights:true});
+g.size.w=620; g.size.h=300; applySize(g);
 addEdge(ent.id,'ap',tA.id,'rec'); addEdge(ent.id,'sta',tS.id,'rec');
+addEdge(ent.id,'node',tN.id,'rec'); addEdge(ent.id,'link',tL.id,'rec');
+addEdge(tN.id,'all',tL.id,'sigs'); addEdge(tL.id,'all',g.id,'rows');
+addEdge(g.id,'sel',tA.id,'filter'); addEdge(g.id,'sel',tS.id,'filter'); addEdge(g.id,'sel',tN.id,'filter'); addEdge(g.id,'sel',tL.id,'filter');
+addEdge(tA.id,'match',tS.id,'hits'); addEdge(tS.id,'match',g.id,'hl');
 markWiresDirty();
 });
 preset('Joystick: Gamepad → Frame → MQTT', function(){
