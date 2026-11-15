@@ -3502,7 +3502,7 @@ markWiresDirty();
 /* ---- цикл отрисовки ---- */
 let lastDraw=0;
 const fpsSel=document.getElementById('fps');
-try{ const v=LS.get('dsp-fps'); if(v==='auto'||v==='max'||v==='min') fpsSel.value=v; }catch(e){}
+try{ const v=LS.get('dsp-fps'); if(v==='auto'||v==='max'||v==='min'||v==='turbo') fpsSel.value=v; }catch(e){}
 fpsSel.onchange=()=>{ try{ LS.set('dsp-fps',fpsSel.value); }catch(e){} wakeDraw(); };
 // В WebView Android DownloadListener не получает имя из <a download> — файл назывался бы uuid.bin.
 // Запоминаем имя по адресу blob: при клике, приложение берёт его из window.dspDlNames (MainActivity.blobJs).
@@ -3611,7 +3611,7 @@ const still = ts-lastInput>2000 && !activeInteractions && !panzooming && !zoomin
 const rtlDt = clamp(Math.round(drawEma)*10, 33, 100);
 const autoDt = TOUCH?33 : (rtlBusy?rtlDt : still ? (ts-lastInput>10000?50:33) : 16);   // на тач-экранах хватает 30 к/с
 const fpsMode=fpsSel.value;                         // переключатель в панели: max — всегда 60 к/с, min — 10 к/с
-const minDt = fpsMode==='max' ? 16 : fpsMode==='min' ? 100 : autoDt;
+const minDt = fpsMode==='turbo' ? 7 : fpsMode==='max' ? 16 : fpsMode==='min' ? 100 : autoDt;   // turbo — без потолка 60 к/с, для экранов 120 Гц
 if(ts-lastDraw >=minDt  && !activeInteractions  && !panzooming  && !zooming){
 lastDraw=ts;
 const toDraw=[];

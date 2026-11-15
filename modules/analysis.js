@@ -2362,6 +2362,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
           {n:'tr3',t:'select',opts:['off','live','average','max hold','min hold','view'],d:'off',label:'trace 3'},
           {n:'tr4',t:'select',opts:['off','live','average','max hold','min hold','view'],d:'off',label:'trace 4'},
           {n:'avgN',t:'range',min:2,max:200,step:1,d:16,label:'average: frames (a true mean first, then a sliding window)'},
+          {n:'frameMax',t:'check',d:true,short:'frame peak',label:'peak of every spectrum frame between two redraws (the source may deliver more frames than the screen draws: a burst in a skipped frame is kept)',adv:true},
           {n:'det',t:'select',opts:['auto','peak','negpeak','sample','rms','average'],d:'auto',label:'detector (a pixel column that holds several bins; auto = peak)'},
           {n:'rbw',t:'select',opts:['native','×2','×4','×8','×16','×32','×64'],d:'native',label:'RBW: bins merged (carriers keep the level, noise grows by 10·lg k)'},
           {n:'mkTrace',t:'select',opts:['1','2','3','4'],d:'1',label:'markers read trace'},
@@ -2506,6 +2507,12 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
       }
     }
     n.s=sp;
+    // frameMax: источник мог выдать несколько кадров между двумя перерисовками (120 к/с против 60) — пик по бину копится, draw() рисует его
+    if(sp && sp.max && sp.det==='peak' && n.p.frameMax && sp.rev!=null && sp.rev!==n._fmRev){      // только когда источник показывает пик (USB SDR, detector=peak); у остальных спектр как есть
+      n._fmRev=sp.rev; const src=sp.max, N0=src.length;
+      if(!n._fm || n._fm.length!==N0 || n._fmFreqs!==sp.freqs){ n._fm=Float32Array.from(src); n._fmFreqs=sp.freqs; }
+      else { const f=n._fm; for(let i=0;i<N0;i++) if(src[i]>f[i]) f[i]=src[i]; }
+    }
     // список полос/закладок с узла 'bandplan' (или совместимого) — держим последний известный,
     // если сейчас не подключено (или на секунду пропало между тиками), а не мигаем пустым списком
     if(Array.isArray(I.bands)) n.bandsData=I.bands;
@@ -2622,6 +2629,10 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
     if(n._ov) n._ov.style.display = n.p.layout==='panes' ? 'none' : '';
     if(n.p.layout==='panes') return saPanesDraw(n,cv,cx);
     const W=cv.width,H=cv.height;
+    if(n._fm && n.s && n.p.frameMax){                // пик за все кадры с прошлой перерисовки вместо последнего кадра (rev тот же — «свежесть» не меняется)
+      if(n._fm.length===n.s.mag.length && n._fmFreqs===n.s.freqs) n.s=Object.assign({},n.s,{mag:n._fm});
+      n._fm=null;
+    }
     if(saSkipDraw(n,cv)) return;                     // ничего не изменилось — канва держит прошлый кадр
     const hs=n.p.show==='spectrum' ? Math.max(1,H-2) : n.p.show==='waterfall' ? Math.min(H-2,24) : Math.round(H*n.p.split), hw=H-hs;   // скрытая часть — полоска в пару пикселей (спектр: шкала частот и подписи остаются)
     n._hs=hs;                                          // для перетаскивания границы — см. pointerdown ниже
