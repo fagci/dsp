@@ -34,6 +34,7 @@ PR('stdc','Inmarsat STD-C','Aircraft','inmarsat-kernels.js',['stdcParse','stdcDe
 PR('odid','Remote ID (ASTM F3411)','Aircraft','odid-kernels.js',['odidParse'],['odidBuild','odidPack']);
 PR('rs41','Radiosonde RS41','Aircraft','sonde-kernels.js',['rs41Parse'],['rs41EccEncode'],['rs41Generate'],'сборка кадра по полям — через rs41Generate/rs41SimFrame, зеркальной пары нет');
 PR('ccsds','CCSDS / LRPT (RS, Витерби)','Aircraft','ccsds-kernels.js',['rsDecode','rsDecodeInterleaved'],['rsEncode','rsEncodeInterleaved','ccEncode','lrptGenerate']);
+PR('gps','GPS L1 C/A (навигационное сообщение)','Aircraft','gps-kernels.js',['gpsParseSubframe','gpsFindFrames'],['gpsBuildSubframe','gpsSynth'],[],'подкадры 1–3: кодер и разборщик зеркальные; gpsSynth — тестовое небо, не излучать');
 PR('ais','AIS','Maritime','ais-kernels.js',['aisParse'],['aisBuild','aisGenerate']);
 /* ---- пейджинг, датчики, время ---- */
 PR('pocsag','POCSAG','Paging & sensors','pocsag-kernels.js',[],['pocEncode','pocGenerate','pocTxBits'],[],'разбор — в модуле pocsagRx (pocsag.js)');
@@ -110,6 +111,10 @@ protoAdapter('sms',{
   sample:()=>({type:'submit',to:'+79991234567',text:'Hello world'}),
   build:f=>protoBytesOf(smsBuild(f).parts[0].hex), parse:b=>{ const r=smsParse(b); r.type=r.mti; return r; }});
 
+protoAdapter('gps',{                                                                           // подкадр 2 (эфемериды, часть 1): 300 бит → 38 байт
+  sample:()=>{ const e=gpsDemoEph(3,1792), f={id:2,tow:301}; for(const k of ['IODE2','Crs','deltaN','M0','Cuc','e','Cus','sqrtA','Toe']) f[k]=e[k]; return f; },
+  build:f=>protoBitsToBytes(Array.from(gpsBuildSubframe(f))),
+  parse:b=>{ const r=gpsParseSubframe(Uint8Array.from(protoBytesToBits(b).slice(0,300))); if(!r.ok) throw new Error(r.err); delete r.ok; delete r.err; delete r.inv; return r; }});
 protoAdapter('dcf77',{
   sample:()=>({min:30,hour:12,day:15,month:6,year:2024,dst:true}),                              // местное берлинское время
   build:f=>protoBitsToBytes(dcfEncode(Date.UTC(f.year,f.month-1,f.day,f.hour-(f.dst ? 2 : 1),f.min)).map(Number)),

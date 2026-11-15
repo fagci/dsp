@@ -537,6 +537,9 @@ const PRESET_CATS={
   'AIS: Vessels on the Map (Generator)':'Aircraft, Satellites & Telemetry',
   'AIS: Messages → HEX Structure (Generator)':'Aircraft, Satellites & Telemetry',
   'AIS: Vessels on the Map (USB SDR, 162 MHz)':'Aircraft, Satellites & Telemetry',
+  'GPS: Test Sky → Receiver → Map (Loopback)':'Aircraft, Satellites & Telemetry',
+  'GPS: Receiver (USB SDR on 1575.42 MHz)':'Aircraft, Satellites & Telemetry',
+  'GPS: Receiver from a Saved IQ Recording':'Aircraft, Satellites & Telemetry',
   'ISM 433: Sensors and Remotes (Generator)':'Aircraft, Satellites & Telemetry',
   'ISM 433: Sensors and Remotes (USB SDR)':'Aircraft, Satellites & Telemetry',
   'ISM 433: Wideband Scanner, all rtl_433 decoders (Generator)':'Aircraft, Satellites & Telemetry',
@@ -4911,6 +4914,60 @@ tb.size.w=360; tb.size.h=320; applySize(tb);
 const hx=addNode('hexStruct',1200,200,{schema:'ais'});
 hx.size.w=460; hx.size.h=520; applySize(hx);
 addEdge(gn.id,'iq',de.id,'in'); addEdge(de.id,'raw',tb.id,'rec'); addEdge(de.id,'raw',hx.id,'rec');
+markWiresDirty();
+});
+preset('GPS: Test Sky → Receiver → Map (Loopback)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'A GPS receiver without an antenna. "GPS: Test Sky" is the mirror of the receiver: it draws 6 satellites of an invented constellation above the chosen point and sends them as IQ at 1575.42 MHz —\n'+
+  'C/A codes, Doppler from the orbits, navigation data with ephemerides (subframes 1–3), noise for the C/N0 you set. The invented orbits and ephemerides make this signal useless outside the program — never radiate it.\n'+
+  'GPS Receiver searches PRN 1–32 (FFT, one per 250 ms), tracks (DLL + Costas PLL), finds bit and subframe boundaries, decodes the ephemerides, measures pseudoranges and solves x, y, z and the clock bias.\n'+
+  'The first fix appears after ~25 s (the receiver needs three subframes in a row, 6 s each, plus the search). Green is the receiver, red is the point the sky was drawn for: the gap is the receiver error (≈1–3 m at 46 dB·Hz).\n'+
+  'Try: lower C/N0 to 40 (the fix scatters), to 36 (the search stops finding satellites), change nsat, move the point (lat / lon) — the receiver follows after a restart of "receive".'});
+nt.size.w=900; nt.size.h=170; applySize(nt);
+const sk=addNode('gpsSky',40,260,{sr:'2048000',lat:55.03,lon:82.92,alt:150,nsat:6,cn0:46});
+sk.size.w=330; sk.size.h=300; applySize(sk);
+const rx=addNode('gpsRx',410,260,{maxSat:8,avg:5});
+rx.size.w=520; rx.size.h=360; applySize(rx);
+const map=addNode('geoMap',970,260,{mz:17,mlat:55.03,mlon:82.92,ttl:600,labels:true,trail:600});
+map.size.w=560; map.size.h=420; applySize(map);
+const log=addNode('recLog',410,660,{});
+log.size.w=520; applySize(log);
+addEdge(sk.id,'iq',rx.id,'in'); addEdge(rx.id,'rec',map.id,'rec'); addEdge(sk.id,'rec',map.id,'rec'); addEdge(rx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('GPS: Receiver (USB SDR on 1575.42 MHz)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'GPS L1 C/A on an RTL-SDR (or any SDR that goes to 1575.42 MHz at 2.048 MS/s): the signal is ~20 dB below the noise, the receiver finds it by correlation with the C/A code.\n'+
+  'You need an ACTIVE GPS antenna (the dongle\'s bias-tee powers it: tick "bias-tee" in the advanced options; check that your SDR model supports it) with a view of the sky — a window is rarely enough, a balcony or a roof is.\n'+
+  'Set the gain high (≈ 40–49 dB) and the frequency correction (ppm) of your dongle: a cheap crystal is up to ±50 ppm = ±80 kHz at L1, the search covers only ±5 kHz around the tuned frequency — measure it on a known signal first (Spectrum Analyzer on a broadcast carrier) or widen "Doppler ±" and tune.\n'+
+  'Expect: the first satellites in 10–30 s, ephemeris after 18–30 s, a fix after about a minute with 5+ satellites (open sky: 1–10 m, with a roof antenna). The decoded position goes to the map and as NMEA GGA to the text output.'});
+nt.size.w=900; nt.size.h=170; applySize(nt);
+const src=addNode('rtlsdr',40,260,{sr:'2048000',freq:1575420000,demod:'IQ'});
+const sa=addNode('sa',40,420,{auto:true,floor:-100,top:-30,split:1});
+sa.size.w=600; sa.size.h=240; applySize(sa);
+const rx=addNode('gpsRx',700,260,{maxSat:8,avg:10,maxd:5});
+rx.size.w=520; rx.size.h=360; applySize(rx);
+const map=addNode('geoMap',1260,260,{mz:16,ttl:600,labels:true,trail:600});
+map.size.w=560; map.size.h=420; applySize(map);
+const log=addNode('recLog',700,660,{});
+log.size.w=520; applySize(log);
+addEdge(src.id,'spec',sa.id,'spec'); addEdge(src.id,'iq',rx.id,'in'); addEdge(rx.id,'rec',map.id,'rec'); addEdge(rx.id,'rec',log.id,'rec');
+markWiresDirty();
+});
+preset('GPS: Receiver from a Saved IQ Recording', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'The same receiver on a recording: IQ File Player → GPS Receiver. The recording is raw IQ around 1575.42 MHz at 1.024 / 2.048 / 4.096 MS/s (8-bit unsigned, as rtl_sdr writes it, or any format the player knows: set it in "Choose from Files…").\n'+
+  'A few minutes of a recording from the same place are enough; the receiver does not need to know where you are or the time — they come out of the signal. Make a recording with USB SDR (record to: Files) in the preset "GPS: Receiver (USB SDR on 1575.42 MHz)",\n'+
+  'or take any L1 recording made by gps-sdr-sim / GNSS-SDR from a file. Test-Sky (Loopback preset) can be recorded the same way with IQ Recorder, to try the player without an antenna.'});
+nt.size.w=900; nt.size.h=130; applySize(nt);
+const pl=addNode('iqPlay',40,200,{loop:true});
+const rx=addNode('gpsRx',400,200,{maxSat:8,avg:10});
+rx.size.w=520; rx.size.h=360; applySize(rx);
+const map=addNode('geoMap',960,200,{mz:15,ttl:600,labels:true,trail:600});
+map.size.w=560; map.size.h=420; applySize(map);
+const log=addNode('recLog',400,600,{});
+log.size.w=520; applySize(log);
+addEdge(pl.id,'iq',rx.id,'in'); addEdge(rx.id,'rec',map.id,'rec'); addEdge(rx.id,'rec',log.id,'rec');
 markWiresDirty();
 });
 preset('AIS: Vessels on the Map (USB SDR, 162 MHz)', function(){
