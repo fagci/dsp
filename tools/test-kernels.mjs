@@ -65,7 +65,7 @@ ev(`function xcRun(o){ const {d0=0,eps=0,snr=10,sec=1.2,sr=250000,offs=0,base=0,
 // строка воркера спектра берётся из sources.js (сам файл требует DOM — выдёргиваем только её)
 { const srcJs=fs.readFileSync(path.join(root,'modules/sources.js'),'utf8'), a=srcJs.indexOf('const RTL_SPEC_WORKER_SRC'), b=srcJs.indexOf('`;',srcJs.indexOf("self.postMessage({type:'result'",a))+2;
   vm.runInContext(srcJs.slice(a,b)+';var SPECW_SRC=RTL_SPEC_WORKER_SRC;',ctx);
-  ctx.SPECW_RUN=(src,w,msg)=>{ const wc=vm.createContext({console,Math,Float32Array,Float64Array,Uint8Array,Uint32Array,Map,Set,self:w}); wc.self=w; vm.runInContext(src,wc); w.onmessage({data:msg}); }; }
+  ctx.SPECW_RUN=(src,w,msg)=>{ const wc=vm.createContext({console,Math,performance,Float32Array,Float64Array,Uint8Array,Uint32Array,Map,Set,self:w}); wc.self=w; vm.runInContext(src,wc); w.onmessage({data:msg}); }; }
 const MSG='Array.from("123456789",c=>c.charCodeAt(0))';
 const bitsMsb=`${MSG}.flatMap(v=>Array.from({length:8},(_,k)=>(v>>(7-k))&1))`;
 const bitsLsb=`${MSG}.flatMap(v=>Array.from({length:8},(_,k)=>(v>>k)&1))`;
@@ -299,6 +299,11 @@ const cases=[
   // Воркер спектра USB-SDR (встроен в sources.js как строка) — с БПФ из core-dsp: тон 0.1234·fs попадает в свой бин при N до 262144
   ['Воркер спектра: тон в нужном бине при N = 4096, 65536, 262144',`(()=>{ const src=SPECW_SRC, w={postMessage(m){ w.out=m; }, onmessage:null}; const wc={self:w}; return [4096,65536,262144].map(N=>{ const L=2*N, I=new Float32Array(L), Q=new Float32Array(L); for(let i=0;i<L;i++){ const p=2*Math.PI*.1234*i; I[i]=.5*Math.cos(p); Q[i]=.5*Math.sin(p); }
     SPECW_RUN(src,w,{type:'fft',I:I.buffer,Q:Q.buffer,N,L,win:'hann'}); const m=new Float32Array(w.out.mag); let pk=0; for(let i=0;i<N;i++) if(m[i]>m[pk]) pk=i; return pk===Math.round(N/2+.1234*N); }).join(); })()`,'true,true,true'],
+  // Всплеск короче кадра: пик по бину (mx) за все БПФ окна заметно выше среднего (mag), положение — в том же бине
+  ['Воркер спектра: короткий всплеск виден в пике mx, а в среднем размазан',`(()=>{ const src=SPECW_SRC, w={postMessage(m){ w.out=m; }, onmessage:null}, N=1024, K=16, L=N+(K-1)*(N>>1), I=new Float32Array(L), Q=new Float32Array(L);
+    for(let i=5000;i<5200;i++){ const p=2*Math.PI*.25*i; I[i]=.8*Math.cos(p); Q[i]=.8*Math.sin(p); }
+    SPECW_RUN(src,w,{type:'fft',I:I.buffer,Q:Q.buffer,N,L,win:'hann'}); const m=new Float32Array(w.out.mag), x=new Float32Array(w.out.mx), b=Math.round(N/2+.25*N);
+    let pk=0; for(let i=0;i<N;i++) if(x[i]>x[pk]) pk=i; return [w.out.K===K, Math.abs(pk-b)<=1, x[b]/m[b]>2.5, x[b]>=m[b]].join(); })()`,'true,true,true,true'],
   ['Окна: Дольф—Чебышев 100 дБ — боковые −100±1 дБ; Кайзер/Хэнн/Бартлетт — известная шумовая полоса; центр = 1',`(()=>{ const Z=65536, psl=(k,p)=>{ const N=1024, w=window_(k,N,p), re=new Float32Array(Z), im=new Float32Array(Z); re.set(w); fft(re,im); const m=new Float64Array(Z/2); let mx=0; for(let i=0;i<Z/2;i++){ m[i]=Math.hypot(re[i],im[i]); if(m[i]>mx) mx=m[i]; } let j=1; while(m[j+1]<m[j]) j++; let sl=0; for(let i=j;i<Z/2;i++) if(m[i]>sl) sl=m[i]; return 20*Math.log10(sl/mx); };
     const en=(k,p)=>{ const w=window_(k,4096,p); let a=0,b=0; for(const v of w){ a+=v; b+=v*v; } return 4096*b/(a*a); };
     return [Math.abs(psl('dolph-chebyshev',100)+100)<1, Math.abs(en('hann')-1.5)<.01, Math.abs(en('bartlett')-1.333)<.01, Math.abs(en('hft144d')-4.5386)<.01, WINDOW_KINDS.every(k=>Math.abs(window_(k,1024)[512]-1)<.01)].join(); })()`,'true,true,true,true,true'],

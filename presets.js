@@ -344,6 +344,7 @@ const PRESET_CATS={
   'Tools: Pedometer (Phone, Screen Stays On)':'Tools',
   'Echo Repeater: Record the Transmission, Play It Back (USB SDR)':'SDR Receivers',
   'USB SDR: Channel Scan (Channel Scanner + squelch)':'SDR Receivers',
+  'USB SDR: Burst Monitor (peak per frame, 120 → 0.2 fps)':'SDR Receivers',
   'USB SDR: Chain by Typing (Ctrl+K, usb>(dac,sa,…))':'SDR Receivers',
   'Spectrum Analyzer: Gradient Fill and Waterfall Brightness':'Analysis & Measurement',
   'USB SDR: Channel Scan + Decoder Switch (digital voice / analog)':'SDR Receivers',
@@ -1862,6 +1863,20 @@ const dc=addNode('dac',620,220,{vol:.4});
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(sa.id,'f1',rx.id,'tuneFreq');
 addEdge(rx.id,'audioL',dc.id,'L'); addEdge(rx.id,'audioR',dc.id,'R');
+markWiresDirty();
+});
+preset('USB SDR: Burst Monitor (peak per frame, 120 → 0.2 fps)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Catching very short signal bursts. The old spectrum took one FFT of the latest N samples per frame and dropped everything between frames (at 2.4 MS/s, N 4096, 25 fps — about 4 % of the time). Now the USB SDR runs the FFT over EVERY sample (hop N/2, “continuous FFT”) and a frame keeps the per-bin PEAK and the mean over its whole interval, so a burst between two frames is not lost.\n'+
+  'Detector = peak: the trace and the waterfall show that peak (noise sits higher than in the mean — the price of seeing everything). Spectrum Analyzer “frame peak” also keeps the peak of the frames that the screen did not draw (source 120 fps, screen 60).\n'+
+  'Rates: “spectrum rate” goes 120 → 0.2 fps; slow rates (1 fps and below, long monitoring) show the peak of the whole second(s). 120 fps also needs Redraw rate “fps 120” in the toolbar and a 120 Hz screen. A small FFT (256–1024) gives the time resolution for bursts of 100 µs; a large one gives the frequency resolution.\n'+
+  'Status line of the SDR node: “N fft/frame” — how many FFTs fill a frame; “spectrum overload” — the worker cannot keep up with the stream (lower the sample rate or enlarge the FFT). For real hardware only: plug in a dongle and press connect.'});
+nt.size.w=720; nt.size.h=190; applySize(nt);
+const rx=addNode('rtlsdr',40,260,{sr:'2400000',auto:false,gainDb:30,demod:'IQ',freq:433920000,specSize:'1024',specFps:'60',specAvg:'off',specCont:true,specDet:'peak'});
+const sa=addNode('sa',40,600,{auto:true,floor:-90,top:-20,split:.4,frameMax:true,peakHold:false});
+sa.size.w=620; sa.size.h=320; applySize(sa);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(sa.id,'f1',rx.id,'tuneFreq');
 markWiresDirty();
 });
 preset('USB SDR: Chain by Typing (Ctrl+K, usb>(dac,sa,…))', function(){
