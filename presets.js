@@ -640,6 +640,8 @@ const PRESET_CATS={
   'Wi-Fi: ESP32 Sniffer → Table and HEX Structure':'Network & IoT',
   'Radio: ESP32-C5 Bridge → Network Map (Wi-Fi / BLE / Zigbee)':'Network & IoT',
   'Radio: ESP32-C5 Wi-Fi 6 PHY · BLE 5 · FTM ranging':'Network & IoT',
+  'Radio: ESP32-C5 802.15.4 energy scan (Zigbee / Thread channels)':'Network & IoT',
+  'Radio: ESP32-C5 CSI presence (motion index)':'Network & IoT',
   'Radio: Wi-Fi airodump (APs · stations · last seen ago)':'Network & IoT',
   'Radio: Wi-Fi Network Map (nodes · links · packets · notes)':'Network & IoT',
   'Radio: Wi-Fi channel level · occupancy · CSI (Table Chart)':'Network & IoT',
@@ -9524,6 +9526,46 @@ addEdge(ent.id,'node',tN.id,'rec'); addEdge(ent.id,'link',tL.id,'rec');
 addEdge(tN.id,'all',tL.id,'sigs'); addEdge(tL.id,'all',g.id,'rows');
 addEdge(g.id,'sel',tA.id,'filter'); addEdge(g.id,'sel',tS.id,'filter'); addEdge(g.id,'sel',tN.id,'filter'); addEdge(g.id,'sel',tL.id,'filter');
 addEdge(tA.id,'match',tS.id,'hits'); addEdge(tS.id,'match',g.id,'hl');
+markWiresDirty();
+});
+preset('Radio: ESP32-C5 802.15.4 energy scan (Zigbee / Thread channels)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Which Zigbee / Thread channel is quiet? The ESP32-C5 in mode ZB with «ZB energy» (firmware ZED ON) measures the energy on channels 11…26, one window per channel, and Radio Bridge gives one record per window on the stat output: rssi_max, rssi_avg and busy % (the share of samples above −75 dBm), id zch<N>. Table keeps the latest window per channel, Table Chart draws the bars — peak (with peak hold) and occupancy. Rule of thumb: Wi-Fi 1 / 6 / 11 cover 802.15.4 channels 11–14, 16–19 and 21–24; channels 15, 20, 25 (and 26) lie between them, so a Zigbee / Thread network usually has the best chance there — the chart shows which one is really quiet at your place.\n'+
+  'Without hardware the Text Source plays sample ZED lines (ZED <channel> <ms> <samples> <max dBm> <avg dBm> <busy ‰>). Energy scan and reception share the radio: with ZED on the board does not decode frames.'});
+nt.size.w=1100; nt.size.h=150; applySize(nt);
+const tx=addNode('textsrc',40,230,{text:'ZED 11 100 190 -70 -95 10\nZED 12 100 190 -60 -93 10\nZED 13 100 190 -80 -96 10\nZED 14 100 190 -55 -90 80\nZED 15 100 190 -35 -70 420\nZED 16 100 190 -68 -94 10\nZED 17 100 190 -85 -97 10\nZED 18 100 190 -82 -93 10\nZED 19 100 190 -76 -95 10\nZED 20 100 190 -45 -92 260\nZED 21 100 190 -90 -96 10\nZED 22 100 190 -84 -95 10\nZED 23 100 190 -93 -97 10\nZED 24 100 190 -80 -94 10\nZED 25 100 190 -40 -60 610\nZED 26 100 190 -72 -95 10\nZED 15 100 190 -32 -68 380\nZED 25 100 190 -37 -58 640\nZED 14 100 190 -52 -88 95'});
+tx.size.w=300; tx.size.h=300; applySize(tx);
+const rb=addNode('radioBridge',380,230,{mode:'ZB',zed:true,zedMs:100});
+rb.size.w=320; rb.size.h=300; applySize(rb);
+const tC=addNode('table',740,230,{list:'@patch',key:'id',initial:false,sortCol:'chan',sortDir:1});
+tC.size.w=460; tC.size.h=420; applySize(tC);
+const c1=addNode('tblchart',1240,230,{kind:'bar',x:'chan',y:'rssi_max',hold:true,auto:false,lo:-100,hi:-30});
+c1.size.w=520; c1.size.h=240; applySize(c1);
+const c2=addNode('tblchart',1240,500,{kind:'bar',x:'chan',y:'busy',auto:false,lo:0,hi:100});
+c2.size.w=520; c2.size.h=240; applySize(c2);
+addEdge(tx.id,'text',rb.id,'text');
+addEdge(rb.id,'stat',tC.id,'rec');
+addEdge(tC.id,'all',c1.id,'rows'); addEdge(tC.id,'all',c2.id,'rows');
+markWiresDirty();
+});
+preset('Radio: ESP32-C5 CSI presence (motion index)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Is there someone in the room? Wi-Fi CSI (channel state information) of every frame from a router or a second board changes when something moves between the transmitter and the ESP32-C5. Radio Bridge (CSI on; «CSI all PHY» also takes HT / VHT / HE frames, firmware CSIMODE ALL) puts a motion index in every csi record: the relative change of the subcarrier amplitudes between two consecutive reports of one address, smoothed. present = 1 when the index is above «CSI thr». The first six samples below are a still room, then someone walks, then it is still again.\n'+
+  'Calibrate the threshold on an empty room: the noise floor depends on the router, the distance and the channel. For a steady reading use a frame source with a fixed rate (a router beacon every 100 ms, or ping the board from a second one). Breathing and fine movement need the Breath Monitor / Room Walk blocks fed with the same csi records.'});
+nt.size.w=1100; nt.size.h=150; applySize(nt);
+const tx=addNode('textsrc',40,230,{text:'CSI 6 -52 aa:bb:cc:dd:ee:01 0b260c290d2c0e2f0f3210340f320e2f0d2c0c290c270b250c280d2d0f311034\nCSI 6 -52 aa:bb:cc:dd:ee:01 0b260c290d2c0e2f0f3210340f320e2f0d2c0c290c270b250c280d2d0f311034\nCSI 6 -52 aa:bb:cc:dd:ee:01 0b260c290d2c0e2f0f3210340f320e2f0d2c0c290c270b250c280d2d0f311034\nCSI 6 -52 aa:bb:cc:dd:ee:01 0b260c290d2c0e2f0f3210340f320e2f0d2c0c290c270b250c280e2d0f311034\nCSI 6 -52 aa:bb:cc:dd:ee:01 0b260c290d2c0e2f0f3210340f320e2f0d2c0c290c270b250c280e2d0f311034\nCSI 6 -52 aa:bb:cc:dd:ee:01 0b260c290d2c0e2f0f3210340f320e2f0d2c0c290c270b250c280d2d0f311034\nCSI 6 -55 aa:bb:cc:dd:ee:01 0b261034123b10360d2a0a220b240e2f113810370d2d091f081a0a210f321443\nCSI 6 -55 aa:bb:cc:dd:ee:01 0f330f300c27091f0b230f32133f133f10340b24081a081a0c2711391442123d\nCSI 6 -55 aa:bb:cc:dd:ee:01 0a23081c091e0d2c123d1546123c0d2b091e091c0b250e2e103610360d2c0b23\nCSI 6 -55 aa:bb:cc:dd:ee:01 081a0b251035133f123e0f310a230a200c280f3110350e2d0b25091f0a210e30\nCSI 6 -55 aa:bb:cc:dd:ee:01 0d2d113711370e2e0b240a230d2c1137123b0f330b26081a081b0c28113a1546\nCSI 6 -55 aa:bb:cc:dd:ee:01 0f310c290a20091f0d2a123c1443123c0d2c091e081a091f0e2e123c133e1034\nCSI 6 -55 aa:bb:cc:dd:ee:01 091d081b0b2410341443144310340b23091d0a220d2c0f3110340e2e0b250a22\nCSI 6 -55 aa:bb:cc:dd:ee:01 091e0d2c113a133e10360c280a210b250e3010360f330c27091f091d0c271139\nCSI 6 -52 aa:bb:cc:dd:ee:01 0b260c290d2c0e2f0f3210340f320e2f0d2c0c290c270b250c280e2d0f311034\nCSI 6 -52 aa:bb:cc:dd:ee:01 0b260c290d2c0e2f0f3210340f320e2f0d2c0c290c270b250c280e2d0f311034\nCSI 6 -52 aa:bb:cc:dd:ee:01 0b260c290d2c0e2f0f3210340f320e2f0d2c0c290c270b250c280d2d0f311034\nCSI 6 -52 aa:bb:cc:dd:ee:01 0b260c290d2c0e2f0f3210340f320e2f0d2c0c290c270b250c280e2d0f311034\nCSI 6 -52 aa:bb:cc:dd:ee:01 0b260c290d2c0e2f0f3210340f320e2f0d2c0c290c270b250c280e2d0f311034'});
+tx.size.w=300; tx.size.h=300; applySize(tx);
+const rb=addNode('radioBridge',380,230,{mode:'WIFI',csi:true,csiMs:0,csiThr:0.1});
+rb.size.w=320; rb.size.h=360; applySize(rb);
+const tS=addNode('table',740,230,{list:'@patch',initial:false,follow:true,maxRows:200});
+tS.size.w=460; tS.size.h=300; applySize(tS);
+const c1=addNode('tblchart',1240,230,{kind:'line',y:'motion',last:60,auto:true});
+c1.size.w=520; c1.size.h=240; applySize(c1);
+const c2=addNode('tblchart',1240,500,{kind:'line',y:'present',last:60,auto:false,lo:0,hi:1});
+c2.size.w=520; c2.size.h=200; applySize(c2);
+addEdge(tx.id,'text',rb.id,'text');
+addEdge(rb.id,'csi',tS.id,'rec');
+addEdge(tS.id,'all',c1.id,'rows'); addEdge(tS.id,'all',c2.id,'rows');
 markWiresDirty();
 });
 preset('Joystick: Gamepad → Frame → MQTT', function(){

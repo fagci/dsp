@@ -5,6 +5,8 @@
    и полем hex: её можно отдать в Rec Filter, Table, Graph, HEX Structure. Передача: входы tx / txrec / txbin → «TX <протокол> <hex>».
    Опции: «Wi-Fi PHY / MCS / noise» (META — формат 11b/g/n/ac/ax, MCS, ширина, шум, SNR, метка времени в записи), «BLE 5 extended» (BLEEXT — расширенная
    реклама и LE Coded), «FTM» (802.11mc: вход ftm — «mac [кадров] [канал]» или запись с mac; выход ftm — дистанция в метрах; ответчик — «answer FTM»).
+   Ещё: «ZB energy» (ZED — энергия по каналам 11…26 в stat, записи zb-ed), «+ BLE» (BLE одновременно с Wi-Fi или ZB), «USB format: binary» (FMT BIN — пакеты с CRC,
+   вдвое меньше трафика, метка времени чипа ts_us у BLE и ZB), «board» (метка платы в каждой записи), CSI: индекс движения motion / present (radioCsiMotion).
    Выход stat — окно по каналу (макс. RSSI, занятость %), csi — амплитуда / фаза по поднесущим; оба отдельно от rec.
    Без железа узел кормится входом text (те же строки). Ядро — radiobridge-kernels.js. */
 
@@ -32,16 +34,16 @@ async function radioConnect(n){
 }
 async function radioReadLoop(n){
   const reader=n.port.readable.getReader(); n.reader=reader;
-  const dec=new TextDecoder(); let buf='';
+  const st={};                                         // поток: текстовые строки и (FMT BIN) двоичные пакеты вперемешку
   try{
     while(n.connected){
       const {value,done}=await reader.read();
       if(done) break;
       if(!value) continue;
-      buf+=dec.decode(value,{stream:true});
-      let i;
-      while((i=buf.indexOf('\n'))>=0){ radioFeed(n,buf.slice(0,i)); buf=buf.slice(i+1); }
-      if(buf.length>8192) buf='';
+      const r=radioDemux(st,value);
+      for(const line of r.lines) radioFeed(n,line);
+      for(const f of r.frames) radioFeedF(n,f);
+      if(r.bad) n.binBad=(n.binBad|0)+r.bad;
     }
     if(n.connected){ n.status='port closed by device'; radioTeardown(n); }
   }catch(e){
@@ -51,11 +53,17 @@ async function radioReadLoop(n){
 function radioFeed(n,line){
   const f=radioLine(line);
   if(!f){ const st=radioStatus(line); if(st) n.reply=st; return; }
+  if(f.zed){ n.pendStat.push(radioZedRec(f)); if(n.pendStat.length>500) n.pendStat.splice(0,n.pendStat.length-500); return; }
   if(f.ftm){ n.pendFtm.push(radioFtmRec(f,n.p.ftmCal)); if(n.pendFtm.length>200) n.pendFtm.splice(0,n.pendFtm.length-200); return; }
   if(f.stat){ n.pendStat.push(radioStatRec(f)); if(n.pendStat.length>500) n.pendStat.splice(0,n.pendStat.length-500); return; }
-  if(f.csi){ n.pendCsi.push(radioCsiRec(f)); if(n.pendCsi.length>100) n.pendCsi.splice(0,n.pendCsi.length-100); return; }
+  if(f.csi){ const cr=radioCsiMotion(n.csiSt,radioCsiRec(f),n.p.csiThr); if(n.p.tag) cr.board=n.p.tag; n.pendCsi.push(cr); if(n.pendCsi.length>100) n.pendCsi.splice(0,n.pendCsi.length-100); return; }
+  radioFeedF(n,f);
+}
+// кадр (объект f из radioLine или из двоичного пакета) → запись; tag — метка платы, чтобы записи двух C5 различались в одной таблице
+function radioFeedF(n,f){
   n.frames++;
   let r; try{ r=radioRec(f); }catch(e){ return; }
+  if(n.p.tag) r.board=n.p.tag;
   n.pend.push(r); n.lastBin=f.bytes; n.lastProto=f.proto; n.binId++;
   if(n.pend.length>500) n.pend.splice(0,n.pend.length-500);
   if(n.p.arProbe) radioAutoReply(n,r);
@@ -75,18 +83,20 @@ function radioAutoReply(n,r){
 function radioCfg(n){
   const p=n.p, mode=p.mode;
   const types=[p.tMgmt&&'MGMT',p.tCtrl&&'CTRL',p.tData&&'DATA'].filter(Boolean).join(',');
-  let s='';
+  let s='FMT '+(p.fmt==='binary' ? 'BIN' : 'TEXT')+'\n';
   if(mode==='WIFI'){
     s+='BAND '+p.band+'\nTYPES '+(types||'MGMT')+'\nSNAP '+p.snap+'\nDSNAP '+p.dsnap+'\n';
     s+=p.stat ? 'STAT '+p.statMs+'\n' : 'STAT OFF\n';
+    s+='CSIMODE '+(p.csiAll ? 'ALL' : 'LEG')+'\n';
     s+=p.csi ? 'CSI ON '+p.csiMs+'\n' : 'CSI OFF\n';
   }
   if(mode==='WIFI') s+=p.meta ? 'META ON\n' : 'META OFF\n';
   if(mode==='WIFI' && (p.ftmResp || n.ftmRespSent)) s+='FTMRESP '+(p.ftmResp ? 'ON' : 'OFF')+'\n';
   if(mode==='BLE') s+='BLESCAN '+p.bleScan+'\nBLEEXT '+(p.bleExt ? (p.bleCoded ? 'CODED' : 'ON') : 'OFF')+'\n';
   if(mode==='WIFI') n.ftmRespSent=!!p.ftmResp;
-  s+='MODE '+mode+'\n';
-  if(mode!=='OFF' && mode!=='BLE') s+=p.chan>0 ? 'HOP OFF\nCH '+p.chan+'\n' : 'HOP ON '+p.dwell+'\n';
+  s+='MODE '+mode+((mode==='WIFI' || mode==='ZB') && p.withBle ? '+BLE' : '')+'\n';
+  if(mode==='ZB') s+=p.zed ? 'ZED ON '+p.zedMs+'\n' : 'ZED OFF\n';
+  if(mode!=='OFF' && mode!=='BLE' && !(mode==='ZB' && p.zed)) s+=p.chan>0 ? 'HOP OFF\nCH '+p.chan+'\n' : 'HOP ON '+p.dwell+'\n';
   return s;
 }
 async function radioSend(n,text){
@@ -125,6 +135,13 @@ def({ id:'radioBridge', lazy:'manual', title:'Radio Bridge (ESP32-C5)', cat:'Sou
           {n:'statMs',t:'range',min:100,max:5000,step:100,d:1000,label:'stat window, ms (hop: per dwell)',fn:n=>radioSend(n,radioCfg(n))},
           {n:'csi',t:'check',d:false,label:'Wi-Fi: CSI → csi',fn:n=>radioSend(n,radioCfg(n))},
           {n:'csiMs',t:'range',min:0,max:2000,step:10,d:100,label:'CSI: min interval, ms',fn:n=>radioSend(n,radioCfg(n))},
+          {n:'csiAll',t:'check',d:false,label:'CSI: HT / VHT / HE frames too (default — legacy and HT20)',short:'CSI all PHY',fn:n=>radioSend(n,radioCfg(n))},
+          {n:'csiThr',t:'range',min:0.01,max:1,step:0.01,d:0.1,label:'CSI: presence threshold of the motion index (calibrate on an empty room)',short:'CSI thr'},
+          {n:'withBle',t:'check',d:false,label:'also scan BLE (Wi-Fi or ZB radio + BLE at once; the chip shares the antenna, expect some losses)',short:'+ BLE',fn:n=>radioSend(n,radioCfg(n))},
+          {n:'zed',t:'check',d:false,label:'ZB: energy scan of channels 11…26 → stat (zb-ed records, level and busy % per channel)',short:'ZB energy',fn:n=>radioSend(n,radioCfg(n))},
+          {n:'zedMs',t:'range',min:20,max:2000,step:10,d:100,label:'ZB energy: window per channel, ms',short:'ZB window',fn:n=>radioSend(n,radioCfg(n))},
+          {n:'fmt',t:'select',opts:['text','binary'],d:'text',label:'USB format (binary: about half the traffic, hardware timestamp for BLE / ZB too)',short:'USB format',fn:n=>radioSend(n,radioCfg(n))},
+          {n:'tag',t:'text',d:'',label:'board name (added to every record as «board» — two ESP32-C5 in one table)',short:'board'},
           {n:'meta',t:'check',d:false,label:'Wi-Fi: PHY / MCS / bandwidth / noise / timestamp in each record (11ax shows as phy 11ax)',short:'PHY meta',fn:n=>radioSend(n,radioCfg(n))},
           {n:'bleScan',t:'select',opts:['PASSIVE','ACTIVE'],d:'PASSIVE',label:'BLE scan',fn:n=>radioSend(n,radioCfg(n))},
           {n:'bleExt',t:'check',d:false,label:'BLE 5 extended advertising (needs CONFIG_BT_NIMBLE_EXT_ADV in the firmware build)',short:'BLE 5 ext',fn:n=>radioSend(n,radioCfg(n))},
@@ -142,7 +159,7 @@ def({ id:'radioBridge', lazy:'manual', title:'Radio Bridge (ESP32-C5)', cat:'Sou
           {n:'csma',t:'check',d:false,label:'tx: ZB with CSMA'},
           {n:'baud',t:'num',d:115200,label:'baud (ignored by USB-CDC chips)',adv:true},
           {n:'clr',t:'button',label:'Clear',fn:n=>{ n.pend=[]; n.pendStat=[]; n.pendCsi=[]; n.pendFtm=[]; n.frames=0; n.sent=0; n.txCount=0; n.replies=0; n.ftmReq=0; }}],
-  init:n=>{ n.pend=[]; n.pendStat=[]; n.pendCsi=[]; n.pendFtm=[]; n.ftmReq=0; n.ftmRespSent=false; n.lastFtm=null; n.frames=0; n.sent=0; n.lastText=null; n.lastBin=null; n.lastProto='wifi'; n.binId=0; n.binSent=0; n.binOut=null;
+  init:n=>{ n.csiSt=new Map(); n.binBad=0; n.pend=[]; n.pendStat=[]; n.pendCsi=[]; n.pendFtm=[]; n.ftmReq=0; n.ftmRespSent=false; n.lastFtm=null; n.frames=0; n.sent=0; n.lastText=null; n.lastBin=null; n.lastProto='wifi'; n.binId=0; n.binSent=0; n.binOut=null;
     n.arLast=new Map(); n.arSeq=0; n.replies=0;
     n.lastTx=null; n.lastTxRec=null; n.lastTxBin=null; n.txCount=0; n.txLast=''; n.txErr=''; n.reply='';
     n.port=null; n.reader=null; n.connected=false; n.connecting=false; n.status='not connected'; },
@@ -167,10 +184,10 @@ def({ id:'radioBridge', lazy:'manual', title:'Radio Bridge (ESP32-C5)', cat:'Sou
     if(n.binSent!==n.binId){ n.binSent=n.binId; n.binOut=binObj(n.lastBin,n.lastProto+'-frame'); }
     return {rec:recs.length ? recs : null, stat:st.length ? st : null, csi:cs.length ? cs : null, ftmr:fr.length ? fr : null, bin:n.binOut, count:n.sent, frames:n.frames};
   },
-  drawKey:n=>n.status+'|'+n.frames+'|'+n.txCount+'|'+n.replies+'|'+n.reply+'|'+n.txErr,
+  drawKey:n=>n.status+'|'+n.binBad+'|'+n.frames+'|'+n.txCount+'|'+n.replies+'|'+n.reply+'|'+n.txErr,
   draw(n){
     const el=n.el.querySelector('.readout'); if(!el) return;
-    const s=n.status+' · '+n.frames+' frames · '+n.sent+' records · tx '+n.txCount+(n.replies ? ' ('+n.replies+' auto-replies)' : '')+(n.ftmReq ? ' · ftm '+n.ftmReq : '')+(n.txErr ? ' ('+n.txErr+')' : '')+
+    const s=n.status+' · '+n.frames+' frames · '+n.sent+' records · tx '+n.txCount+(n.replies ? ' ('+n.replies+' auto-replies)' : '')+(n.ftmReq ? ' · ftm '+n.ftmReq : '')+(n.binBad ? ' · bad packets '+n.binBad : '')+(n.txErr ? ' ('+n.txErr+')' : '')+
       (n.reply ? '\n'+n.reply : '')+(n.txLast ? '\ntx: '+n.txLast : '');
     if(el.textContent!==s) el.textContent=s;
   }});

@@ -12,6 +12,12 @@
      RX BLEX <адрес> <rssi> <props> <тип адреса> <phy1> <phy2> <sid> <статус> <hex>   расширенная реклама BLE 5
          props: 1 connectable, 2 scannable, 4 directed, 8 scan response, 16 legacy; phy: 1 1M, 2 2M, 3 coded; статус: 0 полные данные, 1 есть продолжение, 2 обрезано
      FTM <mac> <статус> <rtt_raw 0.1 нс> <rtt_est 0.1 нс> <дистанция см>   измерение дальности 802.11mc
+     ZED <канал> <мс> <отсчётов> <макс дБм> <сред дБм> <занято ‰>   энергия на канале 802.15.4 (ZED ON), «занято» — доля отсчётов выше −75 дБм
+   Двоичный режим (FMT BIN): кадры RX WIFI / BLE / ZB идут не строками, а пакетами  A5 <длина u16> <тип> <тело> <CRC16 u16>  (CRC-16/CCITT по типу и телу),
+   остальные строки остаются текстом; radioDemux делит поток на строки и пакеты, пакет превращается в тот же объект f, что даёт radioLine.
+     тип 1 WIFI: флаги(1 обрезан, 2 есть meta) канал rssi ts(u32) [fmt mcs bw шум] данные
+     тип 2 BLE:  флаги(1 обрезан, 2 расширенный) адрес(6) rssi evtype atype ts(u32) [props phy1 phy2 sid статус] данные
+     тип 3 ZB:   канал rssi lqi ts(u32) данные
    Кадр разбирается схемой из hex-formats.js (ядро — hex-kernels.js); запись rec несёт hex и hexSchema,
    поэтому её можно отдать в HEX Structure. Имена полей одинаковы для всех протоколов:
    proto, kind, src, dst, net (BSSID / PAN), chan, rssi, + поля пакета (ie.ssid, ad.name, zb_cluster …).
@@ -43,6 +49,8 @@ function radioLine(line){
   if(m) return {proto:'ble', addr:m[1].toLowerCase(), rssi:+m[2], evtype:+m[3], atype:+m[4], bytes:hexFromHex(m[5])};
   m=/^\s*RX ZB (\d+) (-?\d+) (\d+) ([0-9a-fA-F]+)\s*$/.exec(line);
   if(m) return {proto:'zb', chan:+m[1], rssi:+m[2], lqi:+m[3], bytes:hexFromHex(m[4])};
+  m=/^\s*ZED (\d+) (\d+) (\d+) (-?\d+) (-?\d+) (\d+)\s*$/.exec(line);
+  if(m) return {zed:true, chan:+m[1], ms:+m[2], n:+m[3], rmax:+m[4], ravg:+m[5], busy:+m[6]};
   m=/^\s*STAT (\d+) (\d+) (\d+) (\d+) (-?\d+) (-?\d+) (\d+) (\d+)\s*$/.exec(line);
   if(m) return {stat:true, chan:+m[1], ms:+m[2], frames:+m[3], bytes:+m[4], rmax:+m[5], ravg:+m[6], busy:+m[7], drop:+m[8]};
   m=/^\s*CSI (\d+) (-?\d+) ((?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}) ([0-9a-fA-F]+)\s*$/.exec(line);
@@ -55,6 +63,7 @@ const radioStatus=line=>{ const s=String(line).trim(); return /^(OK|ERR|WARN|TXZ
 // зеркало radioLine: строка прошивки из полей (для проверки круга «собрали → разобрали» и для Loopback-пресета; в эфир не излучает)
 function radioLineBuild(f){
   const hex=hexToHex(f.bytes||[]);
+  if(f.zed) return 'ZED '+f.chan+' '+f.ms+' '+f.n+' '+f.rmax+' '+f.ravg+' '+f.busy;
   if(f.ftm) return 'FTM '+f.peer+' '+f.status+' '+f.rttRaw+' '+f.rttEst+' '+f.distCm;
   if(f.proto==='wifi' && f.meta){ const m=f.meta;
     return 'RXM WIFI'+(f.trunc?'!':'')+' '+f.chan+' '+f.rssi+' '+m.fmt+' '+m.mcs+' '+m.bw+' '+m.noise+' '+m.ts+' '+hex; }
@@ -91,6 +100,26 @@ function radioStatRec(f,now){
   return {t:now||Date.now(), proto:'wifi', kind:'chan-stat', id:'ch'+f.chan, chan:f.chan, ms:f.ms, frames:f.frames, bytes:f.bytes,
     rssi_max:heard ? f.rmax : -127, rssi_avg:heard ? f.ravg : -127, busy:Math.round(f.busy)/10, fps:f.ms ? Math.round(f.frames*1e4/f.ms)/10 : 0,
     drop:f.drop, text:'ch'+f.chan+' max '+(heard ? f.rmax : '—')+' dBm · busy '+(f.busy/10).toFixed(1)+'% · '+f.frames+' frames'};
+}
+// ZED: энергия на канале 802.15.4 (как chan-stat у Wi-Fi: те же поля rssi_max / rssi_avg / busy — те же графики); busy — доля отсчётов выше −75 дБм
+function radioZedRec(f,now){
+  const heard=f.n>0;
+  return {t:now||Date.now(), proto:'zb', kind:'zb-ed', id:'zch'+f.chan, chan:f.chan, ms:f.ms, samples:f.n,
+    rssi_max:heard ? f.rmax : -127, rssi_avg:heard ? f.ravg : -127, busy:Math.round(f.busy)/10,
+    text:'zb ch'+f.chan+' max '+(heard ? f.rmax : '—')+' dBm · busy '+(f.busy/10).toFixed(1)+'% · '+f.n+' samples'};
+}
+// индекс движения по CSI: относительное изменение амплитуд поднесущих между соседними отчётами одного адреса, сглаженное EMA;
+// present — индекс выше порога thr (порог подбирают на месте: пустая комната даёт шумовую «полку»). st — Map адрес → состояние
+function radioCsiMotion(st,rec,thr){
+  const a=String(rec.csi||'').split(',').map(Number);
+  if(a.length<4 || a.some(x=>!isFinite(x))) return rec;
+  let e=st.get(rec.src);
+  if(!e || e.a.length!==a.length){ st.set(rec.src,{a,ema:0,n:0}); if(st.size>200) st.delete(st.keys().next().value); rec.motion=0; rec.present=0; return rec; }
+  let d=0,m=0; for(let i=0;i<a.length;i++){ d+=Math.abs(a[i]-e.a[i]); m+=e.a[i]; }
+  const mv=m>0 ? d/m : 0;
+  e.ema=e.n ? e.ema*0.8+mv*0.2 : mv; e.n++; e.a=a;
+  rec.motion=Math.round(e.ema*1000)/1000; rec.present=rec.motion>(+thr||0.1) ? 1 : 0;
+  return rec;
 }
 // CSI: амплитуда и фаза по поднесущим (пары int8 мнимая, вещественная); csi / csi_ph — списки через запятую для графика
 function radioCsiRec(f,now){
@@ -131,6 +160,7 @@ function radioRec(f,now){
   if(f.trunc) r.trunc=1;
   if(f.meta){ const m=f.meta;
     r.phy=RADIO_PHY[m.fmt] || '?'; r.mcs=m.mcs; r.bw=m.bw; r.noise=m.noise; r.snr=f.rssi-m.noise; r.ts_us=m.ts; }
+  if(f.ts!==undefined && !f.meta) r.ts_us=f.ts;
   if(f.ext){ const x=f.ext;
     r.phy=RADIO_BLE_PHY[x.phy1]||'?'; r.phy2=RADIO_BLE_PHY[x.phy2]||''; r.sid=x.sid; r.ext=(x.props&16) ? 0 : 1;
     r.conn=x.props&1 ? 1 : 0; r.scannable=x.props&2 ? 1 : 0; r.partial=x.status===1 ? 1 : 0; if(x.status===2) r.trunc=1; }
@@ -175,4 +205,74 @@ function radioProbeResp(r,o){
     'body.ts':0, 'body.interval':100, 'body.capab':0x0421, 'ie.ssid':o.ssid, 'ie.rates':'82848b960c121824'};
   const ch=r.chan || o.chan; if(ch>=1 && ch<=14) v['ie.channel']=ch;
   return hexBuild('wifi',v).bytes;
+}
+
+/* ---------- двоичный режим (FMT BIN) ---------- */
+function radioCrc16(b){                               // CRC-16/CCITT-FALSE: poly 0x1021, init 0xFFFF
+  let c=0xFFFF;
+  for(let i=0;i<b.length;i++){ c^=b[i]<<8; for(let k=0;k<8;k++) c=(c&0x8000) ? ((c<<1)^0x1021)&0xFFFF : (c<<1)&0xFFFF; }
+  return c;
+}
+const _u32=(a,v)=>{ v>>>=0; a.push(v&255,(v>>>8)&255,(v>>>16)&255,(v>>>24)&255); };
+// объект f (как у radioLine; для WIFI — meta, для BLE — addr, для всех — ts) → пакет; null — для типа без двоичной формы
+function radioBinBuild(f){
+  const b=[], d=f.bytes||[];
+  if(f.proto==='wifi'){
+    const m=f.meta; b.push(1, (f.trunc?1:0)|(m?2:0), f.chan&255, f.rssi&255); _u32(b,m ? m.ts : f.ts||0);
+    if(m) b.push(m.fmt&255,m.mcs&255,m.bw&255,m.noise&255);
+  } else if(f.proto==='ble'){
+    const x=f.ext, a=String(f.addr).split(':').map(h=>parseInt(h,16)); if(a.length!==6 || a.some(isNaN)) return null;
+    b.push(2,(f.trunc?1:0)|(x?2:0),...a,f.rssi&255,f.evtype&255,f.atype&255); _u32(b,f.ts||0);
+    if(x) b.push(x.props&255,x.phy1&255,x.phy2&255,x.sid&255,x.status&255);
+  } else if(f.proto==='zb'){ b.push(3,f.chan&255,f.rssi&255,f.lqi&255); _u32(b,f.ts||0); }
+  else return null;
+  for(let i=0;i<d.length;i++) b.push(d[i]);
+  const body=Uint8Array.from(b), crc=radioCrc16(body), out=new Uint8Array(body.length+5);
+  out[0]=0xA5; out[1]=body.length&255; out[2]=body.length>>8; out.set(body,3); out[3+body.length]=crc&255; out[4+body.length]=crc>>8;
+  return out;
+}
+const _i8=v=>v<<24>>24, _rd32=(b,i)=>(b[i]|b[i+1]<<8|b[i+2]<<16|b[i+3]<<24)>>>0;
+const _mac=(b,i)=>{ let s=''; for(let k=0;k<6;k++) s+=(k?':':'')+(b[i+k]<16?'0':'')+b[i+k].toString(16); return s; };
+function radioBinParse(body){                         // тело пакета (тип … данные) → f или null
+  const t=body[0];
+  if(t===1 && body.length>=8){
+    const fl=body[1], meta=(fl&2)!==0, n=meta ? 12 : 8; if(body.length<n) return null;
+    const f={proto:'wifi', trunc:(fl&1)!==0, chan:body[2], rssi:_i8(body[3]), bytes:body.slice(n)};
+    const ts=_rd32(body,4);
+    if(meta) f.meta={fmt:body[8], mcs:body[9], bw:body[10], noise:_i8(body[11]), ts}; else f.ts=ts;
+    return f;
+  }
+  if(t===2 && body.length>=15){
+    const fl=body[1], ext=(fl&2)!==0, n=ext ? 20 : 15; if(body.length<n) return null;
+    const f={proto:'ble', addr:_mac(body,2), rssi:_i8(body[8]), evtype:body[9], atype:body[10], ts:_rd32(body,11), bytes:body.slice(n)};
+    if(fl&1) f.trunc=true;
+    if(ext){ f.ext={props:body[15], phy1:body[16], phy2:body[17], sid:body[18], status:body[19]}; f.evtype=radioLegacyEv(f.ext.props); }   // evtype из props, как у строки RX BLEX
+    return f;
+  }
+  if(t===3 && body.length>=9) return {proto:'zb', chan:body[1], rssi:_i8(body[2]), lqi:body[3], ts:_rd32(body,4), bytes:body.slice(8)};
+  return null;
+}
+// разбор потока из порта: st — {b:Uint8Array} между вызовами; ответ {lines, frames, bad}; текстовые строки и пакеты могут идти вперемешку
+// (пакет начинается с 0xA5 — байта вне ASCII, строка его не содержит); битый пакет (CRC, длина) пропускается по байту
+function radioDemux(st,chunk){
+  const old=st.b||new Uint8Array(0), b=new Uint8Array(old.length+chunk.length); b.set(old,0); b.set(chunk,old.length);
+  const lines=[], frames=[]; let bad=0, i=0, ls=0, keep=-1;
+  while(i<b.length){
+    const c=b[i];
+    if(c===0xA5){
+      if(i+3>b.length){ keep=i; break; }
+      const len=b[i+1]|b[i+2]<<8;
+      if(len<4 || len>2000){ bad++; i++; ls=i; continue; }
+      if(i+5+len>b.length){ keep=i; break; }
+      const body=b.subarray(i+3,i+3+len);
+      if(radioCrc16(body)===(b[i+3+len]|b[i+4+len]<<8)){ const f=radioBinParse(body); if(f) frames.push(f); else bad++; i+=5+len; ls=i; }
+      else { bad++; i++; ls=i; }
+      continue;
+    }
+    if(c===10){ let s=''; for(let k=ls;k<i;k++) if(b[k]<0x80) s+=String.fromCharCode(b[k]); lines.push(s); i++; ls=i; continue; }
+    i++;
+  }
+  const from=keep>=0 ? keep : ls;
+  st.b=b.length-from>8192 ? new Uint8Array(0) : b.slice(from);
+  return {lines,frames,bad};
 }
