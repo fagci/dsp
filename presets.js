@@ -345,6 +345,7 @@ const PRESET_CATS={
   'Echo Repeater: Record the Transmission, Play It Back (USB SDR)':'SDR Receivers',
   'USB SDR: Channel Scan (Channel Scanner + squelch)':'SDR Receivers',
   'USB SDR: Burst Monitor (peak per frame, 120 → 0.2 fps)':'SDR Receivers',
+  'USB SDR: Long Monitor (waterfall row per minute = peak)':'SDR Receivers',
   'USB SDR: Chain by Typing (Ctrl+K, usb>(dac,sa,…))':'SDR Receivers',
   'Spectrum Analyzer: Gradient Fill and Waterfall Brightness':'Analysis & Measurement',
   'USB SDR: Channel Scan + Decoder Switch (digital voice / analog)':'SDR Receivers',
@@ -1876,6 +1877,19 @@ nt.size.w=720; nt.size.h=190; applySize(nt);
 const rx=addNode('rtlsdr',40,260,{sr:'2400000',auto:false,gainDb:30,demod:'IQ',freq:433920000,specSize:'1024',specFps:'60',specAvg:'off',specCont:true,specDet:'peak'});
 const sa=addNode('sa',40,600,{auto:true,floor:-90,top:-20,split:.4,frameMax:true,peakHold:false,clean:'floor',cleanDb:6});
 sa.size.w=620; sa.size.h=320; applySize(sa);
+addEdge(rx.id,'spec',sa.id,'spec');
+addEdge(sa.id,'f1',rx.id,'tuneFreq');
+markWiresDirty();
+});
+preset('USB SDR: Long Monitor (waterfall row per minute = peak)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Watching a band for hours or days without losing short signals. The trace stays live (10 fps), but the waterfall gets ONE row per minute (“row every, s” in the Waterfall section) and that row is the per-bin PEAK over the whole minute — a burst anywhere inside it is on the row. Time ticks every 10 minutes. The waterfall shows as many rows as it is pixels tall: at 60 s per row a 600 px waterfall is 10 hours; set “row every, s” to 300 for two days (make the node tall, or hide the spectrum: show = waterfall). The source can also frame slowly by itself: at 0.2 fps one spectrum frame is the peak of 5 seconds.\n'+
+  'Clean picture (“clean”) keeps the rows free of noise speckle: the floor of the row stream is learned separately (peaks sit higher than the mean). Use the mouse wheel / drag on the waterfall to look back; “⤓ Picture (PNG)” and “⤓ Traces to CSV” export what you see.\n'+
+  'Wideband: tick “wideband sweep” in the SDR node (Spectrum & sweep), detector “max”, 1–2 averages per step, a small sweep FFT — every sweep line becomes a peak of the row the same way. For real hardware only: plug in a dongle and press connect.'});
+nt.size.w=720; nt.size.h=170; applySize(nt);
+const rx=addNode('rtlsdr',40,240,{sr:'2400000',auto:false,gainDb:30,demod:'IQ',freq:433920000,specSize:'4096',specFps:'10',specAvg:'off',specCont:true,specDet:'peak'});
+const sa=addNode('sa',40,580,{auto:true,floor:-90,top:-20,split:.35,frameMax:true,clean:'floor',cleanDb:6,wfRow:'60',wfMem:'512',tickSec:'600'});
+sa.size.w=680; sa.size.h=360; applySize(sa);
 addEdge(rx.id,'spec',sa.id,'spec');
 addEdge(sa.id,'f1',rx.id,'tuneFreq');
 markWiresDirty();
