@@ -381,6 +381,7 @@ const PRESET_CATS={
   'Measure: Channel Model — Noise, Fading and Doppler on a Signal (Generator)':'Analysis & Measurement',
   'Measure: Spectrum Baseline — New Signal and Missing Carrier Alarm (Generator)':'Analysis & Measurement',
   'Measure: Air Diary — Who Transmits and When (Generator)':'Analysis & Measurement',
+  'Measure: Channel Markers — Open Only on Modulation, Record All at Once (Generator)':'Analysis & Measurement',
   'Geo: Geotag — Signal Level Map of a Walk (Mock GPS)':'Maps & Locating',
   'Measure: SINAD of an FM Receiver (Generator)':'Analysis & Measurement',
   'Measure: IQ Quality — DC and Imbalance (Generator)':'Analysis & Measurement',
@@ -4257,6 +4258,33 @@ const n1=addNode('numview',1480,260,{label:'deviations'});
 addEdge(g1.id,'iq',a1.id,'a'); addEdge(g2.id,'iq',a1.id,'b'); addEdge(a1.id,'out',a2.id,'a'); addEdge(g3.id,'iq',a2.id,'b');
 addEdge(a2.id,'out',sp.id,'in'); addEdge(sp.id,'spec',bl.id,'spec'); addEdge(sp.id,'spec',sa.id,'spec'); addEdge(bl.id,'base',sa.id,'spec2');
 addEdge(bl.id,'bands',sa.id,'bands'); addEdge(bl.id,'count',n1.id,'in');
+markWiresDirty();
+});
+preset('Measure: Channel Markers — Open Only on Modulation, Record All at Once (Generator)', function(){
+clearAll();
+const nt=addNode('note',40,40,{text:'Channel Markers keeps its own noise floor for every bin (over time), so each channel is measured by how far it rises above its own noise. A channel gets a coloured marker over the spectrum (zone + label) and OPENS only when modulation appears: an unmodulated carrier stays grey, a one-frame wideband spike does not pass the M-of-N confirmation. (Unlike the Signal Detector (CFAR), which compares a bin with its neighbours in one frame.)\n'+
+  'Here: FM, AM and a second FM station plus an unmodulated carrier. Three open channels take slots 1…3 and keep them while open; the slot frequency goes to the IQ Channelizer (manual, inputs f1…), the slot gate to IQ Recorder (go input) — every open signal of the window is recorded at the same time, one file per channel, with its frequency in the name.\n'+
+  'More signals than slots — the extra ones are counted in «lost». On a real receiver wire the spectrum and the IQ of the SDR instead of the generators; «open on: any signal» ignores the modulation check.'});
+nt.size.w=820; nt.size.h=190; applySize(nt);
+const g1=addNode('iqGen',40,280,{sr:'1024000',fc:100000000,mode:'FM',off:-300000,lvl:-35,tone:300,dev:3000,noise:-110});
+const g2=addNode('iqGen',40,560,{sr:'1024000',fc:100000000,mode:'AM',off:-100000,lvl:-38,tone:700,depth:.6,noise:-110});
+const g3=addNode('iqGen',40,840,{sr:'1024000',fc:100000000,mode:'FM',off:150000,lvl:-40,tone:400,dev:2500,noise:-110});
+const g4=addNode('iqGen',40,1120,{sr:'1024000',fc:100000000,mode:'carrier',off:320000,lvl:-35,noise:-70});
+const a1=addNode('iqAdd',320,420,{}), a2=addNode('iqAdd',320,700,{}), a3=addNode('iqAdd',320,980,{});
+const sp=addNode('iqSpec',560,380,{size:'4096',avg:'4',upd:60});
+const cm=addNode('pseudoSpec',820,280,{K:'3',thr:10,hold:1500,settle:8});
+cm.size.w=440; cm.size.h=300; applySize(cm);
+const sa=addNode('sa',1300,280,{auto:true,floor:-120,top:-20,split:.4});
+sa.size.w=680; sa.size.h=340; applySize(sa);
+const ch=addNode('iqChan',560,700,{N:'64',ov:'2',K:'3',sel:'manual'});
+addEdge(g1.id,'iq',a1.id,'a'); addEdge(g2.id,'iq',a1.id,'b'); addEdge(a1.id,'out',a2.id,'a'); addEdge(g3.id,'iq',a2.id,'b');
+addEdge(a2.id,'out',a3.id,'a'); addEdge(g4.id,'iq',a3.id,'b');
+addEdge(a3.id,'out',sp.id,'in'); addEdge(sp.id,'spec',cm.id,'spec'); addEdge(sp.id,'spec',sa.id,'spec');
+addEdge(cm.id,'bands',sa.id,'sigs'); addEdge(a3.id,'out',ch.id,'in');
+for(let k=1;k<=3;k++){
+  const rc=addNode('iqRec',1000,780+(k-1)*330,{mode:'go input',fmt:'WAV',tag:'ch'+k,autostart:true,padB:300,padA:300});
+  addEdge(cm.id,'f'+k,ch.id,'f'+k); addEdge(ch.id,'ch'+k,rc.id,'in'); addEdge(cm.id,'g'+k,rc.id,'go'); addEdge(cm.id,'f'+k,rc.id,'freq');
+}
 markWiresDirty();
 });
 preset('Measure: Air Diary — Who Transmits and When (Generator)', function(){
