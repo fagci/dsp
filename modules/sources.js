@@ -4647,10 +4647,18 @@ function rtlUpdateSpec(n){
   const lim=Math.min(ring.filled,ring.size);
   let L, K;
   if(cont){
-    const pl=specAccPlan(Math.min(ring.written-(n.specTaken||0), lim), lim, N, specAccKmax(n._fftMs, pumpMs));
+    // доля ядра под спектр уступает звуку: пошли обрывы (dry) — режем вдвое-втрое, без обрывов 20 с — возвращаем
+    const st=n.underrunsStarve|0;
+    if(n._ldSt==null) n._ldSt=st;
+    if(st>n._ldSt){ n._ldSt=st; n._specLoad=Math.max(.08,(n._specLoad||.3)*.6); n._ldT=now; }
+    else if((n._specLoad||.3)<.3 && now-(n._ldT||0)>20000){ n._specLoad=Math.min(.3,n._specLoad*1.25); n._ldT=now; }
+    const fresh0=Math.min(ring.written-(n.specTaken||0), lim);
+    const pl=specAccPlan(fresh0, lim, N, specAccKmax(n._fftMs, pumpMs, n._specLoad||.3));
     L=pl.L; K=pl.K;
     if(!(K>0)) return;
-    if(pl.lost>0) n._specLostT=now;       // воркер не успевает за потоком: часть отсчётов пропущена (виден в статусе)
+    // воркер не успевает за потоком (виден в статусе); первый проход после старта/перестройки забирает всё кольцо — это не перегруз
+    if(pl.lost>0 && n._specPrimed && pl.lost>.1*fresh0 && fresh0<ring.size*.5) n._specLostT=now;
+    n._specPrimed=true;
   } else {
     // Уэлч: K сегментов с перекрытием 50% в одном кадре — шум падает в ~sqrt(K) раз без размазывания по кадрам
     K=+n.p.specWelch||1;
@@ -5124,7 +5132,7 @@ async function rtlApplyPending(n){
       await sdrTune(n);
       // спектр — только с отсчётов новой частоты: кольцо с нуля, старые чанки отсекает эпоха
       n._specEpoch=n.dev.epoch?.()||0; n.specRing.filled=0;
-      n._specSeq=(n._specSeq|0)+1;                 // расчёты спектра, заказанные до перестройки, отбрасываются (см. rtlUpdateSpec)
+      n._specSeq=(n._specSeq|0)+1; n._specPrimed=false;                 // расчёты спектра, заказанные до перестройки, отбрасываются (см. rtlUpdateSpec)
     }
     if(gainStale){
       if(n.dev.kind==='hackrf') await n.dev.setHackrfGain(+n.p.lna, +n.p.vga, !!n.p.amp);
@@ -5905,7 +5913,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
       ? `${n.dev?n.dev.tunerName:'?'} · ${n.p.demod} · ${fmtHz(cf,3)} ±${fmtHz(n.sourceRate/2)} · tune ${fmtHz(tune,3)} · `+
         `${(n.mspsIo||0).toFixed(2)} Msps · ch ${chCount}`+
         (n.specK>1 ? ` · fft avg ×${n.specK}` : '')+
-        (n.p.specCont!==false && n.specFft>1 ? ` · ${n.specFft} fft/frame` : '')+(performance.now()-(n._specLostT||-1e9)<3000 ? ' · spectrum overload (samples skipped)' : '')+
+        (n.p.specCont!==false && n.specFft>1 ? ` · ${n.specFft} fft/frame` : '')+(performance.now()-(n._specLostT||-1e9)<3000 ? ' · spectrum thinned: CPU is short (some samples skipped)' : '')+
         (sdrConv(n) ? ` · conv ${sdrConv(n)>0?'+':''}${fmtHz(sdrConv(n),3)}` : '')+
         (sdrStages(n) ? ` · gain L${n.p.stLnaAuto?'a':n.p.stLna} M${n.p.stMixAuto?'a':n.p.stMix} V${n.p.stVga}`+
           ((n.p.stLnaAuto||n.p.stMixAuto) ? '' : ` ≈ ${r82xxStageDb({lna:n.p.stLna,mix:n.p.stMix,vga:n.p.stVga}).toFixed(1)} dB`) : '')+
