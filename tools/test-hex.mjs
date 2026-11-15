@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Uint8Array,DataView,ArrayBuffer,TextEncoder,TextDecoder,Array,Map,Set,Error,String,Number,BigInt,Object,Date,JSON,isNaN,parseInt});
 for(const f of ['hex-kernels.js','hex-formats.js','hex-gsm.js','wifisniff-kernels.js','radiobridge-kernels.js','pcap-kernels.js']) vm.runInContext(fs.readFileSync(path.join(root,'modules',f),'utf8'),ctx,{filename:f});
-vm.runInContext('this.H={HexAisAsm,hexAisPayload,pcapRead,pcapWrite,PCAP_SCHEMA,hexDetect,wifiLine,wifiRec,radioLine,radioStatus,radioRec,radioLineBuild,radioWifiEnc,radioCrc16,radioBinBuild,radioBinParse,radioDemux,radioZedRec,radioCsiMotion,radioCsiRec,radioFtmRec,radioFtmCmd,radioStatRec,radioCsiRec,radioTx,radioProbeResp,hexParse,hexBuild,hexToRec,wifiFromPkt,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
+vm.runInContext('this.H={HexAisAsm,hexAisPayload,pcapRead,pcapWrite,PCAP_SCHEMA,hexDetect,wifiLine,wifiRec,radioLine,radioStatus,radioRec,radioLineBuild,radioWifiEnc,radioCrc16,radioBinBuild,radioProbeReq,radioZbBeaconReq,zllBuild,zllParse,zllRec,radioBinParse,radioDemux,radioZedRec,radioCsiMotion,radioCsiRec,radioFtmRec,radioFtmCmd,radioStatRec,radioCsiRec,radioTx,radioProbeResp,hexParse,hexBuild,hexToRec,wifiFromPkt,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
 const H=ctx.H;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 const hex=s=>H.hexFromHex(s), toHex=b=>H.hexToHex(b);
@@ -331,6 +331,24 @@ const rsnIe='0100'+'000fac04'+'0100'+'000fac04'+'0100'+'000fac02'+'0c00';
       ok('bridge demux: absurd length is skipped, junk bytes leave the text',r.lines.length===1 && r.lines[0]==='OK' && r.frames.length===0,JSON.stringify(r)); }
     const rec=H.radioRec(H.radioBinParse(bz.slice(3,bz.length-2)),5);
     ok('bridge bin: zigbee record gets the hardware timestamp',rec.proto==='zb' && rec.ts_us===424242 && rec.lqi===200,JSON.stringify([rec.ts_us,rec.lqi])); }
+  // «кто здесь?»: Probe request, Beacon request, Touchlink (scan / identify / ответ)
+  { const pr=H.radioRec({proto:'wifi',chan:6,rssi:0,bytes:H.radioProbeReq({src:'02:c5:00:00:00:09',ssid:'Home',seq:5})},5);
+    ok('probe request: broadcast with our address and SSID',pr.kind==='probe-req' && pr.src==='02:c5:00:00:00:09' && pr.dst==='ff:ff:ff:ff:ff:ff' && pr['ie.ssid']==='Home' && pr.seq===5,JSON.stringify(pr).slice(0,200));
+    ok('probe request: the wildcard SSID is empty',H.radioRec({proto:'wifi',chan:6,rssi:0,bytes:H.radioProbeReq({})},5)['ie.ssid']==='');
+    const bq=H.radioRec({proto:'zb',chan:15,rssi:0,lqi:0,bytes:H.radioZbBeaconReq(7)},5);
+    ok('beacon request: parsed as a MAC command, sequence kept',bq.kind==='beacon request' && bq.dst==='ffff' && bq.seq===7 && H.radioTx(H.radioZbBeaconReq(7),'ZB')==='TX ZB 030807ffffffff07',JSON.stringify([bq.kind,bq.dst,bq.seq])); }
+  { const me='02:00:00:00:00:00:c5:01', dev='00:17:88:01:02:03:04:05';
+    const sc=H.zllBuild('scan',{src:me,tid:0xdeadbeef,seq:3,zseq:9}), sz=H.zllParse(sc);
+    ok('touchlink scan request: build / parse round trip',sz && sz.kind==='scan-req' && sz.tid===0xdeadbeef && sz.src===me && sz.dst==='ffff' && sz.zinfo===4 && sz.tinfo===0x14 && sc[0]===0x41 && sc[1]===0xc8,JSON.stringify(sz));
+    const id=H.zllBuild('identify',{src:me,dst:dev,tid:0xdeadbeef,duration:7,seq:4}), iz=H.zllParse(id);
+    ok('touchlink identify request: unicast to the IEEE address, duration kept',iz && iz.kind==='identify-req' && iz.dst===dev && iz.src===me && iz.duration===7 && iz.tid===0xdeadbeef && id[0]===0x61,JSON.stringify(iz));
+    ok('touchlink: no frames for reset or bad input',H.zllBuild('reset',{src:me,dst:dev,tid:1})===null && H.zllBuild('identify',{src:me,dst:'zz',tid:1})===null && H.zllBuild('scan',{src:'1:2',tid:1})===null);
+    ok('touchlink: other frames are not touchlink',H.zllParse(hex('6188056200003412'+'4800000034121e11'))===null && H.zllParse(H.radioZbBeaconReq(1))===null && H.zllParse(hex(''))===null);
+    const le=(a,n)=>Array.from({length:n},(_,k)=>(a>>>(8*k))&255), ext=s=>s.split(':').map(h=>parseInt(h,16)).reverse();
+    const resp=Uint8Array.from([0x41,0xcc,0x21,0xff,0xff,...ext(me),...ext(dev), 0x03,0x00,0x10,0x5e,0xc0, 0x18,0x09,0x01, ...le(0xdeadbeef,4),0xfe,0x05,0x13,0x00,0x00,...le(0x11223344,4),
+      ...ext('aa:bb:cc:dd:11:22:33:44'),0x01,15,...le(0x1a62,2),...le(0x1234,2),0x01,0x00]);
+    const rz=H.zllParse(resp), rr=H.radioRec({proto:'zb',chan:15,rssi:-48,lqi:200,bytes:resp},5);
+    ok('touchlink scan response: one record that matches the Zigbee graph node',rz && rz.kind==='scan-resp' && rr.kind==='touchlink-scan-resp' && rr.ieee===dev && rr.net==='1a62' && rr.src==='1234' && rr.lch===15 && rr.dev==='router' && rr.factory_new===1 && rr.ext_pan==='aa:bb:cc:dd:11:22:33:44' && rr.id===dev && rr.tid===0xdeadbeef,JSON.stringify(rr).slice(0,300)); }
   // CSI: индекс движения
   { const mk=a=>H.radioCsiRec({chan:6,rssi:-50,src:'aa:bb:cc:00:11:22',bytes:Uint8Array.from(a.flatMap(x=>[0,x]))},5);
     const st=new Map(); const base=[40,42,45,47,50,48,46,44], moved=base.map((x,i)=>x*(i%2?1.4:0.7));

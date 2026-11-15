@@ -154,6 +154,7 @@ function radioWifiEnc(o){
 }
 
 function radioRec(f,now){
+  if(f.proto==='zb'){ const z=zllParse(f.bytes); if(z) return zllRec(z,f,now); }       // Touchlink — inter-PAN, схема ieee802154 его не разбирает
   const res=hexParse(RADIO_SCHEMA[f.proto],f.bytes), o=hexToRec(res);
   const r={t:now||Date.now(), proto:f.proto, chan:f.chan, rssi:f.rssi, len:f.bytes.length};
   if(f.lqi!==undefined) r.lqi=f.lqi;
@@ -175,6 +176,75 @@ function radioRec(f,now){
   r.text=f.proto+' '+(r.kind||'')+' '+(r.src||'')+(r.dst ? ' → '+r.dst : '')+(r.ssid ? ' "'+r.ssid+'"' : r.name ? ' "'+r.name+'"' : '')+
     (f.chan!==undefined ? ' ch'+f.chan : '')+' '+f.rssi+' dBm';
   r.hex=hexToHex(f.bytes); r.hexSchema=RADIO_SCHEMA[f.proto];
+  return r;
+}
+
+/* ---------- «кто здесь?»: активные запросы и разбор ответов (в эфир кадры уходят только когда их отправит узел) ---------- */
+// Wi-Fi: Probe request (broadcast, SSID пустой или заданный) → ответят точки (Probe response); кадр без FCS
+function radioProbeReq(o){
+  o=o||{};
+  const v={type:0, subtype:4, dur:0, addr1:'ff:ff:ff:ff:ff:ff', addr2:String(o.src||'02:c5:00:00:00:01').toLowerCase(), addr3:'ff:ff:ff:ff:ff:ff',
+    frag:0, seq:(o.seq||0)&4095, 'ie.ssid':String(o.ssid||''), 'ie.rates':'82848b960c121824'};
+  return hexBuild('wifi',v).bytes;
+}
+// 802.15.4: MAC-команда Beacon request (broadcast) → ответят координаторы и маршрутизаторы (Beacon: PAN, permit joining)
+function radioZbBeaconReq(seq){ return Uint8Array.from([0x03,0x08,(seq||0)&255,0xff,0xff,0xff,0xff,0x07]); }
+
+/* Touchlink (ZLL, inter-PAN без шифрования, профиль 0xC05E, кластер 0x1000): Scan request → ответит устройство рядом (Scan response),
+   Identify request → оно мигает / пищит заданное время. Сброса (Reset to factory new) здесь нет и не будет.
+   MAC: data-кадр без безопасности, PAN 0xFFFF; адреса — 64-битные IEEE (в записи MSB first: aa:bb:…, на проводе little-endian). */
+const ZLL_PROFILE=0xC05E, ZLL_CLUSTER=0x1000, ZLL_CH=[11,15,20,25];
+const _ieee=s=>{ const a=String(s||'').split(':').map(h=>parseInt(h,16)); return a.length===8 && !a.some(isNaN) ? a.reverse() : null; };
+const _ieeeStr=(b,i)=>{ let s=''; for(let k=7;k>=0;k--) s+=(k<7?':':'')+(b[i+k]<16?'0':'')+b[i+k].toString(16); return s; };
+function zllBuild(kind,o){
+  o=o||{};
+  const src=_ieee(o.src||'02:00:00:00:00:00:c5:01'); if(!src) return null;
+  const tid=(o.tid>>>0), t4=[tid&255,(tid>>>8)&255,(tid>>>16)&255,(tid>>>24)&255], b=[];
+  let payload, bcast=false;
+  if(kind==='scan'){ bcast=true; payload=[0x00,...t4,(o.zinfo==null?0x04:o.zinfo)&255,(o.tinfo==null?0x14:o.tinfo)&255]; }
+  else if(kind==='identify'){ const d=o.duration==null ? 5 : o.duration&0xFFFF; payload=[0x06,...t4,d&255,d>>8]; }
+  else return null;
+  if(bcast) b.push(0x41,0xc8,(o.seq||0)&255,0xff,0xff,0xff,0xff,...src);                     // dst PAN / short: broadcast, src extended, PAN compression
+  else { const dst=_ieee(o.dst); if(!dst) return null; b.push(0x61,0xcc,(o.seq||0)&255,0xff,0xff,...dst,...src); }   // unicast with ACK request
+  b.push(bcast ? 0x0B : 0x03, ZLL_CLUSTER&255, ZLL_CLUSTER>>8, ZLL_PROFILE&255, ZLL_PROFILE>>8);   // inter-PAN APS: broadcast / unicast
+  b.push(0x11,(o.zseq||0)&255,...payload);                                                            // ZCL: cluster-specific, no default response
+  return Uint8Array.from(b);
+}
+// кадр 802.15.4 → объект Touchlink или null (не inter-PAN ZLL)
+function zllParse(bytes){
+  const b=bytes; if(!b || b.length<12) return null;
+  const fc=b[0]|b[1]<<8; if((fc&7)!==1 || (fc&8)) return null;
+  const dm=(fc>>10)&3, sm=(fc>>14)&3, comp=(fc>>6)&1; let i=3;
+  if(dm===0 || sm===0) return null;
+  if(!(b[i]===0xff && b[i+1]===0xff)) return null;                                          // inter-PAN: PAN 0xFFFF
+  i+=2;
+  let dst=null, src=null;
+  if(dm===3){ if(b.length<i+8) return null; dst=_ieeeStr(b,i); i+=8; } else if(dm===2){ dst=('0000'+(b[i]|b[i+1]<<8).toString(16)).slice(-4); i+=2; }
+  if(!comp) i+=2;
+  if(sm===3){ if(b.length<i+8) return null; src=_ieeeStr(b,i); i+=8; } else if(sm===2) i+=2;
+  if(b.length<i+10) return null;
+  if((b[i]&3)!==3) return null;
+  const cl=b[i+1]|b[i+2]<<8, pr=b[i+3]|b[i+4]<<8; if(cl!==ZLL_CLUSTER || pr!==ZLL_PROFILE) return null;
+  const cmd=b[i+7], p=i+8, u32=k=>(b[p+k]|b[p+k+1]<<8|b[p+k+2]<<16|b[p+k+3]<<24)>>>0;
+  const z={cmd, src, dst, tid:b.length>=p+4 ? u32(0) : 0};
+  if(cmd===0x00 && b.length>=p+6){ z.kind='scan-req'; z.zinfo=b[p+4]; z.tinfo=b[p+5]; }
+  else if(cmd===0x06 && b.length>=p+6){ z.kind='identify-req'; z.duration=b[p+4]|b[p+5]<<8; }
+  else if(cmd===0x01 && b.length>=p+28){
+    z.kind='scan-resp'; z.rssiCorr=b[p+4]; z.zinfo=b[p+5]; z.tinfo=b[p+6]; z.keys=b[p+7]|b[p+8]<<8; z.respId=u32(9);
+    z.extPan=_ieeeStr(b,p+13); z.nwkUpdate=b[p+21]; z.chan=b[p+22]; z.pan=b[p+23]|b[p+24]<<8; z.nwk=b[p+25]|b[p+26]<<8; z.subdevs=b[p+27];
+  } else z.kind='cmd '+cmd;
+  return z;
+}
+// ответ устройства → запись; net и src совпадают с записями Zigbee (id zb:<pan>:<адрес>), чтобы лечь на тот же узел графа
+function zllRec(z,f,now){
+  const h4=v=>('0000'+(v&0xffff).toString(16)).slice(-4), r={t:now||Date.now(), proto:'zb', chan:f.chan, rssi:f.rssi, lqi:f.lqi, len:f.bytes.length};
+  r.kind='touchlink-'+z.kind; r.tid=z.tid; r.ieee=z.src; r.src=z.src;
+  if(z.kind==='scan-resp'){
+    r.net=h4(z.pan); r.src=h4(z.nwk); r.lch=z.chan; r.ext_pan=z.extPan; r.dev=['coordinator','router','end device','?'][z.zinfo&3];
+    r.factory_new=z.tinfo&1; r.rx_idle=(z.zinfo>>2)&1;
+  }
+  r.id=r.ieee||'?'; r.text='touchlink '+z.kind+' '+(z.src||'')+(z.kind==='scan-resp' ? ' pan '+r.net+' ch'+z.chan+' '+r.dev+(r.factory_new ? ' (factory new)' : '') : '')+' '+f.rssi+' dBm';
+  r.hex=hexToHex(f.bytes); r.hexSchema='ieee802154';
   return r;
 }
 

@@ -63,6 +63,7 @@ function radioFeed(n,line){
 function radioFeedF(n,f){
   n.frames++;
   let r; try{ r=radioRec(f); }catch(e){ return; }
+  if(r.kind==='touchlink-scan-resp' && r.ieee) n.zllSeen.set(r.ieee,{ch:r.chan,tid:r.tid});
   if(n.p.tag) r.board=n.p.tag;
   n.pend.push(r); n.lastBin=f.bytes; n.lastProto=f.proto; n.binId++;
   if(n.pend.length>500) n.pend.splice(0,n.pend.length-500);
@@ -116,8 +117,60 @@ function radioTxNow(n,src,proto){
   radioSend(n,line+'\n');
 }
 
+// ---- «кто здесь?» и подсветка: активные запросы по каналам, Touchlink identify, BLE Find Me ----
+const RADIO_CH5=[36,40,44,48,52,56,60,64,100,104,108,112,116,120,124,128,132,136,140,144,149,153,157,161,165];
+const radioSleep=ms=>new Promise(r=>setTimeout(r,ms));
+function radioNeed(n,mode){ if(n.p.mode!==mode){ n.txErr='set radio to '+mode; return false; } if(!n.connected){ n.txErr='not connected'; return false; } n.txErr=''; return true; }
+// steps: [{ch, tx:[строка команды…], dwell}] — по каналу: CH, пауза, кадры, ожидание ответов; в конце возвращаем настройку узла
+async function radioSweep(n,steps,label){
+  const tok=n.sweepTok=(n.sweepTok||0)+1;
+  await radioSend(n,'HOP OFF\n');
+  for(let i=0;i<steps.length;i++){
+    if(tok!==n.sweepTok) return;
+    const st=steps[i]; n.sweepMsg=label+' '+(i+1)+'/'+steps.length+' (ch '+st.ch+')';
+    await radioSend(n,'CH '+st.ch+'\n'); await radioSleep(60);
+    for(const t of st.tx) if(t){ await radioSend(n,t+'\n'); await radioSleep(30); }
+    await radioSleep(st.dwell);
+  }
+  if(tok===n.sweepTok){ n.sweepMsg=''; await radioSend(n,radioCfg(n)); }
+}
+function radioWhoWifi(n){
+  if(!radioNeed(n,'WIFI')) return;
+  const chans=n.p.band==='5G' ? RADIO_CH5 : [1,2,3,4,5,6,7,8,9,10,11,12,13];
+  radioSweep(n,chans.map((ch,i)=>({ch,dwell:150,tx:[0,1].map(k=>radioTx(radioProbeReq({src:n.p.probeSrc,ssid:n.p.probeSsid,seq:(n.arSeq=(n.arSeq+1)&4095)}),'WIFI'))})),'Wi-Fi probe');
+}
+function radioWhoZb(n){
+  if(!radioNeed(n,'ZB')) return;
+  const chans=[]; for(let c=11;c<=26;c++) chans.push(c);
+  radioSweep(n,chans.map(ch=>({ch,dwell:300,tx:[radioTx(radioZbBeaconReq(n.zbSeq=(n.zbSeq+1)&255),'ZB',true)]})),'Zigbee beacon request');
+}
+function radioTlScan(n){
+  if(!radioNeed(n,'ZB')) return;
+  n.zllTid=(Math.random()*0x100000000)>>>0;
+  radioSweep(n,ZLL_CH.map(ch=>({ch,dwell:400,tx:[0,1].map(k=>radioTx(zllBuild('scan',{tid:n.zllTid,seq:n.zbSeq=(n.zbSeq+1)&255,zseq:n.zbSeq}),'ZB',false))})),'Touchlink scan');
+}
+// Identify: мигает / пищит устройство, ответившее на Scan request (канал и tid берём из его ответа)
+function radioIdentify(n,target){
+  if(!radioNeed(n,'ZB')) return;
+  let ieee=''; if(target && typeof target==='object') ieee=String(target.ieee||target.id||''); else ieee=String(target||'');
+  ieee=ieee.trim().toLowerCase();
+  const seen=n.zllSeen.get(ieee), ch=seen ? seen.ch : (n.p.chan>0 ? n.p.chan : 11);
+  const f=zllBuild('identify',{dst:ieee,tid:seen ? seen.tid : n.zllTid,duration:+n.p.identSec||5,seq:n.zbSeq=(n.zbSeq+1)&255,zseq:n.zbSeq});
+  if(!f){ n.txErr='bad IEEE address (aa:bb:cc:dd:ee:ff:00:11)'; return; }
+  n.identCount++; n.identLast=ieee+' ch'+ch;
+  radioSweep(n,[{ch,dwell:300,tx:[0,1,2].map(k=>radioTx(f,'ZB',true))}],'Touchlink identify');
+}
+function radioBleFind(n,target){
+  if(!n.connected){ n.txErr='not connected'; return; }
+  let addr='', at=0; if(target && typeof target==='object'){ addr=String(target.src||target.addr||target.id||''); at=target.addr_type==='random' ? 1 : 0; } else addr=String(target||'');
+  addr=addr.trim().toLowerCase();
+  if(!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(addr)){ n.txErr='bad BLE address'; return; }
+  if(n.p.mode!=='BLE' && !n.p.withBle){ n.txErr='set radio to BLE (or tick + BLE)'; return; }
+  n.txErr=''; n.findCount++; n.findLast=addr; radioSend(n,'BLEFIND '+addr+' '+at+' '+(+n.p.findLevel||2)+'\n');
+}
+
 def({ id:'radioBridge', lazy:'manual', title:'Radio Bridge (ESP32-C5)', cat:'Sources', kw:'esp32 c5 wifi ble bluetooth zigbee thread matter 802.15.4 802.11 sniffer inject transmit tx rx packets frames probe beacon p2p wifi direct espnow',
-  ins:[{n:'text',t:'txt'},{n:'tx',t:'txt'},{n:'txrec',t:'rec'},{n:'txbin',t:'bin'},{n:'ftm',t:'txt'}],
+  ins:[{n:'text',t:'txt'},{n:'tx',t:'txt'},{n:'txrec',t:'rec'},{n:'txbin',t:'bin'},{n:'ftm',t:'txt'},{n:'identify',t:'rec'},{n:'find',t:'rec'}],
   outs:[{n:'rec',t:'rec'},{n:'stat',t:'rec'},{n:'csi',t:'rec'},{n:'ftmr',t:'rec'},{n:'bin',t:'bin'},{n:'count',t:'num'},{n:'frames',t:'num'}],
   readout:true, tall:true, w:420, resize:true,
   params:[{n:'connect',t:'button',label:'Connect ESP32-C5',fn:n=>radioConnect(n)},
@@ -146,6 +199,17 @@ def({ id:'radioBridge', lazy:'manual', title:'Radio Bridge (ESP32-C5)', cat:'Sou
           {n:'bleScan',t:'select',opts:['PASSIVE','ACTIVE'],d:'PASSIVE',label:'BLE scan',fn:n=>radioSend(n,radioCfg(n))},
           {n:'bleExt',t:'check',d:false,label:'BLE 5 extended advertising (needs CONFIG_BT_NIMBLE_EXT_ADV in the firmware build)',short:'BLE 5 ext',fn:n=>radioSend(n,radioCfg(n))},
           {n:'bleCoded',t:'check',d:false,label:'BLE 5: also LE Coded PHY (long range)',short:'LE Coded',fn:n=>radioSend(n,radioCfg(n))},
+          {n:'probeSsid',t:'text',d:'',label:'who is here, Wi-Fi: SSID of the probe request (empty — any network)',short:'probe SSID'},
+          {n:'probeSrc',t:'text',d:'02:c5:00:00:00:01',label:'who is here, Wi-Fi: source MAC of the probe request',short:'probe MAC'},
+          {n:'whoWifi',t:'button',label:'Who is here: Wi-Fi (probe request on every channel)',fn:n=>radioWhoWifi(n)},
+          {n:'whoZb',t:'button',label:'Who is here: Zigbee (beacon request, channels 11…26)',fn:n=>radioWhoZb(n)},
+          {n:'tlScan',t:'button',label:'Who is here: Touchlink scan (channels 11 / 15 / 20 / 25)',fn:n=>radioTlScan(n)},
+          {n:'identTarget',t:'text',d:'',label:'highlight Zigbee: IEEE address of a device that answered the Touchlink scan (or wire its row to «identify»)',short:'identify'},
+          {n:'identSec',t:'range',min:1,max:30,step:1,d:5,label:'highlight Zigbee: blink time, s',short:'blink s'},
+          {n:'identGo',t:'button',label:'Highlight Zigbee device (Touchlink identify)',fn:n=>radioIdentify(n,n.p.identTarget)},
+          {n:'findTarget',t:'text',d:'',label:'highlight BLE: address of a Find Me tag (or wire its row to «find»)',short:'BLE find'},
+          {n:'findLevel',t:'select',opts:['2','1','0'],d:'2',label:'highlight BLE: alert level (2 high, 1 mild, 0 off)',short:'alert'},
+          {n:'findGo',t:'button',label:'Highlight BLE device (Find Me alert)',fn:n=>radioBleFind(n,n.p.findTarget)},
           {n:'ftmPeer',t:'text',d:'',label:'FTM: responder MAC (aa:bb:cc:dd:ee:ff)',short:'FTM peer'},
           {n:'ftmFrames',t:'select',opts:['8','16','24','32','64'],d:'16',label:'FTM: frames per burst',short:'FTM frames'},
           {n:'ftmChan',t:'num',d:0,label:'FTM: responder channel (0 — current)',short:'FTM ch'},
@@ -159,7 +223,7 @@ def({ id:'radioBridge', lazy:'manual', title:'Radio Bridge (ESP32-C5)', cat:'Sou
           {n:'csma',t:'check',d:false,label:'tx: ZB with CSMA'},
           {n:'baud',t:'num',d:115200,label:'baud (ignored by USB-CDC chips)',adv:true},
           {n:'clr',t:'button',label:'Clear',fn:n=>{ n.pend=[]; n.pendStat=[]; n.pendCsi=[]; n.pendFtm=[]; n.frames=0; n.sent=0; n.txCount=0; n.replies=0; n.ftmReq=0; }}],
-  init:n=>{ n.csiSt=new Map(); n.binBad=0; n.pend=[]; n.pendStat=[]; n.pendCsi=[]; n.pendFtm=[]; n.ftmReq=0; n.ftmRespSent=false; n.lastFtm=null; n.frames=0; n.sent=0; n.lastText=null; n.lastBin=null; n.lastProto='wifi'; n.binId=0; n.binSent=0; n.binOut=null;
+  init:n=>{ n.zllSeen=new Map(); n.zllTid=0; n.zbSeq=0; n.sweepTok=0; n.sweepMsg=''; n.identCount=0; n.identLast=''; n.findCount=0; n.findLast=''; n.lastIdent=null; n.lastFind=null; n.csiSt=new Map(); n.binBad=0; n.pend=[]; n.pendStat=[]; n.pendCsi=[]; n.pendFtm=[]; n.ftmReq=0; n.ftmRespSent=false; n.lastFtm=null; n.frames=0; n.sent=0; n.lastText=null; n.lastBin=null; n.lastProto='wifi'; n.binId=0; n.binSent=0; n.binOut=null;
     n.arLast=new Map(); n.arSeq=0; n.replies=0;
     n.lastTx=null; n.lastTxRec=null; n.lastTxBin=null; n.txCount=0; n.txLast=''; n.txErr=''; n.reply='';
     n.port=null; n.reader=null; n.connected=false; n.connecting=false; n.status='not connected'; },
@@ -177,6 +241,8 @@ def({ id:'radioBridge', lazy:'manual', title:'Radio Bridge (ESP32-C5)', cat:'Sou
       n.lastFtm=I.ftm;
       for(const line of I.ftm.split(/[\r\n;]+/)) if(line.trim()) radioFtmNow(n,line);
     }
+    if(I.identify!==n.lastIdent){ n.lastIdent=I.identify; const r=recList(I.identify)[0]; if(r) radioIdentify(n,r); }     // щелчок по строке таблицы → устройство мигает
+    if(I.find!==n.lastFind){ n.lastFind=I.find; const r=recList(I.find)[0]; if(r) radioBleFind(n,r); }
     if(I.txrec!==n.lastTxRec){ n.lastTxRec=I.txrec; for(const r of recList(I.txrec)) radioTxNow(n,r); }
     if(I.txbin && I.txbin.id!==n.lastTxBin){ n.lastTxBin=I.txbin.id; if(I.txbin.d && I.txbin.d.length) radioTxNow(n,I.txbin.d); }
     const recs=n.pend; n.pend=[]; n.sent+=recs.length;
@@ -184,10 +250,10 @@ def({ id:'radioBridge', lazy:'manual', title:'Radio Bridge (ESP32-C5)', cat:'Sou
     if(n.binSent!==n.binId){ n.binSent=n.binId; n.binOut=binObj(n.lastBin,n.lastProto+'-frame'); }
     return {rec:recs.length ? recs : null, stat:st.length ? st : null, csi:cs.length ? cs : null, ftmr:fr.length ? fr : null, bin:n.binOut, count:n.sent, frames:n.frames};
   },
-  drawKey:n=>n.status+'|'+n.binBad+'|'+n.frames+'|'+n.txCount+'|'+n.replies+'|'+n.reply+'|'+n.txErr,
+  drawKey:n=>n.sweepMsg+'|'+n.identCount+'|'+n.findCount+'|'+n.status+'|'+n.binBad+'|'+n.frames+'|'+n.txCount+'|'+n.replies+'|'+n.reply+'|'+n.txErr,
   draw(n){
     const el=n.el.querySelector('.readout'); if(!el) return;
-    const s=n.status+' · '+n.frames+' frames · '+n.sent+' records · tx '+n.txCount+(n.replies ? ' ('+n.replies+' auto-replies)' : '')+(n.ftmReq ? ' · ftm '+n.ftmReq : '')+(n.binBad ? ' · bad packets '+n.binBad : '')+(n.txErr ? ' ('+n.txErr+')' : '')+
+    const s=n.status+' · '+n.frames+' frames · '+n.sent+' records · tx '+n.txCount+(n.replies ? ' ('+n.replies+' auto-replies)' : '')+(n.ftmReq ? ' · ftm '+n.ftmReq : '')+(n.binBad ? ' · bad packets '+n.binBad : '')+(n.sweepMsg ? '\n'+n.sweepMsg : '')+(n.identLast ? '\nidentify '+n.identLast : '')+(n.findLast ? '\nBLE find '+n.findLast : '')+(n.txErr ? ' ('+n.txErr+')' : '')+
       (n.reply ? '\n'+n.reply : '')+(n.txLast ? '\ntx: '+n.txLast : '');
     if(el.textContent!==s) el.textContent=s;
   }});

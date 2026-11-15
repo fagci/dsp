@@ -7,6 +7,8 @@
  * CSI ON [ms]|OFF (WiFi channel state info); BLESCAN PASSIVE|ACTIVE; TX WIFI hex; TX BLE hex; TX ZB hex [CSMA]; INFO; HELP
  * META ON|OFF (WiFi RX lines carry PHY format / MCS / bandwidth / noise floor / hardware timestamp);
  * BLEEXT ON|CODED|OFF (BLE 5 extended advertising scan, CODED adds the LE Coded PHY; needs CONFIG_BT_NIMBLE_EXT_ADV in NimBLE-Arduino nimconfig.h);
+ * BLEFIND <addr> [atype 0 public|1 random] [level 0..2] (BLE Find Me: connect, write Alert Level of the Immediate Alert service 0x1802 / 0x2A06 -
+ *   a tag or tracker that supports it beeps; the scan pauses during the connection; answers OK BLEFIND / ERR BLEFIND <step> <code>);
  * FMT BIN|TEXT (RX WIFI / BLE / ZB as binary packets  A5 len16 type body crc16-ccitt: about half the USB traffic, timestamps for every protocol; other lines stay text);
  * ZED ON [ms]|OFF (802.15.4 energy scan 11..26: lines ZED, MODE ZB); MODE WIFI+BLE | ZB+BLE (BLE scan next to Wi-Fi / 802.15.4, the radio coexistence arbiter shares the antenna);
  * CSIMODE ALL|LEG (CSI of HT / VHT / HE-SU / HE-MU frames instead of legacy + HT20 only)
@@ -305,8 +307,7 @@ fail:
   esp_wifi_deinit();
   return false;
 }
-static bool startBle() {
-  if (!NimBLEDevice::init("bridge")) { Serial.println("ERR BLE INIT"); return false; }
+static bool bleScanStart() {
   int rc;
 #if WITH_BLE_EXT
   if (bleExt) {                                      // extended advertising: legacy PDUs arrive too, flagged by props bit 16
@@ -322,7 +323,12 @@ static bool startBle() {
     dp.itvl = 0x0060; dp.window = 0x0030; // 60 ms interval, 30 ms window
     rc = ble_gap_disc(BLE_OWN_ADDR_PUBLIC, BLE_HS_FOREVER, &dp, bleGapEventCb, NULL);
   }
-  if (rc != 0) { Serial.printf("ERR BLE SCAN %d\r\n", rc); NimBLEDevice::deinit(); return false; }
+  if (rc != 0) { Serial.printf("ERR BLE SCAN %d\r\n", rc); return false; }
+  return true;
+}
+static bool startBle() {
+  if (!NimBLEDevice::init("bridge")) { Serial.println("ERR BLE INIT"); return false; }
+  if (!bleScanStart()) { NimBLEDevice::deinit(); return false; }
   bleRunning = true;
   return true;
 }
@@ -447,6 +453,71 @@ static void cmdBleScan(const char *a) {
   else { Serial.println("ERR BLESCAN"); return; }
   if (bleRunning && !applyMode(mode)) { Serial.println("ERR MODE START"); return; }
   Serial.printf("OK BLESCAN %s\r\n", bleActive ? "ACTIVE" : "PASSIVE");
+}
+// BLE Find Me: connect -> discover Immediate Alert (0x1802) -> its Alert Level (0x2A06) -> write no-response -> disconnect; the scan resumes afterwards
+static const ble_uuid16_t uuidIAS = BLE_UUID16_INIT(0x1802), uuidAL = BLE_UUID16_INIT(0x2A06);
+static bool findBusy = false;
+static int findConn = -1;
+static uint8_t findLevel = 2;
+static uint16_t findStart = 0, findEnd = 0, findChr = 0;
+static uint32_t findT = 0, findDoneAt = 0;
+static ble_addr_t findPeer;
+static void findEnd_(const char *step, int rc) {            // finish: report, drop the link, scan again
+  if (rc == 0) Serial.println("OK BLEFIND"); else Serial.printf("ERR BLEFIND %s %d\r\n", step, rc);
+  if (findConn >= 0) ble_gap_terminate(findConn, 0x13);
+  else { findBusy = false; if (bleRunning) bleScanStart(); }
+  findDoneAt = 0;
+}
+extern "C" int findChrCb(uint16_t ch, const struct ble_gatt_error *err, const struct ble_gatt_chr *chr, void *) {
+  if (err->status == 0 && chr) { findChr = chr->val_handle; return 0; }
+  if (err->status != BLE_HS_EDONE) { findEnd_("chr", err->status); return 0; }
+  if (!findChr) { findEnd_("nochr", 1); return 0; }
+  int rc = ble_gattc_write_no_rsp_flat(ch, findChr, &findLevel, 1);
+  if (rc) findEnd_("write", rc); else findDoneAt = millis() + 400;       // let the write go out before the link is dropped
+  return 0;
+}
+extern "C" int findSvcCb(uint16_t ch, const struct ble_gatt_error *err, const struct ble_gatt_svc *svc, void *) {
+  if (err->status == 0 && svc) { findStart = svc->start_handle; findEnd = svc->end_handle; return 0; }
+  if (err->status != BLE_HS_EDONE) { findEnd_("svc", err->status); return 0; }
+  if (!findEnd) { findEnd_("nosvc", 1); return 0; }
+  int rc = ble_gattc_disc_chrs_by_uuid(ch, findStart, findEnd, &uuidAL.u, findChrCb, NULL);
+  if (rc) findEnd_("disc", rc);
+  return 0;
+}
+extern "C" int findGapCb(struct ble_gap_event *ev, void *) {
+  if (ev->type == BLE_GAP_EVENT_CONNECT) {
+    if (ev->connect.status == 0) {
+      findConn = ev->connect.conn_handle;
+      int rc = ble_gattc_disc_svc_by_uuid(findConn, &uuidIAS.u, findSvcCb, NULL);
+      if (rc) findEnd_("svcdisc", rc);
+    } else findEnd_("connect", ev->connect.status);
+  } else if (ev->type == BLE_GAP_EVENT_DISCONNECT) {
+    findConn = -1; findBusy = false; findDoneAt = 0;
+    if (bleRunning) bleScanStart();
+  }
+  return 0;
+}
+static void cmdBleFind(char *a) {
+  if (!bleRunning) { Serial.println("ERR NOT BLE MODE"); return; }
+  if (findBusy) { Serial.println("ERR BLEFIND BUSY"); return; }
+  char *r1 = splitToken(a), *r2 = *r1 ? splitToken(r1) : r1;
+  unsigned m[6];
+  if (sscanf(a, "%x:%x:%x:%x:%x:%x", &m[0], &m[1], &m[2], &m[3], &m[4], &m[5]) != 6) { Serial.println("ERR BLEFIND <addr> [0|1] [0..2]"); return; }
+  findPeer.type = (*r1 == '1') ? BLE_ADDR_RANDOM : BLE_ADDR_PUBLIC;
+  for (int i = 0; i < 6; ++i) findPeer.val[i] = (uint8_t)m[5 - i];
+  long lv = *r2 ? strtol(r2, NULL, 10) : 2; findLevel = (uint8_t)(lv < 0 ? 0 : lv > 2 ? 2 : lv);
+  findStart = findEnd = findChr = 0; findBusy = true; findT = millis(); findDoneAt = 0;
+  ble_gap_disc_cancel();
+  int rc = ble_gap_connect(BLE_OWN_ADDR_PUBLIC, &findPeer, 4000, NULL, findGapCb, NULL);
+  if (rc) { findBusy = false; Serial.printf("ERR BLEFIND start %d\r\n", rc); if (bleRunning) bleScanStart(); }
+}
+static void findStep() {
+  if (!findBusy) return;
+  if (findDoneAt && (int32_t)(millis() - findDoneAt) >= 0) { findDoneAt = 0; findEnd_("", 0); return; }
+  if (millis() - findT > 8000) {                            // nothing happened: cancel the attempt or drop the link
+    if (findConn >= 0) ble_gap_terminate(findConn, 0x13); else { ble_gap_conn_cancel(); findBusy = false; if (bleRunning) bleScanStart(); }
+    Serial.println("ERR BLEFIND timeout"); findT = millis();
+  }
 }
 static void cmdFmt(const char *a) {
   if (!strcasecmp(a, "BIN")) binMode = true;
@@ -657,6 +728,7 @@ static void printHelp() {
   Serial.println("STAT <ms>|OFF - WIFI per-channel lines: frames, bytes, max/avg RSSI, airtime (counts all frame types)");
   Serial.println("CSI ON [min ms between reports]|OFF - WIFI channel state info");
   Serial.println("BLESCAN PASSIVE|ACTIVE - ACTIVE also returns scan responses");
+  Serial.println("BLEFIND <addr> [0|1] [0..2] - BLE Find Me: write Alert Level (Immediate Alert 0x1802) so a tag beeps; 1 = random address");
   Serial.println("FMT BIN|TEXT - RX WIFI/BLE/ZB as binary packets A5 len16 type body crc16 (other lines stay text)");
   Serial.println("ZED ON [ms]|OFF - 802.15.4 energy scan over channels 11..26 (MODE ZB), line per channel window");
   Serial.println("MODE WIFI+BLE | ZB+BLE - BLE scan alongside Wi-Fi / 802.15.4");
@@ -701,6 +773,7 @@ static void handleLine(char *line) {
   else if (!strcasecmp(line, "BLESCAN") && *args) cmdBleScan(args);
   else if (!strcasecmp(line, "META") && *args) cmdMeta(args);
   else if (!strcasecmp(line, "FMT") && *args) cmdFmt(args);
+  else if (!strcasecmp(line, "BLEFIND") && *args) cmdBleFind(args);
   else if (!strcasecmp(line, "CSIMODE") && *args) cmdCsiMode(args);
   else if (!strcasecmp(line, "ZED") && *args) cmdZed(args);
   else if (!strcasecmp(line, "BLEEXT") && *args) cmdBleExt(args);
@@ -880,6 +953,7 @@ void loop() {
   if (hopOn && (mode == MODE_WIFI || mode == MODE_ZB) && millis() - hopT >= hopMs) { hopT = millis(); hopStep(); }
   if (statOn && mode == MODE_WIFI && millis() - statT >= statMs) statFlush();
   zedStep();
+  findStep();
   static uint32_t droppedShown = 0;
   uint32_t total = dropped + zbDropped;
   if (total != droppedShown) { Serial.printf("WARN DROPPED %lu\r\n", (unsigned long)total); droppedShown = total; }
