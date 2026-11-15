@@ -5,12 +5,19 @@
  * TYPES MGMT,CTRL,DATA|ALL (WiFi RX, default MGMT,CTRL); SNAP n (bytes kept per WiFi frame);
  * DSNAP n (bytes kept per WiFi DATA frame, default 96); STAT ms|OFF (per-channel level / airtime lines);
  * CSI ON [ms]|OFF (WiFi channel state info); BLESCAN PASSIVE|ACTIVE; TX WIFI hex; TX BLE hex; TX ZB hex [CSMA]; INFO; HELP
+ * META ON|OFF (WiFi RX lines carry PHY format / MCS / bandwidth / noise floor / hardware timestamp);
+ * BLEEXT ON|CODED|OFF (BLE 5 extended advertising scan, CODED adds the LE Coded PHY; needs CONFIG_BT_NIMBLE_EXT_ADV in NimBLE-Arduino nimconfig.h);
+ * FTM <mac> [frames 8..64] [ch] (802.11mc ranging to an FTM responder, WIFI mode, HOP OFF); FTMRESP ON|OFF (our AP answers FTM, visible SSID "bridge")
  * RX lines (hex without FCS):
  *   RX WIFI <ch> <rssi> <hex>              (RX WIFI! - cut by SNAP)
  *   RX BLE <addr> <rssi> <evtype> <atype> <hex>   evtype 0 ADV_IND 1 DIRECT 2 SCAN 3 NONCONN 4 SCAN_RSP; atype 0 public 1 random
  *   RX ZB <ch> <rssi> <lqi> <hex>          (802.15.4: Zigbee, Thread, Matter-over-Thread)
  *   STAT <ch> <ms> <frames> <bytes> <rssiMax> <rssiAvg> <busy permille> <dropped>   (WiFi, every window or hop; rssiMax -127 = nothing heard)
  *   CSI <ch> <rssi> <mac> <hex int8 imag,real pairs per subcarrier>
+ *   RXM WIFI[!] <ch> <rssi> <fmt> <mcs> <bw> <noise> <ts_us> <hex>   (META ON; fmt 0 11b, 1 11a/g, 2 11n, 3 11ac, 4 11ax)
+ *   RX BLEX <addr> <rssi> <props> <atype> <phy1> <phy2> <sid> <status> <hex>   (BLEEXT; props 1 conn 2 scan 4 direct 8 scan-rsp 16 legacy;
+ *       phy 1 1M 2 2M 3 coded; status 0 complete 1 more follows 2 truncated)
+ *   FTM <mac> <status> <rtt_raw 0.1ns> <rtt_est 0.1ns> <dist cm>      (status 0 = success)
  * Capture: frames go through a variable-length ring buffer (no 540-byte copies), output is one write per line,
  * DATA frames are cut to DSNAP bytes. STAT counts every frame the driver delivers (all types), regardless of TYPES.
  * WiFi RX: up to MAX_PKT bytes. TX: 24..1500 without FCS.
@@ -35,6 +42,12 @@
 #define RING_BYTES 49152
 #define LOOP_US 8000                                // output time budget per loop pass
 #define WITH_CSI 1                                  // 0 if the SDK has no wifi_csi_config_t fields used below
+#define WITH_FTM 1                                  // 0 if the SDK has no esp_wifi_ftm_initiate_session / ap.ftm_responder
+#if defined(CONFIG_BT_NIMBLE_EXT_ADV) && CONFIG_BT_NIMBLE_EXT_ADV
+#define WITH_BLE_EXT 1
+#else
+#define WITH_BLE_EXT 0
+#endif
 
 enum Proto { P_WIFI, P_BLE, P_ZB };
 enum RadioMode { MODE_OFF, MODE_WIFI, MODE_BLE, MODE_ZB };
@@ -44,6 +57,10 @@ struct Event {
   int8_t rssi;
   uint8_t lqi;
   uint16_t origLen;
+  uint8_t fmt, mcs, bw, x1, x2;                     // WiFi meta (fmt/mcs/bw) / BLE ext phys (x1, x2)
+  int8_t noise;
+  uint32_t ts;
+  int32_t v0, v1, v2;                               // FTM: rtt_raw, rtt_est, dist_cm
   char addr[18];
   uint8_t data[EV_MAX];
 };
@@ -56,6 +73,7 @@ static bool wifi5g = false;
 static uint8_t wifiTypes = 3;                       // bit0 mgmt, bit1 ctrl, bit2 data
 static uint16_t snapLen = 320, dataSnap = 96;
 static bool bleActive = false;
+static bool metaOn = false, bleExt = false, bleCoded = false, ftmResp = false;
 static bool hopOn = false;
 static uint16_t hopMs = 250;
 static uint32_t hopT = 0;
@@ -161,10 +179,14 @@ static void statReset() {
 }
 // rx_ctrl fields differ between chips: pick bb format (cur_bb_format | sig_mode) and mcs when the SDK has them
 // In a struct: the Arduino prototype generator breaks on top-level templates
+// fmt() is normalized: 0 11b, 1 11a/g (legacy OFDM), 2 11n, 3 11ac, 4 11ax (any HE format)
 struct RxInfo {
-  template <class T> static auto fmt(const T &c, int) -> decltype((void)c.cur_bb_format, uint8_t()) { return c.cur_bb_format; }
-  template <class T> static auto fmt(const T &c, long) -> decltype((void)c.sig_mode, uint8_t()) { return c.sig_mode; }
+  template <class T> static auto fmt(const T &c, int) -> decltype((void)c.cur_bb_format, uint8_t()) { return c.cur_bb_format > 4 ? 4 : c.cur_bb_format; }
+  template <class T> static auto fmt(const T &c, long) -> decltype((void)c.sig_mode, uint8_t()) {
+    return c.sig_mode == 0 ? ((c.rate & 15) < 4 ? 0 : 1) : c.sig_mode == 1 ? 2 : 3; }
   template <class T> static uint8_t fmt(const T &, ...) { return 0; }
+  template <class T> static auto bw(const T &c, int) -> decltype((void)c.cwb, uint8_t()) { return c.cwb ? 40 : 20; }
+  template <class T> static uint8_t bw(const T &, ...) { return 20; }
   template <class T> static auto mcs(const T &c, int) -> decltype((void)c.mcs, uint8_t()) { return c.mcs; }
   template <class T> static uint8_t mcs(const T &, ...) { return 7; }
 };
@@ -173,7 +195,7 @@ static uint32_t airtimeUs(uint8_t sigMode, uint8_t rate, uint8_t mcs, uint32_t b
   static const uint16_t leg[16] = {10, 20, 55, 110, 10, 20, 55, 110, 480, 240, 120, 60, 540, 360, 180, 90};   // x100 kbit/s
   static const uint16_t ht[8] = {65, 130, 195, 260, 390, 520, 585, 650};
   uint32_t r, pre;
-  if (sigMode == 0) { r = leg[rate & 15]; pre = (rate & 15) < 4 ? 192 : (rate & 15) < 8 ? 96 : 20; }
+  if (sigMode <= 1) { r = leg[rate & 15]; pre = (rate & 15) < 4 ? 192 : (rate & 15) < 8 ? 96 : 20; }
   else { r = ht[mcs & 7]; pre = 36; }
   return pre + bytes * 80 / r;
 }
@@ -227,7 +249,10 @@ static bool startWifi() {
   // Start on a known 2.4 GHz channel; select requested band AFTER start.
   wc.ap.channel = 6;
   wc.ap.authmode = WIFI_AUTH_OPEN;
-  wc.ap.ssid_hidden = 1;
+  wc.ap.ssid_hidden = ftmResp ? 0 : 1;               // an FTM responder must be visible to be found by a scan
+#if WITH_FTM
+  wc.ap.ftm_responder = ftmResp;
+#endif
   wc.ap.max_connection = 0;
   wc.ap.beacon_interval = 100;
 
@@ -255,10 +280,21 @@ fail:
 }
 static bool startBle() {
   if (!NimBLEDevice::init("bridge")) { Serial.println("ERR BLE INIT"); return false; }
-  struct ble_gap_disc_params dp = {};
-  dp.passive = bleActive ? 0 : 1; dp.filter_duplicates = 0;
-  dp.itvl = 0x0060; dp.window = 0x0030; // 60 ms interval, 30 ms window
-  int rc = ble_gap_disc(BLE_OWN_ADDR_PUBLIC, BLE_HS_FOREVER, &dp, bleGapEventCb, NULL);
+  int rc;
+#if WITH_BLE_EXT
+  if (bleExt) {                                      // extended advertising: legacy PDUs arrive too, flagged by props bit 16
+    struct ble_gap_ext_disc_params p1 = {}, pc = {};
+    p1.passive = pc.passive = bleActive ? 0 : 1;
+    p1.itvl = pc.itvl = 0x0060; p1.window = pc.window = 0x0030;
+    rc = ble_gap_ext_disc(BLE_OWN_ADDR_PUBLIC, 0, 0, 0, 0, 0, &p1, bleCoded ? &pc : NULL, bleGapEventCb, NULL);
+  } else
+#endif
+  {
+    struct ble_gap_disc_params dp = {};
+    dp.passive = bleActive ? 0 : 1; dp.filter_duplicates = 0;
+    dp.itvl = 0x0060; dp.window = 0x0030; // 60 ms interval, 30 ms window
+    rc = ble_gap_disc(BLE_OWN_ADDR_PUBLIC, BLE_HS_FOREVER, &dp, bleGapEventCb, NULL);
+  }
   if (rc != 0) { Serial.printf("ERR BLE SCAN %d\r\n", rc); NimBLEDevice::deinit(); return false; }
   return true;
 }
@@ -377,6 +413,78 @@ static void cmdBleScan(const char *a) {
   if (mode == MODE_BLE && !applyMode(MODE_BLE)) { Serial.println("ERR MODE START"); return; }
   Serial.printf("OK BLESCAN %s\r\n", bleActive ? "ACTIVE" : "PASSIVE");
 }
+static void cmdMeta(const char *a) {
+  if (!strcasecmp(a, "ON")) metaOn = true;
+  else if (!strcasecmp(a, "OFF")) metaOn = false;
+  else { Serial.println("ERR META"); return; }
+  Serial.printf("OK META %s\r\n", metaOn ? "ON" : "OFF");
+}
+static void cmdBleExt(const char *a) {
+#if WITH_BLE_EXT
+  if (!strcasecmp(a, "ON")) { bleExt = true; bleCoded = false; }
+  else if (!strcasecmp(a, "CODED")) { bleExt = true; bleCoded = true; }
+  else if (!strcasecmp(a, "OFF")) { bleExt = false; bleCoded = false; }
+  else { Serial.println("ERR BLEEXT"); return; }
+  if (mode == MODE_BLE && !applyMode(MODE_BLE)) { Serial.println("ERR MODE START"); return; }
+  Serial.printf("OK BLEEXT %s\r\n", !bleExt ? "OFF" : bleCoded ? "CODED" : "ON");
+#else
+  Serial.println("ERR BLEEXT SDK (enable CONFIG_BT_NIMBLE_EXT_ADV in NimBLE-Arduino nimconfig.h)");
+#endif
+}
+static void cmdFtmResp(const char *a) {
+#if WITH_FTM
+  if (!strcasecmp(a, "ON")) ftmResp = true;
+  else if (!strcasecmp(a, "OFF")) ftmResp = false;
+  else { Serial.println("ERR FTMRESP"); return; }
+  if (mode == MODE_WIFI && !applyMode(MODE_WIFI)) { Serial.println("ERR MODE START"); return; }
+  uint8_t mac[6];
+  if (mode == MODE_WIFI && ftmResp && esp_wifi_get_mac(WIFI_IF_AP, mac) == ESP_OK)
+    Serial.printf("OK FTMRESP ON %02x:%02x:%02x:%02x:%02x:%02x CH %d\r\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], wifiChan);
+  else Serial.printf("OK FTMRESP %s\r\n", ftmResp ? "ON" : "OFF");
+#else
+  Serial.println("ERR FTMRESP SDK");
+#endif
+}
+#if WITH_FTM
+static void ftmReportCb(void *, esp_event_base_t, int32_t id, void *data) {
+  if (id != WIFI_EVENT_FTM_REPORT || !data) return;
+  const wifi_event_ftm_report_t *r = (const wifi_event_ftm_report_t *)data;
+  Event e; memset(&e, 0, EV_HDR); e.type = 3; e.proto = P_WIFI; e.lqi = (uint8_t)r->status;
+  e.v0 = (int32_t)r->rtt_raw; e.v1 = (int32_t)r->rtt_est; e.v2 = (int32_t)r->dist_est;
+  snprintf(e.addr, sizeof(e.addr), "%02x:%02x:%02x:%02x:%02x:%02x",
+    r->peer_mac[0], r->peer_mac[1], r->peer_mac[2], r->peer_mac[3], r->peer_mac[4], r->peer_mac[5]);
+  if (!evPush(e)) dropped++;
+}
+#endif
+static void cmdFtm(char *a) {
+#if WITH_FTM
+  if (mode != MODE_WIFI) { Serial.println("ERR NOT WIFI MODE"); return; }
+  if (hopOn) { Serial.println("ERR HOP ON (ranging needs a fixed channel)"); return; }
+  unsigned m[6];
+  char *rest = splitToken(a);
+  if (sscanf(a, "%x:%x:%x:%x:%x:%x", &m[0], &m[1], &m[2], &m[3], &m[4], &m[5]) != 6) { Serial.println("ERR FTM <mac> [frames] [ch]"); return; }
+  long frames = 16, ch = wifiChan;
+  if (*rest) {
+    char *r2 = splitToken(rest);
+    frames = strtol(rest, NULL, 10);
+    if (*r2) ch = strtol(r2, NULL, 10);
+  }
+  static const uint8_t okFrames[] = {8, 16, 24, 32, 64};
+  uint8_t fc = 8;
+  for (uint8_t f : okFrames) if (frames >= f) fc = f;
+  if (ch != wifiChan && (ch < 1 || ch > 200 || (wifi5g ? ch <= 14 : ch > 14))) { Serial.println("ERR CH BAND"); return; }
+  wifi_mode_t wm;
+  if (esp_wifi_get_mode(&wm) == ESP_OK && wm != WIFI_MODE_APSTA && !checkEsp("esp_wifi_set_mode", esp_wifi_set_mode(WIFI_MODE_APSTA))) return;
+  if (ch != wifiChan) { if (!checkEsp("esp_wifi_set_channel", esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE))) return; wifiChan = ch; }
+  wifi_ftm_initiator_cfg_t cfg = {};
+  for (int i = 0; i < 6; ++i) cfg.resp_mac[i] = (uint8_t)m[i];
+  cfg.channel = (uint8_t)ch; cfg.frm_count = fc; cfg.burst_period = 2; cfg.use_get_report_api = false;
+  if (checkEsp("esp_wifi_ftm_initiate_session", esp_wifi_ftm_initiate_session(&cfg))) Serial.println("OK FTM");
+  else Serial.println("ERR FTM");
+#else
+  Serial.println("ERR FTM SDK");
+#endif
+}
 static void cmdHop(char *a) {
   char *ms = a;
   while (*ms && *ms != ' ' && *ms != '\t') ++ms;
@@ -442,7 +550,8 @@ static void cmdInfo() {
   Serial.printf("MODE %s", modeName(mode));
   if (mode == MODE_WIFI) Serial.printf(" CH %d BAND %s TYPES %u SNAP %u DSNAP %u STAT %s CSI %s", wifiChan, wifi5g ? "5G" : "2G", (unsigned)wifiTypes, (unsigned)snapLen, (unsigned)dataSnap, statOn ? "ON" : "OFF", csiOn ? "ON" : "OFF");
   if (mode == MODE_ZB) Serial.printf(" CH %d", zbChan);
-  if (mode == MODE_BLE) Serial.printf(" SCAN %s", bleActive ? "ACTIVE" : "PASSIVE");
+  if (mode == MODE_BLE) Serial.printf(" SCAN %s EXT %s", bleActive ? "ACTIVE" : "PASSIVE", !bleExt ? "OFF" : bleCoded ? "CODED" : "ON");
+  Serial.printf(" META %s FTMRESP %s", metaOn ? "ON" : "OFF", ftmResp ? "ON" : "OFF");
   Serial.printf(" HOP %s %u", hopOn ? "ON" : "OFF", (unsigned)hopMs);
   Serial.printf(" DROPPED %lu RINGFREE %u\r\n", (unsigned long)(dropped + zbDropped), (unsigned)xRingbufferGetCurFreeSize(evRing));
 }
@@ -457,6 +566,10 @@ static void printHelp() {
   Serial.println("STAT <ms>|OFF - WIFI per-channel lines: frames, bytes, max/avg RSSI, airtime (counts all frame types)");
   Serial.println("CSI ON [min ms between reports]|OFF - WIFI channel state info");
   Serial.println("BLESCAN PASSIVE|ACTIVE - ACTIVE also returns scan responses");
+  Serial.println("META ON|OFF - WIFI lines RXM: PHY format, MCS, bandwidth, noise floor, hardware timestamp");
+  Serial.println("BLEEXT ON|CODED|OFF - BLE 5 extended advertising scan (CODED: + LE Coded PHY); restarts active BLE");
+  Serial.println("FTM <mac> [frames 8..64] [ch] - 802.11mc ranging to an FTM responder (WIFI mode, HOP OFF)");
+  Serial.println("FTMRESP ON|OFF - our AP answers FTM requests (visible SSID bridge); restarts active WIFI");
   Serial.println("TX WIFI <hex> - 24..1500 bytes, no FCS");
   Serial.println("TX BLE <hex> - advertisement payload <=31 bytes, repeats");
   Serial.println("TX ZB <hex> [CSMA] - 3..125 bytes, no length/FCS");
@@ -491,6 +604,10 @@ static void handleLine(char *line) {
   } else if (!strcasecmp(line, "STAT") && *args) cmdStat(args);
   else if (!strcasecmp(line, "CSI") && *args) cmdCsi(args);
   else if (!strcasecmp(line, "BLESCAN") && *args) cmdBleScan(args);
+  else if (!strcasecmp(line, "META") && *args) cmdMeta(args);
+  else if (!strcasecmp(line, "BLEEXT") && *args) cmdBleExt(args);
+  else if (!strcasecmp(line, "FTMRESP") && *args) cmdFtmResp(args);
+  else if (!strcasecmp(line, "FTM") && *args) cmdFtm(args);
   else if (!strcasecmp(line, "INFO")) cmdInfo();
   else if (!strcasecmp(line, "HELP") || !strcmp(line, "?")) printHelp();
   else Serial.println("ERR CMD (HELP for help)");
@@ -521,7 +638,7 @@ extern "C" void wifiPromiscCb(void *buf, wifi_promiscuous_pkt_type_t type) {
   uint32_t sig = pkt->rx_ctrl.sig_len;
   if (statOn) {
     int8_t rs = pkt->rx_ctrl.rssi;
-    uint32_t air = airtimeUs(RxInfo::fmt(pkt->rx_ctrl, 0), pkt->rx_ctrl.rate, RxInfo::mcs(pkt->rx_ctrl, 0), sig);
+    uint32_t air = airtimeUs(RxInfo::fmt(pkt->rx_ctrl, 0) <= 1 ? 0 : 2, pkt->rx_ctrl.rate, RxInfo::mcs(pkt->rx_ctrl, 0), sig);
     portENTER_CRITICAL(&stMux);
     st.frames++; st.bytes += sig; st.air += air; st.rssiSum += rs;
     if (rs > st.rssiMax) st.rssiMax = rs;
@@ -534,6 +651,8 @@ extern "C" void wifiPromiscCb(void *buf, wifi_promiscuous_pkt_type_t type) {
   Event e; memset(&e, 0, EV_HDR);
   e.proto = P_WIFI; e.ch = pkt->rx_ctrl.channel; e.rssi = pkt->rx_ctrl.rssi; e.origLen = sig;
   e.len = sig > snap ? snap : sig;
+  e.fmt = RxInfo::fmt(pkt->rx_ctrl, 0); e.mcs = RxInfo::mcs(pkt->rx_ctrl, 0); e.bw = RxInfo::bw(pkt->rx_ctrl, 0);
+  e.noise = pkt->rx_ctrl.noise_floor; e.ts = pkt->rx_ctrl.timestamp;
   memcpy(e.data, pkt->payload, e.len);
   if (!evPush(e)) dropped++;
 }
@@ -548,6 +667,18 @@ extern "C" int bleGapEventCb(struct ble_gap_event *event, void *arg) {
       d->addr.val[5], d->addr.val[4], d->addr.val[3], d->addr.val[2], d->addr.val[1], d->addr.val[0]);
     if (!evPush(e)) dropped++;
   }
+#if WITH_BLE_EXT
+  else if (event->type == BLE_GAP_EVENT_EXT_DISC) {
+    const struct ble_gap_ext_disc_desc *d = &event->ext_disc;
+    Event e; memset(&e, 0, EV_HDR); e.type = 4; e.proto = P_BLE; e.rssi = d->rssi; e.origLen = d->length_data;
+    e.evtype = d->props; e.atype = d->addr.type; e.x1 = d->prim_phy; e.x2 = d->sec_phy; e.ch = d->sid; e.lqi = d->data_status;
+    e.len = e.origLen > MAX_PKT ? MAX_PKT : e.origLen;
+    memcpy(e.data, d->data, e.len);
+    snprintf(e.addr, sizeof(e.addr), "%02x:%02x:%02x:%02x:%02x:%02x",
+      d->addr.val[5], d->addr.val[4], d->addr.val[3], d->addr.val[2], d->addr.val[1], d->addr.val[0]);
+    if (!evPush(e)) dropped++;
+  }
+#endif
   return 0;
 }
 static void printEvent(const Event &e) {
@@ -556,13 +687,19 @@ static void printEvent(const Event &e) {
     return;
   }
   int h;
-  if (e.type == 2) h = snprintf(outBuf, 80, "CSI %u %d %s ", e.ch, e.rssi, e.addr);
+  if (e.type == 3) h = snprintf(outBuf, 80, "FTM %s %u %ld %ld %ld\r\n", e.addr, e.lqi, (long)e.v0, (long)e.v1, (long)e.v2);
+  else if (e.type == 4) h = snprintf(outBuf, 80, "RX BLEX %s %d %u %u %u %u %u %u ", e.addr, e.rssi, e.evtype, e.atype, e.x1, e.x2, e.ch, e.lqi);
+  else if (e.type == 2) h = snprintf(outBuf, 80, "CSI %u %d %s ", e.ch, e.rssi, e.addr);
   else switch (e.proto) {
-    case P_WIFI: h = snprintf(outBuf, 80, e.origLen > e.len ? "RX WIFI! %u %d " : "RX WIFI %u %d ", e.ch, e.rssi); break;
+    case P_WIFI:
+      if (metaOn) h = snprintf(outBuf, 80, "RXM WIFI%s %u %d %u %u %u %d %lu ", e.origLen > e.len ? "!" : "", e.ch, e.rssi, e.fmt, e.mcs, e.bw, e.noise, (unsigned long)e.ts);
+      else h = snprintf(outBuf, 80, e.origLen > e.len ? "RX WIFI! %u %d " : "RX WIFI %u %d ", e.ch, e.rssi);
+      break;
     case P_BLE: h = snprintf(outBuf, 80, "RX BLE %s %d %u %u ", e.addr, e.rssi, e.evtype, e.atype); break;
     case P_ZB: h = snprintf(outBuf, 80, "RX ZB %u %d %u ", e.ch, e.rssi, e.lqi); break;
     default: return;
   }
+  if (e.type == 3) { Serial.write((const uint8_t *)outBuf, h); return; }
   static const char digits[] = "0123456789abcdef";
   char *p = outBuf + h;
   for (int i = 0; i < e.len; ++i) { *p++ = digits[e.data[i] >> 4]; *p++ = digits[e.data[i] & 15]; }
@@ -583,6 +720,9 @@ void setup() {
   if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
     checkEsp("esp_event_loop_create_default", err); return;
   }
+#if WITH_FTM
+  if (!checkEsp("esp_event_handler_register", esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_FTM_REPORT, ftmReportCb, NULL))) return;
+#endif
   platformReady = true;
   Serial.println(); Serial.println("ESP32-C5 USB radio bridge ready. Type HELP.");
 }

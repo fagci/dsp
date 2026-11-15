@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root=path.join(path.dirname(fileURLToPath(import.meta.url)),'..');
 const ctx=vm.createContext({Math,Uint8Array,DataView,ArrayBuffer,TextEncoder,TextDecoder,Array,Map,Set,Error,String,Number,BigInt,Object,Date,JSON,isNaN,parseInt});
 for(const f of ['hex-kernels.js','hex-formats.js','hex-gsm.js','wifisniff-kernels.js','radiobridge-kernels.js','pcap-kernels.js']) vm.runInContext(fs.readFileSync(path.join(root,'modules',f),'utf8'),ctx,{filename:f});
-vm.runInContext('this.H={HexAisAsm,hexAisPayload,pcapRead,pcapWrite,PCAP_SCHEMA,hexDetect,wifiLine,wifiRec,radioLine,radioStatus,radioRec,radioStatRec,radioCsiRec,radioTx,radioProbeResp,hexParse,hexBuild,hexToRec,wifiFromPkt,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
+vm.runInContext('this.H={HexAisAsm,hexAisPayload,pcapRead,pcapWrite,PCAP_SCHEMA,hexDetect,wifiLine,wifiRec,radioLine,radioStatus,radioRec,radioLineBuild,radioFtmRec,radioFtmCmd,radioStatRec,radioCsiRec,radioTx,radioProbeResp,hexParse,hexBuild,hexToRec,wifiFromPkt,hexFromRec,hexSum,hexExpr,hexSchemaCheck,hexFromHex,hexToHex,HEX_LIB,hexDump}',ctx);
 const H=ctx.H;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n,x); };
 const hex=s=>H.hexFromHex(s), toHex=b=>H.hexToHex(b);
@@ -267,6 +267,32 @@ const rsnIe='0100'+'000fac04'+'0100'+'000fac04'+'0100'+'000fac02'+'0c00';
   const zl2=H.radioLine('RX ZB 15 -60 200 '+'61880562 1a0000 3412 4800 0000 3412 1e11 4001 0600 0401 0107 012202'.replace(/ /g,'')), r3=H.radioRec(zl2,5);
   ok('bridge zigbee line',zl2.proto==='zb' && zl2.chan===15 && zl2.lqi===200 && r3.src==='1234' && r3.net==='1a62' && r3.zb_cluster===6 && r3.zcl_cmd===2,JSON.stringify(r3));
   ok('bridge tx lines',H.radioTx('aabbcc','WIFI')==='TX WIFI aabbcc' && H.radioTx('zb 01 02 03','WIFI',true)==='TX ZB 010203 CSMA' && H.radioTx({hex:'0a0b',proto:'ble'},'WIFI')==='TX BLE 0a0b' && H.radioTx(hex('ff00'),'ble')==='TX BLE ff00' && H.radioTx('zz','WIFI')===null && H.radioTx('aa','XX')===null); }
+  // META: RXM WIFI — формат, MCS, ширина, шум, метка времени; круг «собрали → разобрали»
+  { const prb='4000 0000 ffffffffffff aabbccddee09 ffffffffffff 1000'.replace(/ /g,'')+ie(0,'')+ie(1,'8284');
+    const ml=H.radioLine('RXM WIFI 36 -50 4 7 40 -92 123456 '+prb), mr=H.radioRec(ml,5);
+    ok('bridge RXM line: PHY meta',ml.meta.fmt===4 && ml.chan===36 && mr.phy==='11ax' && mr.mcs===7 && mr.bw===40 && mr.noise===-92 && mr.snr===42 && mr.ts_us===123456 && mr.kind==='probe-req',JSON.stringify(mr));
+    ok('bridge RXM truncated + legacy names',H.radioLine('RXM WIFI! 6 -60 0 3 20 -95 9 '+prb).trunc===true && H.radioRec(H.radioLine('RXM WIFI 6 -60 1 3 20 -95 9 '+prb),5).phy==='11a/g' && H.radioRec(H.radioLine('RXM WIFI 6 -60 2 3 20 -95 9 '+prb),5).phy==='11n');
+    const back=H.radioLineBuild(ml); ok('bridge RXM build/parse round trip',back==='RXM WIFI 36 -50 4 7 40 -92 123456 '+prb && JSON.stringify(H.radioLine(back))===JSON.stringify(ml),back);
+    ok('bridge RXM garbage',H.radioLine('RXM WIFI 36 -50 9x 7 40 -92 1 aa')===null && H.radioLine('RXM WIFI 36 -50 4 7 40 -92 1')===null); }
+  // BLE 5: RX BLEX — расширенная реклама, phy, sid, обрезка; legacy в BLEX получает привычный kind
+  { const adv='0201061109'+'4d794c6f6e6752616e6765'.padEnd(2*16,'0'), xl=H.radioLine('RX BLEX 11:22:33:44:55:66 -91 0 1 3 3 5 0 '+adv), xr=H.radioRec(xl,5);
+    ok('bridge BLEX: extended adv on coded PHY',xl.ext.phy1===3 && xr.kind==='ext_adv' && xr.phy==='coded' && xr.sid===5 && xr.ext===1 && xr.partial===0 && xr.src==='11:22:33:44:55:66' && xr.rssi===-91,JSON.stringify(xr));
+    const lg=H.radioRec(H.radioLine('RX BLEX 11:22:33:44:55:66 -60 19 0 1 1 0 0 0201060509'+'4d794150'),5);
+    ok('bridge BLEX: legacy PDU keeps adv_ind kind',lg.kind==='adv_ind' && lg.ext===0 && lg.phy==='1M' && lg.name==='MyAP',JSON.stringify(lg));
+    const sr=H.radioRec(H.radioLine('RX BLEX 11:22:33:44:55:66 -60 8 0 2 2 1 2 0201'),5);
+    ok('bridge BLEX: scan response / truncated',sr.kind==='ext_scan_rsp' && sr.trunc===1 && H.radioRec(H.radioLine('RX BLEX 11:22:33:44:55:66 -60 1 0 1 2 1 1 0201'),5).partial===1);
+    const f=H.radioLine('RX BLEX aa:bb:cc:dd:ee:ff -70 3 1 2 2 9 0 '+adv); ok('bridge BLEX build/parse round trip',JSON.stringify(H.radioLine(H.radioLineBuild(f)))===JSON.stringify(f));
+    ok('bridge BLEX legacy event mapping',[[19,0],[21,1],[18,2],[16,3],[27,4]].every(([p,e])=>H.radioLine('RX BLEX 11:22:33:44:55:66 -60 '+p+' 0 1 1 0 0 02').evtype===e)); }
+  // FTM: дальность 802.11mc (тест-строки не излучаются — только разбор)
+  { const fl=H.radioLine('FTM aa:bb:cc:dd:ee:ff 0 400 380 450'), fr=H.radioFtmRec(fl,0,5);
+    ok('bridge FTM line',fl.ftm===true && fl.peer==='aa:bb:cc:dd:ee:ff' && fl.distCm===450 && fr.kind==='ftm' && fr.ok===1 && fr.dist_m===4.5 && fr.rtt_ns===38 && fr.id==='aa:bb:cc:dd:ee:ff',JSON.stringify(fr));
+    ok('bridge FTM RTT cross-check (c·t/2)',Math.abs(fr.dist_rtt_m-6)<0.05,JSON.stringify(fr));
+    ok('bridge FTM calibration offset and clamp',H.radioFtmRec(fl,1.5,5).dist_m===3 && H.radioFtmRec(fl,9,5).dist_m===0);
+    const bad=H.radioFtmRec(H.radioLine('FTM aa:bb:cc:dd:ee:ff 3 0 0 0'),0,5);
+    ok('bridge FTM failure has no distance',bad.ok===0 && bad.dist_m===null && bad.status==='no-response',JSON.stringify(bad));
+    ok('bridge FTM build/parse round trip',H.radioLineBuild(fl)==='FTM aa:bb:cc:dd:ee:ff 0 400 380 450' && JSON.stringify(H.radioLine(H.radioLineBuild(fl)))===JSON.stringify(fl));
+    ok('bridge FTM command',H.radioFtmCmd('AA:BB:CC:DD:EE:FF','16',0)==='FTM aa:bb:cc:dd:ee:ff 16' && H.radioFtmCmd('aa:bb:cc:dd:ee:ff 64 36',16,0)==='FTM aa:bb:cc:dd:ee:ff 64 36' &&
+      H.radioFtmCmd({src:'aa:bb:cc:dd:ee:ff',chan:11},16,0)==='FTM aa:bb:cc:dd:ee:ff 16 11' && H.radioFtmCmd('aa:bb:cc:dd:ee:ff 3',16,0)==='FTM aa:bb:cc:dd:ee:ff 8' && H.radioFtmCmd('zz',16,0)===null && H.radioFtmCmd('',16,0)===null); }
   const sl=H.radioLine('STAT 6 250 40 5200 -42 -61 125 3'), sr=H.radioStatRec(sl,5);
   ok('bridge STAT window → record',sl.stat && sr.kind==='chan-stat' && sr.id==='ch6' && sr.chan===6 && sr.rssi_max===-42 && sr.busy===12.5 && sr.fps===160 && sr.drop===3);
   ok('bridge STAT empty channel',H.radioStatRec(H.radioLine('STAT 11 250 0 0 -127 -127 0 0'),5).rssi_max===-127);
