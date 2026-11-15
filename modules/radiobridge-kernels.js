@@ -103,6 +103,27 @@ function radioCsiRec(f,now){
     csi:amp.join(','), csi_ph:ph.join(','), text:'csi '+f.src+' ch'+f.chan+' '+n+' subcarriers'};
 }
 
+// шифрование точки доступа как в airodump-ng: ENC (OPN / WEP / WPA / WPA2 / WPA3 / WPA2/WPA3 / OWE), CIPHER (CCMP / TKIP / GCMP …), AUTH (PSK / SAE / MGT / OWE / OPN)
+// по полям Beacon / Probe response: RSN (ie.rsn.akm / pairwise — списки наборов по 4 байта подряд), вендорный WPA и бит Privacy в capabilities
+const RADIO_AKM={1:'MGT',2:'PSK',3:'MGT',4:'PSK',5:'MGT',6:'PSK',8:'SAE',9:'SAE',11:'MGT',12:'MGT',18:'OWE'};
+const RADIO_CIPHER={1:'WEP40',2:'TKIP',4:'CCMP',5:'WEP104',8:'GCMP',9:'GCMP-256',10:'CCMP-256'};
+function radioSuites(hex,names){
+  const out=[], s=String(hex||'').toLowerCase();
+  for(let i=0;i+8<=s.length;i+=8){ if(s.slice(i,i+6)!=='000fac') continue; const n=names[parseInt(s.slice(i+6,i+8),16)]; if(n && !out.includes(n)) out.push(n); }
+  return out;
+}
+function radioWifiEnc(o){
+  const rsn=o['ie.rsn.version']!==undefined, wpa=Object.keys(o).some(k=>/^ie\.wpa\./.test(k));
+  const akm=rsn ? radioSuites(o['ie.rsn.akm'],RADIO_AKM) : [], ciph=rsn ? radioSuites(o['ie.rsn.pairwise'],RADIO_CIPHER) : [];
+  let enc;
+  if(rsn){
+    enc=akm.includes('OWE') ? 'OWE' : akm.includes('SAE') ? (akm.includes('PSK') || akm.includes('MGT') ? 'WPA2/WPA3' : 'WPA3') : 'WPA2';
+    if(wpa && enc==='WPA2') enc='WPA2/WPA';
+  } else if(wpa) enc='WPA';
+  else enc=(+o['body.capab']||0)&0x10 ? 'WEP' : 'OPN';
+  return {enc, cipher:ciph.join('/'), auth:akm.length ? akm.join('/') : enc==='OPN' ? 'OPN' : ''};
+}
+
 function radioRec(f,now){
   const res=hexParse(RADIO_SCHEMA[f.proto],f.bytes), o=hexToRec(res);
   const r={t:now||Date.now(), proto:f.proto, chan:f.chan, rssi:f.rssi, len:f.bytes.length};
@@ -119,6 +140,7 @@ function radioRec(f,now){
     r.kind=f.ext && !(f.ext.props&16) ? (f.ext.props&8 ? 'ext_scan_rsp' : 'ext_adv') : RADIO_BLE_EVT[f.evtype] || 'event '+f.evtype;
     r.name=o['ad.name'] || o['ad.short_name'] || '';
   } else if(f.proto==='wifi' && o['ie.ssid']!==undefined) r.ssid=o['ie.ssid'];
+  if(f.proto==='wifi' && (r.kind==='beacon' || r.kind==='probe-resp')) Object.assign(r,radioWifiEnc(o));
   r.id=r.src || r.net || '?';
   r.text=f.proto+' '+(r.kind||'')+' '+(r.src||'')+(r.dst ? ' → '+r.dst : '')+(r.ssid ? ' "'+r.ssid+'"' : r.name ? ' "'+r.name+'"' : '')+
     (f.chan!==undefined ? ' ch'+f.chan : '')+' '+f.rssi+' dBm';

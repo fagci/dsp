@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ctx = vm.createContext({String, Array, Object, RegExp, Math});
 vm.runInContext(fs.readFileSync(path.join(root, 'modules/tblskin-kernels.js'), 'utf8'), ctx, {filename: 'tblskin-kernels.js'});
-vm.runInContext('this.K={TBL_SKINS,TBL_SKIN_VARS,tblSkin,tblSkinValue,tblSkinParse,tblSkinVars}', ctx);
+vm.runInContext('this.K={TBL_SKINS,TBL_SKIN_VARS,tblSkin,tblSkinValue,tblSkinParse,tblSkinVars,tblAgo}', ctx);
 const K = ctx.K;
 let bad = 0;
 const eq = (n, a, b) => { const sa = JSON.stringify(a), sb = JSON.stringify(b); if (sa !== sb) { bad++; console.log('FAIL', n, sa, '!=', sb); } else console.log('ok  ', n); };
@@ -21,4 +21,10 @@ eq('parse: known variables only', K.tblSkinParse('--tk-r:14px; --tk-av : 48px ;-
 eq('parse: case of the name, junk, empty', [K.tblSkinParse('--TK-R:2px'), K.tblSkinParse('nonsense'), K.tblSkinParse('')], [{'--tk-r': '2px'}, {}, {}]);
 eq('vars: the custom ones win over the skin', K.tblSkinVars('soft', '--tk-r:2px')['--tk-r'], '2px');
 eq('vars: the skin without custom', K.tblSkinVars('dense', '')['--tk-av'], '24px');
+// формат ago: «сколько назад» от метки времени (мс или секунды Unix)
+{ const N = 1.7e12, A = (d, v) => K.tblAgo(v === undefined ? N - d : v, N);
+  eq('ago: now / seconds', [A(0), A(900), A(5000), A(59000)], ['now', 'now', '5 s ago', '59 s ago']);
+  eq('ago: minutes, hours, days', [A(65000), A(3600000 + 125000), A(2 * 86400000 + 5 * 3600000)], ['1 min 05 s ago', '1 h 02 min ago', '2 d 5 h ago']);
+  eq('ago: Unix seconds are accepted', K.tblAgo(N / 1000 - 30, N), '30 s ago');
+  eq('ago: future, text, empty', [A(-60000), K.tblAgo('x', N), K.tblAgo(null, N), K.tblAgo(12, N)], ['', '', '', '']); }
 console.log(bad ? 'FAILED ' + bad : 'all ok'); process.exit(bad ? 1 : 0);

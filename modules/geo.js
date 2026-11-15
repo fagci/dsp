@@ -564,7 +564,7 @@ def({ id:'recEnt', title:'Rec → Entities', cat:'Data', kw:'entity entities lin
           {n:'topMode',t:'select',opts:['all records','only top devices'],d:'all records',label:'records: wire «top» (Follow Detector rows, Table rows) and pass only those devices'},
           {n:'topN',t:'range',min:1,max:100,step:1,d:10,label:'top: first N rows of the list',adv:true},
           {n:'topBy',t:'text',d:'addr|bssid|dev|id',label:'top: record field(s) matched to the list id (a|b)',adv:true},
-          {n:'tpl',t:'select',opts:['—','GSM cells','Digital voice (DMR / P25 / NXDN)','Radio (Wi-Fi / BLE / Zigbee)','Wi-Fi map (nodes · links · packets)','Phone radios (Wi-Fi · BLE · Bluetooth)','Network scan (hosts · ports · devices)','Traceroute (path to a host)'],d:'—',label:'insert rules',
+          {n:'tpl',t:'select',opts:['—','GSM cells','Digital voice (DMR / P25 / NXDN)','Radio (Wi-Fi / BLE / Zigbee)','Wi-Fi map (nodes · links · packets)','Wi-Fi airodump (APs · stations)','Phone radios (Wi-Fi · BLE · Bluetooth)','Network scan (hosts · ports · devices)','Traceroute (path to a host)'],d:'—',label:'insert rules',
            fn:n=>{ const t=ENT_TEMPLATES[n.p.tpl]; if(t){ n.p.rules=(n.p.rules?n.p.rules.trimEnd()+'\n':'')+t; } n.p.tpl='—'; rebuildNode(n); markTopoDirty(); }}],
   init:n=>{ n.in=0; n.outN=0; n.err=''; },
   process(n,I){
@@ -629,6 +629,13 @@ node!: proto=wifi dst=ff:ff:ff:ff:ff:ff | id={dst}, type=broadcast, label=broadc
 link!: proto=wifi kind=beacon bssid dst | id={bssid}>{dst}:beacon, from={bssid}, to={dst}, label=beacon, type=beacon, dashes=1, color=#9aa0a6
 link!: proto=wifi kind~^(qos-)?data$ tods=0 fromds=0 src dst~^([0-9a-f][02468ace]:|ff:ff:ff:ff:ff:ff$) | id={src}>{dst}:data, from={src}, to={dst}, label=data, type=data
 pkt!: proto=wifi src | id={t}:{src}:{seq|len}, t, kind, src, dst, ap={bssid}, chan, rssi, len`,
+  'Wi-Fi airodump (APs · stations)':
+`# как airodump-ng: два порта. ap — точки (bssid, pwr, beacons, ch, enc, cipher, auth, ssid), sta — станции (station, bssid точки, pwr, frames, probe); время последнего кадра даёт колонка last самой Table с key=id (формат ago)
+# счётчики {@n} общие на сущность: beacons = beacon + probe-resp точки, frames = data + probe-req станции; скрытая сеть — пустой ssid; enc/cipher/auth считает Radio Bridge из RSN / WPA / бита Privacy
+ap!: proto=wifi kind=beacon|probe-resp bssid | id={bssid}, bssid, pwr={rssi}, beacons={@n}, ch={ie.channel|chan}, enc, cipher, auth, ssid
+sta!: proto=wifi kind~^(qos-)?data$ tods=1 src~^[0-9a-f][02468ace]: bssid | id={src}, station={src}, bssid, pwr={rssi}, frames={@n}, ch={chan}
+sta!: proto=wifi kind=probe-req src ie.ssid | id={src}, station={src}, pwr={rssi}, frames={@n}, ch={chan}, probe={ie.ssid}
+sta!: proto=wifi kind=probe-req src !ie.ssid | id={src}, station={src}, pwr={rssi}, frames={@n}, ch={chan}`,
   'Phone radios (Wi-Fi · BLE · Bluetooth)':
 `# записи приложения DSP (Phone sensors): три выхода — gw (Wi-Fi), gb (BLE), gt (Bluetooth classic); узлы и связи вместе, таблица с key=id. Phone — центр каждого графа
 gw: src=wifi | id=Phone, type=me, label=Phone, shape=star, color=#e8a200
