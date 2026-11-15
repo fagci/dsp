@@ -2110,6 +2110,7 @@ function saDb(x){
   SA_U32[0]=(b&0x7fffff)|0x3f800000; const f=SA_F32[0];
   return 6.020599913*(((b>>>23)-127)+((((-0.08001167895673834*f+0.63551733008045)*f-2.099419264150444)*f+4.04963655245822)*f-2.505622853644049));
 }
+const saInLive=(l,f)=>f>=l[0]&&f<=l[1];
 const SA_H_DB0=-160, SA_H_STEP=.75, SA_H_MIN=512;
 function saHistPush(n, s){
   const budget=+n.p.wfMem*1e6;
@@ -2123,6 +2124,10 @@ function saHistPush(n, s){
   const sp=h.spare&&h.spare[0]&&h.spare[0].length===N ? h.spare : null; h.spare=null;
   const q=sp?sp[0]:new Uint8Array(N), k=1/SA_H_STEP;
   for(let i=0;i<N;i++){ const v=(saDb(m[i])-SA_H_DB0)*k; q[i]=v<0?0:v>255?255:v; }
+  if(s.live){                                      // прослушивание при паузе развёртки: вне свежего участка данных нет
+    const a=Math.max(0,Math.ceil((s.live[0]-lo)/bin)), b=Math.min(N-1,Math.floor((s.live[1]-lo)/bin));
+    q.fill(0,0,Math.min(N,a)); if(b+1<N) q.fill(0,Math.max(0,b+1));
+  }
   const lv=[q];
   for(let a=q, L=1; a.length>SA_H_MIN; L++){
     const len=Math.ceil(a.length/4), b=sp&&sp[L]&&sp[L].length===len ? sp[L] : new Uint8Array(len);
@@ -3117,7 +3122,10 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
       // (fft/octave/wavelet/cepstrum) объект спектра переиспользуется (мутируется на месте, без
       // лишних аллокаций в реальном времени) — для них сверяем счётчик rev, а не ссылку;
       // у кого rev нет (на всякий случай) — сверяем ссылку самого объекта.
-      const fresh = n.s.rev!=null ? n.s.rev!==n._lastRev : n.s!==n._lastSpecRef;
+      let fresh = n.s.rev!=null ? n.s.rev!==n._lastRev : n.s!==n._lastSpecRef;
+      const live=n.s.live;
+      // слушаем маркер: панорама обновляется на каждом кадре живого спектра, а строка водопада — не чаще rowMs (ось времени ровная)
+      if(fresh && live && n._wfInited){ const t=performance.now(); if(t-(n._liveRowT||0)<Math.max(100,+n.p.rowMs||400)) fresh=false; else n._liveRowT=t; }
       if(fresh || !n._wfInited){
         // палитру не привязываем к триггеру "новая строка" — иначе смена палитры без новых
         // данных продавила бы в водопад лишнюю (повторную) строку, как раз то, от чего защищает
@@ -3136,7 +3144,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
           const ci=cw ? cw.map[x] : 0;
           const v=ci<0 ? 0 : clamp((saDb(cw ? cl[ci] : magReduce(m,edgeXwf[x],edgeXwf[x+1]))-wLo)/((wHi-wLo)||1),0,1);
           const hk=heatIdx(v)*3, k=x*4;
-          if(!n._inXwf[x] || ci<0){ line[k]=line[k+1]=line[k+2]=0; line[k+3]=255; continue; }
+          if(!n._inXwf[x] || ci<0 || (live && !saInLive(live,saFreqB(n,bLo,bHi,x/(Wp-1))))){ line[k]=line[k+1]=line[k+2]=0; line[k+3]=255; continue; }
           line[k]=pal[hk]; line[k+1]=pal[hk+1]; line[k+2]=pal[hk+2]; line[k+3]=255; }
         if(n.wfGl){ const [wl,wh]=saBounds(n); saWfGlWrite(n.wfGl,Wp,line,wl,wh); }
         else { n.ocx.drawImage(n.off,0,1); n.ocx.putImageData(new ImageData(line,Wp,1),0,0); }
