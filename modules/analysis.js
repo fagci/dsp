@@ -1991,7 +1991,10 @@ function saMarkAdd(n,o){
   const dur=+g('dur')||0, label=String(g('label','text','name')??'').slice(0,60);
   let color=g('color','colour'); if(color!=null && !(typeof CSS!=='undefined' && CSS.supports('color',String(color)))) color=null;
   const list=n.userMarks||(n.userMarks=[]);
-  list.push({t0, t1:t0+dur*1000, lo:full?0:lo, hi:full?0:hi, full, label, color});
+  const fill=Math.min(1,Math.max(0,+g('fill')||0)), id=g('id');        // fill — плотность заливки (сплошной прямоугольник без подписи); id — повторная запись обновляет метку (идущий сигнал растёт)
+  const old=id!=null ? list.find(m=>m.id===String(id)) : null;
+  if(old){ old.t1=t0+dur*1000; old.lo=full?0:lo; old.hi=full?0:hi; return; }
+  list.push({t0, t1:t0+dur*1000, lo:full?0:lo, hi:full?0:hi, full, label, color, fill, id:id!=null ? String(id) : null});
   if(list.length>500) list.splice(0,list.length-500);
 }
 function saWfPlace(n){
@@ -2279,7 +2282,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
         {n:'edge',t:'num'},
         {n:'sigs',t:'bands',tip:'detected signals (Signal Detector → bands): triangles over the peaks'},
         {n:'marksTxt',t:'txt',tip:'marks as text, one per line: from=433920 to=433950 label=start t=1231231123'},
-        {n:'marksRec',t:'rec',tip:'marks as records with the same fields (from/to, label, color, t, dur)'},
+        {n:'marksRec',t:'rec',tip:'marks as records with the same fields (from/to, label, color, t, dur; fill — solid rectangle, id — a record with the same id extends the mark)'},
         {n:'m1',t:'num'},
         {n:'m2',t:'num'},
         {n:'m3',t:'num'},

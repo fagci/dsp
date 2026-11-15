@@ -1703,7 +1703,7 @@ function saUserMarks(n,cx,W,hs,hw,dpr){
     const i1=Math.max(i0, saWfLower(C,tb+1,first,last)-1);
     const col=m.color || (m.label ? saMarkColor(m.label) : themeColor('--hi'));
     const dTop=Math.round(hs*dpr)+(last-i1), dH=Math.max(2,i1-i0+1);          // границы метки — по строкам водопада (целые физические пиксели)
-    const y=dTop/dpr, h=dH/dpr, txt=m.label || new Date(m.t0).toLocaleTimeString([], {hour12:false});
+    const y=dTop/dpr, h=dH/dpr, txt=m.label || (m.fill>0 ? '' : new Date(m.t0).toLocaleTimeString([], {hour12:false}));
     let x1=0, x2=W;
     if(!m.full){
       x1=saPos(n,m.lo)*W; x2=saPos(n,m.hi)*W; if(x1>x2){ const t=x1; x1=x2; x2=t; }
@@ -1715,9 +1715,9 @@ function saUserMarks(n,cx,W,hs,hw,dpr){
       const yy=(dTop+Math.floor(dH/2)+.5)/dpr;
       cx.globalAlpha=.9; cx.beginPath(); cx.moveTo(0,yy); cx.lineTo(W,yy); cx.stroke();
     } else {
-      cx.globalAlpha=.14; cx.fillStyle=col; cx.fillRect(x1,y,x2-x1,h);
+      cx.globalAlpha=m.fill>0 ? m.fill : .14; cx.fillStyle=col; cx.fillRect(x1,y,x2-x1,h);
       const xa=(Math.floor(x1*dpr)+.5)/dpr, xb=(Math.max(Math.floor(x1*dpr)+1,Math.floor(x2*dpr))+.5)/dpr, ya=(dTop+.5)/dpr, yb=(dTop+dH-.5)/dpr;
-      cx.globalAlpha=.95; cx.beginPath(); cx.moveTo(xa,ya); cx.lineTo(xb,ya); cx.lineTo(xb,yb); cx.lineTo(xa,yb); cx.lineTo(xa,ya); cx.stroke();
+      cx.globalAlpha=m.fill>0 ? .5 : .95; cx.beginPath(); cx.moveTo(xa,ya); cx.lineTo(xb,ya); cx.lineTo(xb,yb); cx.lineTo(xa,yb); cx.lineTo(xa,ya); cx.stroke();
     }
     if(txt){
       const tw=Math.ceil(cx.measureText(txt).width)+6, lx=Math.max(1,Math.min(W-tw-1,x1)), ly=Math.round(Math.max(hs,m.full?y+h/2-11:y)*dpr)/dpr;
