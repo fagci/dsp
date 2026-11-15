@@ -217,7 +217,7 @@ function gpsAcquire(iq,fs,prn,o={}){
 function gpsTrackNew(prn,fs,acq,o={}){
   const ca=gpsCA(prn), cx=new Int8Array(1025); for(let i=-1;i<=1023;i++) cx[i+1]=ca[((i%1023)+1023)%1023];
   const ch={prn,fs,cx,p:acq.p0,n:0,started:false,ne:0,w:2*Math.PI*acq.dopp,wInt:2*Math.PI*acq.dopp,th:{r:1,i:0},acc:new Float64Array(6),
-    S:[],I:[],Q:[],pI0:0,pQ0:0,lock:0,fllN:o.fllN||300,bl:o.bl||15,dllG:0.02,dllG0:0.1,x:0,
+    S:[],I:[],Q:[],pI0:0,pQ0:0,lock:0,fllN:o.fllN||300,bl:o.bl||15,keep:o.keep||0,drop:0,dllG:0.02,dllG0:0.1,x:0,
     carrierHz(){ return this.w/(2*Math.PI); }};
   ch.step=(GPS_FCODE*(1+acq.dopp/GPS_FL1))/fs; ch.cd=Math.cos(ch.w/fs); ch.sd=Math.sin(ch.w/fs);
   return ch;
@@ -256,6 +256,7 @@ function gpsTrackPush(ch,iq){
       eI=eQ=pI=pQ=lI=lQ=0;
     }
   }
+  if(ch.keep && ch.S.length>ch.keep*1.25){ const d=Math.floor((ch.S.length-ch.keep)/20)*20; ch.S.splice(0,d); ch.I.splice(0,d); ch.Q.splice(0,d); ch.drop+=d; } // кратно 20: фаза бит не сдвигается
   a[0]=eI;a[1]=eQ;a[2]=pI;a[3]=pQ;a[4]=lI;a[5]=lQ; ch.p=p; ch.th.r=cr; ch.th.i=ci; ch.cd=cd; ch.sd=sd; ch.step=step; ch.n=base+L;
   return ch;
 }
@@ -273,17 +274,24 @@ function gpsChannelNav(ch){
   const frames=gpsFindFrames(bits), store={};
   for(const f of frames) gpsEphAdd(store,f.sf);
   const nav={ok:frames.length>0,bits,frames,k0:bs.k0,eph:store.ready?store.eph:null};
-  if(frames.length){ const f=frames[0]; nav.ref={epoch:bs.k0+20*f.pos,tsv:(f.sf.tow-1)*6}; } // начало подкадра: ref.epoch — номер эпохи канала, tsv — время спутника
+  if(frames.length){ const f=frames[0]; nav.ref={epoch:bs.k0+20*f.pos+(ch.drop||0),tsv:(f.sf.tow-1)*6}; } // начало подкадра: ref.epoch — абсолютный номер эпохи канала (с учётом отброшенных ch.drop), tsv — время спутника
   return nav;
 }
 // псевдодальности на общий момент приёма. chs: [{S, fs, ref:{epoch,tsv}, eph, prn}] → [{prn,x,y,z,pr}]
 function gpsPseudoranges(chs){
   if(!chs.length) return [];
-  const Sref=Math.min(...chs.map(c=>c.S[c.S.length-1]))-2*chs[0].fs/1000, fs=chs[0].fs, t=[];
-  for(const c of chs){ let lo=0,hi=c.S.length-1; while(lo<hi){ const m=(lo+hi+1)>>1; if(c.S[m]<=Sref) lo=m; else hi=m-1; }
-    t.push(c.ref.tsv+(lo-c.ref.epoch)*0.001+(Sref-c.S[lo])/fs); }
+  const fs=chs[0].fs, Sg=(c,i)=>c.S[i]+(c.off||0), Sref=Math.min(...chs.map(c=>Sg(c,c.S.length-1)))-2*fs/1000, t=[];
+  for(const c of chs){ let lo=0,hi=c.S.length-1; while(lo<hi){ const m=(lo+hi+1)>>1; if(Sg(c,m)<=Sref) lo=m; else hi=m-1; }
+    t.push(c.ref.tsv+(lo+(c.drop||0)-c.ref.epoch)*0.001+(Sref-Sg(c,lo))/fs); }
   const tRef=t.reduce((a,b)=>a+b,0)/t.length+0.075;
   return chs.map((c,i)=>{ const dt0=gpsSatPos(c.eph,t[i]).dt, s=gpsSatPos(c.eph,t[i]-dt0); return {prn:c.prn,x:s.x,y:s.y,z:s.z,pr:GPS_C*(tRef-t[i])+GPS_C*dt0}; });
+}
+// сообщение NMEA GGA по решению (время — неделя GPS → UTC, поправка 18 с); fix {lat,lon,h,pdop}
+function gpsNmeaGGA(fix,tow,nsat){
+  const utc=((tow-18)%86400+86400)%86400, hh=Math.floor(utc/3600), mm=Math.floor(utc%3600/60), ss=utc%60, p2=(v,w)=>String(v).padStart(w,'0');
+  const dm=(v,w)=>{ const a=Math.abs(v), d=Math.floor(a), m=(a-d)*60; return p2(d,w)+p2(m.toFixed(4),7); };
+  const body='GPGGA,'+p2(hh,2)+p2(mm,2)+p2(ss.toFixed(2),5)+','+dm(fix.lat,2)+','+(fix.lat>=0?'N':'S')+','+dm(fix.lon,3)+','+(fix.lon>=0?'E':'W')+',1,'+p2(nsat,2)+','+fix.pdop.toFixed(1)+','+fix.h.toFixed(1)+',M,0.0,M,,';
+  let c=0; for(let i=0;i<body.length;i++) c^=body.charCodeAt(i); return '$'+body+'*'+c.toString(16).toUpperCase().padStart(2,'0');
 }
 
 // ---------- синтетический эфир ----------
