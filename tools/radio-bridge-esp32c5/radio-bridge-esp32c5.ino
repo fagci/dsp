@@ -478,7 +478,7 @@ static void cmdFtm(char *a) {
   if (ch != wifiChan) { if (!checkEsp("esp_wifi_set_channel", esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE))) return; wifiChan = ch; }
   wifi_ftm_initiator_cfg_t cfg = {};
   for (int i = 0; i < 6; ++i) cfg.resp_mac[i] = (uint8_t)m[i];
-  cfg.channel = (uint8_t)ch; cfg.frm_count = fc; cfg.burst_period = 2; cfg.use_get_report_api = false;
+  cfg.channel = (uint8_t)ch; cfg.frm_count = fc; cfg.burst_period = 2;                  // report comes via the event (use_get_report_api absent in some SDKs, default false)
   if (checkEsp("esp_wifi_ftm_initiate_session", esp_wifi_ftm_initiate_session(&cfg))) Serial.println("OK FTM");
   else Serial.println("ERR FTM");
 #else
