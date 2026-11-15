@@ -5,4 +5,5 @@ The **dashboard** button turns the canvas into a grid of panes. Each pane shows 
 - **Module graph pane** — the ordinary canvas inside a tile, next to the modules open in other panes.
 - Pinning a module (the pin in its header) puts it on the dashboard.
 - **Tiles-only mode**: open the app with `?readonly-tiles` (for example `index.html?readonly-tiles#p=My patch`): only the tiles are shown, the layout cannot be changed.
+- **Clean tiles** (the ▭ button next to the page tabs, handy on a phone): pane headers and their buttons are hidden, only the content stays. Dividers are thicker with a grip and a much wider touch zone, so they are easy to grab and drag; press ▭ again to get the headers back (to split, close, pick modules).
 - Tile layouts are available among the presets (*Tile layouts*).
