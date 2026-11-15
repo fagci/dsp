@@ -1736,6 +1736,24 @@ select.aed-b{padding:0 6px}
 .sl-chip b{cursor:pointer;color:var(--dim);font-weight:400;padding-left:2px}
 .sl-chip b:hover{color:var(--err)}
 
+/* «чистые» тайлы: без шапок и кнопок панелей; разделители толще, зона захвата ±18px (тач — ±24px) */
+body.dashclean .dash-tools{display:none!important}
+body.dashclean .dash-split.row>.dash-resizer{width:8px}
+body.dashclean .dash-split.col>.dash-resizer{height:8px}
+body.dashclean .dash-split.row>.dash-resizer::before{left:-18px;right:-18px}
+body.dashclean .dash-split.col>.dash-resizer::before{top:-18px;bottom:-18px}
+body.dashclean .dash-resizer::after{content:'';position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);border-radius:2px;background:var(--dim);opacity:.7}
+body.dashclean .dash-split.row>.dash-resizer::after{width:2px;height:28px}
+body.dashclean .dash-split.col>.dash-resizer::after{height:2px;width:28px}
+@media (pointer:coarse){
+  body.dashclean .dash-split.row>.dash-resizer{width:10px}
+  body.dashclean .dash-split.col>.dash-resizer{height:10px}
+  body.dashclean .dash-split.row>.dash-resizer::before{left:-24px;right:-24px}
+  body.dashclean .dash-split.col>.dash-resizer::before{top:-24px;bottom:-24px}
+}
+#bar #dashPages .dpg.clean{color:var(--dim)}
+#bar #dashPages .dpg.clean.on{color:var(--acc)}
+
 /* ?readonly-tiles: только тайлы, без панелей и правки раскладки */
 body.rotiles #side,body.rotiles #bar,body.rotiles #scrim,body.rotiles #dashPages,body.rotiles .dash-tools,body.rotiles .dash-resizer,body.rotiles .dash-rail,body.rotiles .dash-pane.graph{display:none!important}
 

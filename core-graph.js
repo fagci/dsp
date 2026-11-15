@@ -2533,10 +2533,23 @@ function dashPagesRender(){
     b.onclick=()=>i===Graph.dashPage? openDashMenu(b) : dashPageGo(i);
     dashPagesEl.append(b);
   });
+  const cl=document.createElement('button'); cl.className='dpg clean'+(dashClean?' on':''); cl.textContent='▭';
+  cl.title='Clean tiles: hide pane headers and buttons (resize dividers stay). Tap again to bring them back';
+  cl.onclick=()=>dashCleanSet(!dashClean);
+  dashPagesEl.append(cl);
   const add=document.createElement('button'); add.className='dpg add'; add.textContent='+';
   add.title='New tile page';
   add.onclick=()=>dashPageAdd();
   dashPagesEl.append(add);
+}
+// «чистые» тайлы (для телефона): шапки и кнопки панелей скрыты, границы тянутся, разделители шире (styles.css: body.dashclean)
+let dashClean=LS.get('dsp-dashclean')==='1';
+document.body.classList.toggle('dashclean',dashClean);
+function dashCleanSet(on){
+  dashClean=!!on; LS.set('dsp-dashclean',dashClean?'1':'');
+  document.body.classList.toggle('dashclean',dashClean);
+  for(const t of dashGridEl?.querySelectorAll('.dash-tools.acts')||[]) t.classList.remove('acts');
+  dashPagesRender(); dashFitSoon();
 }
 let dashMenuEl=null;
 function closeDashMenu(){ dashMenuEl?.remove(); dashMenuEl=null; }
