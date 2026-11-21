@@ -3728,6 +3728,7 @@ function rtlChanLevel(n, ch, db){
 // остаётся размером под старую децимацию и гистерезис (проценты от size) снова начинает
 // значить не те доли секунды, для которых он посчитан — та же болезнь, которую decim лечит.
 function rtlResizeChannelRing(n, ch){
+  if(!n.ring) return;                                // до Connect кольца не выделены — сделает rtlStart
   const asize=Math.max(50000, Math.round(n.ring.size/n.decim));
   ch.aring={A:new Float32Array(asize), B:new Float32Array(asize), size:asize, w:0, filled:0, written:0};   // A — левый, B — правый
   // rebuffering=true с самого начала — свежее кольцо пусто, и это ровно то же состояние, что и
@@ -3737,19 +3738,20 @@ function rtlResizeChannelRing(n, ch){
   ch.readPos=0; ch.readCount=0; ch.rebuffering=true;
   ch.ringDecim=n.decim;
 }
-function rtlResetRing(n){
+function rtlResetRing(n, lazy){
   // размер кольца — под ~2с реального времени на ТЕКУЩЕМ sourceRate, а не фиксированное число
   // сэмплов: иначе на низком sample rate то же кольцо покрывает намного больше реального
   // времени, и порог гистерезиса (в процентах от размера) превращается в секунды ожидания.
   const SIZE=Math.max(500000, Math.min(8000000, Math.round((n.sourceRate||1024000)*2)));
-  n.ring={I:new Float32Array(SIZE), Q:new Float32Array(SIZE), size:SIZE, w:0, filled:0, written:0};
+  // до Connect кольца (16–20 МБ на узел) не нужны; в пресетах на 4 приёмника это ~80 МБ
+  n.ring=lazy ? null : {I:new Float32Array(SIZE), Q:new Float32Array(SIZE), size:SIZE, w:0, filled:0, written:0};
   // rebuffering=true с самого начала — то же "молчим, пока не накопится безопасный запас", что и
   // после настоящего провала в середине игры (см. rtlReadIQ), без отдельного случая под старт.
   n.ringReadPos=0; n.ringReadCount=0; n.ringRebuffering=true;   // чтение сырого IQ — отдельно от каналов
   // ~150мс потока (Уэлч берёт всё пришедшее между расчётами), не меньше двух максимальных БПФ (262144);
   // пишется независимо от режима демодуляции
   const SPEC_SIZE=clamp(Math.round((n.sourceRate||1024000)*0.15), 1<<19, 1<<22);
-  n.specRing={I:new Float32Array(SPEC_SIZE), Q:new Float32Array(SPEC_SIZE), size:SPEC_SIZE, w:0, filled:0, written:0};
+  n.specRing=lazy ? null : {I:new Float32Array(SPEC_SIZE), Q:new Float32Array(SPEC_SIZE), size:SPEC_SIZE, w:0, filled:0, written:0};
   n.specTaken=0;
   n.spec=null; n.specFreqs=null; n.lastSpec=0;
   // аудио-кольца каналов живут на децимированной частоте (sourceRate/decim), а не sourceRate —
@@ -3758,7 +3760,7 @@ function rtlResetRing(n){
   n.decim=rtlDecimFor(n.p.demod, n.sourceRate, n.p.bw);
   // аудио-кольца УЖЕ АКТИВНЫХ каналов пересоздаём под новый размер — сами воркеры не трогаем,
   // их переконфигурирует hardKey-проверка в process() на следующем тике (sourceRate там учтён)
-  for(const ch of n.ch) if(ch.active) rtlResizeChannelRing(n, ch);
+  for(const ch of n.ch) if(ch.active && n.ring) rtlResizeChannelRing(n, ch);
 }
 
 // Исходник демод-воркера. Цепочка: u8 → DC-блок → NCO сдвига → комплексный FIR-дециматор (канал,
@@ -5004,6 +5006,7 @@ async function iqOpenFile(n, given){
 async function rtlDisconnect(n){
   if(n.rec) await iqRecStop(n, n.rec.auto);
   n.reading=false;
+  n.ring=null; n.specRing=null; n.spec=null;
   for(const ch of n.ch){ if(ch.worker) ch.worker.terminate(); ch.worker=null; ch.aring=null; ch.active=false; }
   if(n.specWorker){ n.specWorker.terminate(); n.specWorker=null; }
   if(n.dev){ try{ await n.dev.close(); }catch(e){} n.dev=null; }
@@ -5580,7 +5583,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
   onReset:n=>{                                       // sample rate — на железо; частота центра не сбрасывается (нет умолчания)
     if(n.dev) n.dev.setSampleRate(rtlSafeSr(n.p.sr)).then(r=>{ n.sourceRate=r; rtlResetRing(n); })
       .catch(e=>{ n.status='sample rate change error: '+e.message; });
-    rtlResetRing(n); },
+    rtlResetRing(n, !n.dev); },
   params:[
     {n:'connect',t:'button',label:'Connect',fn:async n=>{ await rtlConnect(n); }},
     {n:'choose',t:'button',label:'Choose…',fn:async n=>{ await rtlConnect(n, true); }},
@@ -5614,7 +5617,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
        catch(e){ n.status='sample rate change error: '+e.message; } } }},
     // режим демодуляции/полоса/де-эмфазис — ОБЩИЕ на все 4 канала (проще UI); частота у каждого своя
     {n:'demod',t:'select',opts:DEMOD_OPTS,d:'WFM',label:'demodulation',
-     fn:n=>{ rtlResetRing(n); }},
+     fn:n=>{ rtlResetRing(n, !n.dev); }},
     // ширина полосы канала (ПЧ) — одна на режим, как в SDR++; её же тянут края шторки на спектре 'sa'
     {n:'bw',t:'range',min:500,max:300000,step:100,d:190000,log:true,label:'bandwidth, Hz'},
     {n:'deemph',t:'select',opts:['50','75','off'],d:'50',label:'WFM de-emphasis, µs'},
@@ -5696,7 +5699,7 @@ def({ id:'rtlsdr', title:'USB SDR', cat:'Sources',
             n.ch=[0,1,2,3].map(()=>({worker:null,aring:null,active:false,
               readPos:0,readCount:0,rebuffering:false,appliedOffset:0,
               hardKey:null,softKey:null,tuneFreq:null}));
-            rtlResetRing(n); },
+            rtlResetRing(n, true); },
   onResume:n=>{ if(n.dev) rtlResetRing(n); },        // стояли — кольца IQ и звука полны старым; начинаем с чистого
   dispose:n=>{ rtlDisconnect(n).catch(e=>console.error('rtlsdr dispose:',e)); },
   process(n,I){

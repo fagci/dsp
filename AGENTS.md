@@ -1,209 +1,150 @@
 # AGENTS.md — как работать с DSP workbench
 
-Браузерная DSP-лаборатория: граф модулей на канвасе, всё считается на клиенте, офлайн-PWA.
-Ванильный JS, **без сборки и без npm-зависимостей**: файлы подключаются классическими
-`<script>` в порядке массива `L` (`index.html`). Поэтому «проект» — это набор глобальных
-`const/function` из нескольких сотен файлов, а не импортов.
+Браузерная DSP-лаборатория: граф модулей на канвасе, всё на клиенте, офлайн-PWA. Ванильный JS,
+**без сборки и npm**: файлы подключаются `<script>` в порядке массива `L` (`index.html`), поэтому
+проект — глобальные `const/function` из сотен файлов, а не импорты. `CLAUDE.md` — доп. заметки
+(git/PR, офлайн, поля узла); при расхождении истина в коде.
 
-`CLAUDE.md` — дополнительные заметки для Claude-сессий (git/PR, офлайн-данные, грабли полей
-узла). Здесь они не дублируются; при расхождении истина — в коде.
-
-## Первые 60 секунд
+## Старт и размеры
 
 1. `git status --short` — не затереть чужую работу.
-2. `docs/PROJECT_MAP.md` — архитектура и точки входа; `docs/HANDOFF.md` — что делалось
-   в прошлой сессии и с чего продолжать. Карта может отставать: спорное проверяй `rg`.
-3. Найди задачу поиском (ниже), прочитай только нужный диапазон строк.
-4. После правки — `node --check`, профильный тест, `node tools/stamp.mjs`.
+2. `docs/PROJECT_MAP.md` (архитектура), `docs/HANDOFF.md` (что делали); карта может отставать — проверяй `rg`.
+3. `modules/` ~470 файлов (~215 `*-kernels.js`); `presets.js` ~11 800 строк, `core-graph.js` ~3 700,
+   `sw.js` ~680. `vendor/` ~49 МБ, `data/` ~8,5 МБ — не сканировать.
+4. Большие файлы: `wc -l` → `rg -n` по символу → `Read` ±40 строк; шире — только если структура непонятна.
 
-## Размеры (чтобы не читать лишнего)
+## Карта
 
-- `modules/` — ~470 файлов, из них ~215 `*-kernels.js`; `presets.js` ~11 800 строк,
-  `core-graph.js` ~3 700, `index.html` ~250, `sw.js` ~680, `tools/test-*.mjs` ~230.
-- `vendor/` ~49 МБ, `data/` ~8,5 МБ — **не сканировать** без явной необходимости.
-- Большие файлы читай диапазонами (`offset`/`limit`) после поиска по символу.
-
-## Карта: что где искать
-
-| Нужно | Где | Как найти |
+| Нужно | Где | Искать |
 |---|---|---|
-| Узел/модуль | `modules/*.js` | `id:'имя'`, `title:'…'`, `cat:'…'`, ключевые слова в `kw` |
-| Чистая логика, парсеры, кодеры | `modules/*-kernels.js` | имя функции/протокола; там же тестовые функции |
-| Регистрация модулей, движок | `core-engine.js` | `def` (строка ~730), `MOD`, `portsOf`, топосортировка |
+| Узел/модуль | `modules/*.js` | `id:'имя'`, `title:'…'`, `cat:'…'`, `kw` |
+| Логика, парсеры, кодеры | `modules/*-kernels.js` | имя функции/протокола (там же тесты) |
+| Движок, регистрация | `core-engine.js` | `def` (~730), `MOD`, `portsOf`, топосортировка |
 | Канвас, палитра, undo, хоткеи | `core-graph.js` | `addNode`, `addEdge`, `Undo`, `cmdk*`, `keydown` |
-| Общие DSP/хелперы | `core-dsp.js` | `bytesHex`, `bytesFromBits`, `bitsMsb`, FFT, фильтры |
-| Воркеры | `*-worker.js` | `importScripts(...)` — список ядер, доступных в воркере |
+| DSP/хелперы | `core-dsp.js` | `bytesHex`, `bytesFromBits`, `bitsMsb`, FFT, фильтры |
+| Воркеры | `*-worker.js` | `importScripts(...)` — ядра, доступные в воркере |
 | Пресеты/патчи | `presets.js` | `preset('Имя'`, `PRESETS`, `openPatch`, `getPatch` |
 | Справка | `help/*.md`, `README.md` | `help/README.md` — оглавление; `help/modules.md` — сгенерирован |
-| Загрузка и кэш | `index.html`, `sw.js` | массив `L` (`index.html:56`), `SHELL` (`sw.js:19`) |
-| Тесты | `tools/test-*.mjs` | имя протокола/модуля; загрузка ядер через `vm` |
-| Генераторы/сборки | `tools/gen-*.mjs`, `tools/stamp.mjs`, `tools/*/build.sh` | по имени артефакта |
+| Загрузка/кэш | `index.html`, `sw.js` | массив `L` (`index.html:56`), `SHELL` (`sw.js:19`) |
+| Тесты | `tools/test-*.mjs` | имя протокола; ядра грузятся через `vm` |
+| Генераторы | `tools/gen-*.mjs`, `tools/stamp.mjs`, `tools/*/build.sh` | по имени артефакта |
 | Офлайн-данные | `modules/filestore.js`, `data/`, `vendor/` | `OfflineData.*` |
 
-Модуль объявляется так (DOM — только в обычном `modules/*.js`, логика — в `*-kernels.js`):
+Модуль: `def({id, title, cat, kw, ins, outs, params, init(n){}, process(n,I){...}, draw(n){}})`
+(DOM — только в `modules/*.js`, логика — в `*-kernels.js`). `process` берёт узел `n`, входы `I`,
+возвращает пины. Состояние — в своих полях (`n.buf`, `n.sx`, …), **не** в
+`n.x/n.y/id/type/p/size/el/ports/out/b/lod` и не в `n.cv`.
+Категории `cat` для сужения: `Sources`, `Protocols`, `Decoders`, `Indicators`, `Analysis`, `Output`,
+`IQ`, `Music`, `Processing`, `Data`, `Tools`, `Control`, `Geo`, `Radio`, `Video`, `Audio`, `Modulation`.
 
-```js
-def({id, title, cat, kw, ins, outs, params, init(n){}, process(n,I){ return {...}; }, draw(n){}})
-```
+## Поиск
 
-`process` получает узел `n` и входы `I`, возвращает объекты выходных пинов. Состояние — в своих
-полях (`n.buf`, `n.sx`, …), **не** в `n.x/n.y/id/type/p/size/el/ports/out/b/lod` и не в `n.cv`.
-
-## Рецепты поиска
-
-В Kilo удобнее инструмент Grep (он на ripgrep) с `path`/`include`. По корню не искать —
-исключай тяжёлое:
+`rg` с `path`/`include`, по корню не искать; исключай `vendor/`, `data/`, `.git/`. `presets.js` —
+одна строка на 1–2 КБ: сначала `-l`/`-c`/`-m`/`--max-columns 200`, не `rg -n` по частым словам.
 
 ```sh
-rg -n -g '!vendor/**' -g '!data/**' -g '!.git/**' 'id:'"'"'hexStruct'"'"'' .
+rg -n "id:'fsk4'" modules                          # модуль; рядом *-kernels.js
+rg -n "^(function|const|let|var|class) dmrDataDone\b" modules   # определение; без якоря — использования
+rg -n "preset\('.*DMR|addNode\('dmr'" presets.js    # пресет и место модуля в графе
+rg -n "dmr" tools/test-*.mjs help/*.md README.md    # тест, справка
+rg -o "modules/x\.js" index.html                    # подключён? (L — одна длинная строка)
+rg -n "modules/x\.js" iq-worker.js                  # доступно в воркере (importScripts)
 ```
 
-Частые запросы:
-
-```sh
-# модуль по id / названию / категории
-rg -n "id:'fsk4'" modules
-rg -n "title:'Digital Voice|cat:'Decoders'" modules
-
-# определение символа и все использования
-rg -n "^(function|const|let|var|class) dmrDataDone\b" modules
-rg -n "\bdmrDataDone\s*\(" modules
-
-# параметр или порт узла
-rg -n "n:'hexcol'|n:'rec'" modules/hex.js
-rg -n "t:'rec'" modules/*.js
-
-# где файл подключён и где ещё используется
-rg -n "modules/dmr-kernels.js" index.html sw.js iq-worker.js
-rg -n "\bFSK4\.protos\.dmr\b" modules
-
-# пресет, справка, тест
-rg -n "preset\('.*DMR" presets.js
-rg -n "addNode\('dmr'" presets.js        # где модуль уже стоит в пресетах
-rg -n "DMR|SMS" help/radio.md README.md
-rg -n "dmr" tools/test-*.mjs
-```
-
-Категории модулей (`cat`) для быстрого сужения: `Sources` (108), `Protocols` (65),
-`Decoders` (54), `Indicators`, `Analysis`, `Output`, `IQ`, `Music`, `Processing`, `Data`,
-`Tools`, `Control`, `Geo`, `Radio`, `Video`, `Audio`, `Modulation`.
-
-Если точного символа нет — ищи по описанию: `rg -n "kw:'[^']*(dmr|sms)" modules`,
-`rg -n "title:'…'" modules`, затем `rg -n "…" help/*.md README.md` (в справке часто есть
-имя файла/узла). `help/modules.md` — сгенерированный справочник, по нему можно искать,
-но править его нельзя.
-
-Проверить, что файл вообще загружается: `rg -o "modules/dmr-kernels\.js" index.html`
-(`L` — одна длинная строка, поэтому `-o`) и `rg -n "modules/dmr-kernels\.js" iq-worker.js`
-(в воркер попадают только ядра из `importScripts`).
-
-Правило: сначала `rg` по точному символу/строке, потом `Read` нужного диапазона ±40 строк,
-и только если структура непонятна — читай файл шире. Перед чтением большого файла полезно
-`wc -l`: читать 200 строк вокруг совпадения дешевле, чем 4 000 строк целиком.
-
-## Маршрут «найти фичу за 5 шагов»
-
-1. `rg -n "id:'<id>'" modules` → файл модуля; рядом ищи одноимённый `*-kernels.js`.
-2. Найди `def({id:...})`, прочитай `process` — он показывает, какие функции ядра вызываются.
-3. `rg -n "<функция>" modules` → определение и соседние хелперы; читай только их.
-4. `rg -n "<протокол>|<id>" tools/test-*.mjs` → тест даёт векторы, ожидаемые поля и зеркальный кодер.
-5. `rg -n "<id>|<название>" presets.js help/*.md README.md` → рабочий пресет и описание.
-
-Пример (DMR/SMS): `modules/fsk4.js` (`id:'fsk4'`, Digital Voice Decoder) → `modules/dmr-kernels.js`
-(`FSK4.protos.dmr`, `dmrDataDone`, `dmrPayload`) → `help/radio.md` (раздел DMR) →
-`tools/test-hexdec.mjs` (векторы LC/CSBK/CRC).
+Маршрут «найти фичу»: `id` → модуль → `process` → функции ядра → тест-векторы → пресет/справка.
 
 ## Как менять
 
-- Логика — в `*-kernels.js` (без DOM, её гоняют тесты); оболочка/UI — в `modules/*.js`.
-- Новый файл: добавить **в оба** списка — `L` в `index.html` и `SHELL` в `sw.js`. Порядок в `L`
-  важен: `*-kernels.js` раньше своего модуля, `usb-bridge.js` раньше `webusb-serial.js`,
-  `presets.js` и `modules/help.js` раньше `core-graph.js`, `help-kernels.js` раньше `core-graph.js`.
-- Декодер и кодер — зеркальные (`…Parse`/`…Build`), с round-trip тестом и пресетом-«Loopback».
-- Встроенный пресет — это код: `preset(имя, fn)` строит граф через `addNode`/`addEdge`; копий
-  в `localStorage` нет, ищи использование модуля как `addNode('<id>'` в `presets.js`.
-- Новая фича = код + тест + пресет + запись в `README.md`/`help/`; иначе не считается готовой.
-- Внешние данные — офлайн (см. `CLAUDE.md`, раздел «Офлайн»); не тянуть с CDN.
-- Зависимости не добавлять; тесты — Node без пакетов.
-
-После правки любого файла оболочки (`index.html`, `styles.css`, `sw.js`, `help/*.md`,
-`core-*.js`, `modules/*`, `presets.js`) — `node tools/stamp.mjs` (версия и хэши для SW).
+- Логика — в `*-kernels.js` (без DOM, гоняют тесты); UI — в `modules/*.js`.
+- Новый файл — **в оба** списка: `L` (`index.html`) и `SHELL` (`sw.js`). В `L` порядок важен:
+  `*-kernels.js` раньше своего модуля; `usb-bridge.js` раньше `webusb-serial.js`; `presets.js`,
+  `modules/help.js`, `help-kernels.js` раньше `core-graph.js`.
+- Декодер/кодер зеркальны (`…Parse`/`…Build`), с round-trip тестом и пресетом-«Loopback».
+- Встроенный пресет — код `preset(имя, fn)` с `addNode`/`addEdge`; копий в `localStorage` нет,
+  использование модуля — `addNode('<id>'` в `presets.js`. Builder сам вызывает `clearAll()` и заканчивает
+  `markWiresDirty()`: первое открытие `openPatch` строит его прямо в живом графе, без `serialize`/`deserialize` —
+  не рассчитывай на пост-обработку `deserialize` (migrate/размеры).
+- Новая фича = код + тест + пресет + запись в `README.md`/`help/`. Внешние данные — офлайн (см. `CLAUDE.md`,
+  «Офлайн»), без CDN; зависимости не добавлять, тесты — Node без пакетов.
+- После правок `index.html`, `styles.css`, `sw.js`, `help/*.md`, `core-*.js`, `modules/*`,
+  `presets.js` — `node tools/stamp.mjs` (версия и хэши для SW).
 
 ## Проверка
 
 ```sh
-node --check modules/<файл>.js
-node tools/test-<протокол>.mjs       # профильный тест
-timeout 120 node tools/test-kernels.mjs   # общий снимок ядер
-node tools/stamp.mjs                 # после правок
-git diff --stat && git diff          # что именно уходит
+node --check modules/x.js
+node tools/check-globals.mjs modules/x-kernels.js modules/x.js   # новый файл: коллизии имён (иначе SyntaxError)
+node tools/test-<протокол>.mjs                                  # профильный тест
+timeout 120 node tools/test-kernels.mjs                          # снимок ядер — один раз в конце
+node tools/stamp.mjs && git diff --stat                          # полный diff — только по мелким файлам
 ```
 
-- Нужен Node 22+ (в контейнере бывает 20 — часть тестов тогда не запустится; проверь `node -v`).
-- Ядра грузятся в `vm` из списка `iq-worker.js`; для разовой проверки пиши скрипт в
-  `/tmp/kilo/` и повторяй ту же загрузку (`importScripts` → массив файлов).
-- Браузер: Playwright/Chromium установлены; статику отдавай `python3 -m http.server`,
-  дождись `window.crossOriginIsolated === true`; `MOD` — глобальная `const`, а не `window.MOD`.
-- WebUSB-лаборатория (`tools/lab-chrome.mjs`, `tools/e2e-usb-sdr.mjs`): grant привязан к origin,
-  поэтому не меняй порт 8124 без повторного `--grant`. После правок `presets.js`/`modules/*`
-  снимай старый service worker и чисти `caches` — иначе `openApp` отдаёт закешированный старый
-  код и проверка врёт (было: пресет грузил `bandscan` вместо нового `chanscan`).
-- Lab-скрипт обязан закрывать CDP и убивать Chrome в `finally`; при внешнем `timeout` это может не
-  сработать — проверяй `~/.cache/dsp-lab/chrome/SingletonLock` и процессы, lock удаляй только если
-  Chrome уже мёртв, иначе следующий запуск повиснет на профиле/USB.
+- `check-globals.mjs` — только для новых файлов: на пачке старых он даёт сотни ложных коллизий.
+- Нет Playwright — пресеты гоняй через `tools/lab-chrome.mjs` (CDP: `serve` + `openApp` + `openPatch`),
+  не через `vm` с DOM-заглушками; разовый скрипт — в `/tmp/kilo/`. После `clearAll` проверяй, что осталось
+  `Graph.nodes`/DOM/`HiDPICanvases.size` = 0 и нет живых таймеров/сокетов.
+- Упавший тест сначала сверь с `HEAD` (`git show HEAD:<файл>`): в репо есть устаревшие тесты и заглушки.
+- Node 22+ (в контейнере бывает 20 — часть тестов не запустится; `node -v`).
+- Ядра грузятся в `vm` из списка `iq-worker.js`; разовый скрипт — в `/tmp/kilo/`, та же загрузка.
+- Браузер: сначала `node -p "require.resolve('playwright')"`. Есть — статику `python3 -m http.server`,
+  дождись `window.crossOriginIsolated === true`; `MOD` — глобальная `const`, не `window.MOD`.
+- WebUSB: grant привязан к origin — не меняй порт 8124 без `--grant`. После правок `presets.js`/`modules/*`
+  снимай старый SW и чисти `caches`, иначе `openApp` отдаёт старый код (`bandscan` вместо `chanscan`).
+- Lab-скрипт закрывает CDP и убивает Chrome в `finally`; при внешнем `timeout` проверь
+  `~/.cache/dsp-lab/chrome/SingletonLock` и процессы — lock удаляй только если Chrome мёртв.
 
-## Экономия вывода инструментов
+## Экономия вывода
 
-Длинный вывод инструмента — главный расход контекста. На практике больше всего съедают
-`ps ... args` (километровые командные строки Chrome), `find /` (тысячи `Permission denied`)
-и repo-wide `grep` по частым словам вроде `localhost:` / `WebSocket` (строки из `presets.js`
-по 1–2 КБ). Правила:
-
-- `ps` — только нужные колонки, без `args`: `ps -o pid=,stat=,comm= -C chrome`; не `ps aux` и не
-  `ps -eo ... args`, если не нужна именно командная строка одного процесса.
-- `find` — только по проекту и с `-maxdepth`; никогда `find /`. Пакет ищи через `which`,
-  `npm root -g`, `node -p "require.resolve('...')"`, а не сканом диска.
-- `rg`/grep — сначала `-l` (только файлы) или `-c`, потом точный символ; ставь `--max-count`/`-m`,
-  `--max-columns 200`, исключай `presets.js`, `vendor/`, `data/`, `.git/`. Короткие общие имена
-  (`f1`, `id`, `data`, `state`) цепляют однострочные гиганты вроде `PALETTES` в `modules/analysis.js`:
-  ищи `n:'f1'`, `function …` или добавляй `--max-columns-preview`.
-- `git diff` по `index.html`/`sw.js` не читай: `const H={...}` — одна строка на десятки КБ, `head`
-  режет строки, но не её длину. Только `git diff --stat`/`--numstat`; содержимое проверяй
-  `node tools/stamp.mjs` и точечным `rg`.
-- Долгие live-сканы (SDR/GSM) не печатай каждый тик/канал и не повторяй `CELL` на каждом изменении:
-  в скрипте — только смена состояния/счётчики, полные записи в `/tmp/kilo/*.jsonl`, в конце один
-  `UNIQUE`/итог. У `background_process` ставь `lines` 20–50; полный сохранённый вывод разбирай
-  `rg 'UNIQUE|CELL|error'`, а не `logs` на 500–1000 строк.
-- Тяжёлые тесты запускай с ограничением: `timeout 120 node tools/test-kernels.mjs` — на Node 20
-  он может не уложиться и молча съесть всё ожидание.
-- `Read` — только диапазоном (`offset`/`limit`) после `wc -l` и `rg -n`; не `cat` большой файл
-  и не дампить `/proc/*/status` целиком (`rg '^Groups|^Uid|^Gid' /proc/self/status`).
-- `xwininfo -root -children`, `tree`, `lsusb -t` — только при отладке X11/USB; для одного окна
-  `xprop -id`.
-- Свои скрипты — в `/tmp/kilo/`, не в репозиторий; вывод скрипта — сводкой, не дампом.
+- `rg` — сначала `-l`/`-c`, `-m`, `--max-columns 200`; `find` — только по проекту с `-maxdepth`;
+  `ps` — без `args` (`ps -o pid=,stat=,comm= -C chrome`).
+- Не читать `git diff` по `index.html`/`sw.js` (`const H={...}` — строка на десятки КБ): `--stat`/`--numstat`,
+  содержимое — `node tools/stamp.mjs` и точечный `rg`.
+- Live-сканы (SDR/GSM): не печатай каждый тик/канал; полные записи — в `/tmp/kilo/*.jsonl`, в конце один
+  `UNIQUE`/итог; `background_process` — `lines` 20–50, разбор через `rg 'UNIQUE|CELL|error'`.
+- Тяжёлые тесты — `timeout 120`, вывод в `/tmp/kilo/*.log` + `tail -3`. Свои скрипты — в `/tmp/kilo/`,
+  печатай сводку (`length`, `Object.keys`, 3 строки, `UNIQUE`), не полный JSON/CSV/лог.
+- `Read` — диапазоном после `wc -l`/`rg -n`; не дампить `/proc/*/status`. `tree`/`lsusb -t`/`xwininfo`
+  — только при отладке X11/USB (для одного окна `xprop -id`).
 - Ревью небольших инструментов — `quick`: три суб-агента на 300 строк дороже самого кода.
 
-## Не трогать и не читать целиком
+## Не повторять / не трогать
 
-- `vendor/` (wasm/модели), `.git/`, `data/` (крупные данные), `*.min.js`.
-- `presets.js`, `core-graph.js`, `modules/*` — только по символу и диапазону строк.
-- `help/modules.md` — генерируется (`node tools/gen-modref.mjs`, нужен Playwright).
-- `const H={...}` в `sw.js` и `V` в `index.html` — генерирует `tools/stamp.mjs`; руками не править.
+- `index.html` (`const L=[...]`) и `sw.js` (`const H={...}`) — однострочные гиганты: никаких `rg -n`/`cat`/
+  `git diff`, только узкий `-o` или `node -e` (`rg -o 'modules/ledger[^"]*' index.html`).
+- `node --check` — только `.js`; версия/хэши — `node tools/stamp.mjs --check`, наличие в загрузке — `rg -o`.
+- Пресеты не проверяй `vm` с DOM-заглушками (`ST_EXAMPLES` и десятки глобал): есть Playwright —
+  `node tools/e2e-presets.mjs "Finance:"`, нет — `node --check presets.js` + тест ядра.
+- Smoke нового узла без браузера: ядро + модуль в `vm` с заглушками `def`/`defGroups`, `init`/`process`
+  на 2–3 записях — DOM не нужен. Полный `test-kernels.mjs` — раз в конце, в цикле — профильный.
+- Сначала ищи готовое (`PROJECT_MAP`/`HANDOFF`, Table templates, `recEnt`, calc-поля, `recCsv`,
+  `rowplayer`); не пиши второй CSV-импортёр, если хватает Table + маппинга.
+- Table: не ищи общие `type`/`format`/`fmt`/`date`/`money` (цепляют `hex-proto`, `timecode`, `tblchart`);
+  точки входа — `TC_TYPES` (`table-cards.js`, начало), `tblType`/`tcText`/`tcFormField`/`tcValue`,
+  `tblCell`/`TBL_FMTS` (`table.js` ~1538–1610), панель полей ~1920–2040; тесты `tools/test-table*.mjs`.
+- `help/*.md` — строка на несколько КБ: не `cat`; для правки вытащи фрагмент `rg -o` и вставь в `edit`.
+  `help/modules.md` генерируется (`gen-modref.mjs`, нужен Playwright).
+- `V` в `index.html` и `H` в `sw.js` — только `tools/stamp.mjs`; `vendor/`, `.git/`, `data/`, `*.min.js`
+  не читать целиком; `presets.js`/`core-graph.js`/`modules/*` — только по символу и диапазону.
 - `docs/PROJECT_MAP.md` обновляй при структурных изменениях (новые файлы, переезды, переименования).
 
 ## Грабли
 
-- Дублирующийся `id` модуля молча перезаписывается (`def` пишет warning) — проверяй `rg "id:'..."
-  modules | wc -l`, если поведение «не то».
+- Дублирующийся `id` модуля молча перезаписывается (`def` warning) — проверяй `rg -c "id:'..." modules`.
 - `Undo.push()` — no-op при `Undo.busy=true`; превью цепочек создаёт реальные узлы, ставь `_frozen`.
-- Точное совпадение `id` модуля должно бить начало слова названия в `modScoreW` — не ломай
-  ранжирование палитры/цепочек.
-- Тяжёлая загрузка: сотни файлов последовательно; не добавляй лишних синхронных зависимостей.
-- Push в этой среде бывает транзиентно падает; повторяй с
-  `GIT_SSH_COMMAND="ssh -o IdentitiesOnly=yes -i ~/.ssh/gh_rsa"`.
+- Точное совпадение `id` модуля должно бить начало слова названия в `modScoreW` — не ломай ранжирование.
+- `n.out` перезаписывается результатом `process` после каждого такта, `n.b` сбрасывается при смене block
+  size, `n.cv` подменяется движком у узлов с `view`, `n.size` ломает раскладку и сохранение (`w/h` → null).
+  `makeNode` проверяет `n.out`/`n.size` только в `init` — ищи записи `rg -n "n\.(out|size|b|cv)\s*=" modules`.
+- Свои канвы создавай через `hiDPICanvas(cv,cx,n)` — движок удалит их из `HiDPICanvases` вместе с узлом
+  (`n._cvs`); большие буферы (IQ/аудио/история) выделяй при Connect/старте и освобождай в `dispose`.
+- rAF/`setInterval`/WebSocket в модуле останавливай в `dispose`; после `clearAll` не должно оставаться
+  живых таймеров и отсоединённых канвасов.
+- Корреляции/matched filter не считай O(N·M) на каждом блоке: FFT или символьная частота. Бюджет блока —
+  `BLOCK/Eng.sr` (512 @ 48 кГц ≈ 10,7 мс).
+- Тяжёлая загрузка — сотни файлов последовательно; не добавляй лишних синхронных зависимостей.
 
 ## Git
 
-Без явной просьбы пользователя не коммить, не пушить и не создавать PR. Правило из
-`CLAUDE.md` «после пуша всегда PR и сразу merge» относится к Claude-сессиям; в Kilo действует
-текущее правило: изменения остаются в рабочем дереве, пока их не попросят закоммитить.
+Без явной просьбы не коммить, не пушить, не создавать PR: изменения остаются в рабочем дереве.
+Правило `CLAUDE.md` «после пуша всегда PR и сразу merge» — для Claude; в Kilo действует это.
+Push бывает транзиентно падает: повторяй с `GIT_SSH_COMMAND="ssh -o IdentitiesOnly=yes -i ~/.ssh/gh_rsa"`.

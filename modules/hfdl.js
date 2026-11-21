@@ -614,7 +614,8 @@ def({ id:'hfdlM1Match', lazy:'proc', title:'HFDL: M1 Detector (rate)', cat:'Prot
       for(let k=0;k<P;k++) n.taps[k]=Math.round(k*sps);
       n.L=n.taps[P-1]+1; n.ring=new Float32Array(n.L); n.w=0; n.ss=0; n.P=P;
     }
-    const P=n.P, L=n.L, ring=n.ring, taps=n.taps;
+    const P=n.P, L=n.L, ring=n.ring, taps=n.taps, T=P-1;
+    const t0=n.tmpl[0], t1=n.tmpl[1], t2=n.tmpl[2], t3=n.tmpl[3], t4=n.tmpl[4], t5=n.tmpl[5], t6=n.tmpl[6], t7=n.tmpl[7];
     let bestOverBlock=0, bestIdxOverBlock=n.curIdx, rawAccMax=0, rmsLast=0;
     for(let i=0;i<BLOCK;i++){
       const old=ring[n.w], nv=I.in?I.in[i]:0;
@@ -622,15 +623,25 @@ def({ id:'hfdlM1Match', lazy:'proc', title:'HFDL: M1 Detector (rate)', cat:'Prot
       ring[n.w]=nv;
       const rms=Math.sqrt(Math.max(0,n.ss)/L);
       rmsLast=rms;
-      let bestC=0, bestIdx=0, bestRawAcc=0, bestAcc=0;
-      for(let sIdx=0;sIdx<8;sIdx++){
-        const pat=n.tmpl[sIdx];
-        let acc=0;
-        for(let k=0;k<P;k++) acc+=ring[(n.w-taps[k]+L*2)%L]*pat[P-1-k];
-        const c=clamp(Math.abs(acc/(P*rms+1e-9)),0,2);   // ЗАЩИТА: без неё при просадке rms→0 значение улетало в тысячи
-        if(c>bestC){ bestC=c; bestIdx=sIdx; bestRawAcc=Math.abs(acc); bestAcc=acc; }
+      // 8 шаблонов за один проход по кольцу: индекс кольца считается один раз на tap, а не 8
+      let a0=0,a1=0,a2=0,a3=0,a4=0,a5=0,a6=0,a7=0;
+      const w0=n.w+L*2;
+      for(let k=0;k<P;k++){
+        let j=w0-taps[k]; if(j>=L) j-=L; if(j>=L) j-=L;
+        const x=ring[j], q=T-k;
+        a0+=x*t0[q]; a1+=x*t1[q]; a2+=x*t2[q]; a3+=x*t3[q];
+        a4+=x*t4[q]; a5+=x*t5[q]; a6+=x*t6[q]; a7+=x*t7[q];
       }
-      if(bestRawAcc>rawAccMax) rawAccMax=bestRawAcc;
+      let bestAbs=Math.abs(a0), bestIdx=0, bestAcc=a0;
+      const a1a=Math.abs(a1); if(a1a>bestAbs){ bestAbs=a1a; bestIdx=1; bestAcc=a1; }
+      const a2a=Math.abs(a2); if(a2a>bestAbs){ bestAbs=a2a; bestIdx=2; bestAcc=a2; }
+      const a3a=Math.abs(a3); if(a3a>bestAbs){ bestAbs=a3a; bestIdx=3; bestAcc=a3; }
+      const a4a=Math.abs(a4); if(a4a>bestAbs){ bestAbs=a4a; bestIdx=4; bestAcc=a4; }
+      const a5a=Math.abs(a5); if(a5a>bestAbs){ bestAbs=a5a; bestIdx=5; bestAcc=a5; }
+      const a6a=Math.abs(a6); if(a6a>bestAbs){ bestAbs=a6a; bestIdx=6; bestAcc=a6; }
+      const a7a=Math.abs(a7); if(a7a>bestAbs){ bestAbs=a7a; bestIdx=7; bestAcc=a7; }
+      const bestC=clamp(bestAbs/(P*rms+1e-9),0,2);   // ЗАЩИТА: без неё при просадке rms→0 значение улетало в тысячи
+      if(bestAbs>rawAccMax) rawAccMax=bestAbs;
       oc[i]=bestC;
       if(bestC>bestOverBlock){ bestOverBlock=bestC; bestIdxOverBlock=bestIdx; }
       let hit=(n.m1>=n.p.thr && n.m1>n.m2 && n.m1>=bestC);
@@ -1179,7 +1190,7 @@ def({ id:'hfdlSymsync', title:'HFDL: Symbol Sync (polyphase)', cat:'Modulation',
       const f=symsyncBuildFilters(k,m,M);
       n.hSubLen=f.hSubLen; n.mfBranch=f.mfBranch; n.dmfBranch=f.dmfBranch;
       n.winRe=new Float64Array(n.hSubLen); n.winIm=new Float64Array(n.hSubLen); n.winPos=0;
-      n.kOut=2; n.rate=k/n.kOut; n.del=n.rate; n.tau=0; n.bf=0; n.b=0; n.decimCounter=0;
+      n.kOut=2; n.rate=k/n.kOut; n.del=n.rate; n.tau=0; n.bf=0; n.bIdx=0; n.decimCounter=0;
       n.qPrev=0; n.qPrev2=0; n.qHatPrev=0; n.qHatPrev2=0;
       const bt=n.p.lfBw, alpha=1-bt;
       n.B=[0.22*bt,0,0]; n.A=[1-0.5*alpha,-0.495*alpha,0]; n.rateAdjustment=0.5*bt;
@@ -1196,13 +1207,13 @@ def({ id:'hfdlSymsync', title:'HFDL: Symbol Sync (polyphase)', cat:'Modulation',
         const rI=n.prevI+frac*(xi-n.prevI), rQ=n.prevQ+frac*(xq-n.prevQ);
         // push в кольцевой буфер
         n.winPos=(n.winPos+1)%n.hSubLen; n.winRe[n.winPos]=rI; n.winIm[n.winPos]=rQ;
-        while(n.b<M){
-          let mfRe=0, mfIm=0; const br=n.mfBranch[n.b];
+        while(n.bIdx<M){
+          let mfRe=0, mfIm=0; const br=n.mfBranch[n.bIdx];
           for(let n2=0;n2<n.hSubLen;n2++){ const idx=(n.winPos-n2+n.hSubLen*4)%n.hSubLen; mfRe+=br[n2]*n.winRe[idx]; mfIm+=br[n2]*n.winIm[idx]; }
           const symI=mfRe/k, symQ=mfIm/k;
           if(n.decimCounter===n.kOut){
             n.decimCounter=0;
-            let dmfRe=0, dmfIm=0; const dbr=n.dmfBranch[n.b];
+            let dmfRe=0, dmfIm=0; const dbr=n.dmfBranch[n.bIdx];
             for(let n2=0;n2<n.hSubLen;n2++){ const idx=(n.winPos-n2+n.hSubLen*4)%n.hSubLen; dmfRe+=dbr[n2]*n.winRe[idx]; dmfIm+=dbr[n2]*n.winIm[idx]; }
             let q=mfRe*dmfRe/(k*k)+mfIm*dmfIm/(k*k); q=clamp(q,-1,1);
             const qHat=n.B[0]*q+n.B[1]*n.qPrev+n.B[2]*n.qPrev2 - n.A[1]*n.qHatPrev - n.A[2]*n.qHatPrev2;
@@ -1210,11 +1221,11 @@ def({ id:'hfdlSymsync', title:'HFDL: Symbol Sync (polyphase)', cat:'Modulation',
             n.rate+=n.rateAdjustment*qHat; n.del=n.rate+qHat;
           }
           n.decimCounter++;
-          n.tau+=n.del; n.bf=n.tau*M; n.b=Math.round(n.bf);
+          n.tau+=n.del; n.bf=n.tau*M; n.bIdx=Math.round(n.bf);
           n.symsyncOutIdx++;
           if(n.symsyncOutIdx&1){ n.sI=symI; n.sQ=symQ; clk=1; }  // держим каждый 2й (output_rate=2 → 1 симв/такт)
         }
-        n.tau-=1; n.bf-=M; n.b-=M;
+        n.tau-=1; n.bf-=M; n.bIdx-=M;
         n.prevI=xi; n.prevQ=xq;
       }
       oi[i]=n.sI; oq[i]=n.sQ; ok[i]=clk;

@@ -628,6 +628,7 @@ let probeNode=null; const probeSt={n:0,t0:0,last:0};
 function probeSet(n){ probeNode=n||null; probeSt.n=0; probeSt.t0=probeSt.last=performance.now(); }
 function evalNode(n, ctx){
   const d = MOD[n.type]; if(!d) return;
+  if(typeof d.process!=='function'){ n.out={}; if(n._perr){ n._perr=0; n.el?.classList.remove('has-err'); } return; }   // DOM-тайлы (панели трекера, линейка) — без process
   const g = ctx || Graph;
   const I = n._I || (n._I={});         // переиспользуем — раньше {} аллоцировался заново на каждый узел каждый блок
   // g.inIndex — карта "узел+порт → провод", строится в retopo(). Без неё пришлось бы

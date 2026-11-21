@@ -341,7 +341,7 @@ def({ id:'dataRx', title:'Symbols → Data (universal)', cat:'Decoders', kw:'rec
           {n:'save',t:'button',label:'Save last data',fn:n=>{
             if(!n.last) return; const a=document.createElement('a');
             a.href=URL.createObjectURL(new Blob([n.last])); a.download='data.bin'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),5000); }}],
-  init:n=>{ n.lastId=0; n.parts=new Map(); n.seen=new WeakSet(); n.total=0; n.at=0; n.good=0; n.bad=0; n.done=0; n.pulse=0; n.out=null; n.msgText=''; n.rec=null;
+  init:n=>{ n.lastId=0; n.parts=new Map(); n.seen=new WeakSet(); n.total=0; n.at=0; n.good=0; n.bad=0; n.done=0; n.pulse=0; n.msgText=''; n.rec=null;
     n.img=null; n.binOut=null; n.capCv=document.createElement('canvas'); n.last=null; n.text='waiting for frames'; },
   process(n,I){
     const f=I.blk, P=n.p, now=performance.now();

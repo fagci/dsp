@@ -109,6 +109,7 @@ async function nsvVfs(n,ns){
 async function nsvVfsClose(n){ const r=n.remote; n.remote=null; n.bridge=''; if(r) await r.close().catch(()=>{}); }
 // файл с входа bin: в корень папки сервера (в памяти) или записью на чужую шару
 function nsvPublish(n,b,src){
+  if(!b || !b.d) return;
   const nm=String(b.name||('file-'+b.id)).replace(/[\\/]/g,'_');
   if(n.remote){ n.remote.write('/'+nm,b.d).catch(e=>{ n.status='error: '+(e.message||e); }); }
   else { n.mem.set(nm,{d:b.d,mime:b.mime||httpMime(nm),t:Date.now()}); if(n.mem.size>50) n.mem.delete(n.mem.keys().next().value); }

@@ -51,6 +51,15 @@ const TBL_TEMPLATES=[
    desc:'How to reach a person: one row per address (phone, e-mail, Telegram, Matrix, …); «contact» links to the person, so one person has many addresses. Merging two people moves their addresses to one.'},
   {id:'photos', title:'Photo log', dir:'photos', cols:['name','t','lat','lon','alt','photo','audio','note'],
    desc:'Photos with the place and time (the place and time are taken from the picture when it has EXIF).'},
+  {id:'finance', title:'Finance: transactions (facts)', dir:'finance', cols:['id','date','name','category','account','to','type','amount','currency','note'],
+   types:{date:{t:'date'},type:{t:'choice',opts:['expense','income','transfer']},amount:{t:'num'},note:{t:'long'}},
+   desc:'Money movements for the Ledger: date, signed amount or type (expense / income / transfer), account and an optional destination account for a transfer. Import a bank CSV into this list (CSV → Table Import) and pick the columns in Ledger txmap; the ZenMoney names date / income / outcome / payee / categoryName / comment work without a map.'},
+  {id:'financeperiodic', title:'Finance: recurring income and expenses (plan)', dir:'finance', cols:['id','name','start','period','every','weekday','monthday','end','times','amount','final','amounts','type','account','to','category','currency','skip','note'],
+   types:{start:{t:'date'},end:{t:'date'},period:{t:'choice',opts:['once','day','workday','week','month','quarter','year']},every:{t:'num'},weekday:{t:'text'},monthday:{t:'text'},times:{t:'num'},amount:{t:'num'},final:{t:'num'},amounts:{t:'text'},type:{t:'choice',opts:['expense','income','transfer']},note:{t:'long'}},
+   desc:'Recurring rules for the Ledger: start, period (once / day / workday / week / month / quarter / year), every, weekday (1=Mon … 7=Sun, 0=Sun, names) or monthday (1…31, -1=last day), end or times, amount. final — the last payment (105,105,110: amount 105, final 110, times 3); amounts — an explicit list «105, 105, 110». type sets the sign; to makes a transfer to another account; skip lists dates without an occurrence. The columns times / final avoid the Table port names count / last; the Ledger accepts both.'},
+  {id:'financeaccounts', title:'Finance: opening balances', dir:'finance', cols:['id','account','amount','currency','date','note'],
+   types:{amount:{t:'num'},date:{t:'date'},note:{t:'long'}},
+   desc:'Starting balances for the Ledger, one row per account (account, amount, currency, date). They are added before the first movement; a movement on an account that is not here simply starts from zero.'},
 ];
 // недостающие колонки шаблона в конец списка колонок cur
 const tblTemplateCols=(cur,t)=>[...cur,...t.cols.filter(c=>!cur.includes(c))];

@@ -1441,7 +1441,7 @@ function tblRenderList(n,inc){
     wid=vc.map((x,k)=>Math.max(x.c.length,2,prev ? prev[k] : 0));
     texts=[];
     for(let i=s;i<e;i++){
-      const t=vc.map(x=>tblCell(x,n.rows[i][x.c],n.p.tz==='local'));
+      const t=vc.map(x=>tblCell(x,n.rows[i][x.c],n.p.tz==='local',tcDef(n,x.c)));
       t.forEach((v,k)=>{ if(v.length>wid[k]) wid[k]=v.length; });
       texts.push(t);
     }
@@ -1535,7 +1535,7 @@ function tblRenderList(n,inc){
 // колонки списка, которых там нет, дописываются в конец. p.rules = [{q, bg, on}] — первое совпавшее правило красит строку
 // (q — тот же язык, что у фильтра). Не совпало ни одно — цвет по умолчанию (p.tint): колонка color → ошибка (err ≠ 0) → severity (err / warn) →
 // значение колонки типа (proto, type, kind, mode…), у каждого значения свой оттенок; '-' — без раскраски.
-const TBL_FMTS=['auto','text','hz','time','ago','hex','num','swatch'];
+const TBL_FMTS=['auto','text','hz','time','datetime','money','ago','hex','num','swatch'];
 const TBL_ERR=['err','error','errors','crc_err','crc_fail','bad'];
 const TBL_SEV=['level','severity','lvl','sev','status'], TBL_CAT=['proto','protocol','type','kind','mode','service','modulation','demod','class','category','dir'];
 function tblViewCols(n){
@@ -1563,7 +1563,7 @@ function tblAgoStart(){
     for(const el of els){ const t=tblAgo(+el.dataset.ago,now); if(t && el.firstChild && el.firstChild.nodeType===3 && el.firstChild.data!==t) el.firstChild.data=t; }
   },1000);
 }
-function tblCell(x,v,local){
+function tblCell(x,v,local,def){
   if(v===''||v==null) return '';
   const low=x.c.toLowerCase(), f=x.fmt||'auto';
   if(f==='auto'){
@@ -1572,12 +1572,18 @@ function tblCell(x,v,local){
     if(x.ty==='file'){ const k=tcFileIds(v).length; return k ? '📎'+k : ''; }
     if(x.ty==='checklist') return '☑ '+v;
     if(x.ty==='bool' || x.ty==='link') return x.ty==='bool' ? (tcIsTrue(v) ? '✓' : '✗') : tcLinks(v).join(', ');
+    if(x.ty==='datetime') return tcFmtDate(v,def?.fmt,local);
+    if(x.ty==='money') return tcFmtMoney(v,def);
+    if(x.ty==='rating') return tcRating(v,def);
+    if(x.ty==='url') return String(v);
     if(TBL_HZ.test(x.c)){ const h=tblHz(v); return isFinite(h) ? fmtHz(h,3) : recFmt(v); }
     if(/^(t|ts|time|date|datetime)$/.test(low) && typeof v==='number') return tblTime(v,local);
     return recFmt(v);
   }
   if(f==='hz'){ const h=tblHz(v); return isFinite(h) ? fmtHz(h,3)+'Hz' : recFmt(v); }
   if(f==='time') return typeof v==='number' ? tblTime(v,local) : recFmt(v);
+  if(f==='datetime') return tcFmtDate(v,def?.fmt,local);
+  if(f==='money') return tcFmtMoney(v,def);
   if(f==='ago') return typeof v==='number' ? (tblAgo(v) || tblTime(v,local)) : recFmt(v);
   if(f==='hex') return typeof v==='number' && Number.isInteger(v) ? (v<0?'-':'')+'0x'+Math.abs(v).toString(16) : recFmt(v,true);
   if(f==='num'){ const k=typeof v==='number' ? v : parseFloat(v); return isFinite(k) ? String(+k.toFixed(3)) : recFmt(v); }
@@ -1600,7 +1606,8 @@ function tblCellEl(n,x,v,text){
   if(x.ty==='checklist'){ el.textContent=text; el.classList.add('tc-chk','tbl-ico'); el.dataset.c=x.c; el.title='Open the checklist'; return el; }
   if(x.ty==='bool' && x.fmt==='auto' && n.drill && !tblRO(n)){ el.textContent=text; el.classList.add('tc-tog'); el.dataset.c=x.c; el.title='Tick / untick'; el.style.cursor='pointer'; return el; }
   if(x.ty==='progress' && x.fmt==='auto' && tcFrac(n,x.c,v)!=null){ el.classList.add('tbl-bar'); el.append(tcBar(n,x.c,v,text)); return el; }
-  if((x.fmt==='swatch' || (x.fmt==='auto' && TBL_COLOR.includes(low))) && v && CSS.supports('color',String(v))){
+  if(x.ty==='url'){ el.append(tcUrlEl(v)); return el; }
+  if((x.ty==='color' || x.fmt==='swatch' || (x.fmt==='auto' && TBL_COLOR.includes(low))) && v && CSS.supports('color',String(v))){
     const sw=document.createElement('i'); sw.className='tbl-sw'; sw.style.background=String(v); el.append(sw);
   }
   el.append(text);
@@ -1649,7 +1656,7 @@ function tblSummary(n,r){
   return parts.join(' / ');
 }
 // подсказка строки — при наведении, а не на каждую из сотен строк при каждой перерисовке (строки и GC)
-const tblRowTip=(n,r)=>n.cl.filter(c=>r[c]!=='' && r[c]!=null).map(c=>c+': '+(TBL_HZ.test(c)&&isFinite(tblHz(r[c])) ? fmtHz(tblHz(r[c]),4)+'Hz' : recFmt(r[c]))).join('\n');
+const tblRowTip=(n,r)=>n.cl.filter(c=>r[c]!=='' && r[c]!=null).map(c=>c+': '+(TBL_HZ.test(c)&&isFinite(tblHz(r[c])) ? fmtHz(tblHz(r[c]),4)+'Hz' : tcText(n,c,r[c]))).join('\n');
 // значок устройства по полям строки (имя, производитель, класс, порты…): библиотека modules/devicon-kernels.js; card.icons===false — выключено
 const tblIconMemo=new WeakMap();
 function tblIcon(n,r){
@@ -1921,7 +1928,7 @@ function tblFieldsPanel(n,box,mk,sel){
     }
     row.append(name);
     if(!ro) row.append(sel(TC_TYPES,t,v=>{
-      const nd={...d,t:v}; if(v!=='choice') delete nd.opts; if(v!=='link' && v!=='checklist'){ delete nd.to; } if(v!=='link'){ delete nd.multi; } if(v!=='progress'){ delete nd.min; delete nd.max; } if(v!=='calc'){ delete nd.expr; delete nd.mat; } if(v==='calc' || v==='auto'){ delete nd.def; delete nd.req; }
+      const nd={...d,t:v}; if(v!=='choice') delete nd.opts; if(v!=='link' && v!=='checklist'){ delete nd.to; } if(v!=='link'){ delete nd.multi; } if(v!=='progress' && v!=='rating'){ delete nd.min; delete nd.max; } else if(v!=='progress') delete nd.min; if(v!=='calc'){ delete nd.expr; delete nd.mat; } if(v!=='datetime' && v!=='money') delete nd.fmt; if(v!=='money') delete nd.cur; if(v==='calc' || v==='auto'){ delete nd.def; delete nd.req; }
       if(v==='checklist' && !nd.to){ tcChkCreate(n,c).then(to=>tcSetDef(n,c,{...nd,to})).then(()=>{ tblRenderView(n); tblRenderList(n); }); return; }
       tcSetDef(n,c,nd); tblRenderView(n); tblRenderList(n);
     }));
@@ -1977,6 +1984,28 @@ function tblFieldsPanel(n,box,mk,sel){
         e.addEventListener('keydown',ev=>ev.stopPropagation());
         e.addEventListener('change',()=>{ const nd={...d}; e.value.trim()==='' ? delete nd[k] : nd[k]=+e.value; tcSetDef(n,c,nd); tblRenderList(n); });
         cc.append(mk('span','tv-lbl',k),e);
+      }
+    }
+    if(!ro && t==='rating'){
+      const cc=ln('stars'), e=mk('input','tv-w'); e.type='number'; e.min=1; e.max=10; e.step=1; e.value=d.max??''; e.placeholder='5'; e.title='how many stars (1…10, empty — 5)';
+      e.addEventListener('keydown',ev=>ev.stopPropagation());
+      e.addEventListener('change',()=>{ const nd={...d}; e.value.trim()==='' ? delete nd.max : nd.max=Math.max(1,Math.min(10,+e.value||5)); tcSetDef(n,c,nd); tblRenderList(n); });
+      cc.append(e);
+    }
+    if(!ro && (t==='datetime' || t==='money')){
+      const cc=ln('format'), f=mk('input','tv-q'); f.value=d.fmt??'';
+      f.placeholder=t==='datetime' ? 'YYYY-MM-DD HH:mm' : (d.cur ? '¤#,##0.00' : '#,##0.00');
+      f.title=t==='datetime'
+        ? 'tokens: YYYY YY MM M DD D HH H mm m ss s SSS; empty — YYYY-MM-DD HH:mm'
+        : 'number pattern: #,##0.00 (comma groups, 0 decimals); ¤ — the currency symbol of the code below, e.g. ¤#,##0.00 or #,##0.00 ¤';
+      f.addEventListener('keydown',e=>e.stopPropagation());
+      f.addEventListener('change',()=>{ const nd={...d}; f.value.trim() ? nd.fmt=f.value.trim() : delete nd.fmt; tcSetDef(n,c,nd); tblRenderList(n); });
+      cc.append(f);
+      if(t==='money'){
+        const cu=mk('input','tv-w'); cu.value=d.cur??''; cu.placeholder='USD'; cu.maxLength=3; cu.title='currency code for ¤ (ISO 4217: USD, EUR, RUB…)';
+        cu.addEventListener('keydown',e=>e.stopPropagation());
+        cu.addEventListener('change',()=>{ const nd={...d}, v=cu.value.trim().toUpperCase(); v ? nd.cur=v : delete nd.cur; tcSetDef(n,c,nd); tblRenderList(n); });
+        cc.append(mk('span','tv-lbl','currency'),cu);
       }
     }
     if(!ro && t==='calc'){

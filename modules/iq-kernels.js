@@ -474,13 +474,13 @@ IQK.iqSpec={
     const N=+n.p.size, A=+n.p.avg, cplx=s.chunks.length ? !!s.chunks[0].im : n.cplx!==false;
     const key=N+'|'+A+'|'+n.p.win+'|'+s.sr+'|'+s.fc+'|'+cplx;
     if(key!==n.key){
-      n.key=key; n.cplx=cplx; n.size=pow2ge(N);
-      n.rr=new Float32Array(n.size); n.ri=new Float32Array(n.size); n.W=0; n.last=0;
+      n.key=key; n.cplx=cplx; n.ringN=pow2ge(N);
+      n.rr=new Float32Array(n.ringN); n.ri=new Float32Array(n.ringN); n.W=0; n.last=0;
       n.w=window_(n.p.win,N); let sum=0; for(let i=0;i<N;i++) sum+=n.w[i]; n.wsum=sum;
       n.re=new Float32Array(N); n.im=new Float32Array(N); n.pw=new Float64Array(N); n.cnt=0;
       n.sp=null;
     }
-    const mask=n.size-1;
+    const mask=n.ringN-1;
     for(const c of s.chunks){
       const xr=c.re, xi=c.im, K=xr.length; let w=n.W;
       for(let i=0;i<K;i++,w++){ n.rr[w&mask]=xr[i]; n.ri[w&mask]=xi?xi[i]:0; }
@@ -851,7 +851,7 @@ IQK.modMeter={
     if(sr!==n.sr || bw!==n.bw || win!==n.win){
       n.sr=sr; n.bw=bw; n.win=win; n.need=Math.max(64,Math.round(sr*win)); n.al=1-Math.exp(-2*Math.PI*bw/sr);
       n.k=sr/(2*Math.PI); n.px=1; n.py=0; n.la=0; n.lb=0; n.lf=0; n.lg=0; n.skip=Math.round(sr*3/(2*Math.PI*bw))+8;
-      n.ma=0; n.fpk=0; n.fm0=0; n.res=null; n.out=null; n.ui=null; n.winReset=true;
+      n.ma=0; n.fpk=0; n.fm0=0; n.res=null; n.ui=null; n.winReset=true;
     }
     if(n.winReset){ n.winReset=false; n.cnt=0; n.se=0; n.sp=0; n.emax=-1e9; n.emin=1e9; n.sf=0; n.fn=0; n.fmax=-1e12; n.fmin=1e12; n.zc=0; n.zs=0; }
     let last=null;
@@ -1336,7 +1336,7 @@ function cprEncode(lat,lon,odd){
 // DF0/4/5/16/20/21 — адрес в CRC, принимается, если борт недавно слышен в DF11/17/18.
 const ADSB_ADDR_TTL=60000;
 IQK.adsbDemod={
-  init(n){ n.sr=0; n.frames=0; n.fixed=0; n.bad=0; n.cand=0; n.rate=0; n.rT=0; n.rN=0; n.known=new Map(); n.bits=new Uint8Array(112); n.conf=new Float32Array(112); n.b=new Uint8Array(14); },
+  init(n){ n.sr=0; n.frames=0; n.fixed=0; n.bad=0; n.cand=0; n.rate=0; n.rT=0; n.rN=0; n.known=new Map(); n.bits=new Uint8Array(112); n.conf=new Float32Array(112); n.bytes14=new Uint8Array(14); },
   process(n,I){
     const s=iqIn(I,'in');
     if(!s){ n.ui=null; return {rec:null, rate:null}; }
@@ -1352,7 +1352,7 @@ IQK.adsbDemod={
     const G=x=>{ const k=x|0; return P[k]+(x-k)*m[k]; };
     const S=(a,b)=>G(b)-G(a);
     const h=u/2, thr=Math.pow(10,n.p.thr/20), recs=[], now=Date.now();
-    const end=N-n.span, bits=n.bits, b=n.b;
+    const end=N-n.span, bits=n.bits, b=n.bytes14;
     const pre=x=>{                                   // средний импульс и среднее затишье, на полбита
       const p1=S(x,x+h), p2=S(x+u,x+u+h), p3=S(x+3.5*u,x+4*u), p4=S(x+4.5*u,x+5*u);
       const q=S(x+h,x+u)+S(x+u+h,x+3.5*u)+S(x+4*u,x+4.5*u)+S(x+5*u,x+8*u);

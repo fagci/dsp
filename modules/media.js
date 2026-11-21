@@ -26,7 +26,7 @@ def({ id:'voiceTx', title:'Voice → Packets', cat:'Protocols', kw:'voice audio 
           {n:'fpp',t:'range',min:1,max:8,step:1,d:3,label:'frames per packet (fewer — less delay, more header overhead)'},
           {n:'gate',t:'range',min:-80,max:-20,step:1,d:-80,label:'send only above, dBFS (−80 — always; the pauses of speech cost nothing)'},
           {n:'gain',t:'range',min:-30,max:30,step:1,d:0,label:'input gain, dB (0 dB: ±1 → ±24000)'}, MV_WRAP],
-  init:n=>{ n.key=''; n.h=-1; n.rs=null; n.pcm=[]; n.frames=[]; n.seq=0; n.q=[]; n.out=null; n.pulse=0; n.hang=0; n.sent=0; n.bytes=0; n.bw=[]; n.enc=null; n.ts=0; n.text='…'; c2Load(); },
+  init:n=>{ n.key=''; n.h=-1; n.rs=null; n.pcm=[]; n.frames=[]; n.seq=0; n.q=[]; n.binOut=null; n.pulse=0; n.hang=0; n.sent=0; n.bytes=0; n.bw=[]; n.enc=null; n.ts=0; n.text='…'; c2Load(); },
   dispose(n){ if(n.h>=0 && C2.ex) C2.ex.c2_free(n.h); try{ n.enc?.close(); }catch(e){} },
   process(n,I){
     const c=mvByName(n.p.codec), sr=Eng.sr, rate=MD_INFO[c.id].rate;
@@ -44,12 +44,12 @@ def({ id:'voiceTx', title:'Voice → Packets', cat:'Protocols', kw:'voice audio 
       }
     }
     const on=I.ptt==null ? true : I.ptt>.5, x=I.in;
-    if(!on){ n.rs=new MdResampler(sr,rate); n.pcm=[]; n.frames=[]; n.hang=0; n.text='idle · '+n.sent+' packets sent'; return {bin:n.out,active:0,kbps:0,new:0}; }
+    if(!on){ n.rs=new MdResampler(sr,rate); n.pcm=[]; n.frames=[]; n.hang=0; n.text='idle · '+n.sent+' packets sent'; return {bin:n.binOut,active:0,kbps:0,new:0}; }
     if(c.id===MD_CODEC.c2_1600 || c.id===MD_CODEC.c2_3200){
-      if(!C2.ex){ n.text=C2.err ? 'codec2.wasm: '+C2.err : 'loading codec2.wasm…'; return {bin:n.out,active:0,kbps:0,new:0}; }
+      if(!C2.ex){ n.text=C2.err ? 'codec2.wasm: '+C2.err : 'loading codec2.wasm…'; return {bin:n.binOut,active:0,kbps:0,new:0}; }
       if(n.h<0) n.h=C2.ex.c2_new(c.mode);
     }
-    if(n.err){ n.text=n.err; return {bin:n.out,active:0,kbps:0,new:0}; }
+    if(n.err){ n.text=n.err; return {bin:n.binOut,active:0,kbps:0,new:0}; }
     // звук → int16 на частоте кодека
     if(x){
       const g=Math.pow(10,n.p.gain/20)*24000, y=n.rs.push(x);
@@ -72,11 +72,11 @@ def({ id:'voiceTx', title:'Voice → Packets', cat:'Protocols', kw:'voice audio 
       if(u){ n.q.push(u); if(n.q.length>50) n.q.shift(); }
     }
     const now=performance.now();
-    if(n.q.length){ const u=n.q.shift(); n.out=binObj(u,'voice-'+n.seq,'application/x-dsp-voice'); n.pulse=2; n.sent++; n.bw.push([now,u.length]); }
+    if(n.q.length){ const u=n.q.shift(); n.binOut=binObj(u,'voice-'+n.seq,'application/x-dsp-voice'); n.pulse=2; n.sent++; n.bw.push([now,u.length]); }
     while(n.bw.length && now-n.bw[0][0]>2000) n.bw.shift();
     const kbps=n.bw.reduce((s,v)=>s+v[1],0)*8/2000;
     n.text=c.n+' · '+n.sent+' packets · '+kbps.toFixed(1)+' kbit/s'+(n.q.length>5 ? ' · queue '+n.q.length : '');
-    return {bin:n.out,active:n.bw.length ? 1 : 0,kbps,new:binPulse(n)}; },
+    return {bin:n.binOut,active:n.bw.length ? 1 : 0,kbps,new:binPulse(n)}; },
   drawKey:n=>n.text,
   draw(n){ binReadout(n); }});
 
@@ -165,7 +165,7 @@ def({ id:'videoTx', title:'Video → Packets', cat:'Protocols', kw:'video pictur
           {n:'q',t:'range',min:.2,max:.95,step:.05,d:.7,label:'JPEG quality wish (lowered by itself toward the target size)'},
           {n:'kb',t:'range',min:1,max:200,step:1,d:40,label:'target frame size, KB (radio: 1–3)'},
           {n:'gray',t:'check',d:false,label:'grayscale (a smaller frame)'}, MV_WRAP],
-  init:n=>{ n.cv=null; n.t0=0; n.busy=false; n.seq=0; n.qNow=.7; n.q=[]; n.out=null; n.pulse=0; n.sent=0; n.bw=[]; n.src=''; n.text='waiting for a picture'; },
+  init:n=>{ n.cv=null; n.t0=0; n.busy=false; n.seq=0; n.qNow=.7; n.q=[]; n.binOut=null; n.pulse=0; n.sent=0; n.bw=[]; n.src=''; n.text='waiting for a picture'; },
   process(n,I){
     const now=performance.now(), fps=+n.p.fps||10;
     let src=null, w=0, h=0;
@@ -192,11 +192,11 @@ def({ id:'videoTx', title:'Video → Packets', cat:'Protocols', kw:'video pictur
         }finally{ n.busy=false; }
       },'image/jpeg',n.qNow);
     }
-    if(n.q.length){ const u=n.q.shift(); n.out=binObj(u,'frame-'+n.seq,'application/x-dsp-video'); n.pulse=2; n.sent++; n.bw.push([now,u.length]); n.last=u.length; }
+    if(n.q.length){ const u=n.q.shift(); n.binOut=binObj(u,'frame-'+n.seq,'application/x-dsp-video'); n.pulse=2; n.sent++; n.bw.push([now,u.length]); n.last=u.length; }
     while(n.bw.length && now-n.bw[0][0]>4000) n.bw.shift();
     const kbps=n.bw.reduce((s,v)=>s+v[1],0)*8/4000;
     n.text=n.big && !n.last ? 'a frame of '+n.big+' bytes does not fit the framing; lower the size or take slip / kiss / cobs' : !src ? 'no picture on vid / img' : '«'+n.p.label+'» from '+n.src+' '+(n.cv?.width||0)+'×'+(n.cv?.height||0)+' · '+n.sent+' frames'+(n.last ? ' · '+(n.last/1024).toFixed(1)+' KB, q '+n.qNow.toFixed(2) : '')+' · '+kbps.toFixed(1)+' kbit/s';
-    return {bin:n.out,active:src && n.bw.length ? 1 : 0,kbps,new:binPulse(n)}; },
+    return {bin:n.binOut,active:src && n.bw.length ? 1 : 0,kbps,new:binPulse(n)}; },
   drawKey:n=>n.text,
   draw(n){ binReadout(n); }});
 

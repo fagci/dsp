@@ -3,7 +3,8 @@
 
 // ---- экран не гаснет, пока граф запущен ----
 const Awake={lock:null, want:false,
-  enabled:()=>LS.get('dsp-awake')!=='0',
+  // явная настройка важнее; без неё экран держим только на тач-устройствах (ноутбук — не держим)
+  enabled:()=>{ const v=LS.get('dsp-awake'); return v==null ? matchMedia('(pointer:coarse)').matches : v==='1'; },
   async set(on){
     this.want=on;
     if(!('wakeLock' in navigator)) return;

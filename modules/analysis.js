@@ -2435,7 +2435,7 @@ def({ id:'sa', title:'Spectrum Analyzer', cat:'Analysis', crisp:true,
           {n:'wfContrast',t:'range',min:.5,max:4,step:.05,d:1,label:'waterfall contrast (× — narrows the colour window)'},
           {n:'palette',t:'select',opts:['default',...Object.keys(PALETTES)],d:'classic',label:'waterfall palette',adv:true},
           // история водопада в полном разрешении — зум/смена палитры и диапазона дБ перерисовывают её без потерь
-          {n:'wfMem',t:'select',opts:['off','32','128','512'],d:'128',label:'waterfall history memory, MB',adv:true,
+          {n:'wfMem',t:'select',opts:['off','32','128','512'],d:(typeof matchMedia==='function' && matchMedia('(pointer:coarse)').matches)?'32':'128',label:'waterfall history memory, MB',adv:true,
            fn:n=>{ n.hist=null; n._histKey=null; }},
           // фосфорный спектр: плотность попаданий трассы в зоне спектра (как у 'persist')
           {n:'phosphor',t:'check',d:false,label:'phosphor',fn:n=>{ n.ph=null; }},
@@ -4366,14 +4366,14 @@ def({ id:'xcorr', lazy:'proc', title:'Cross-Correlation', cat:'Analysis',
   params:[{n:'maxMs',t:'range',min:.1,max:200,step:.1,d:10,label:'range, ms'},
           {n:'win',t:'select',opts:['0.05','0.1','0.25','0.5'],d:'0.1',label:'window, s'},
           {n:'smooth',t:'range',min:0,max:.99,step:.01,d:.7,label:'averaging'}],
-  init:n=>{n.a=null;n.b=null;n.w=0;n.r=null;n.lag=0;n.peak=0;n.cnt=0;},
+  init:n=>{n.a=null;n.bBuf=null;n.w=0;n.r=null;n.lag=0;n.peak=0;n.cnt=0;},
   process(n,I){
     if(typeof I.maxMs==='number') setMod(n,'maxMs',I.maxMs);
     if(typeof I.smooth==='number') setMod(n,'smooth',I.smooth);
     const need=Math.round(+n.p.win*Eng.sr);
-    if(!n.a||n.a.length!==need){ n.a=new Float32Array(need); n.b=new Float32Array(need); n.w=0; }
+    if(!n.a||n.a.length!==need){ n.a=new Float32Array(need); n.bBuf=new Float32Array(need); n.w=0; }
     for(let i=0;i<BLOCK;i++){
-      n.a[n.w]=I.A?I.A[i]:0; n.b[n.w]=I.B?I.B[i]:0; n.w=(n.w+1)%need; }
+      n.a[n.w]=I.A?I.A[i]:0; n.bBuf[n.w]=I.B?I.B[i]:0; n.w=(n.w+1)%need; }
     if(++n.cnt%4===0) xcCompute(n);
     return {lagMs:n.lag/Eng.sr*1000, lagN:n.lag, peak:n.peak}; },
   draw(n,cv,cx){
@@ -4393,32 +4393,46 @@ def({ id:'xcorr', lazy:'proc', title:'Cross-Correlation', cat:'Analysis',
 
 
 function xcCompute(n){
-  const N=n.a.length, M=Math.min(N>>2,Math.round(n.p.maxMs*Eng.sr/1000));
-  const A=new Float32Array(N), B=new Float32Array(N);
+  const N=n.a.length, M=Math.min(N>>2,Math.max(1,Math.round(n.p.maxMs*Eng.sr/1000)));
+  const w=n.w;
   let ma=0,mb=0;
-  for(let i=0;i<N;i++){ A[i]=n.a[(n.w+i)%N]; B[i]=n.b[(n.w+i)%N]; ma+=A[i]; mb+=B[i]; }
+  for(let i=0;i<N;i++){ ma+=n.a[(w+i)%N]; mb+=n.bBuf[(w+i)%N]; }
   ma/=N; mb/=N;
   let ea=0,eb=0;
-  for(let i=0;i<N;i++){ A[i]-=ma; B[i]-=mb; ea+=A[i]*A[i]; eb+=B[i]*B[i]; }
+  for(let i=0;i<N;i++){ const a=n.a[(w+i)%N]-ma, b=n.bBuf[(w+i)%N]-mb; ea+=a*a; eb+=b*b; }
   const nrm=Math.sqrt(ea*eb)+1e-12;
-  const len=2*M+1, step=N>8192?2:1;
+  // FFT-корреляция вместо O(N·M): при окне 0.25 с и диапазоне 50 мс это 75 мс → единицы мс на такт
+  const P=pow2ge(N+M);
+  let ar=n._fftAr, ai=n._fftAi, br=n._fftBr, bi=n._fftBi;
+  if(!ar || ar.length!==P){
+    ar=n._fftAr=new Float64Array(P); ai=n._fftAi=new Float64Array(P);
+    br=n._fftBr=new Float64Array(P); bi=n._fftBi=new Float64Array(P);
+  } else { ar.fill(0); ai.fill(0); br.fill(0); bi.fill(0); }
+  for(let i=0;i<N;i++){ ar[i]=n.a[(w+i)%N]-ma; br[i]=n.bBuf[(w+i)%N]-mb; }
+  fft(ar,ai); fft(br,bi);
+  for(let k=0;k<P;k++){
+    const ar0=ar[k], ai0=ai[k], br0=br[k], bi0=bi[k];
+    ar[k]=ar0*br0+ai0*bi0; ai[k]=ar0*bi0-ai0*br0;   // conj(A)·B
+  }
+  for(let k=0;k<P;k++) ai[k]=-ai[k];                  // ifft = conj(fft(conj(X)))/P
+  fft(ar,ai);
+  const len=2*M+1;
   if(!n.r||n.r.length!==len) n.r=new Float32Array(len);
   const sm=n.p.smooth;
-  let best=0,bi=0;
+  let best=0,lagBest=0;
   for(let L=-M;L<=M;L++){
-    let acc=0;
-    const i0=Math.max(0,-L), i1=Math.min(N,N-L);
-    for(let i=i0;i<i1;i+=step) acc+=A[i]*B[i+L];
-    const v=acc*step/nrm;
+    const q=L>=0 ? L : P+L;
+    const v=ar[q]/P/nrm;
     const k=L+M;
     n.r[k]=n.r[k]*sm+v*(1-sm);
-    if(Math.abs(n.r[k])>Math.abs(best)){ best=n.r[k]; bi=L; } }
+    if(Math.abs(n.r[k])>Math.abs(best)){ best=n.r[k]; lagBest=L; }
+  }
   n.M=M;
-  const k=bi+M;                                      // уточнение вершины параболой
+  const k=lagBest+M;                                 // уточнение вершины параболой
   if(k>0&&k<len-1){
     const y0=n.r[k-1], y1=n.r[k], y2=n.r[k+1];
-    n.lag=bi+clamp(.5*(y0-y2)/(y0-2*y1+y2||1e-9),-.5,.5);
-  } else n.lag=bi;
+    n.lag=lagBest+clamp(.5*(y0-y2)/(y0-2*y1+y2||1e-9),-.5,.5);
+  } else n.lag=lagBest;
   n.peak=best;
 }
 

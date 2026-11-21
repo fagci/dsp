@@ -111,7 +111,7 @@ def({ id:'nmea', lazy:'proc', title:'NMEA Parser', cat:'Data', kw:'nmea gps gnss
   params:[{n:'cs',t:'select',opts:['if present','required','ignore'],d:'if present',label:'checksum'},
           {n:'id',t:'text',d:'gps',label:'record id of the receiver'},
           {n:'ttl',t:'range',min:1,max:120,step:1,d:30,label:'AIS: forget a vessel after, min'}],
-  init:n=>{ n.lastText=undefined; n.ok=0; n.bad=0; n.skip=0; n.fix={}; n.pend=null; n.lastTime=null; n.out={};
+  init:n=>{ n.lastText=undefined; n.ok=0; n.bad=0; n.skip=0; n.fix={}; n.pend=null; n.lastTime=null; n.fixOut={};
             n.used=new Set(); n.gsv={}; n.frag={}; n.last=''; n.ais={p:{ch:'A'}, ships:new Map(), recent:[], msgs:0, lastMsg:0, seq:0};
             n.satCount=0; n.inView=0; n.lines=[]; },
   process(n,I){
@@ -125,14 +125,14 @@ def({ id:'nmea', lazy:'proc', title:'NMEA Parser', cat:'Data', kw:'nmea gps gnss
     if(n.pend && now-n.pend.at>300){ recs.push(nmeaFlush(n)); }
     for(const [k,v] of n.ais.ships) if(now-v.seen>(+n.p.ttl||30)*60000) n.ais.ships.delete(k);
     recs.push(...aisOut.recs);
-    const o=n.out;
+    const o=n.fixOut;
     return {rec:recs.length ? recs : null, sat:sats.length ? sats : null,
       lat:o.lat ?? null, lon:o.lon ?? null, alt:o.alt ?? null, sog:o.sog ?? null, cog:o.cog ?? null, hdg:o.hdg ?? null,
       sats:o.sats ?? null, hdop:o.hdop ?? null, depth:o.depth ?? null, wspd:o.wspd ?? null, wdir:o.wdir ?? null, temp:o.temp ?? null,
       go:go ? 1 : 0};
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(!r) return;
-    const o=n.out, f=(v,d)=>v==null ? '—' : (+v).toFixed(d);
+    const o=n.fixOut, f=(v,d)=>v==null ? '—' : (+v).toFixed(d);
     let t=n.ok+' sentences'+(n.bad ? ', '+n.bad+' with a bad checksum' : '')+(n.skip ? ', '+n.skip+' skipped' : '');
     if(o.lat!=null) t+='\nfix: '+f(o.lat,5)+', '+f(o.lon,5)+'  alt '+f(o.alt,1)+' m  '+(n.fix.fixName||'')+(o.sats!=null ? '  sats '+o.sats : '')+(o.hdop!=null ? '  hdop '+o.hdop : '');
     if(o.sog!=null || o.cog!=null) t+='\nspeed '+f(o.sog,1)+' kn  course '+f(o.cog,1)+'°'+(o.hdg!=null ? '  heading '+f(o.hdg,0)+'°' : '');
@@ -160,7 +160,7 @@ function nmeaLine(n,line,now,recs,sats,aisOut){
   const d=nmeaDecode(s);
   if(!d){ n.skip++; return 0; }
   n.ok++;
-    const o=n.out, fx=n.fix;
+    const o=n.fixOut, fx=n.fix;
   const pos=d.valid && (d.type==='GGA' || d.type==='RMC' || d.type==='GLL');
   if(pos){
     if(n.pend && n.lastTime!==null && d.time!=null && d.time!==n.lastTime) recs.push(nmeaFlush(n));

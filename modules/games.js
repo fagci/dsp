@@ -155,16 +155,16 @@ const ngEnd=n=>n.res===1 ? 'you win!' : n.res===-1 ? 'you lose' : 'draw';
 const TTT_L=[[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
 function tttLine(b){ return TTT_L.find(l=>b[l[0]] && b[l[0]]===b[l[1]] && b[l[0]]===b[l[2]]) || null; }
 function tttPlay(n,i,p){
-  if(n.over || n.turnP!==p || n.b[i]) return false;
-  n.b[i]=p; n.line=tttLine(n.b);
-  if(n.line) ngFinish(n,p); else if(n.b.every(Boolean)) ngFinish(n,3); else n.turnP=3-p;
+  if(n.over || n.turnP!==p || n.board[i]) return false;
+  n.board[i]=p; n.line=tttLine(n.board);
+  if(n.line) ngFinish(n,p); else if(n.board.every(Boolean)) ngFinish(n,3); else n.turnP=3-p;
   n.dirty=true; return true;
 }
 const TTT={
-  reset(n){ n.b=Array(9).fill(0); n.line=null; },
+  reset(n){ n.board=Array(9).fill(0); n.line=null; },
   msg(n,cmd,a){ const i=+a[0]; if(cmd==='m' && i>=0 && i<9) tttPlay(n,i,3-n.me); },
   mount(n,bd){ n.cells=ngGrid(bd,3,3,i=>{ if(n.ready && tttPlay(n,i,n.me)) ngSend(n,'m '+i); }); },
-  render(n){ n.cells.forEach((c,i)=>{ const v=n.b[i];
+  render(n){ n.cells.forEach((c,i)=>{ const v=n.board[i];
     c.textContent=v===1 ? 'X' : v===2 ? 'O' : ''; c.className='ng-c'+(v ? ' p'+v : '')+(n.line && n.line.includes(i) ? ' win' : ''); }); },
   status:n=>n.over ? ngEnd(n) : ngWho(n)+' ('+(n.turnP===1 ? 'X' : 'O')+')'
 };
@@ -188,16 +188,16 @@ function c4Win(b,i,p){                              // линия из 4+ чер
 }
 function c4Play(n,c,p){
   if(n.over || n.turnP!==p || c<0 || c>=C4_W) return false;
-  const i=c4Drop(n.b,c); if(i<0) return false;
-  n.b[i]=p; n.line=c4Win(n.b,i,p); n.last4=i;
-  if(n.line) ngFinish(n,p); else if(n.b.every(Boolean)) ngFinish(n,3); else n.turnP=3-p;
+  const i=c4Drop(n.board,c); if(i<0) return false;
+  n.board[i]=p; n.line=c4Win(n.board,i,p); n.last4=i;
+  if(n.line) ngFinish(n,p); else if(n.board.every(Boolean)) ngFinish(n,3); else n.turnP=3-p;
   n.dirty=true; return true;
 }
 const C4={
-  reset(n){ n.b=Array(C4_W*C4_H).fill(0); n.line=null; n.last4=-1; },
+  reset(n){ n.board=Array(C4_W*C4_H).fill(0); n.line=null; n.last4=-1; },
   msg(n,cmd,a){ if(cmd==='m') c4Play(n,+a[0],3-n.me); },
   mount(n,bd){ n.cells=ngGrid(bd,C4_W,C4_H,i=>{ const c=i%C4_W; if(n.ready && c4Play(n,c,n.me)) ngSend(n,'m '+c); }); },
-  render(n){ n.cells.forEach((c,i)=>{ const v=n.b[i];
+  render(n){ n.cells.forEach((c,i)=>{ const v=n.board[i];
     c.className='ng-c ng-disc'+(v ? ' f'+v : '')+(n.line && n.line.includes(i) ? ' win' : '')+(i===n.last4 ? ' last' : ''); }); },
   status:n=>n.over ? ngEnd(n) : ngWho(n)+' ('+(n.turnP===1 ? 'amber' : 'teal')+')'
 };
@@ -292,27 +292,27 @@ const rvMoves=(b,p)=>{ const m=[]; for(let i=0;i<RV_N*RV_N;i++) if(rvFlips(b,i,p
 const rvCount=(b,p)=>b.reduce((s,v)=>s+(v===p),0);
 function rvPlay(n,i,p){
   if(n.over || n.turnP!==p || !(i>=0 && i<RV_N*RV_N)) return false;
-  const f=rvFlips(n.b,i,p); if(!f.length) return false;
-  n.b[i]=p; f.forEach(k=>{ n.b[k]=p; }); n.lastRv=i;
-  if(rvMoves(n.b,3-p).length) n.turnP=3-p;
-  else if(!rvMoves(n.b,p).length){                   // никто не может ходить
-    const a=rvCount(n.b,1), c=rvCount(n.b,2);
+  const f=rvFlips(n.board,i,p); if(!f.length) return false;
+  n.board[i]=p; f.forEach(k=>{ n.board[k]=p; }); n.lastRv=i;
+  if(rvMoves(n.board,3-p).length) n.turnP=3-p;
+  else if(!rvMoves(n.board,p).length){                   // никто не может ходить
+    const a=rvCount(n.board,1), c=rvCount(n.board,2);
     ngFinish(n,a>c ? 1 : c>a ? 2 : 3);
   }                                                  // иначе соперник пропускает ход
   n.dirty=true; return true;
 }
 const RV={
   reset(n){
-    n.b=Array(RV_N*RV_N).fill(0); n.lastRv=-1;
-    n.b[27]=n.b[36]=2; n.b[28]=n.b[35]=1;
+    n.board=Array(RV_N*RV_N).fill(0); n.lastRv=-1;
+    n.board[27]=n.board[36]=2; n.board[28]=n.board[35]=1;
   },
   msg(n,cmd,a){ if(cmd==='m') rvPlay(n,+a[0],3-n.me); },
   mount(n,bd){ n.cells=ngGrid(bd,RV_N,RV_N,i=>{ if(n.ready && rvPlay(n,i,n.me)) ngSend(n,'m '+i); }); },
   render(n){
-    const mine=n.turnP===n.me && !n.over ? new Set(rvMoves(n.b,n.me)) : null;
-    n.cells.forEach((c,i)=>{ const v=n.b[i];
+    const mine=n.turnP===n.me && !n.over ? new Set(rvMoves(n.board,n.me)) : null;
+    n.cells.forEach((c,i)=>{ const v=n.board[i];
       c.className='ng-c ng-disc'+(v ? ' f'+v : '')+(!v && mine && mine.has(i) ? ' hint' : '')+(i===n.lastRv ? ' last' : ''); });
   },
-  status:n=>(n.over ? ngEnd(n) : ngWho(n)+' ('+(n.turnP===1 ? 'amber' : 'teal')+')')+' '+rvCount(n.b,1)+':'+rvCount(n.b,2)
+  status:n=>(n.over ? ngEnd(n) : ngWho(n)+' ('+(n.turnP===1 ? 'amber' : 'teal')+')')+' '+rvCount(n.board,1)+':'+rvCount(n.board,2)
 };
 ngDef({id:'greversi',title:'Reversi (2 players)',kw:'reversi othello',w:340,spec:RV});

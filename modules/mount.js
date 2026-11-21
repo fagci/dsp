@@ -233,7 +233,7 @@ async function mountfsRun(n){
     if(!m) throw new Error(spec ? 'no mounted folder "'+spec+'" (⛓ mount in Files)' : 'nothing is mounted (⛓ mount in Files)');
     const r=await mountfsDo(await Mounts.fsOf(m),n.p.action,path,n.binIn);
     if(r.bin) n.res=r.bin; if(r.text!=null) n.list=r.text;
-    n.size=r.size||0; n.ok=1; n.pulse=2; n.text=n.p.action+' '+(mtNorm(path)||'/')+' · ok'+(r.size!=null && n.p.action!=='mkdir' && n.p.action!=='delete' ? ' · '+r.size : '');
+    n.resSize=r.size||0; n.ok=1; n.pulse=2; n.text=n.p.action+' '+(mtNorm(path)||'/')+' · ok'+(r.size!=null && n.p.action!=='mkdir' && n.p.action!=='delete' ? ' · '+r.size : '');
   }catch(e){ n.ok=0; n.text=String(e.message||e).slice(0,160); }
   n.busy=false;
 }
@@ -245,9 +245,9 @@ def({ id:'mountfs', title:'Mounted Folder (read / write / list)', cat:'Sources',
     {n:'action',t:'select',opts:MOUNTFS_ACTIONS,d:'read',label:'action (Run, or a rising edge on go)'},
     {n:'path',t:'text',d:'',label:'path inside the folder (the «path» input overrides; write: a folder path ending in / takes the file name from «bin»)'},
     {n:'run',t:'button',label:'Run',fn:n=>mountfsRun(n)}],
-  init:n=>{ n.busy=false; n.prevGo=0; n.res=null; n.list=''; n.size=0; n.ok=0; n.pulse=0; n.text='mount a folder in Files (⛓ mount)'; n.pathIn=''; n.binIn=null; },
+  init:n=>{ n.busy=false; n.prevGo=0; n.res=null; n.list=''; n.resSize=0; n.ok=0; n.pulse=0; n.text='mount a folder in Files (⛓ mount)'; n.pathIn=''; n.binIn=null; },
   process(n,I){
     n.pathIn=typeof I.path==='string' ? I.path : ''; n.binIn=I.bin||null;
     const go=(I.go||0)>.5; if(go && !n.prevGo) mountfsRun(n); n.prevGo=go;
-    return {bin:n.res,list:n.list,size:n.size,ok:n.ok,new:binPulse(n)}; },
+    return {bin:n.res,list:n.list,size:n.resSize,ok:n.ok,new:binPulse(n)}; },
   draw:binReadout });

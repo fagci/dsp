@@ -41,6 +41,7 @@
 | Справка в приложении | `modules/help.js` + `help-kernels.js` | `hpOpen/hpGo/hpLoad`; `hpLoad` собирает «абзацы модулей» (`hlpBullets`) со всех страниц `help/` — карточки модулей и поиск |
 | Serial | `modules/sources.js` (`def id:'webserial'`), `modules/webusb-serial.js` | вход `text` шлёт по изменению; shim ставится, где нет `navigator.serial` (Android: Chrome WebUSB и приложение через `usb-bridge.js`) |
 | Command Templates (команды с параметрами) | `modules/flow.js` (`def id:'cmds'`), логика `modules/flow-kernels.js` | `cmdTpls/cmdFields/cmdNames/cmdFmtVal/cmdFill`; шаблон `TUNE {f}` → пин `f`, кнопка ▶ + вход `gN`, выходы `text/go/rec` |
+| Ledger (финансы, повторения, баланс на дату) | `modules/ledger.js`, логика `modules/ledger-kernels.js` | `def id:'ledger'`; `lgCompute`, `lgGen`, `lgParseDate/lgWhen`, `lgNum`, `txmap/rmap/bmap`; строки — Table, шаблоны `finance*`, пресеты «Finance: …», тест `tools/test-ledger.mjs` |
 | Патчи/пресеты | `presets.js` | `readP/writeP/openPatch/insertPatch/buildPatchList/stashIfDirty`; `preset(name, fn)` |
 | Версионирование | `tools/stamp.mjs` | пересчитывает `V`/`CACHE`/`H`; `--check` для CI |
 

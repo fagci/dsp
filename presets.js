@@ -240,7 +240,20 @@ patchListEl.classList.toggle('empty',matches===0);
 function openPatch(name){
 stashIfDirty();
 const p=readP(); if(!hasPatch(name,p)) return;
-try{ deserialize(getPatch(name,p)); }
+try{
+  // Первое открытие встроенного пресета: builder уже рисует в живой граф — не гоняем его через
+  // serialize+deserialize (это второй проход addNode и второе выделение колец/канв). Кэш нужен
+  // для insertPatch и повторных открытий.
+  if(!p[name] && PRESETS[name] && !builtinCache.has(name)){
+    const was=Undo.busy; Undo.busy=true;
+    try{ Sel.clear(); clearAll(); PRESETS[name](); autoLayout(); }
+    finally{ Undo.busy=was; }
+    builtinCache.set(name,serialize());
+    syncSel();
+    if(!was) Undo.push();
+    if(dashMode) setDash(true);
+  } else deserialize(getPatch(name,p));
+}
 catch(e){ console.error('open "'+name+'" failed:',e); stat.textContent='could not open «'+name+'»: '+(e&&e.message||e); buildPatchList(); return; }
 currentPatchName=name; setDirty(false); syncHash();
 stat.textContent='opened: '+name;
@@ -2712,6 +2725,91 @@ ms.size.w=380; ms.size.h=360; applySize(ms);
 const ch=addNode('chat',460,260,{});
 ch.size.w=360; ch.size.h=300; applySize(ch);
 addEdge(ms.id,'rec',ch.id,'rec');
+markWiresDirty();
+});
+preset('Finance: Ledger — Accounts, Transactions and a Recurring Plan (Tables)', function(){
+clearAll();
+const nt=addNode('note',40,30,{text:'A finance tracker made of three ordinary Table lists, with the Ledger node doing the arithmetic.\n'+
+  'Transactions = facts (import a bank CSV into this list with ⋯ → Import; the ZenMoney columns date / income / outcome / payee / categoryName / comment are recognised by themselves, or map them in Ledger «transactions: role=column»).\n'+
+  'Recurring = the plan: start, period, every, end or times, amount. A loan 105, 105, 110: amount 105, final 110, times 3; amounts «105, 105, 110» is an explicit list. weekday 1=Mon … 7=Sun; monthday -1 = the last day. skip = dates without a payment.\n'+
+  'Opening balances = the starting money. Ledger «state at» accepts today, 2026-12-31, +3m, -1y — the same rules work backwards and forwards. The chart is the monthly balance; the table below is the balance of every account at that date.\n'+
+  'To see what is left after a new purchase, type +1m into «state at»; to check a past month, type 2026-03-31. Nothing is written to the tables, so you can experiment freely.'});
+nt.size.w=1100; nt.size.h=230; applySize(nt);
+const tx=addNode('table',40,300,{list:'@patch',vmode:'grid',data:[
+  'id,date,name,category,account,to,type,amount,currency,note',
+  't1,2026-11-05,Продукты,Еда,Платинум,,expense,6200,RUB,',
+  't2,2026-11-12,Наличные,Перевод,Платинум,Наличные,transfer,10000,RUB,',
+  't3,2026-11-15,Кафе,Еда,Наличные,,expense,1500,RUB,'].join('\n'),
+  schema:{types:{date:{t:'date'},type:{t:'choice',opts:['expense','income','transfer']},amount:{t:'num'},note:{t:'long'}},card:{key:'id',initial:false}}});
+tx.size.w=520; tx.size.h=360; applySize(tx);
+const ru=addNode('table',40,760,{list:'@patch',vmode:'grid',data:[
+  'id,name,start,period,every,monthday,end,times,amount,final,type,account,category',
+  'r1,Аренда,2026-01-01,month,1,1,,,45000,,expense,Платинум,Жильё',
+  'r2,Зарплата,2026-01-10,month,1,10,,,120000,,income,Платинум,Доход',
+  'r3,Кредит,2026-11-20,month,1,20,2027-01-20,3,105,110,expense,Платинум,Кредит',
+  'r4,Подписка,2026-11-01,month,1,1,,,299,,expense,Платинум,Сервисы'].join('\n'),
+  schema:{types:{start:{t:'date'},end:{t:'date'},period:{t:'choice',opts:['once','day','workday','week','month','quarter','year']},every:{t:'num'},monthday:{t:'text'},times:{t:'num'},amount:{t:'num'},final:{t:'num'},type:{t:'choice',opts:['expense','income','transfer']}},card:{key:'id',initial:false}}});
+ru.size.w=620; ru.size.h=360; applySize(ru);
+const ac=addNode('table',40,1220,{list:'@patch',vmode:'grid',data:[
+  'id,account,amount,currency,date',
+  'b1,Платинум,125000,RUB,2026-01-01',
+  'b2,Наличные,8000,RUB,2026-01-01'].join('\n'),
+  schema:{types:{amount:{t:'num'},date:{t:'date'}},card:{key:'id',initial:false}}});
+ac.size.w=420; ac.size.h=260; applySize(ac);
+const lg=addNode('ledger',720,300,{at:'today',from:'2026-01-01',bucket:'month',horizon:24,next:8});
+lg.size.w=420; lg.size.h=300; applySize(lg);
+const ch=addNode('tblchart',720,720,{kind:'line',x:'t',y:'balance',auto:true});
+ch.size.w=520; ch.size.h=300; applySize(ch);
+const acc=addNode('table',720,1120,{list:'@patch',vmode:'grid',cols:['account','opening','income','expense','balance','currency','count','last'],
+  schema:{types:{opening:{t:'num'},income:{t:'num'},expense:{t:'num'},balance:{t:'num'},count:{t:'num'}},card:{rowsIn:'replace',initial:false}}});
+acc.size.w=520; acc.size.h=260; applySize(acc);
+const nv=addNode('numview',1280,400,{digits:2});
+addEdge(tx.id,'rows',lg.id,'rows');
+addEdge(ru.id,'rows',lg.id,'rules');
+addEdge(ac.id,'rows',lg.id,'base');
+addEdge(lg.id,'series',ch.id,'rows');
+addEdge(lg.id,'accounts',acc.id,'rows');
+addEdge(lg.id,'balance',nv.id,'in');
+markWiresDirty();
+});
+preset('Finance: Accounts and Categories as a Graph (Ledger → Rec → Entities)', function(){
+clearAll();
+const nt=addNode('note',40,30,{text:'The same movements as a graph: Ledger turns facts and the recurring plan into records, Rec → Entities makes one account entity, one category entity and a link for every movement, and the Table upserts them by id. Accounts are hexagons, categories are boxes, the link label is the amount.\n'+
+  'Add more rules to make a payee, a month or a project a node; wire the Table rows to the Graph, and the Graph edit output back to the Table to correct a label. The Ledger readout is the balance at «state at»; set it to +1y to see which categories will take the most in the next year.'});
+nt.size.w=1000; nt.size.h=150; applySize(nt);
+const tx=addNode('table',40,240,{list:'@patch',vmode:'grid',data:[
+  'id,date,name,category,account,to,type,amount,currency',
+  't1,2026-11-05,Продукты,Еда,Платинум,,expense,6200,RUB',
+  't2,2026-11-12,Наличные,Перевод,Платинум,Наличные,transfer,10000,RUB',
+  't3,2026-11-15,Кафе,Еда,Наличные,,expense,1500,RUB',
+  't4,2026-11-20,Кредит,Кредит,Платинум,,expense,105,RUB'].join('\n'),
+  schema:{types:{date:{t:'date'},type:{t:'choice',opts:['expense','income','transfer']},amount:{t:'num'}},card:{key:'id',initial:false}}});
+tx.size.w=480; tx.size.h=300; applySize(tx);
+const ru=addNode('table',40,620,{list:'@patch',vmode:'grid',data:[
+  'id,name,start,period,every,amount,type,account,category',
+  'r1,Аренда,2026-01-01,month,1,45000,expense,Платинум,Жильё',
+  'r2,Зарплата,2026-01-10,month,1,120000,income,Платинум,Доход'].join('\n'),
+  schema:{types:{start:{t:'date'},period:{t:'choice',opts:['once','day','week','month','quarter','year']},amount:{t:'num'},type:{t:'choice',opts:['expense','income','transfer']}},card:{key:'id',initial:false}}});
+ru.size.w=480; ru.size.h=260; applySize(ru);
+const lg=addNode('ledger',580,240,{at:'today',bucket:'month',horizon:24});
+lg.size.w=360; lg.size.h=260; applySize(lg);
+const ent=addNode('recEnt',1000,240,{rules:
+  'account: account | id=acc:{account}, label={account}, type=account, shape=hexagon\n'+
+  'category: category | id=cat:{category}, label={category}, type=category, shape=box\n'+
+  'link: account category | id={account}>{category}, from=acc:{account}, to=cat:{category}, amount={amount}, label={amount}'});
+ent.size.w=520; ent.size.h=360; applySize(ent);
+const tb=addNode('table',1580,240,{list:'@patch',vmode:'grid',cols:['id','label','type','shape','from','to','amount'],
+  schema:{types:{amount:{t:'num'}},card:{key:'id',initial:false}}});
+tb.size.w=460; tb.size.h=340; applySize(tb);
+const g=addNode('graphview',1580,640,{directed:true});
+g.size.w=620; g.size.h=420; applySize(g);
+addEdge(tx.id,'rows',lg.id,'rows');
+addEdge(ru.id,'rows',lg.id,'rules');
+addEdge(lg.id,'rec',ent.id,'rec');
+addEdge(ent.id,'account',tb.id,'rec');
+addEdge(ent.id,'category',tb.id,'rec');
+addEdge(ent.id,'link',tb.id,'rec');
+addEdge(tb.id,'rows',g.id,'rows');
 markWiresDirty();
 });
 preset('Contacts: People and Addresses from vCard, Phone and Messages (Tables)', function(){

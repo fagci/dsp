@@ -106,7 +106,7 @@ def({ id:'flightsim', title:'Flight Sim', cat:'Sources',
           {n:'slon',t:'num',d:37.6173,label:'start lon, °',adv:true},
           {n:'id',t:'text',d:'sim',label:'record id',adv:true}],
   init:n=>{ n.s=null; n.spawnAt=null; n.tower=null; n.cs={}; n.t=0; n.tracks=new Map(); n.pickId=null; n.nextPick=false;
-            n.thrCmd=.5; n.note=''; n.rwy=undefined; n.rwyKey=''; n.rwyBusy=false; n.rwyErr=''; n.spawnRwy=null; n.edge={reset:0,cam:0,next:0}; n.fc=null; n.gh=null; n.msg=''; n.txt=''; n.camKey=''; n.out=null; },
+            n.thrCmd=.5; n.note=''; n.rwy=undefined; n.rwyKey=''; n.rwyBusy=false; n.rwyErr=''; n.spawnRwy=null; n.edge={reset:0,cam:0,next:0}; n.fc=null; n.gh=null; n.msg=''; n.txt=''; n.camKey=''; },
   process(n,I){
     const p=n.p, now=performance.now(), ts=Date.now(), dt=n.t ? Math.min(.1,(now-n.t)/1000) : 0; n.t=now;
     const rise=k=>{ const v=recNum(I[k])>.5 ? 1 : 0, r=v && !n.edge[k]; n.edge[k]=v; return r; };

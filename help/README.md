@@ -9,7 +9,7 @@ The same pages are shown in the app (the **?** button in the toolbar, or **F1**)
 - [Running and settings](run.md) — run / stop, speed, block size, sample rate
 - [Patches and presets](patches.md) — the patch list, saving, sharing, links
 - [Sources](sources.md) — everything that brings a signal or data into the graph
-- [Tables and records](data.md) — `rec` and `rows`, Table, viewers
+- [Tables and records](data.md) — `rec` and `rows`, Table, viewers, Ledger (finance and plans)
 - [Map and records](map.md) — points, layers, Rec → Entities rules
 - [Dashboard](dashboard.md) — panes and tiles for instrument-like screens
 - [SDR and receivers](sdr.md) — USB SDRs, remote SDRs, tinySA, telemetry

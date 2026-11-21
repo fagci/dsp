@@ -57,14 +57,15 @@ const n={id:id||('n'+(Graph.seq++)), type, x,  y, p:{}, out:{}, b:{}, lod:0,
 size:{w:d.w||((d.view||d.tall)?320:210), h:d.h||(d.tall? 96 : (d.view? d.view.h : 0))}};
 fillParamDefaults(n,d);
 if(params) Object.assign(n.p,params);
-const myId=n.id;
+const myId=n.id, sizeW=n.size.w, sizeH=n.size.h, out0=n.out;
 d.init?.(n);
-for(const k of ['id','type','p','size','el','ports']){          // служебные поля модулю нельзя
-if(k==='id' &&n.id!==myId){ console.error('узел '+type+' затёр n.id в init'); n.id=myId; } }
+if(n.id!==myId){ console.error('узел '+type+' затёр n.id в init'); n.id=myId; }
+// n.size/n.out — поля движка; модуль, положивший туда своё состояние, ломает раскладку и сохранение
+if(!n.size || typeof n.size!=='object' || n.size.w!==sizeW || n.size.h!==sizeH){
+console.error('узел '+type+' затёр n.size в init — размер задаётся через d.w/d.h'); n.size={w:sizeW,h:sizeH}; }
+if(n.out!==out0) console.error('узел '+type+' пишет в n.out — это поле движка');
 // x/y — координаты узла на холсте; модуль, положивший туда буфер состояния, ломает провода (NaN в path) и сохранение
 if(typeof n.x!=='number' || typeof n.y!=='number'){ console.error('узел '+type+' затёр n.x/n.y в init — храни состояние в другом поле'); n.x=x; n.y=y; }
-if('out' in n  && n.out!==undefined  && typeof n.out!=='object')
-console.error('узел '+type+' использует n.out — это поле движка');
 n.out={};
 return n;
 }
@@ -78,6 +79,7 @@ function delNode(n){
 const d=MOD[n.type];
 try{ d?.dispose?.(n); }catch(e){ console.error('dispose '+n.type+':',e); }
 n.roCv?.disconnect();                               // иначе ResizeObserver держит канву живой
+if(n._cvs){ for(const c of n._cvs) HiDPICanvases.delete(c); n._cvs.clear(); }
 visIO.unobserve(n.el);
 Graph.edges.filter(e=>e.from===n.id||e.to===n.id).forEach(delEdge);
 Graph.nodes=Graph.nodes.filter(x=>x!==n); delete Graph.map[n.id];
@@ -302,6 +304,7 @@ nativeH.set.call(cv, cv.pxH=ph);
 cv.pxGen=(cv.pxGen|0)+1;                             // буфер стёрт — кэширующим draw() надо перерисовать
 cx.setTransform(pw/logW,0,0,ph/logH,0,0); };
 HiDPICanvases.set(cv,restretch);
+if(n){ (n._cvs||(n._cvs=new Set())).add(cv); }   // все канвы узла (главная + свои у модуля) — чтобы удалить их из карты вместе с узлом
 if(n && MOD[n.type]?.crisp) crispCtx(cx,()=>cv.pxW/logW);
 // Chrome на Android сбрасывает 2D-контекст в фоне; после восстановления матрица сброшена
 cv.addEventListener('contextrestored',()=>restretch(true));
@@ -787,6 +790,7 @@ const fc=ae && n.el.contains(ae) && ae.closest?.('.prm[data-param]') ?
    ss:ae.selectionStart ?? null, se:ae.selectionEnd ?? null, st:ae.scrollTop} : null;
 fillParamDefaults(n,MOD[n.type]);                  // добить дефолтами новые/переименованные параметры
 n.roCv?.disconnect();                               // старая канва уходит вместе с el, наблюдатель — тоже
+if(n._cvs){ for(const c of n._cvs) HiDPICanvases.delete(c); n._cvs.clear(); }
 visIO.unobserve(n.el);
 const host=n.el.parentNode, inDash=dashMode && !!dashLeafOf(n.id);   // в тайле новый DOM остаётся в своей панели
 n.el.remove(); buildNodeEl(n);

@@ -362,11 +362,11 @@ function iqBridge(n,I){
   const s=iqIn(I,'in');
   if(!s || !s.sr){ out.fill(0); oq.fill(0); n.state='no input'; return {out, q:oq, fill:null}; }
   if(s.sr!==n.sr){                             // новая частота — новое кольцо (2 с)
-    n.sr=s.sr; n.size=pow2ge(Math.max(s.sr*2, BLOCK*8));
-    n.rr=new Float32Array(n.size); n.ri=new Float32Array(n.size);
+    n.sr=s.sr; n.ringN=pow2ge(Math.max(s.sr*2, BLOCK*8));
+    n.rr=new Float32Array(n.ringN); n.ri=new Float32Array(n.ringN);
     n.W=0; n.pos=0; n.rebuf=true; n.floor=0; n.ppm=0; n.drops=0; n.starves=0;
   }
-  const mask=n.size-1, rr=n.rr, ri=n.ri;
+  const mask=n.ringN-1, rr=n.rr, ri=n.ri;
   for(const c of s.chunks){
     const xr=c.re, xi=c.im, K=xr.length;
     let w=n.W;
@@ -375,7 +375,7 @@ function iqBridge(n,I){
   }
   const ratio=s.sr/Eng.sr, target=Math.max(s.sr*n.p.lat/1000, ratio*BLOCK*2);
   let fill=n.W-n.pos;
-  if(fill>n.size-ratio*BLOCK*2){ n.pos=n.W-target; fill=target; n.drops++; }   // кольцо на исходе
+  if(fill>n.ringN-ratio*BLOCK*2){ n.pos=n.W-target; fill=target; n.drops++; }   // кольцо на исходе
   const g=Math.pow(10,n.p.gain/20);
   if(n.rebuf){
     if(fill>=target){ n.rebuf=false; n.pos=n.W-target; fill=target;             // излишек пришедшего чанка — сразу в сброс

@@ -926,18 +926,18 @@ def({ id:'chanLog', title:'Channel Activity', cat:'Analysis', readout:true, tall
             const rows=R.map(r=>[r.f.toFixed(0),r.bw.toFixed(0),r.label,r.occ.toFixed(2),r.hits,new Date(Date.now()-(performance.now()-r.first)).toISOString(),new Date(Date.now()-(performance.now()-r.last)).toISOString(),r.db.toFixed(1),r.group].join(','));
             dl(new Blob(['freq_hz,bw_hz,type,occupancy_pct,hits,first_seen_utc,last_seen_utc,peak_db,group\n'+rows.join('\n')],{type:'text/csv'}),'channels-'+Date.now()+'.csv'); }},
           {n:'clr',t:'button',label:'Reset',fn:n=>{ n.st=chanNew(performance.now()); n.rows=[]; n.text='reset'; }}],
-  init:n=>{ n.st=chanNew(performance.now()); n.rows=[]; n.text='connect bands from the Signal Type Identifier'; n.out=[]; },
+  init:n=>{ n.st=chanNew(performance.now()); n.rows=[]; n.text='connect bands from the Signal Type Identifier'; n.bandsOut=[]; },
   process(n,I){
     const fr=I.bands, now=performance.now();
     if(Array.isArray(fr) && chanUpdate(n.st,fr,now,{tol:+n.p.tol,maxCh:+n.p.maxCh})){
       const R=chanRows(n.st,now,+n.p.join).filter(r=>r.occ>=+n.p.min); n.rows=R;
-      n.out=R.slice(0,+n.p.top).map(r=>({lo:r.f-r.bw/2, hi:r.f+r.bw/2, label:r.label+' '+r.occ.toFixed(0)+'%', color:'#b0bec5', sig:true, f:r.f}));
+      n.bandsOut=R.slice(0,+n.p.top).map(r=>({lo:r.f-r.bw/2, hi:r.f+r.bw/2, label:r.label+' '+r.occ.toFixed(0)+'%', color:'#b0bec5', sig:true, f:r.f}));
       let grp='', lines=[];
       for(const r of R.slice(0,+n.p.top)){ if(r.group!==grp){ grp=r.group; lines.push('— '+grp); }
         lines.push((fmtHz(r.f,r.f>1e6?4:2)+'Hz').padStart(13)+'  '+r.label.padEnd(8)+' '+r.occ.toFixed(0).padStart(3)+'%  bw '+fmtHz(r.bw,1)+'Hz · '+r.hits+'×'); }
       n.text=R.length+' channel'+(R.length===1?'':'s')+' over '+Math.round((now-n.st.t0)/1000)+' s\n'+lines.join('\n');
     }
     const t=n.rows[0];
-    return {bands:n.out, text:n.text, count:n.rows.length, f:t?t.f:null, occ:t?t.occ:0};
+    return {bands:n.bandsOut, text:n.text, count:n.rows.length, f:t?t.f:null, occ:t?t.occ:0};
   },
   draw(n){ const r=n.el.querySelector('.readout'); if(r && r.textContent!==n.text) r.textContent=n.text; }});

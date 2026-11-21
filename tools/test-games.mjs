@@ -9,7 +9,7 @@ const BLOCK=512, SR=48000;
 let now=0, bad=0;
 const defs={};
 const ctx=vm.createContext({Math,Float32Array,Float64Array,Uint8Array,BigInt,Number,Array,Object,String,JSON,TextEncoder,TextDecoder,Set,
-  Date:{now:()=>now}, BLOCK, Eng:{sr:SR}, buf:(n,k)=>n['_'+k]||(n['_'+k]=new Float32Array(BLOCK)),
+  Date:{now:()=>now}, BLOCK, Eng:{sr:SR}, binObj:d=>({d}), buf:(n,k)=>n['_'+k]||(n['_'+k]=new Float32Array(BLOCK)),
   def:d=>{ defs[d.id]=d; }, document:{}});
 const load=f=>fs.readFileSync(path.join(root,f),'utf8');
 vm.runInContext(load('modules/tbsk-kernels.js')+'\n'+load('modules/tbsk.js'),ctx);
@@ -57,7 +57,7 @@ function play(o){
       const g=P(me.game,{in:r.text,link:1});
       me.gres=g;
       if(me.game.ready && g.turn && !me.game.over){
-        const mv=G.rvMoves(me.game.b,me.game.me);
+        const mv=G.rvMoves(me.game.board,me.game.me);
         if(mv.length && rnd()<.3){ const i=mv[Math.floor(rnd()*mv.length)]; if(G.rvPlay(me.game,i,me.game.me)){ G.ngSend(me.game,'m '+i); moves++; } }
       }
       if(me.game.ready && me.game.over && !me.next && rnd()<.01){ me.next=1; }
@@ -71,7 +71,7 @@ function play(o){
   }
   return {A:A.game,B:B.game,moves,lost,blocks:st,sec:st*BLOCK/SR,ms:Date.now()-t0};
 }
-const same=(r)=>JSON.stringify(r.A.b)===JSON.stringify(r.B.b);
+const same=(r)=>JSON.stringify(r.A.board)===JSON.stringify(r.B.board);
 
 let r=play({sec:900});
 ok('clean channel: both sides finish a game',r.A.over && r.B.over,'sim '+r.sec.toFixed(1)+' s, '+r.moves+' moves, cpu '+r.ms+' ms');
@@ -97,19 +97,19 @@ for(const gid of ['gtictactoe','gconnect4','gbattleship','greversi']) for(const 
 }
 {
   const [A,B]=wire('greversi',false);
-  const mv=G.rvMoves(A.b,A.turnP===A.me ? A.me : B.me), who=A.turnP===A.me ? A : B, other=who===A ? B : A;
+  const mv=G.rvMoves(A.board,A.turnP===A.me ? A.me : B.me), who=A.turnP===A.me ? A : B, other=who===A ? B : A;
   G.rvPlay(who,mv[0],who.me); G.ngSend(who,'m '+mv[0]);
   const P=defs.greversi.process; let last=who.outQ.shift(); now+=10;
   P(other,{in:last}); 
-  ok('wire rel=false: move arrives',JSON.stringify(A.b)===JSON.stringify(B.b));
+  ok('wire rel=false: move arrives',JSON.stringify(A.board)===JSON.stringify(B.board));
 }
 {
   const [A,B]=wire('greversi',true);
   const who=A.turnP===A.me ? A : B, other=who===A ? B : A, P=defs.greversi.process;
-  const mv=G.rvMoves(who.b,who.me); G.rvPlay(who,mv[0],who.me); G.ngSend(who,'m '+mv[0]);
+  const mv=G.rvMoves(who.board,who.me); G.rvPlay(who,mv[0],who.me); G.ngSend(who,'m '+mv[0]);
   const txt=who.outQ[who.outQ.length-1], bad1=txt.replace(/m (\d+)/,(x,d)=>'m '+((+d+1)%64));
-  P(other,{in:bad1}); ok('rel: corrupted frame rejected',JSON.stringify(who.b)!==JSON.stringify(other.b));
-  P(other,{in:null}); P(other,{in:txt}); ok('rel: good frame accepted',JSON.stringify(who.b)===JSON.stringify(other.b));
+  P(other,{in:bad1}); ok('rel: corrupted frame rejected',JSON.stringify(who.board)!==JSON.stringify(other.board));
+  P(other,{in:null}); P(other,{in:txt}); ok('rel: good frame accepted',JSON.stringify(who.board)===JSON.stringify(other.board));
   P(other,{in:null}); const q=other.outQ.length; P(other,{in:txt}); ok('rel: duplicate not applied twice, acked again',other.outQ.length>q || other.justSent);
 }
 r=play({sec:60,drop:1});

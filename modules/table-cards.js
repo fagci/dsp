@@ -1,13 +1,13 @@
 "use strict";
 /* ============================ Table: типы полей, карточки, связи между списками ============================
    Схема списка: ListDB-meta {cols, types:{колонка:{t, opts, to, multi}}, card:{show:[колонки]}}; у списка в патче (@patch) — n.p.schema.
-   Типы: text, long, num, progress (min / max — границы шкалы, по умолчанию 0…100), bool, date, choice (opts), photo, audio, link (to — другой список; в ячейке имена записей через « | »).
+   Типы: text, long, num, progress (min / max — границы шкалы, по умолчанию 0…100), bool, date, datetime (fmt — шаблон), money (cur, fmt), rating (max), color, url, choice (opts), photo, audio, link (to — другой список; в ячейке имена записей через « | »).
    file — в ячейке id файлов из Files: «fl-12 fl-15» (или «ph-…» для фото из пространства images); сами файлы остаются в dsp-files.
    card.lines — раскладка карточки: [[колонки строки 1],[строки 2]…] под названием; нет — по одному полю из show на строку. card.keys — подписи полей, card.cover=='none' — без блока фото.
    Колонки без типа ведут себя как раньше (photo / audio — по имени). Виды: cards (карточки с фото), grid (полный список), compact (краткий).
    Карточка записи — панель с большим фото, всеми полями, связями и обратными связями («кто ссылается на эту запись»). */
 
-const TC_TYPES=[['text','text'],['long','long text'],['num','number'],['bool','checkbox'],['progress','progress bar'],['date','date'],['choice','choice'],
+const TC_TYPES=[['text','text'],['long','long text'],['num','number'],['bool','checkbox'],['progress','progress bar'],['date','date'],['datetime','date and time'],['money','money'],['rating','rating (stars)'],['color','colour'],['url','link (URL)'],['choice','choice'],
   ['photo','photo'],['image','avatar / image (URL or photo)'],['online','online status'],['typing','typing'],['audio','audio'],['file','file (from Files)'],['link','link to a list'],['phone','phone (calls on tap; searched by digits)'],['email','e-mail (opens a letter on tap)'],['checklist','checklist (items from another list)'],['auto','auto number'],['calc','calculated']];
 const TC_VIEWS=[['cards','🃏','cards','cards'],['grid','☰','full list (columns)','table'],['compact','≡','brief list (name · values)','brief'],['icons','👤','list with icons (avatar, online, typing)','avatars']];
 const TC_SEP=' | ';
@@ -16,6 +16,69 @@ const tcView=n=>n.p.vmode==='cards' ? 'cards' : n.p.vmode==='compact' ? 'compact
 const tcCardish=n=>{ const v=tcView(n); return v==='cards' || v==='icons'; };
 const tcSchemaOf=m=>({types:{...(m?.types||{})},card:{...(m?.card||{})}});
 const tcDef=(n,c)=>n.schema?.types?.[c]||{};
+const TC_DT_FMT='YYYY-MM-DD HH:mm', TC_MONEY_FMT='#,##0.00';
+const tcZ=(v,w=2)=>String(v).padStart(w,'0');
+// дата и время: число (секунды / миллисекунды) или строка; строка без зоны считается «настенным» временем как есть
+function tcDateParts(v,local){
+  if(v==null || v==='') return null;
+  if(typeof v==='number'){
+    if(!isFinite(v)) return null;
+    const ms=v>1e11 ? v : v>1e8 ? v*1000 : null;
+    if(ms==null) return null;
+    const d=new Date(ms);
+    return local ? {y:d.getFullYear(),mo:d.getMonth()+1,d:d.getDate(),h:d.getHours(),mi:d.getMinutes(),s:d.getSeconds(),ms:d.getMilliseconds()}
+                 : {y:d.getUTCFullYear(),mo:d.getUTCMonth()+1,d:d.getUTCDate(),h:d.getUTCHours(),mi:d.getUTCMinutes(),s:d.getUTCSeconds(),ms:d.getUTCMilliseconds()};
+  }
+  const s=String(v).trim(), m=s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?)?$/);
+  if(m && !/[zZ]|[+-]\d\d:?\d\d$/.test(s))
+    return {y:+m[1],mo:+m[2],d:+m[3],h:+(m[4]||0),mi:+(m[5]||0),s:+(m[6]||0),ms:+(m[7]||0)};
+  const t=Date.parse(s); if(!isFinite(t)) return null;
+  return tcDateParts(t,local);
+}
+function tcFmtDate(v,fmt,local){
+  const p=tcDateParts(v,local); if(!p) return String(v??'');
+  return String(fmt||TC_DT_FMT).replace(/YYYY|YY|MM|M|DD|D|HH|H|mm|m|ss|s|SSS/g,k=>
+    k==='YYYY' ? String(p.y) : k==='YY' ? tcZ(p.y%100) : k==='MM' ? tcZ(p.mo) : k==='M' ? String(p.mo) :
+    k==='DD' ? tcZ(p.d) : k==='D' ? String(p.d) : k==='HH' ? tcZ(p.h) : k==='H' ? String(p.h) :
+    k==='mm' ? tcZ(p.mi) : k==='m' ? String(p.mi) : k==='ss' ? tcZ(p.s) : k==='s' ? String(p.s) : tcZ(p.ms,3));
+}
+// деньги: в ячейке число; строка приводится к числу (пробелы, валюта, запятая как десятичный разделитель)
+function tcMoneyNum(v){
+  if(typeof v==='number') return isFinite(v) ? v : null;
+  let s=String(v??'').trim(); if(!s) return null;
+  s=s.replace(/[^\d.,+\-]/g,'');
+  if(!s) return null;
+  const dot=s.lastIndexOf('.'), comma=s.lastIndexOf(',');
+  if(dot>=0 && comma>=0) s=comma>dot ? s.replace(/\./g,'').replace(',','.') : s.replace(/,/g,'');
+  else if(comma>=0){ const after=s.length-comma-1; s=after===3 && !/(^|[^\d])0$/.test(s.slice(0,comma)) ? s.replace(/,/g,'') : s.replace(',','.'); }
+  const n=Number(s); return isFinite(n) ? n : null;
+}
+function tcCurSym(cur){
+  cur=String(cur||'').trim().toUpperCase(); if(!cur) return '';
+  try{ const p=new Intl.NumberFormat(undefined,{style:'currency',currency:cur,currencyDisplay:'narrowSymbol'}).formatToParts(0); return p.find(x=>x.type==='currency')?.value || cur; }
+  catch(e){ return cur; }
+}
+// fmt: шаблон вида «#,##0.00»; ¤ — знак валюты из def.cur (¤#,##0.00, #,##0.00 ¤)
+function tcFmtMoney(v,def){
+  const n=tcMoneyNum(v); if(n==null) return String(v??'');
+  const d=def||{}, cur=String(d.cur||'').trim().toUpperCase(), sym=tcCurSym(cur);
+  let fmt=String(d.fmt||'').trim() || (cur ? '¤#,##0.00' : TC_MONEY_FMT), m=fmt.match(/[#0,]+(?:\.[#0]+)?/);
+  if(!m){ fmt=TC_MONEY_FMT; m=fmt.match(/[#0,]+(?:\.[#0]+)?/); }
+  const pat=m[0], dot=pat.indexOf('.'), dec=dot>=0 ? pat.slice(dot+1) : '', md=Math.min(20,dec.length), min=Math.min(md,(dec.match(/0/g)||[]).length);
+  const num=new Intl.NumberFormat(undefined,{minimumFractionDigits:min,maximumFractionDigits:md,useGrouping:pat.includes(',')}).format(n);
+  return (fmt.slice(0,m.index).replace(/¤/g,sym)+num+fmt.slice(m.index+pat.length).replace(/¤/g,sym)).trim();
+}
+function tcRating(v,def){
+  const n=+v; if(!isFinite(n)) return String(v??'');
+  const max=Math.max(1,Math.min(10,Math.round(+def?.max||5))), k=Math.max(0,Math.min(max,Math.round(n)));
+  return '★'.repeat(k)+'☆'.repeat(max-k);
+}
+function tcUrlHref(v){
+  const s=String(v??'').trim(); if(!s) return '';
+  const m=s.match(/^([a-z][a-z0-9+.-]*):/i);
+  if(m) return /^(https?|mailto|tel)$/i.test(m[1]) ? s : '';
+  return 'https://'+s;
+}
 // тип колонки: из схемы, иначе по имени (photo / audio, как раньше)
 function tblType(n,c){
   const t=n.schema?.types?.[c]?.t; if(t) return t;
@@ -169,11 +232,14 @@ async function tcCardOf(n,list){
 // текст значения для списков и карточек
 function tcText(n,c,v){
   if(v===''||v==null) return '';
-  const t=tblType(n,c);
+  const t=tblType(n,c), d=tcDef(n,c);
   if(t==='bool') return tcIsTrue(v) ? '✓' : '✗';
   if(t==='link') return tcLinks(v).join(', ');
   if(t==='checklist') return '☑ '+v;
   if(t==='file') return tcFileIds(v).length ? '📎'+tcFileIds(v).length : '';
+  if(t==='datetime') return tcFmtDate(v,d.fmt,n.p.tz==='local');
+  if(t==='money') return tcFmtMoney(v,d);
+  if(t==='rating') return tcRating(v,d);
   return recFmt(v);
 }
 
@@ -312,7 +378,7 @@ function tcPick(n,list,multi,cur){
 }
 
 /* ---------- поля формы ---------- */
-// {inp, bar?, wide?} для типов long / num / bool / date / choice / link; иначе null (общая ветка формы)
+// {inp, bar?, wide?} для типов long / num / money / rating / color / bool / date / datetime / choice / link; иначе null (общая ветка формы)
 function tcFormField(n,c,rec,ty){
   const def=tcDef(n,c), v=rec[c];
   const mkb=(t,f)=>{ const b=document.createElement('button'); b.type='button'; b.textContent=t; b.style.cssText=TBL_BTN; b.addEventListener('click',e=>{ e.preventDefault(); f(); }); return b; };
@@ -325,10 +391,22 @@ function tcFormField(n,c,rec,ty){
     const inp=document.createElement('input'); inp.value=v??''; inp.disabled=true; inp.placeholder=ty==='auto' ? 'auto number' : 'calculated';
     return {inp};
   }
-  if(ty==='num' || ty==='progress'){
+  if(ty==='num' || ty==='progress' || ty==='money'){
     const inp=document.createElement('input'); inp.type='number'; inp.step='any'; inp.value=v??'';
     if(ty==='progress'){ inp.min=def.min??0; inp.max=def.max??100; }
     inp.addEventListener('keydown',e=>e.stopPropagation());
+    return {inp};
+  }
+  if(ty==='rating'){
+    const inp=document.createElement('select'), max=Math.max(1,Math.min(10,Math.round(+def.max||5))), cur=String(v??''), opts=[''];
+    for(let i=0;i<=max;i++) opts.push(String(i));
+    if(cur!=='' && !opts.includes(cur)) opts.push(cur);
+    for(const o of opts){ const op=document.createElement('option'); op.value=o; const k=+o; op.textContent=o==='' ? '—' : k+' · '+(isFinite(k) ? '★'.repeat(Math.min(max,k))+'☆'.repeat(Math.max(0,max-k)) : o); inp.append(op); }
+    inp.value=cur;
+    return {inp};
+  }
+  if(ty==='color'){
+    const inp=document.createElement('input'); inp.type='color'; inp.value=/^#[0-9a-f]{6}$/i.test(String(v)) ? v : '#c9c9c9';
     return {inp};
   }
   if(ty==='online'){
@@ -343,6 +421,14 @@ function tcFormField(n,c,rec,ty){
   }
   if(ty==='date'){
     const inp=document.createElement('input'); inp.type='date'; inp.value=/^\d{4}-\d\d-\d\d$/.test(String(v)) ? v : '';
+    return {inp};
+  }
+  if(ty==='datetime'){
+    const inp=document.createElement('input'); inp.type='datetime-local';
+    const p=tcDateParts(v,true);
+    inp.value=p ? p.y+'-'+tcZ(p.mo)+'-'+tcZ(p.d)+'T'+tcZ(p.h)+':'+tcZ(p.mi)+(/[sS]/.test(String(def.fmt||'')) || p.s || p.ms ? ':'+tcZ(p.s) : '') : '';
+    inp.step=/[sS]/.test(String(def.fmt||'')) || p?.ms ? '1' : '60';
+    inp.addEventListener('keydown',e=>e.stopPropagation());
     return {inp};
   }
   if(ty==='choice'){
@@ -388,9 +474,9 @@ function tcFormField(n,c,rec,ty){
 function tcValue(ty,inp){
   const v=inp.value;
   switch(ty){
-    case 'num': case 'progress': return String(v).trim()==='' ? '' : isFinite(+v) ? +v : v;
+    case 'num': case 'progress': case 'money': case 'rating': return String(v).trim()==='' ? '' : isFinite(+v) ? +v : v;
     case 'bool': case 'typing': return inp.checked ? 1 : 0;
-    case 'date': case 'choice': case 'online': case 'long': case 'link': case 'file': return v;
+    case 'date': case 'datetime': case 'color': case 'url': case 'choice': case 'online': case 'long': case 'link': case 'file': return v;
   }
   return undefined;
 }
@@ -426,11 +512,26 @@ function tcContactEl(t,v){
   }
   return box;
 }
+function tcUrlEl(v){
+  const a=document.createElement('a'); a.className='tc-v tc-lnk'; a.textContent=String(v??'');
+  const href=tcUrlHref(v);
+  if(href){ a.href=href; a.target='_blank'; a.rel='noopener noreferrer'; a.title='Open '+href; }
+  a.addEventListener('click',e=>e.stopPropagation());
+  return a;
+}
+function tcColorEl(v){
+  const el=document.createElement('span'); el.className='tc-v';
+  if(v && CSS.supports('color',String(v))){ const sw=document.createElement('i'); sw.className='tbl-sw'; sw.style.background=String(v); el.append(sw); }
+  el.append(String(v??''));
+  return el;
+}
 // значение поля для карточки: связи — чипы, шкала, файлы, обычный текст
 function tcValEl(n,c,v){
   const t=tblType(n,c);
   if(t==='link') return tcChips(n,c,v);
   if(t==='phone' || t==='email') return tcContactEl(t,v);
+  if(t==='url') return tcUrlEl(v);
+  if(t==='color') return tcColorEl(v);
   if(t==='progress') return tcBar(n,c,v,tcText(n,c,v));
   if(t==='checklist') return Object.assign(document.createElement('span'),{className:'tc-v',textContent:tcText(n,c,v)});
   if(t==='file') return tcFileEl(v);
@@ -632,9 +733,10 @@ function tcDetail(n,i){
     else if(t==='audio'){ const a=auIds(v); val=mkb('🔊 '+a.length,'Play the audio',()=>auView(a)); }
     else if(t==='progress') val=tcBar(n,c,v,tcText(n,c,v));
     else if(t==='file') val=tcFileEl(v,true);
+    else if(t==='url') val=tcUrlEl(v);
     else {
       val=document.createElement('span'); val.className='tc-v'+(t==='long' ? ' pre' : '');
-      if(TBL_COLOR.includes(c.toLowerCase()) && CSS.supports('color',String(v))){ const sw=document.createElement('i'); sw.className='tbl-sw'; sw.style.background=String(v); val.append(sw); }
+      if((t==='color' || TBL_COLOR.includes(c.toLowerCase())) && CSS.supports('color',String(v))){ const sw=document.createElement('i'); sw.className='tbl-sw'; sw.style.background=String(v); val.append(sw); }
       val.append(TBL_HZ.test(c)&&isFinite(tblHz(v)) ? fmtHz(tblHz(v),4)+'Hz' : tcText(n,c,v));
     }
     l.append(val); form.append(l);
