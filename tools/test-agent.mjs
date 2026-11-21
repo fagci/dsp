@@ -12,7 +12,7 @@ const ctx=vm.createContext({Math,JSON,Set,Object,Array,String,Number,Date,Error,
   performance:{now:()=>clock.t}, def:d=>{ defs[d.id]=d; },
   ndFetch:async(n,url)=>{ calls.http.push(url); return {ok:true,status:200,text:async()=>'<html><script>x()</script><body>Temp <b>+4</b> °C</body></html>'}; },
   AppLink:{ok:true,call:async(cmd,args)=>{ calls.app.push([cmd,args]); return {}; }}});
-vm.runInContext(['agent-kernels.js','agent.js'].map(f=>fs.readFileSync(path.join(root,'modules/'+f),'utf8')).join('\n')+';this.K={agParseTools,agToolList,agCoerce,agAllowed,agSystemPrompt,agParseCalls,agCalc,agRunCall,agNew,agDecide,agFormatResults,agTraceLine,AG_BUILTIN,AG_SAMPLE};',ctx);
+vm.runInContext(['agent-kernels.js','agent.js'].map(f=>fs.readFileSync(path.join(root,'modules/'+f),'utf8')).join('\n')+';this.K={agParseTools,agToolList,agCoerce,agAllowed,agSystemPrompt,agLang,agParseCalls,agCalc,agRunCall,agNew,agDecide,agFormatResults,agTraceLine,AG_BUILTIN,AG_SAMPLE};',ctx);
 const K=ctx.K, D=defs.agent;
 const node=(p={})=>{ const n={p:{...Object.fromEntries(D.params.filter(q=>q.d!==undefined).map(q=>[q.n,q.d])),...p},el:null}; D.init(n); return n; };
 
@@ -57,6 +57,10 @@ ok('tool list: read / write vanish when no pins are declared; actions stay',K.ag
 const sp=K.agSystemPrompt(pt,tl,'');
 ok('system prompt: tools as JSON, the call format, the pins with meanings and ranges, the actions',/<tools>/.test(sp) && /"name":"calc"/.test(sp) && /<tool_call>/.test(sp) && /temp — temperature, °C \(number\)/.test(sp) && /alert — alert \(number, 0…3\)/.test(sp) && /WITHOUT a tool call/.test(sp) && /set_gain\(db -10…10\)/.test(sp) && /\[needs approval\]/.test(sp) && /do not repeat it/.test(sp));
 ok('system prompt: no tools → says so',/no tools/.test(K.agSystemPrompt({reads:[],writes:[],acts:[]},[],'')));
+ok('language: the script of the task is detected (Latin → English, Cyrillic → Russian, CJK → Chinese)',K.agLang('Check the weather')==='English' && K.agLang('Проверь погоду')==='Russian' && K.agLang('检查天气')==='Chinese' && K.agLang('')==='English');
+ok('language: the chosen language is demanded explicitly (not just «like the task»)',/Answer in English, always/.test(K.agSystemPrompt(pt,tl,'',false,'English')) && /Answer in Russian, always/.test(K.agSystemPrompt(pt,tl,'',true,'Russian')) && /language of the task/.test(K.agSystemPrompt(pt,tl,'',false,'')));
+const spn=K.agSystemPrompt(pt,tl,'',true);
+ok('system prompt: native mode asks for the API function calling, not for <tool_call> text',/native function-calling/.test(spn) && !/<tool_call>/.test(spn) && /temp — temperature/.test(spn));
 
 // --- разбор вызовов
 const c1=K.agParseCalls('Let me check. <tool_call>{"name":"calc","arguments":{"expression":"1+1"}}</tool_call><tool_call>{"name":"time","arguments":{}}</tool_call>');
@@ -104,15 +108,19 @@ ok('run: a long result is cut with its length',/\(cut, 3000 chars\)$/.test(await
 // --- узел целиком: подставной Ollama на проводах
 // сценарий: массив ответов; модель «думает» delay тактов; возвращает записи обмена
 function llm(script,delay=2){
-  const log=[], st={i:0,wait:-1,last:'',pulse:0};
+  const log=[], st={i:0,wait:-1,last:'',calls:null,pulse:0};
   return {log,
-    feed(o){                                      // выходы агента → вход «модели»; возвращает то, что модель подаёт обратно {reply,new}
+    feed(o){                                      // выходы агента → вход «модели»; возвращает то, что модель подаёт обратно {reply,new,calls}
       if(o.clear) log.push({clear:1});
-      if(o.send){ log.push({prompt:o.prompt,system:o.system}); st.wait=delay; }
+      if(o.send){ log.push({prompt:o.prompt,system:o.system,...(o.results ? {results:o.results} : {})}); st.wait=delay; }
       if(o.halt) { log.push({halt:1}); st.wait=-1; }
       let nw=0;
-      if(st.wait>0){ st.wait--; if(st.wait===0){ st.last=script[st.i++]; nw=1; st.wait=-1; } }
-      return {reply:st.last,new:nw};
+      if(st.wait>0){ st.wait--; if(st.wait===0){
+        const step=script[st.i++];
+        st.last=typeof step==='string' ? step : String(step && step.text || '');
+        st.calls=step && typeof step==='object' && step.calls ? JSON.stringify(step.calls) : null;
+        nw=1; st.wait=-1; } }
+      return {reply:st.last,new:nw,calls:nw ? st.calls : null};
     }};
 }
 async function run(n,m,inputs={},ticks=60,pre){
@@ -139,6 +147,17 @@ ok('agent: the tool result goes to the model as the next message',/^<tool_respon
 ok('agent: the trace lists the call and its result, the rec events too',/calc\(\{"expression":"20\*log\(2\.5\)"\}\) → 7\.9588/.test(n.trace[0]) && n.q.length===0 && r.seq.some(o=>o.rec && o.rec.some(e=>e.kind==='tool' && e.name==='calc')) && r.seq.some(o=>o.rec && o.rec.some(e=>e.kind==='final')));
 ok('agent: pulses are single ticks (send, clear), busy only while it works',r.seq.filter(o=>o.send).length===2 && r.seq.filter(o=>o.clear).length===1 && r.seq[0].busy===1 && r.last.busy===0);
 
+// A2: native tool calling — модель присылает готовые вызовы (OpenAI), а не <tool_call> в тексте
+n=node({task:'What is 20*log(2.5)?'}); m=llm([{calls:[{id:'c1',name:'calc',args:{expression:'20*log(2.5)'}}]},'It is about 7.96.']);
+D.params.find(p=>p.n==='run').fn(n); r=await run(n,m);
+const wt=JSON.parse(r.seq[0].tools||'[]'), nr=r.seq.find(o=>o.results);
+ok('native: the tools list goes out as standard OpenAI function schemas',Array.isArray(wt) && wt.some(t=>t.type==='function' && t.function.name==='calc' && t.function.parameters.type==='object'),JSON.stringify(wt).slice(0,200));
+ok('native: structured calls are executed, the result goes back with its call id',n.final==='It is about 7.96.' && n.s.steps===2 && nr && JSON.parse(nr.results)[0].id==='c1' && JSON.parse(nr.results)[0].result==='7.95880017344',nr&&nr.results);
+ok('native: no textual <tool_response> prompt is sent with a structured result',!m.log[2].prompt && /c1/.test(m.log[2].results||''),JSON.stringify({prompt:m.log[2].prompt,results:m.log[2].results}).slice(0,300));
+n=node({task:'x',maxSteps:9}); m=llm(Array(4).fill({calls:[{id:'c',name:'time',args:{}}]}));
+D.params.find(p=>p.n==='run').fn(n); r=await run(n,m,{},200);
+ok('native: the same call three times stops the run',/three times/.test(n.final) && n.s.steps<=3,n.final);
+
 // B: чтение входа, запись выхода с ограничением, текстовый выход (пины — по объявлениям в «tools»)
 n=node({task:'Check the weather'}); m=llm([call('read',{pin:'temp'})+call('read',{pin:'press'}),call('write',{pin:'alert',value:9})+call('write',{pin:'report',value:'Ducting likely'}),'Alert set.']);
 D.params.find(p=>p.n==='run').fn(n); r=await run(n,m,{temp:21.5,press:1031});
@@ -148,7 +167,7 @@ ok('agent: the system prompt tells the model what the pins mean (from the «tool
 ok('pins: the node\'s pins follow the declarations (reads and answer pins are inputs, writes and actions are outputs, the fixed ones stay)',(()=>{
   const k=node({tools:'read x\nread y:text\nwrite w:num 0..1\nact go_fast(speed:num) -> speed_now auto\nact beep() auto'});
   const ins=D.ins(k).map(p=>p.n), outs=D.outs(k).map(p=>p.n);
-  return ins.includes('task') && ins.includes('approve') && ins.includes('x') && ins.includes('y') && ins.includes('speed_now') && !ins.includes('w') && outs.includes('prompt') && outs.includes('pending') && outs.includes('w') && outs.includes('go_fast') && outs.includes('beep') && !outs.includes('x') && D.ins(k).every(p=>p.t==='val' || ['task','go','stop','reply','new','approve','deny'].includes(p.n)); })());
+  return ins.includes('task') && ins.includes('approve') && ins.includes('x') && ins.includes('y') && ins.includes('speed_now') && !ins.includes('w') && outs.includes('prompt') && outs.includes('pending') && outs.includes('w') && outs.includes('go_fast') && outs.includes('beep') && !outs.includes('x') && outs.includes('tools') && outs.includes('results') && ins.includes('calls') && D.ins(k).every(p=>p.t==='val' || ['task','go','stop','reply','new','approve','deny','calls'].includes(p.n)); })());
 ok('pins: a broken line makes no pin (and is shown in the node)',(()=>{ const k=node({tools:'read ok\nread bad:float\nwrite prompt'}); return D.ins(k).some(p=>p.n==='ok') && !D.ins(k).some(p=>p.n==='bad') && !D.outs(k).some(p=>p.n==='prompt' && p.t==='val'); })());
 
 // B2: действия — значения на пинах: одно значение держится, запись идёт один такт, без аргументов — импульс

@@ -334,7 +334,7 @@ function dmrNmea(str){
 }
 // собранные октеты → поля записи (IP/UDP, TMS, короткие данные)
 function dmrPayload(sap,dd,msg){
-  const r={};
+  const r={hex:bytesHex(msg)};
   if(sap===4 && msg.length>28 && (msg[0]>>4)===4){
     const ihl=(msg[0]&15)*4, prot=msg[9];
     r.ip=msg[12]+'.'+msg[13]+'.'+msg[14]+'.'+msg[15]+' → '+msg[16]+'.'+msg[17]+'.'+msg[18]+'.'+msg[19];
@@ -342,14 +342,14 @@ function dmrPayload(sap,dd,msg){
       const sp=(msg[ihl]<<8)|msg[ihl+1], dp=(msg[ihl+2]<<8)|msg[ihl+3]; r.port=dp; r.proto='UDP';
       const p=ihl+8, port=dp===4007||sp===4007 ? 4007 : dp;
       if(port===4007){ const t=dmrTms(msg,p); r.service='TMS'; if(t.ack) r.ack=true; else r.message=t.text; }
-      else if(port===4001){ r.service='LRRP'; Object.assign(r,dmrLrrp(msg,p)); r.data=bytesHex(msg,p,Math.min(40,msg.length-p)); }
-      else { r.service=({4001:'LRRP',4004:'XCMP',4005:'ARS',4008:'telemetry',231:'Cellocator'})[port]||('UDP '+port); r.data=bytesHex(msg,p,Math.min(40,msg.length-p)); r.payload=bytesHex(msg,p,msg.length-p); }
-    } else { r.proto='IP '+prot; r.data=bytesHex(msg,ihl,Math.min(40,msg.length-ihl)); }
+      else if(port===4001){ r.service='LRRP'; Object.assign(r,dmrLrrp(msg,p)); r.data=bytesHex(msg,p,msg.length-p); }
+      else { r.service=({4001:'LRRP',4004:'XCMP',4005:'ARS',4008:'telemetry',231:'Cellocator'})[port]||('UDP '+port); r.data=bytesHex(msg,p,msg.length-p); r.payload=bytesHex(msg,p,msg.length-p); }
+    } else { r.proto='IP '+prot; r.data=bytesHex(msg,ihl,msg.length-ihl); }
   } else if(dd!=null){
     r.service='short data'; r.format=dd;
     r.message=dd===0||dd===1 ? undefined : dd===2 ? dmrText7(msg,0,msg.length) : dmrPrintable(msg,0,msg.length);
-    r.data=bytesHex(msg,0,Math.min(40,msg.length));
-  } else { if(sap===10) r.service='short data'; r.data=bytesHex(msg,0,Math.min(40,msg.length)); const t=dmrPrintable(msg,0,msg.length); if(/[A-Za-z]{4}/.test(t)) r.message=t; }
+    r.data=bytesHex(msg,0,msg.length);
+  } else { if(sap===10) r.service='short data'; r.data=bytesHex(msg,0,msg.length); const t=dmrPrintable(msg,0,msg.length); if(/[A-Za-z]{4}/.test(t)) r.message=t; }
   return r;
 }
 
@@ -726,17 +726,18 @@ function dmrDataDone(n,L,S,out){
     crc=dmrCrc32(m,tot-4)===want; f.crc=crc?'ok':'bad';
     body=m.subarray(0,Math.max(0,tot-4-d.pad));
   }
+  f.hex=bytesHex(body);
   let text;
   if(d.dpf===0){
     const fm=d.dd;
     const msg=fm===7 ? dmrUtf16(m,0,tot,false) : fm===3 ? dmrText7(m,0,tot) : dmrPrintable(m,0,tot);
-    f.format=fm; f.message=fm===5 ? dmrPrintable(m,0,tot) : msg; f.data=bytesHex(m,0,Math.min(48,tot)); f.service='UDT';
+    f.format=fm; f.message=fm===5 ? dmrPrintable(m,0,tot) : msg; f.data=bytesHex(body); f.service='UDT';
     Object.assign(f,dmrUdt(fm,m,d.hdr.pad||0,d.blocks));
     if(fm===5) Object.assign(f,dmrNmea(f.message));
   } else Object.assign(f,dmrPayload(d.dpf===13||d.dpf===14 ? 10 : d.sap,d.dpf===13||d.dpf===14 ? d.dd : null,body));
   if(f.lat!=null){ f.id='dmr:'+d.from; f.label=String(d.from); }
   n.st.msgs++;
-  text='DATA '+f.from+' → '+(d.group ? 'TG ' : '')+f.to+' '+(f.service||'')+(f.port?' :'+f.port:'')+' '+(crc===false||d.crcBad?'[CRC bad] ':'')+(f.lat!=null ? f.lat+', '+f.lon+' ' : '')+(f.message!=null ? '"'+f.message+'"' : f.data||'');
+  text='DATA '+f.from+' → '+(d.group ? 'TG ' : '')+f.to+' '+(f.service||'')+(f.port?' :'+f.port:'')+' '+(crc===false||d.crcBad?'[CRC bad] ':'')+(f.lat!=null ? f.lat+', '+f.lon+' ' : '')+(f.message!=null ? '"'+f.message+'"' : (f.data ? f.data.slice(0,64)+(f.data.length>64?'…':'') : ''));
   dmrEmit(n,S,L,out,'message',f,text);
 }
 

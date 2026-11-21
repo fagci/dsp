@@ -8676,6 +8676,24 @@ addEdge(ag.id,'log',tk.id,'text');
 addEdge(ag.id,'alarm',tk2.id,'rec');
 markWiresDirty();
 });
+preset('Agent: OpenAI-compatible API — Native Tool Calling (API key)', function(){
+clearAll();
+const nt=addNode('note',40,20,{text:'A model from any OpenAI-compatible API — OpenAI, OpenRouter, Groq, DeepSeek, Mistral, LM Studio, llama.cpp server, Ollama /v1 — with the API key and native function calling.\n'+
+  '1) Settings → Credentials → «＋ new…»: type «llm», server — the API base (https://api.openai.com/v1, https://openrouter.ai/api/v1, http://127.0.0.1:1234/v1), password — the API key. Pick the account in the Ollama node («account»). The key stays in this browser, not in the patch.\n'+
+  '2) «protocol» = openai, «model» = the model name (press «⟳ Models»). The browser needs CORS on the provider (OpenRouter, Groq and local servers allow it; for OpenAI use the DSP app on Android or a server of your own).\n'+
+  '3) The wires are the same as with Ollama, plus two: Agent.tools → Ollama.tools (the standard tool schemas) and Ollama.calls → Agent.calls (structured calls instead of <tool_call> text in «reply»). Press «▶ Run the task».'});
+nt.size.w=1000; nt.size.h=170; applySize(nt);
+const ag=addNode('agent',40,230,{task:'Read the temperature and the pressure. If the pressure is high and it is colder than 10 °C, set the alert to 2 and write a one-line report; otherwise set the alert to 0 and say why.',maxSteps:6,native:true,
+  tools:'read temp "temperature, °C"\nread press "pressure, hPa"\nwrite alert:num 0..3 "alert level"\nwrite report:text "one-line report for the operator"\n'});
+ag.size.w=380; ag.size.h=440; applySize(ag);
+const ol=addNode('ollama',820,230,{proto:'openai',host:'https://api.openai.com/v1',model:'gpt-4o-mini',keep:12,temp:.2,maxTok:600}); ol.size.w=420; ol.size.h=360; applySize(ol);
+const tp=addNode('textpanel',820,620,{lines:'# Agent\nalert level {a:0}\n{s1}'}); tp.size.w=420; tp.size.h=140; applySize(tp);
+addEdge(ag.id,'prompt',ol.id,'prompt'); addEdge(ag.id,'system',ol.id,'system'); addEdge(ag.id,'send',ol.id,'send'); addEdge(ag.id,'clear',ol.id,'clear'); addEdge(ag.id,'halt',ol.id,'stop');
+addEdge(ag.id,'tools',ol.id,'tools'); addEdge(ag.id,'results',ol.id,'results');
+addEdge(ol.id,'last',ag.id,'reply'); addEdge(ol.id,'new',ag.id,'new'); addEdge(ol.id,'calls',ag.id,'calls');
+addEdge(ag.id,'alert',tp.id,'a'); addEdge(ag.id,'report',tp.id,'s1');
+markWiresDirty();
+});
 preset('Ollama: Explain the Weather for Radio (Open-Meteo → LLM)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Data from one node, the explanation from another: the text of Weather & Elevation (temperature, humidity, pressure, wind) goes to the «context» pin of Ollama and is added to the question. Press «▶ Ask» — the model says what this means for VHF / UHF reception.\n'+

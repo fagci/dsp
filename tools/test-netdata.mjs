@@ -8,7 +8,7 @@ const defs={}, calls=[];
 let routes={}, offline=false;
 const enc=s=>new TextEncoder().encode(s);
 const mkFetch=()=>async(u,o)=>{
-  calls.push({url:String(u),body:o&&o.body});
+  calls.push({url:String(u),body:o&&o.body,headers:o&&o.headers});
   if(offline) throw new TypeError('Failed to fetch');
   if(o?.signal?.aborted) throw Object.assign(new Error('aborted'),{name:'AbortError'});
   const k=Object.keys(routes).find(k=>String(u).includes(k));
@@ -33,7 +33,7 @@ const ctx=vm.createContext({URL,URLSearchParams,String,Number,Math,Array,Object,
   setMod:(n,k,v)=>{ n.p[k]=v; }, recNum:v=>typeof v==='number'&&isFinite(v)?v:null, recList:v=>Array.isArray(v)?v:v?[v]:[],
   GeoMe:{lat:null,lon:null}, phoneUrl:u=>u, NetSock:class{}, httpStream:(...a)=>ctx.__hs(...a), __hs:null});
 const src=['netdata-kernels','netdata'].map(f=>fs.readFileSync(path.join(root,'modules/'+f+'.js'),'utf8')).join('\n');
-vm.runInContext(src+';this.K={ndDist,ndBearing,ndAgo,ndHash,ndMeteoUrl,ndElevUrl,ndElev,ndMeteo,ndDew,ndCompass,ndMeteoLines,ndAcUrl,ndAdsbLol,ndOpenSky,ndOsmPair,ndOsmQuery,ndOsmRows,ndOllamaBase,ndNdjson,ndOllamaTags,ndOllamaMessages,ndOllamaBody,ndOllamaChunk,ND_APP};',ctx);
+vm.runInContext(src+';this.K={ndDist,ndBearing,ndAgo,ndHash,ndMeteoUrl,ndElevUrl,ndElev,ndMeteo,ndDew,ndCompass,ndMeteoLines,ndAcUrl,ndAdsbLol,ndOpenSky,ndOsmPair,ndOsmQuery,ndOsmRows,ndOllamaBase,ndNdjson,ndOllamaTags,ndOllamaMessages,ndOllamaBody,ndOllamaChunk,ndOpenaiBase,ndOpenaiHeaders,ndOpenaiModels,ndOpenaiTools,ndOpenaiResults,ndOpenaiRequest,ndOpenaiBody,ndSse,ndOpenaiNew,ndOpenaiPush,ndOpenaiCalls,ndOpenaiStats,ndOpenaiTrim,ND_APP};',ctx);
 const K=ctx.K;
 let bad=0; const ok=(n,c,x='')=>{ if(!c){ bad++; console.log('FAIL',n,x); } else console.log('ok  ',n); };
 const node=(id,p={})=>{ const d=defs[id]; const n={p:{...Object.fromEntries(d.params.filter(q=>q.d!==undefined).map(q=>[q.n,q.d])),...p},el:null}; d.init(n); return n; };
@@ -115,6 +115,29 @@ ok('body: stream, options only when set',bd.stream===true && bd.options.temperat
 const c1=K.ndOllamaChunk({message:{content:'He'},done:false}), c2=K.ndOllamaChunk({done:true,eval_count:20,eval_duration:2e9,prompt_eval_count:7,total_duration:3e9});
 ok('chunk: text and final statistics',c1.delta==='He' && !c1.done && c2.done && c2.stats.tps===10 && c2.stats.tokens===20 && c2.stats.promptTokens===7 && c2.stats.total===3);
 ok('chunk: error',K.ndOllamaChunk({error:'model not found'}).err==='model not found');
+
+// --- OpenAI-compatible: адрес, ключ, tools, SSE
+ok('openai base: https by default, /v1 added once, a full endpoint is cut',K.ndOpenaiBase('')==='https://api.openai.com/v1' && K.ndOpenaiBase('api.openai.com')==='https://api.openai.com/v1'
+  && K.ndOpenaiBase('https://openrouter.ai/api/v1')==='https://openrouter.ai/api/v1' && K.ndOpenaiBase('http://127.0.0.1:1234')==='http://127.0.0.1:1234/v1'
+  && K.ndOpenaiBase('https://api.groq.com/openai/v1/chat/completions')==='https://api.groq.com/openai/v1' && K.ndOpenaiBase('https://api.deepseek.com/v1/')==='https://api.deepseek.com/v1');
+ok('openai headers: Bearer only when a key is given',K.ndOpenaiHeaders(' sk-1 ').Authorization==='Bearer sk-1' && K.ndOpenaiHeaders('').Authorization===undefined && K.ndOpenaiHeaders('')['Content-Type']==='application/json');
+ok('openai models: data[].id, sorted, junk dropped',K.ndOpenaiModels({data:[{id:'m-b'},{id:'m-a'},{},{id:''}]}).map(m=>m.name).join()==='m-a,m-b' && K.ndOpenaiModels({})===null);
+ok('openai tools / results: arrays or JSON text, empty and broken → null',K.ndOpenaiTools('[{"type":"function"}]').length===1 && K.ndOpenaiTools('[]')===null && K.ndOpenaiTools('xx')===null && K.ndOpenaiResults('[{"id":"c1","result":"2"}]').length===1 && K.ndOpenaiResults('')===null);
+const SSE=[{choices:[{delta:{content:'Hel'}}]},{choices:[{delta:{content:'lo'},finish_reason:'stop'}]},{usage:{prompt_tokens:4,completion_tokens:2}},{done:true}];
+const sseText=SSE.map(o=>o.done ? 'data: [DONE]' : 'data: '+JSON.stringify(o)).join('\n\n')+'\n\n';
+const cut=sseText.indexOf('"Hel"')+3, p1=K.ndSse(sseText.slice(0,cut)), p2=K.ndSse(p1.rest+sseText.slice(cut));
+ok('sse: data lines, [DONE], a line cut in the middle waits',p1.lines.length===0 && p2.lines.length===4 && p2.lines[0].choices[0].delta.content==='Hel' && p2.lines[3].done===true && p2.rest==='');
+const st=K.ndOpenaiNew(); for(const o of p2.lines) K.ndOpenaiPush(st,o);
+ok('openai stream: text, finish, usage',st.text==='Hello' && st.finish==='stop' && st.usage.completion_tokens===2 && K.ndOpenaiStats(st,2000).tps===1 && K.ndOpenaiStats(st,2000).total===2);
+const st2=K.ndOpenaiNew();
+[ {choices:[{delta:{tool_calls:[{index:0,id:'c1',function:{name:'calc',arguments:'{"expr'}}]}}]},
+  {choices:[{delta:{tool_calls:[{index:0,function:{arguments:'ession":"1+1"}'}}]},finish_reason:'tool_calls'}]} ].forEach(o=>K.ndOpenaiPush(st2,o));
+const nc=K.ndOpenaiCalls(st2);
+ok('tool calls: fragments by index are joined, arguments parsed, a missing id is made',nc.length===1 && nc[0].id==='c1' && nc[0].name==='calc' && nc[0].args.expression==='1+1' && K.ndOpenaiCalls((()=>{ const s=K.ndOpenaiNew(); K.ndOpenaiPush(s,{choices:[{delta:{tool_calls:[{index:0,function:{name:'t',arguments:'{}'}}]}}]}); return s; })())[0].id==='call_0');
+const ob=K.ndOpenaiBody('m',[{role:'user',content:'x'}],{temperature:.2,seed:0,maxTokens:100,tools:[{type:'function',function:{name:'t'}}]});
+ok('openai body: stream with usage, tools and tool_choice only when present',ob.stream===true && ob.stream_options.include_usage===true && ob.max_tokens===100 && ob.tools.length===1 && ob.tool_choice==='auto' && !('seed' in ob) && !('tools' in K.ndOpenaiBody('m',[],{})));
+const H=[{role:'user',content:'1'},{role:'assistant',content:null,tool_calls:[{id:'c'}]},{role:'tool',tool_call_id:'c',content:'r'},{role:'assistant',content:'a'},{role:'user',content:'2'},{role:'assistant',content:'b'}];
+ok('history: system, tool_calls and tool answers survive; trim keeps whole turns',K.ndOpenaiRequest(H,'sys',null).length===7 && K.ndOpenaiRequest(H,'sys',null)[2].tool_calls.length===1 && K.ndOpenaiTrim(H,1).map(m=>m.content||m.role).join()==='2,b' && K.ndOpenaiTrim(H,0).length===2);
 
 // --- узлы
 (async()=>{
@@ -286,5 +309,35 @@ ok('chunk: error',K.ndOllamaChunk({error:'model not found'}).err==='model not fo
   ol=node('ollama',{model:'m',auto:true}); defs.ollama.process(ol,{prompt:'one'}); await wait(30); defs.ollama.process(ol,{prompt:'one'}); await wait(10);
   ok('ollama: auto asks once per change',calls.length===1);
   defs.ollama.process(ol,{prompt:'two'}); await wait(30); ok('ollama: …and again on a new text',calls.length===2);
+
+  // OpenAI-compatible: ключ, /v1/models, поток SSE, native tool calls и ответы инструментов
+  NET.mode='off'; NET.proxy=''; NET.need.clear(); routes={}; calls.length=0;
+  const sse=a=>a.map(o=>o.done ? 'data: [DONE]' : 'data: '+JSON.stringify(o)).join('\n\n')+'\n\n';
+  const oaCall=sse([{choices:[{delta:{tool_calls:[{index:0,id:'c1',function:{name:'calc',arguments:'{"expression":"1+1"}'}}]},finish_reason:'tool_calls'}]},{usage:{prompt_tokens:3,completion_tokens:1}},{done:true}]);
+  const oaText=sse([{choices:[{delta:{content:'Tw'}}]},{choices:[{delta:{content:'o'},finish_reason:'stop'}]},{done:true}]);
+  routes={'/models':{body:{data:[{id:'gpt-b'},{id:'gpt-a'},{id:''}]}}};
+  let oo=node('ollama',{proto:'openai',host:'api.example.com',key:'sk-test'});
+  await defs.ollama.params.find(p=>p.n==='list').fn(oo);
+  ok('openai node: /v1/models with the key, names chosen',calls.at(-1).url==='https://api.example.com/v1/models' && calls.at(-1).headers.Authorization==='Bearer sk-test' && oo.models.map(m=>m.name).join()==='gpt-a,gpt-b' && oo.p.model==='gpt-a',oo.msg);
+  routes={'/chat/completions':{body:'',chunks:[oaCall]}}; calls.length=0;
+  const TOOLS=JSON.stringify([{type:'function',function:{name:'calc',description:'x',parameters:{type:'object',properties:{expression:{type:'string'}},required:['expression']}}}]);
+  oo=node('ollama',{proto:'openai',host:'api.example.com/v1',model:'gpt-test',key:'sk-test',prompt:'hi'});
+  defs.ollama.process(oo,{tools:TOOLS}); await defs.ollama.params.find(p=>p.n==='ask').fn(oo);
+  let ro=defs.ollama.process(oo,{});
+  const sentOa=JSON.parse(calls[0].body);
+  ok('openai node: POST /v1/chat/completions, Bearer key, stream, tools in the body',calls[0].url==='https://api.example.com/v1/chat/completions' && calls[0].headers.Authorization==='Bearer sk-test' && sentOa.stream===true && sentOa.tools.length===1 && sentOa.tool_choice==='auto',JSON.stringify(sentOa).slice(0,200));
+  ok('openai node: native tool calls come out on «calls», the assistant message is kept with tool_calls',ro.calls && JSON.parse(ro.calls)[0].id==='c1' && oo.hist.length===2 && oo.hist[1].tool_calls[0].id==='c1',JSON.stringify(oo.hist));
+  routes={'/chat/completions':{body:'',chunks:[oaText]}}; calls.length=0;
+  defs.ollama.process(oo,{results:JSON.stringify([{id:'c1',name:'calc',result:'2'}])}); await defs.ollama.params.find(p=>p.n==='ask').fn(oo);
+  ro=defs.ollama.process(oo,{});
+  const sent2=JSON.parse(calls[0].body), m2=sent2.messages;
+  ok('openai node: tool results go back as role «tool» with the call id, no extra user message',m2.some(m=>m.role==='assistant' && m.tool_calls) && m2.at(-1).role==='tool' && m2.at(-1).tool_call_id==='c1' && m2.at(-1).content==='2' && m2.filter(m=>m.role==='user').length===1,m2.map(m=>m.role).join());
+  ok('openai node: the text answer arrives, «calls» is empty',ro.last==='Two' && !ro.calls);
+  const modelParam=defs.ollama.params.find(p=>p.n==='model'), modelNode=node('ollama',{model:'m-old'}); modelNode.models=[{name:'m-new'}];
+  ok('model: a dropdown of the fetched names, the current one first',modelParam.t==='select' && typeof modelParam.opts==='function' && modelParam.opts(modelNode).join()==='m-old,m-new');
+  routes={'/chat/completions':{body:'',chunks:[oaText]}}; calls.length=0;
+  const om=node('ollama',{proto:'openai',host:'api.example.com/v1',model:'listed',modelCustom:'own-model',prompt:'hi'});
+  await defs.ollama.params.find(p=>p.n==='ask').fn(om);
+  ok('model: «own model» overrides the dropdown',JSON.parse(calls[0].body).model==='own-model',om.msg);
   console.log(bad ? bad+' FAILED' : 'all ok'); process.exit(bad ? 1 : 0);
 })();

@@ -215,3 +215,114 @@ function ndOllamaChunk(o){
   }
   return r;
 }
+
+/* ---------- OpenAI-compatible API (/v1/chat/completions, SSE, native tool calls) ---------- */
+// база: «api.openai.com», «https://openrouter.ai/api/v1», «http://127.0.0.1:1234» → адрес, к которому добавляются /models и /chat/completions.
+// Схема по умолчанию https, хвост /v1 добавляется, если его нет (полный адрес …/chat/completions или …/models отрезается).
+function ndOpenaiBase(s){
+  s=String(s||'').trim()||'https://api.openai.com';
+  if(!/^https?:\/\//i.test(s)) s='https://'+s;
+  s=s.replace(/\/+$/,'').replace(/\/(?:chat\/completions|models)$/i,'');
+  if(!/\/v\d+$/i.test(s)) s+='/v1';
+  return s;
+}
+// заголовки: Content-Type и ключ (стандартный «Authorization: Bearer»); ключ не попадает в тело
+function ndOpenaiHeaders(key){
+  const h={'Content-Type':'application/json'};
+  if(String(key||'').trim()) h.Authorization='Bearer '+String(key).trim();
+  return h;
+}
+function ndOpenaiModels(j){
+  if(!j || !Array.isArray(j.data)) return null;
+  return j.data.map(m=>({name:String(m.id||m.name||''),size:0,params:'',quant:''})).filter(m=>m.name).sort((a,b)=>a.name.localeCompare(b.name));
+}
+// «tools» с провода — JSON-схемы OpenAI; мусор и пустой список — без инструментов
+function ndOpenaiTools(t){
+  if(Array.isArray(t)) return t.length ? t : null;
+  try{ const a=JSON.parse(String(t||'')); return Array.isArray(a) && a.length ? a : null; }catch(e){ return null; }
+}
+// «results» с провода — [{id, name?, result}] ответы инструментов; иначе null
+function ndOpenaiResults(t){
+  if(Array.isArray(t)) return t.length ? t : null;
+  try{ const a=JSON.parse(String(t||'')); return Array.isArray(a) && a.length ? a : null; }catch(e){ return null; }
+}
+// сообщения запроса: system + история (в истории уже лежат и tool_calls, и ответы role:'tool')
+function ndOpenaiRequest(hist,system,tools){
+  const m=[];
+  if(system) m.push({role:'system',content:String(system)});
+  for(const x of Array.isArray(hist) ? hist : []){
+    if(!x || !x.role) continue;
+    const y={role:x.role,content:x.content ?? null};
+    if(x.tool_calls) y.tool_calls=x.tool_calls;
+    if(x.tool_call_id) y.tool_call_id=x.tool_call_id;
+    m.push(y);
+  }
+  return m;
+}
+function ndOpenaiBody(model,messages,o){
+  const b={model,messages,stream:true,stream_options:{include_usage:true}};
+  if(o.temperature!=null && isFinite(o.temperature)) b.temperature=+o.temperature;
+  if(o.maxTokens>0) b.max_tokens=o.maxTokens|0;
+  if(o.seed>0) b.seed=o.seed|0;
+  if(o.tools && o.tools.length){ b.tools=o.tools; b.tool_choice='auto'; }
+  return b;
+}
+// SSE: строки «data: {...}» → объекты; «data: [DONE]» → {done:true}; хвост без перевода строки ждёт продолжения
+function ndSse(buf){
+  const out=[]; let i;
+  while((i=buf.indexOf('\n'))>=0){
+    let line=buf.slice(0,i); buf=buf.slice(i+1);
+    if(line.endsWith('\r')) line=line.slice(0,-1);
+    const t=line.trim();
+    if(!t || t[0]===':') continue;
+    if(!/^data:/i.test(t)) continue;
+    const d=t.slice(5).trim();
+    if(d==='[DONE]'){ out.push({done:true}); continue; }
+    try{ out.push(JSON.parse(d)); }catch(e){ out.push({error:'bad line: '+d.slice(0,80)}); }
+  }
+  return {lines:out,rest:buf};
+}
+// поток ответа: текст и куски вызовов инструментов (index → id, name, arguments по кускам)
+function ndOpenaiNew(){ return {text:'',calls:[],finish:null,usage:null,err:null}; }
+function ndOpenaiPush(st,o){
+  if(!o) return st;
+  if(o.done){ st.finish=st.finish||'done'; return st; }
+  if(o.error){ st.err=String(o.error.message||o.error); return st; }
+  if(o.usage) st.usage=o.usage;
+  const ch=o.choices && o.choices[0];
+  if(!ch) return st;
+  const d=ch.delta || {};
+  if(typeof d.content==='string') st.text+=d.content;
+  if(Array.isArray(d.tool_calls)) for(const t of d.tool_calls){
+    const i=t.index|0, c=st.calls[i]||(st.calls[i]={id:'',name:'',arguments:''});
+    if(t.id) c.id=t.id;
+    const f=t.function || {};
+    if(f.name) c.name=f.name;
+    if(typeof f.arguments==='string') c.arguments+=f.arguments;
+  }
+  if(ch.finish_reason) st.finish=ch.finish_reason;
+  return st;
+}
+// аргументы — JSON-строка (иногда с висящей запятой); сломанные не роняют вызов, а дают {}
+function ndJsonArg(s){
+  try{ return JSON.parse(s||'{}')||{}; }catch(e){ try{ return JSON.parse(String(s).replace(/,\s*([}\]])/g,'$1'))||{}; }catch(x){ return {}; } }
+}
+function ndOpenaiCalls(st){
+  const out=[], arr=Array.isArray(st.calls) ? st.calls : [];
+  for(let i=0;i<arr.length;i++){
+    const c=arr[i]; if(!c || !c.name) continue;
+    out.push({id:c.id||('call_'+i),name:c.name,args:ndJsonArg(c.arguments),raw:c.arguments||''});
+  }
+  return out;
+}
+function ndOpenaiStats(st,ms){
+  const u=st.usage || {}, tokens=u.completion_tokens||0, promptTokens=u.prompt_tokens||0, sec=ms>0 ? ms/1000 : 0;
+  return {tokens,promptTokens,tps:sec>0 && tokens ? ndRound(tokens/sec,1) : null,total:ndRound(sec,1)};
+}
+// история по ходам: последние keep вопросов (0 — только текущий); ход — от role:'user' до следующего user
+function ndOpenaiTrim(hist,keep){
+  const h=Array.isArray(hist) ? hist : [], k=Math.max(1,keep|0);
+  let seen=0, start=0;
+  for(let i=h.length-1;i>=0;i--) if(h[i].role==='user'){ if(++seen>=k){ start=i; break; } }
+  return h.slice(start);
+}

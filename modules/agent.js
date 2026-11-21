@@ -84,15 +84,16 @@ function agStart(n,task){
   task=String(task||'').trim(); if(!task){ n.note='the task is empty'; n.rev++; return; }
   n.parsed=agParseTools(n.p.tools); n.allow=agAllowed(n.p.allow);
   n.toolList=agToolList(n.parsed,n.allow);
-  n.sysOut=agSystemPrompt(n.parsed,n.toolList,'');
-  n.s=agNew(); n.s.task=task; n.pending=task; n.runId++; n.trace=[]; n.final=''; n.note=n.parsed.errs.length ? 'tools: '+n.parsed.errs.join('; ') : '';
+  const lang=n.p.lang && n.p.lang!=='auto' ? n.p.lang : agLang(task);
+  n.sysOut=agSystemPrompt(n.parsed,n.toolList,'',!!n.p.native,lang); n.langOut=lang;
+  n.s=agNew(); n.s.task=task; n.pending=task; n.pendingResults=''; n.runId++; n.trace=[]; n.final=''; n.note=n.parsed.errs.length ? 'tools: '+n.parsed.errs.join('; ') : '';
   n.phase='clear'; n.t0=performance.now(); n.rev++;
 }
 function agFinish(n,kind,text,halt,partial){
   const was=n.phase; n.phase='idle'; n.runId++;
   if(n.pend) agAnswer(n,false);                                        // ждущее подтверждение — отказ
   n.final=kind==='final' ? text : '(stopped: '+text+')'+(partial ? '\n'+partial : '');
-  n.text=n.final;
+  n.text=n.final; n.pendingResults='';
   if(halt && was==='wait') n.pl.halt=1;
   n.q.push({t:Date.now(),src:'agent',kind,text:n.final,steps:n.s.steps,task:n.s.task});
   n.go=1; n.rev++;
@@ -115,19 +116,44 @@ function agReply(n,text){
   })();
 }
 
+// ответ модели пришёл native-вызовами (OpenAI-протокол): инструменты те же, но результат уходит структурированно
+function agReplyNative(n,calls,text){
+  const d=agDecideNative(n.s,calls,{maxSteps:+n.p.maxSteps||6});
+  if(d.kind==='none') return agReply(n,text);
+  if(d.kind==='stop') return agFinish(n,'stop',d.reason,false,'');
+  const id=n.runId; n.phase='exec'; n.rev++;
+  (async()=>{
+    const ctx=agCtx(n), results=[];
+    for(const c of d.calls){
+      const r=await agRunCall(c,ctx,n.parsed,n.allow);
+      if(id!==n.runId) return;
+      results.push({id:c.id,name:c.name,result:r});
+      const line=agTraceLine(n.s.steps,c,r); n.trace.push(line); if(n.trace.length>60) n.trace.shift();
+      n.q.push({t:Date.now(),src:'agent',kind:'tool',step:n.s.steps,name:c.name,args:c.args,result:r.slice(0,300)});
+    }
+    n.pending=''; n.pendingResults=JSON.stringify(results); n.phase='ask'; n.rev++;
+  })();
+}
+const agCallsIn=v=>{
+  if(Array.isArray(v)) return v;
+  try{ const a=JSON.parse(String(v||'')); return Array.isArray(a) ? a : []; }catch(e){ return []; }
+};
 def({ id:'agent', title:'Agent (LLM with tools)', cat:'Tools', readout:true, tall:true, w:340, resize:true,
   kw:'agent llm tools function calling tool use autonomous assistant ollama llama qwen planner react reason act graph control actions pins confirm',
   // task / go — задача и запуск; reply / new — ответ модели (Ollama.last / .new); approve / deny — ответ на запрос подтверждения;
   // остальные пины — из «tools»: read-пины и пины ответа действий (входы), write-пины и пины действий (выходы)
-  ins:n=>[{n:'task',t:'txt'},{n:'go',t:'num'},{n:'stop',t:'num'},{n:'reply',t:'txt'},{n:'new',t:'num'},{n:'approve',t:'num'},{n:'deny',t:'num'},...agDynIns(n)],
+  ins:n=>[{n:'task',t:'txt'},{n:'go',t:'num'},{n:'stop',t:'num'},{n:'reply',t:'txt'},{n:'new',t:'num'},{n:'approve',t:'num'},{n:'deny',t:'num'},{n:'calls',t:'txt'},...agDynIns(n)],
   outs:n=>[{n:'prompt',t:'txt'},{n:'system',t:'txt'},{n:'send',t:'num'},{n:'clear',t:'num'},{n:'halt',t:'num'},
+           {n:'tools',t:'txt'},{n:'results',t:'txt'},
            {n:'text',t:'txt'},{n:'trace',t:'txt'},{n:'rec',t:'rec'},{n:'done',t:'num'},{n:'busy',t:'num'},{n:'steps',t:'num'},{n:'pending',t:'txt'},...agDynOuts(n)],
   params:[{n:'task',t:'text',d:'',label:'task (the wire «task» starts a run by itself when its text changes)'},
           {n:'run',t:'button',label:'▶ Run the task',fn:n=>agStart(n,n.p.task)},
           {n:'stopb',t:'button',label:'■ Stop',fn:n=>{ if(n.phase!=='idle') agFinish(n,'stop','stopped by hand',true); }},
           {n:'yes',t:'button',label:'✔ Approve the waiting action',fn:n=>agAnswer(n,true)},
           {n:'no',t:'button',label:'✖ Deny it',fn:n=>agAnswer(n,false)},
-          {n:'tools',t:'code',plain:true,d:AG_SAMPLE,fn:agResizeLater,label:'what the model sees and can do — every line makes a pin: read name[:type] "meaning" · write name[:type] [min..max] "meaning" · act name(arg[:type] [min..max], …) [-> result_pin] "meaning" [confirm|auto]'},
+          {n:'tools',t:'code',plain:true,d:AG_SAMPLE,fn:agResizeLater,label:'what the model sees and can do — every line makes a pin: read name[:type] "meaning" · write name[:type] [min..max] "meaning" · act name(arg[:type] [min..max], …) [-> result_pin] "meaning" [confirm|auto]. The same list goes out on «tools» (OpenAI schemas) for native function calling'},
+          {n:'lang',t:'select',opts:['auto','English','Russian','Chinese','Spanish','German','French','Portuguese','Italian','Japanese','Korean','Ukrainian','Arabic'],d:'auto',label:'answer language — auto: by the task text (Cyrillic → Russian, CJK → Chinese, otherwise English); a name forces it (the prompt says «answer in … always», which stops a model from drifting into its own language)'},
+          {n:'native',t:'check',d:false,label:'the model uses native function calling (OpenAI protocol): wire «tools» → LLM.tools and LLM.calls → «calls»; the system prompt then does not ask for <tool_call> text'},
           {n:'allow',t:'text',d:AG_ALLOW_DEFAULT,label:'built-in tools allowed: calc, time, read, write, http_get, notify, speak (notify / speak — in the DSP app); the actions you declare are always there'},
           {n:'hosts',t:'text',d:'',label:'http_get: allowed hosts, https only (e.g. api.open-meteo.com); empty — the tool does not work'},
           {n:'maxSteps',t:'range',min:1,max:15,step:1,d:6,label:'most steps (model answers) per task'},
@@ -135,13 +161,15 @@ def({ id:'agent', title:'Agent (LLM with tools)', cat:'Tools', readout:true, tal
           {n:'confirmWait',t:'range',min:10,max:600,step:10,d:120,label:'wait for your approval of an action, s (then it is denied)'},
           {n:'actWait',t:'range',min:.5,max:30,step:.5,d:3,label:'an action with «-> pin»: wait for the answer on that pin, s'},
           {n:'proxy',t:'check',d:false,label:'http_get: through the CORS proxy from Settings',adv:true}],
-  init:n=>{ n.phase='idle'; n.s=agNew(); n.o={}; n.emit={}; n.vals={}; n.parsed={reads:[],writes:[],acts:[],errs:[]}; n.allow=new Set(); n.toolList=[]; n.sysOut=''; n.pending=''; n.runId=0; n.trace=[];
+  init:n=>{ n.phase='idle'; n.s=agNew(); n.o={}; n.emit={}; n.vals={}; n.parsed={reads:[],writes:[],acts:[],errs:[]}; n.allow=new Set(); n.toolList=[]; n.sysOut=''; n.pending=''; n.pendingResults=''; n.langOut=''; n.runId=0; n.trace=[];
     n.final=''; n.text=''; n.note=''; n.q=[]; n.rev=0; n.pl={send:0,clear:0,halt:0}; n.goP=false; n.stP=false; n.nwP=false; n.apP=false; n.dnP=false; n.lastTask=''; n.waitAt=0; n.t0=0; n.go=0; n.promptOut='';
     n.pend=null; n.confirmText=''; },
   dispose:n=>{ n.runId++; clearTimeout(n._rz); if(n.pend) agAnswer(n,false); },
   drawKey:n=>n.rev+'|'+n.phase,
   process(n,I){
     n.vals=I;
+    if(n.phase==='idle') n.allow=agAllowed(n.p.allow);
+    const wireTools=agToolWire(agToolList(agParsed(n),n.allow));
     const t=typeof I.task==='string' ? I.task.trim() : '';
     if(agPulse(n,'goP',I.go)) agStart(n,t||n.p.task);
     else if(t && t!==n.lastTask){ n.lastTask=t; agStart(n,t); }
@@ -152,12 +180,12 @@ def({ id:'agent', title:'Agent (LLM with tools)', cat:'Tools', readout:true, tal
     if(n.phase==='clear'){ n.pl.clear=1; n.phase='ask'; }                          // сначала чистая беседа у модели, на следующем такте — вопрос
     else if(n.phase==='ask'){ n.promptOut=n.pending; n.pl.send=1; n.phase='wait'; n.waitAt=performance.now(); }
     else if(n.phase==='wait'){
-      if(nw) agReply(n,String(I.reply||''));
+      if(nw){ const calls=agCallsIn(I.calls); if(calls.length) agReplyNative(n,calls,String(I.reply||'')); else agReply(n,String(I.reply||'')); }
       else if(performance.now()-n.waitAt>(+n.p.timeout||240)*1000) agFinish(n,'stop','the model did not answer in '+(+n.p.timeout||240)+' s',true);
     }
     const pl=n.pl; n.pl={send:0,clear:0,halt:0};
     const q=n.q.length ? n.q.splice(0) : null, go=n.go; n.go=0;
-    const res={prompt:n.promptOut||null,system:n.sysOut||null,send:pl.send,clear:pl.clear,halt:pl.halt,text:n.text,trace:n.trace.join('\n'),rec:q,done:go,busy:n.phase==='idle' ? 0 : 1,steps:n.s.steps,pending:n.confirmText||''};
+    const res={prompt:n.promptOut||null,system:n.sysOut||null,send:pl.send,clear:pl.clear,halt:pl.halt,tools:JSON.stringify(wireTools),results:n.pendingResults||null,text:n.text,trace:n.trace.join('\n'),rec:q,done:go,busy:n.phase==='idle' ? 0 : 1,steps:n.s.steps,pending:n.confirmText||''};
     const pp=agParsed(n);
     for(const w of pp.writes) res[w.pin]=n.o[w.pin] ?? null;
     for(const a of pp.acts) res[a.name]=a.name in n.emit ? n.emit[a.name] : (n.o[a.name] ?? null);
@@ -167,7 +195,7 @@ def({ id:'agent', title:'Agent (LLM with tools)', cat:'Tools', readout:true, tal
     const r=n.el.querySelector('.readout'); if(!r) return;
     const L=[];
     if(n.confirmText) L.push('❓ approve?  '+n.confirmText,'   (✔ / ✖ below, or the «approve» / «deny» pins)');
-    if(n.phase==='idle') L.push(n.final ? 'done · '+n.s.steps+' step(s)' : 'idle — press «▶ Run the task» or send a text to «task»');
+    if(n.phase==='idle') L.push(n.final ? 'done · '+n.s.steps+' step(s)' : 'idle — press «▶ Run the task» or send a text to «task»','   model, protocol and API key — in the wired LLM node (Ollama / OpenAI-compatible)');
     else L.push('step '+(n.s.steps+1)+' · '+({clear:'starting',ask:'asking the model',wait:'the model is thinking',exec:'running tools'}[n.phase]||n.phase)+' · '+Math.round((performance.now()-n.t0)/1000)+' s');
     const pe=agParsed(n).errs; if(pe.length) L.push('tools: '+pe.join('; '));
     if(n.note && !pe.length) L.push(n.note);

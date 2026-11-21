@@ -247,9 +247,28 @@ def({ id:'osmobj', title:'OSM Objects (Overpass)', cat:'Sources', readout:true, 
   }
 });
 
-/* ---------- Ollama ---------- */
+/* ---------- Ollama / OpenAI-compatible ---------- */
 // хост «app» — не сервер: llama.cpp внутри приложения Android (llm-app.js)
 const olmApp=n=>/^(app|phone|dsp)(:\/\/)?$/i.test(String(n.p.host||'').trim());
+// протокол: родной Ollama (/api/chat) или стандартный OpenAI (/v1/chat/completions, ключ, tools)
+const olmOpenai=n=>String(n.p.proto||'ollama').toLowerCase()==='openai';
+// учётка из Settings → Credentials: server — адрес API, password — ключ (в патч не попадает); иначе поля host / key узла
+function olmCred(n){
+  try{ return typeof Cred!=='undefined' && n.p.account ? Cred.get(n.p.account) : null; }catch(e){ return null; }
+}
+const olmKey=n=>{ const c=olmCred(n); return c ? String(c.pass||c.user||'') : String(n.p.key||''); };
+const olmHost=n=>{ const c=olmCred(n); return String((c && c.server) || n.p.host || ''); };
+const olmBase=n=>olmOpenai(n) ? ndOpenaiBase(olmHost(n)) : ndOllamaBase(olmHost(n));
+// модель: выбранная в списке или своя (modelCustom — адрес .gguf, ключ каталога, имя, которого нет в /v1/models)
+const olmModel=n=>String(n.p.modelCustom||'').trim() || String(n.p.model||'').trim();
+function olmSetModel(n,v){ v=String(v||''); n.p.model=v; if(n.set && n.set.model) n.set.model(v); }
+// варианты для выпадающего списка: модели с сервера / из /v1/models / файлы на телефоне + текущая + ключи каталога (host «app»)
+function olmModelOpts(n){
+  const cur=String(n.p.model||'').trim(), names=(n.models||[]).map(m=>m.name).filter(Boolean);
+  if(cur && !names.includes(cur)) names.unshift(cur);
+  if(olmApp(n) && typeof LLM_CATALOG!=='undefined') for(const k of Object.keys(LLM_CATALOG)) if(!names.includes(k) && !names.includes(k+'.gguf')) names.push(k);
+  return names.length ? names : [cur];
+}
 async function olmModelsApp(n){
   n.msg='asking the phone…';
   try{
@@ -259,7 +278,7 @@ async function olmModelsApp(n){
     const have=new Set(loc.map(m=>m.name));
     n.cat=Object.keys(LLM_CATALOG).filter(k=>!have.has(k+'.gguf')).map(k=>k+' (≈'+LLM_CATALOG[k].mb+' MB, '+LLM_CATALOG[k].note+')');
     n.msg='';
-    if(!n.p.model) setMod(n,'model',loc.length ? loc[0].name : Object.keys(LLM_CATALOG)[0]);
+    if(!olmModel(n)) olmSetModel(n,loc.length ? loc[0].name : Object.keys(LLM_CATALOG)[0]);
   }catch(e){ n.msg='models: '+e.message; }
   n.rev=(n.rev||0)+1;
 }
@@ -267,7 +286,7 @@ async function olmModelsApp(n){
 async function olmBench(n){
   if(!olmApp(n)){ n.msg='the benchmark works with the host «app» only'; n.rev++; return; }
   if(n.busy){ n.msg='wait for the answer to finish'; n.rev++; return; }
-  const spec=llmSpec(n.p.model); if(!spec){ n.msg='choose a model first'; n.rev++; return; }
+  const spec=llmSpec(olmModel(n)); if(!spec){ n.msg='choose a model first'; n.rev++; return; }
   n.busy=true; n.msg='benchmark: loading the model and trying thread counts…'; n.rev++;
   try{
     const r=await llmAppBench(spec,{gpu:!!n.p.appGpu,ctx:+n.p.numCtx||4096});
@@ -275,7 +294,20 @@ async function olmBench(n){
   }catch(e){ n.msg='benchmark failed: '+e.message; }
   finally{ n.busy=false; n.rev++; }
 }
+// «⟳ Models» для стандартного протокола: GET /v1/models с ключом (OpenAI, OpenRouter, Groq, DeepSeek, LM Studio, llama.cpp…)
+async function olmModelsOpenai(n){
+  const base=olmBase(n);
+  n.msg='asking '+base+'…';
+  try{
+    const r=await ndGet(n,'t',base+'/models','json',{timeout:15,cache:'t'+ndHash(base),headers:ndOpenaiHeaders(olmKey(n))});
+    const list=ndOpenaiModels(r.j); if(!list) throw new Error('this is not an OpenAI-compatible server');
+    n.models=list; n.msg=ndStatus(n,r) || (list.length ? '' : 'no models — check the account and the address');
+    if(!olmModel(n) && list.length) olmSetModel(n,list[0].name);
+  }catch(e){ const t=ndErr(e); if(t) n.msg='models: '+t; }
+  n.rev=(n.rev||0)+1;
+}
 async function olmModels(n){
+  if(olmOpenai(n)) return olmModelsOpenai(n);
   if(olmApp(n)) return olmModelsApp(n);
   const base=ndOllamaBase(n.p.host);
   n.msg='asking '+base+'…';
@@ -283,18 +315,76 @@ async function olmModels(n){
     const r=await ndGet(n,'t',base+'/api/tags','json',{timeout:10,cache:'t'+ndHash(base)});
     const list=ndOllamaTags(r.j); if(!list) throw new Error('this is not an Ollama server');
     n.models=list; n.msg=ndStatus(n,r) || (list.length ? '' : 'no models on the server — «ollama pull <name>»');
-    if(!n.p.model && list.length) setMod(n,'model',list[0].name);
+    if(!olmModel(n) && list.length) olmSetModel(n,list[0].name);
   }catch(e){ const t=ndErr(e); if(t) n.msg='models: '+t+olmHint(base); }
   n.rev=(n.rev||0)+1;
 }
 // почему не достучались: страница на https не может ходить на http-адрес в сети; Ollama отвечает только разрешённым Origin
 const olmHint=base=>(typeof location!=='undefined' && location.protocol==='https:' && /^http:\/\/(?!127\.0\.0\.1|localhost)/.test(base) ? '\n  https page → http server: use 127.0.0.1 / localhost, a tunnel, or open the app over http' : '')
   +'\n  Ollama must allow this page: OLLAMA_ORIGINS=* (or the page address) and restart the server';
-async function olmSend(n,prompt,ctx){
-  prompt=String(prompt||'').trim(); if(!prompt){ n.msg='the prompt is empty'; n.rev++; return; }
-  if(n.busy){ if(n.queue.length<5) n.queue.push([prompt,ctx]); else n.msg='the queue is full (5 questions)'; n.rev++; return; }     // вопрос не теряется: ответит следующим
-  const model=String(n.p.model||'').trim();
-  if(!model){ n.msg='choose a model («⟳ Models» or type a name)'; n.rev++; return; }
+// стандартный протокол: поток SSE, native tool calls; results — ответы инструментов [{id,name,result}] с провода
+async function olmSendOpenai(n,prompt,ctx,results){
+  const rs=Array.isArray(results) && results.length ? results : null;
+  prompt=String(prompt||'').trim();
+  if(!rs && !prompt){ n.msg='the prompt is empty'; n.rev++; return; }
+  const model=olmModel(n);
+  if(!model){ n.msg='pick a model («⟳ Models», or fill «own model»)'; n.rev++; return; }
+  const base=olmBase(n), key=olmKey(n);
+  (n.acs ||= {}).c?.abort();
+  const ac=n.acs.c=new AbortController();
+  n.busy=true; n.text=''; n.stats=null; n.callsOut=null; n.msg='waiting for the model…'; n.t0=performance.now();
+  const tools=ndOpenaiTools(n.inTools);
+  // история: ответы инструментов дописываются к уже отправленному assistant(tool_calls); новый вопрос — user
+  const add=rs ? rs.map(r=>({role:'tool',tool_call_id:String(r.id||r.name||''),content:String(r.result ?? '')})) : [{role:'user',content:ctx ? prompt+'\n\n---\n'+String(ctx) : prompt}];
+  const hist=[...(Array.isArray(n.hist) ? n.hist : []),...add];
+  let acc='';
+  try{
+    const body=ndOpenaiBody(model,ndOpenaiRequest(hist,n.sys,tools),{temperature:+n.p.temp||0,seed:+n.p.seed||0,maxTokens:+n.p.maxTok||0,tools});
+    const r=await ndFetch(n,base+'/chat/completions',{method:'POST',signal:ac.signal,headers:ndOpenaiHeaders(key),body:JSON.stringify(body)});
+    if(!r.ok){
+      const t=await ndWhy(r);
+      throw new Error('HTTP '+r.status+(t ? ': '+t : '')+(r.status===401 || r.status===403 ? ' (check the API key — Settings → Credentials)' : ''));
+    }
+    const st=ndOpenaiNew(), rd=r.body.getReader(), dec=new TextDecoder();
+    let buf='', fin=false;
+    n.msg='';
+    while(!fin){
+      const {done,value}=await rd.read(); if(done) break;
+      buf+=dec.decode(value,{stream:true});
+      const p=ndSse(buf); buf=p.rest;
+      for(const o of p.lines){
+        if(o.done){ fin=true; break; }
+        ndOpenaiPush(st,o);
+        if(st.err) throw new Error(st.err);
+        if(st.text && st.text.length>acc.length){ acc=st.text; n.text=acc; n.rev++; }
+      }
+    }
+    ndOpenaiPush(st,{done:true});
+    acc=st.text || acc;
+    const calls=ndOpenaiCalls(st);
+    n.stats=ndOpenaiStats(st,performance.now()-n.t0);
+    n.hist=hist;
+    if(acc || calls.length) n.hist.push({role:'assistant',content:acc||null,...(calls.length ? {tool_calls:calls.map(c=>({id:c.id,type:'function',function:{name:c.name,arguments:c.raw||JSON.stringify(c.args)}}))} : {})});
+    n.hist=ndOpenaiTrim(n.hist,+n.p.keep);
+    n.callsOut=calls.length ? JSON.stringify(calls.map(c=>({id:c.id,name:c.name,args:c.args}))) : null;
+    n.last=acc; n.fresh=1; n.recOut={from:model,text:acc,role:'assistant',model,t:Date.now(),...(calls.length ? {calls:calls.map(c=>c.name)} : {})};
+    n.msg=calls.length && !acc ? 'the model calls: '+calls.map(c=>c.name).join(', ') : '';
+  }catch(e){
+    if(e.name==='AbortError'){ n.msg='stopped'; n.queue.length=0; if(acc){ n.last=acc; n.fresh=1; n.recOut={from:model,text:acc,role:'assistant',model,t:Date.now(),partial:1}; } }
+    else n.msg='failed: '+ndErr(e);
+  }finally{
+    n.busy=false; n.rev=(n.rev||0)+1;
+    const nx=n.queue.shift(); if(nx) olmSend(n,nx[0],nx[1],nx[2]);
+  }
+}
+async function olmSend(n,prompt,ctx,results){
+  const oa=olmOpenai(n);
+  prompt=String(prompt||'').trim();
+  if(!oa && !prompt){ n.msg='the prompt is empty'; n.rev++; return; }
+  if(n.busy){ if(n.queue.length<5) n.queue.push([prompt,ctx,results]); else n.msg='the queue is full (5 questions)'; n.rev++; return; }     // вопрос не теряется: ответит следующим
+  if(oa) return olmSendOpenai(n,prompt,ctx,results);
+  const model=olmModel(n);
+  if(!model){ n.msg='pick a model («⟳ Models», or fill «own model»)'; n.rev++; return; }
   const base=ndOllamaBase(n.p.host);
   const msgs=ndOllamaMessages(n.hist,n.sys,prompt,ctx,+n.p.keep);
   const body=ndOllamaBody(model,msgs,{temperature:+n.p.temp,numCtx:+n.p.numCtx,seed:+n.p.seed,keepAlive:n.p.keepAlive});
@@ -304,7 +394,7 @@ async function olmSend(n,prompt,ctx){
   let acc='';
   try{
     if(olmApp(n)){                                                       // llama.cpp в приложении: ответ по токенам через мост
-      const spec=llmSpec(model); if(!spec) throw new Error('the model name is not valid: a key from the list, a .gguf file name or an address of a .gguf');
+      const spec=llmSpec(model); if(!spec) throw new Error('the model name is not valid: a key from the list, a .gguf file name or an address of a .gguf (use «own model» for a name the list does not show)');
       if(typeof AppLink==='undefined' || !AppLink.ok) throw new Error('host «app» works only in the DSP app for Android');
       n.msg='';
       const r=await llmAppRun(spec,{gpu:!!n.p.appGpu,ctx:+n.p.numCtx||4096,messages:msgs,max:+n.p.maxTok||512,temp:+n.p.temp,seed:+n.p.seed,threads:+n.p.threads||0,signal:ac.signal},t=>{ acc+=t; n.text=acc; n.rev++; });
@@ -337,21 +427,26 @@ async function olmSend(n,prompt,ctx){
     const nx=n.queue.shift(); if(nx) olmSend(n,nx[0],nx[1]);
   }
 }
-def({ id:'ollama', title:'Ollama (local LLM)', cat:'Tools', readout:true, tall:true, w:340,
-  kw:'ollama llm ai chat model language gpt llama qwen gemma mistral assistant ask question describe explain local',
-  // чат с моделью на своём сервере Ollama (/api/chat, потоком); context — любой текст с проводов (запись, журнал, декодер)
-  ins:[{n:'prompt',t:'txt'},{n:'system',t:'txt'},{n:'context',t:'txt'},{n:'send',t:'num'},{n:'stop',t:'num'},{n:'clear',t:'num'}],
-  outs:[{n:'text',t:'txt'},{n:'last',t:'txt'},{n:'new',t:'num'},{n:'rec',t:'rec'},{n:'busy',t:'num'},{n:'tps',t:'num'},{n:'tokens',t:'num'},{n:'models',t:'txt'}],
-  params:[{n:'host',t:'text',d:'http://127.0.0.1:11434',label:'Ollama server (host, host:port or URL) — or «app»: llama.cpp inside the DSP app for Android (GGUF models, GPU via OpenCL)'},
-          {n:'model',t:'text',d:'',label:'model (name from «⟳ Models», e.g. llama3.2). Host «app»: a list key (qwen2.5-3b-instruct-q4_0), a .gguf file on the phone or an address of a .gguf — downloaded once'},
+def({ id:'ollama', title:'Ollama / OpenAI-compatible LLM', cat:'Tools', readout:true, tall:true, w:340,
+  kw:'ollama openai compatible api key gpt chatgpt openrouter groq deepseek mistral together lm studio llama.cpp llm ai chat model language function calling tools agent llm',
+  // чат с моделью: родной Ollama (/api/chat) или стандартный OpenAI-протокол (/v1/chat/completions, ключ, tools);
+  // context — любой текст с проводов (запись, журнал, декодер); tools / results — native tool calling для Agent
+  ins:[{n:'prompt',t:'txt'},{n:'system',t:'txt'},{n:'context',t:'txt'},{n:'send',t:'num'},{n:'stop',t:'num'},{n:'clear',t:'num'},{n:'tools',t:'txt'},{n:'results',t:'txt'}],
+  outs:[{n:'text',t:'txt'},{n:'last',t:'txt'},{n:'new',t:'num'},{n:'rec',t:'rec'},{n:'busy',t:'num'},{n:'tps',t:'num'},{n:'tokens',t:'num'},{n:'models',t:'txt'},{n:'calls',t:'txt'}],
+  params:[{n:'proto',t:'select',opts:['ollama','openai'],d:'ollama',label:'protocol — ollama: a native Ollama server (/api/chat) or «app» · openai: any OpenAI-compatible API (/v1/chat/completions with an API key and native tool calls: OpenAI, OpenRouter, Groq, DeepSeek, LM Studio, llama.cpp server, Ollama /v1)'},
+          {n:'host',t:'text',d:'http://127.0.0.1:11434',label:'server — openai: base URL (https://api.openai.com, https://openrouter.ai/api/v1, http://127.0.0.1:1234…; /v1 is added if missing). ollama: host:port — or «app»: llama.cpp inside the DSP app for Android (GGUF models, GPU via OpenCL)'},
+          {n:'account',t:'text',d:'',cred:true,credType:'llm',label:'openai: account from Settings → Credentials (server — the API base, password — the API key; the key stays in this browser, not in the patch)'},
+          {n:'key',t:'text',d:'',label:'openai: API key if no account is chosen (stored in the patch as plain text — an account is safer)',adv:true},
+          {n:'model',t:'select',opts:n=>olmModelOpts(n),d:'',label:'model — pick from the list: press «⟳ Models» first (the server / API / phone is asked once). Host «app»: the list also offers catalog keys to download. Anything not in the list goes in «own model» below'},
+          {n:'modelCustom',t:'text',d:'',label:'own model — overrides «model» when filled: a name the server hides, a catalog key or an address of a .gguf (host «app»)',adv:true},
           {n:'appGpu',t:'check',d:true,label:'host «app»: use the GPU (OpenCL, Adreno 7xx / 8xx; fastest with Q4_0 models); off — CPU only. Switching CPU → GPU needs an app restart'},
-          {n:'maxTok',t:'range',min:32,max:4096,step:32,d:512,label:'host «app»: longest answer, tokens'},
+          {n:'maxTok',t:'range',min:32,max:4096,step:32,d:512,label:'longest answer, tokens (openai: max_tokens; host «app»)'},
           {n:'threads',t:'num',d:0,min:0,max:16,step:1,label:'host «app»: threads (0 — automatic: up to 4 fast cores (generation is memory-bound, more threads slow it down); «⏱ Benchmark» picks the best on this phone)'},
           {n:'bench',t:'button',label:'⏱ Benchmark (host «app»)',fn:n=>olmBench(n)},
           {n:'list',t:'button',label:'⟳ Models',fn:n=>olmModels(n)},
           {n:'prompt',t:'text',d:'',label:'question (the wire «prompt» overrides it)'},
           {n:'sys',t:'text',d:'',label:'system prompt (the wire «system» overrides it)'},
-          {n:'ask',t:'button',label:'▶ Ask',fn:n=>olmSend(n,n.inPrompt||n.p.prompt,n.inCtx)},
+          {n:'ask',t:'button',label:'▶ Ask',fn:n=>olmSend(n,n.inPrompt||n.p.prompt,n.inCtx,n.inResults)},
           {n:'stopb',t:'button',label:'■ Stop',fn:n=>n.acs?.c?.abort()},
           {n:'clr',t:'button',label:'Clear dialogue',fn:n=>{ n.queue.length=0; n.hist=[]; n.text=''; n.last=''; n.msg=''; n.rev++; }},
           {n:'auto',t:'check',d:false,label:'ask by itself when the «prompt» wire changes'},
@@ -362,33 +457,38 @@ def({ id:'ollama', title:'Ollama (local LLM)', cat:'Tools', readout:true, tall:t
           {n:'keepAlive',t:'text',d:'',label:'keep the model loaded (5m, 1h, 0 — unload at once)',adv:true},
           {n:'proxy',t:'check',d:false,label:'always through the CORS proxy from Settings (without it — directly, the proxy only after a refusal in «on error» mode)',adv:true}],
   init:n=>{ n.hist=[]; n.text=''; n.last=''; n.msg=''; n.busy=false; n.models=[]; n.stats=null; n.fresh=0; n.rev=0; n.sys='';
-    n.queue=[]; n.cat=[]; n.recOut=null; n.inPrompt=''; n.inCtx=''; n.prevPrompt=null; n.s=false; n.st=false; n.cl=false; n.t0=0; },
+    n.queue=[]; n.cat=[]; n.recOut=null; n.inPrompt=''; n.inCtx=''; n.inTools=null; n.inResults=null; n.callsOut=null;
+    n.prevPrompt=null; n.s=false; n.st=false; n.cl=false; n.t0=0; },
   dispose:n=>{ ndAbort(n); },
   drawKey:n=>n.rev+'|'+n.msg+'|'+n.busy,
   process(n,I){
     const p=typeof I.prompt==='string' ? I.prompt : '';
     n.inCtx=typeof I.context==='string' ? I.context : '';
+    n.inTools=typeof I.tools==='string' ? I.tools : null;
+    n.inResults=ndOpenaiResults(I.results);
     n.sys=(typeof I.system==='string' && I.system) || n.p.sys || '';
     const prompt=p||n.p.prompt||'';
     n.inPrompt=prompt;
-    if(ndPulse(n,'s',I.send)) olmSend(n,prompt,n.inCtx);
-    else if(n.p.auto && p && p!==n.prevPrompt && !n.busy) olmSend(n,p,n.inCtx);
+    if(ndPulse(n,'s',I.send)) olmSend(n,prompt,n.inCtx,n.inResults);
+    else if(n.p.auto && p && p!==n.prevPrompt && !n.busy) olmSend(n,p,n.inCtx,n.inResults);
     n.prevPrompt=p||n.prevPrompt;
     if(ndPulse(n,'st',I.stop)) n.acs?.c?.abort();
-    if(ndPulse(n,'cl',I.clear)){ n.queue.length=0; n.hist=[]; n.text=''; n.last=''; n.msg=''; n.rev++; }
-    const fresh=n.fresh; n.fresh=0; const rec=fresh ? n.recOut : null;
+    if(ndPulse(n,'cl',I.clear)){ n.queue.length=0; n.hist=[]; n.text=''; n.last=''; n.msg=''; n.callsOut=null; n.rev++; }
+    const fresh=n.fresh; n.fresh=0; const rec=fresh ? n.recOut : null, calls=fresh ? n.callsOut : null;
+    if(fresh) n.callsOut=null;
     return {text:n.text,last:n.last||null,new:fresh,rec,busy:n.busy ? 1 : 0,tps:n.stats?.tps??null,tokens:n.stats?.tokens??null,
-      models:n.models.length ? n.models.map(m=>m.name).join('\n') : null};
+      models:n.models.length ? n.models.map(m=>m.name).join('\n') : null,calls};
   },
   draw(n){
-    const L=[];
+    const L=[], m=olmModel(n);
+    if(!n.text && !n.busy) L.push((olmOpenai(n) ? 'openai' : 'ollama')+' · '+(olmHost(n)||'—')+(m ? ' · '+m : ' · no model')+(olmOpenai(n) ? (olmKey(n) ? ' · key set' : ' · no key') : ''));
     if(n.msg) L.push(n.msg);
     if(n.busy && !n.text && !n.msg) L.push('…');
     if(n.stats) L.push(n.stats.tokens+' tokens · '+(n.stats.tps ?? '?')+' tok/s · '+n.stats.total+' s'+(n.stats.cached ? ' · '+n.stats.cached+' prompt tokens from the cache' : ''));
     if(olmApp(n) && n.busy && !n.text && typeof LLMAP!=='undefined' && LLMAP.prog) L.push(LLMAP.prog+' (once — the model stays on the phone)');
     if(!n.text && !n.msg && n.models.length) L.push(n.models.length+' models: '+n.models.map(m=>m.name+(m.params ? ' ('+m.params+')' : '')).join(', '));
-    if(!n.text && !n.msg && n.cat && n.cat.length) L.push('to download (type the key in «model»): '+n.cat.join('; '));
-    else if(!n.text && !n.msg && !n.busy) L.push('type the model name (or press «⟳ Models»), write a question and press «▶ Ask»');
+    if(!n.text && !n.msg && n.cat && n.cat.length) L.push('to download (pick the key in «model»): '+n.cat.join('; '));
+    else if(!n.text && !n.msg && !n.busy) L.push('press «⟳ Models» and pick a model from the list, write a question and press «▶ Ask»');
     if(n.text) L.push(n.text.length>3000 ? '…'+n.text.slice(-3000) : n.text);
     ndShow(n,L.join('\n'));
   }

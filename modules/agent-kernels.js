@@ -5,8 +5,8 @@
    Hermes; для других моделей понимается и голый JSON), безопасный калькулятор (без eval) и решение, что делать с ответом. Тест tools/test-agent.mjs. */
 
 // Пины узла — те, что объявлены в «tools» (любые имена и типы), плюс фиксированные ниже; чужие имена не должны с ними пересекаться.
-const AG_FIXED_IN=['task','go','stop','reply','new','approve','deny'];
-const AG_FIXED_OUT=['prompt','system','send','clear','halt','text','trace','rec','done','busy','steps','pending'];
+const AG_FIXED_IN=['task','go','stop','reply','new','approve','deny','calls'];
+const AG_FIXED_OUT=['prompt','system','send','clear','halt','text','trace','rec','done','busy','steps','pending','tools','results'];
 const AG_TYPES=['num','text','any'];
 const AG_NAME=/^[A-Za-z_]\w{0,31}$/;
 
@@ -91,10 +91,23 @@ function agToolList(parsed,allow){
   }
   return out;
 }
-function agSystemPrompt(parsed,tools,extra){
+// те же инструменты в виде стандартных OpenAI «tools» — для native function calling на проводе (Agent.tools → LLM.tools)
+const agToolWire=tools=>tools.map(t=>({type:'function',function:{name:t.name,description:t.description||'',parameters:t.parameters||{type:'object',properties:{}}}}));
+// язык ответа по задаче: основная письменность (кириллица / CJK / арабица), иначе английский.
+// Нужен, потому что модели (особенно китайские) иначе отвечают на своём по умолчанию, даже если задача на английском.
+function agLang(text){
+  const t=String(text||''), n=re=>(t.match(re)||[]).length;
+  const cjk=n(/[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/g), cyr=n(/[\u0400-\u04ff]/g), ar=n(/[\u0600-\u06ff]/g);
+  if(cjk && cjk>=cyr && cjk>=ar) return 'Chinese';
+  if(cyr && cyr>=ar) return 'Russian';
+  if(ar) return 'Arabic';
+  return 'English';
+}
+function agSystemPrompt(parsed,tools,extra,native,lang){
   const L=['You are an agent inside a signal-processing workbench. Solve the task step by step; use the tools when you need a value, a calculation or an effect, and never invent a tool result.',''];
   if(tools.length){
-    L.push('# Tools','<tools>',...tools.map(t=>JSON.stringify({name:t.name,description:t.description,parameters:t.parameters})),'</tools>','',
+    if(native) L.push('# Tools','The tools are supplied by the API as functions: call them through the native function-calling interface, never as text. After a tool result, continue until you can answer in plain text.','');
+    else L.push('# Tools','<tools>',...tools.map(t=>JSON.stringify({name:t.name,description:t.description,parameters:t.parameters})),'</tools>','',
       'To call a tool, reply with exactly one or more blocks and nothing else:','<tool_call>{"name": "tool_name", "arguments": {"arg": "value"}}</tool_call>',
       'The results come back as <tool_response>…</tool_response> messages; then continue. When you have the answer, reply in plain text WITHOUT a tool call.','');
   }else L.push('There are no tools: answer from what you know.','');
@@ -102,7 +115,7 @@ function agSystemPrompt(parsed,tools,extra){
   if(parsed.reads.length) L.push('Inputs you can read (tool read): '+parsed.reads.map(r=>r.pin+(r.desc ? ' — '+r.desc : '')+' ('+ty(r.type)+')').join('; ')+'.');
   if(parsed.writes.length) L.push('Outputs you can set (tool write): '+parsed.writes.map(w=>w.pin+(w.desc ? ' — '+w.desc : '')+' ('+ty(w.type)+(w.min!=null ? ', '+w.min+'…'+w.max : '')+')').join('; ')+'.');
   if(parsed.acts.length) L.push('Actions: '+parsed.acts.map(a=>a.name+'('+a.args.map(x=>x.name+(x.min!=null ? ' '+x.min+'…'+x.max : '')).join(', ')+')'+(a.confirm ? ' [needs approval]' : '')).join('; ')+'. If the user denies an action, do not repeat it.');
-  L.push('Answer in the language of the task. Be brief.');
+  L.push(lang ? 'Answer in '+lang+', always — even if the task, the tool results or earlier messages are in another language. Be brief.' : 'Answer in the language of the task. Be brief.');
   if(extra) L.push('',String(extra));
   return L.join('\n');
 }
@@ -227,6 +240,22 @@ function agDecide(s,text,cfg){
   if(s.seen[key]>=3) return {kind:'stop',reason:'the same call repeated three times',text:rest};
   if(s.steps>=cfg.maxSteps) return {kind:'stop',reason:'step limit ('+cfg.maxSteps+')',text:rest};
   return {kind:'tools',calls:calls.slice(0,cfg.maxCalls||4),say:rest};
+}
+// ответ модели пришёл готовыми вызовами (native tool calling, OpenAI-протокол): те же шаги, те же ограничения
+function agDecideNative(s,calls,cfg){
+  const cs=[];
+  for(const c of Array.isArray(calls) ? calls : []){
+    const name=String((c && (c.name || c.function?.name)) || '').trim(); if(!name) continue;
+    let args=c.arguments ?? c.args ?? c.function?.arguments ?? {};
+    if(typeof args==='string') args=agJson(args) || {};
+    cs.push({id:c.id, name, args:args && typeof args==='object' && !Array.isArray(args) ? args : {}});
+  }
+  if(!cs.length) return {kind:'none',calls:[]};
+  s.steps++;
+  const key=cs.map(c=>c.name+JSON.stringify(c.args)).join('|'); s.seen[key]=(s.seen[key]||0)+1;
+  if(s.seen[key]>=3) return {kind:'stop',reason:'the same call repeated three times',text:''};
+  if(s.steps>=cfg.maxSteps) return {kind:'stop',reason:'step limit ('+cfg.maxSteps+')',text:''};
+  return {kind:'tools',calls:cs.slice(0,cfg.maxCalls||4)};
 }
 const agFormatResults=rs=>rs.map(r=>'<tool_response>'+JSON.stringify({name:r.name,result:r.result})+'</tool_response>').join('\n');
 const agTraceLine=(step,call,result)=>'#'+step+' '+call.name+'('+JSON.stringify(call.args).slice(0,120)+') → '+String(result).replace(/\s+/g,' ').slice(0,160);

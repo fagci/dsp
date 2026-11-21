@@ -4,7 +4,7 @@
    Тип (CR_TYPES) переключает примеры полей (CR_EXAMPLE); crGuess(server) угадывает тип по схеме адреса. */
 
 const CR_NAME=/^[A-Za-z0-9_.-]{1,24}$/;
-const CR_TYPES=['email','matrix','xmpp','irc','ntfy','telegram','nostr','aprs','mastodon','bluesky','proxy','custom'];
+const CR_TYPES=['email','matrix','xmpp','irc','ntfy','telegram','nostr','aprs','mastodon','bluesky','llm','proxy','custom'];
 const CR_EXAMPLE={
   email:   {server:'imaps://imap.gmail.com:993',          smtp:'smtps://smtp.gmail.com:465'},
   matrix:  {server:'https://matrix.org',                  smtp:''},
@@ -16,6 +16,7 @@ const CR_EXAMPLE={
   aprs:    {server:'aprs://rotate.aprs2.net:14580',       smtp:''},
   mastodon:{server:'https://mastodon.social',             smtp:''},
   bluesky: {server:'https://public.api.bsky.app',         smtp:''},
+  llm:     {server:'https://api.openai.com/v1 · https://openrouter.ai/api/v1 · http://127.0.0.1:1234/v1', smtp:''},
   proxy:   {server:'socks5://127.0.0.1:9050 · http://proxy.lan:3128', smtp:''},
   custom:  {server:'imaps://… · https://… · ircs://…',    smtp:''},
 };
@@ -31,6 +32,7 @@ const CR_HINT={
   aprs:    {user:'your callsign (N0CALL-7)',        pass:'APRS-IS passcode (empty — receive only)'},
   mastodon:{user:'empty',                          pass:'access token'},
   bluesky: {user:'handle.bsky.social',              pass:'app password'},
+  llm:     {user:'empty (or the account, if the provider wants one)', pass:'API key (sk-…, gsk_…, or the provider token)'},
   proxy:   {user:'login (if the proxy asks)',       pass:'password (if the proxy asks)'},
   custom:  {user:'login',                          pass:'password / token'},
 };
