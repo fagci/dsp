@@ -451,7 +451,7 @@ function gsmArfcnFreq(n){
 // подсказка, на что настроить второй приёмник ('ul') на тестовом стенде; null — частота вне известных диапазонов
 function gsmUplinkFreq(dlMHz){
   if(dlMHz==null) return null;
-  if(dlMHz>=935 && dlMHz<=960) return dlMHz-45;
+  if(dlMHz>=921 && dlMHz<=960) return dlMHz-45;           // R-GSM/E-GSM/P-GSM 900: 921–960 DL → 876–915 UL
   if(dlMHz>=1805.2 && dlMHz<=1879.8) return dlMHz-95;
   return null;
 }
@@ -944,8 +944,10 @@ class GsmReceiver{
 
   signalDbm(){
     const h=this.head; let p=0;
-    for(let ii=GSM_GUARD|0;ii<GSM_TS_BITS;ii++){ const a=Math.hypot(this.re[h+ii],this.im[h+ii]); p+=a*a; }
-    return Math.round(10*Math.log10(p/GSM_TS_BITS/50));
+    // отсчёты, а не символы: окно — весь таймслот (156.25 символов = 625 отсч. при OSR=4)
+    const lo=(GSM_GUARD*GSM_OSR)|0, hi=(GSM_TS_BITS*GSM_OSR)|0;
+    for(let ii=lo;ii<hi;ii++){ const a=Math.hypot(this.re[h+ii],this.im[h+ii]); p+=a*a; }
+    return Math.round(10*Math.log10(p/(hi-lo)/50));
   }
 
   // тип бёрста по 51-мультикадру TS0; для TN>0 — просто нормальный (данные)
@@ -1040,7 +1042,10 @@ class GsmReceiver{
       // на два разных id и recUniq считает их за две разные записи вместо одной.
       const base=rec.plmn+'-'+si.lac.toString(16);
       if(si.ci!=null){ rec.id=base+'-'+si.ci.toString(16); this.lastCellBase=base; this.lastCellId=rec.id; }
-      else rec.id=(this.lastCellBase===base && this.lastCellId) ? this.lastCellId : base;
+      else if(this.lastCellBase===base && this.lastCellId) rec.id=this.lastCellId;
+      // SI4 не несёт CID: до первого SI3 id неизвестен. Раньше подставлялся PLMN-LAC, и recUniq
+      // заводил на ту же соту вторую строку без CID; без id запись просто не попадает в список
+      // сот, а после SI3 получает полный id (SI4 повторяется каждые 51 кадр, так что не теряется).
       this.cellLabel=(op||rec.plmn)+' LAC'+si.lac; }           // для рёбер графа соседей (emitNeighbors)
     if(si.cellArfcns) { rec.cellArfcns=si.cellArfcns; rec.cellFmt=si.cellFmt; }
     if(si.neighborArfcns) { rec.neighborArfcns=si.neighborArfcns; rec.neighborFmt=si.neighborFmt; rec.nccPermitted=si.nccPermitted;
@@ -1287,10 +1292,17 @@ class GsmReceiver{
 // реземплера от старой несущей — застрявший на старой частоте foff может не дать найти FCCH на новой. Кнопка
 // делает то же самое, что переустановка узла, без необходимости удалять и добавлять его заново.
 function gsmRxReset(n){
+  gsmRxSoftReset(n);
+  n.bid=0; n.log=[]; n.text='ищу FCCH…';
+}
+// сброс только приёмного тракта: AFC, NCO и реземплеры. Лог/счётчик бёрстов остаются — это нужно
+// сканеру: при переходе на другую несущую остаточный foff от прошлой (возможно, ложной FCCH) не должен
+// уводить поиск на новом канале, но история приёма за весь проход должна сохраниться.
+function gsmRxSoftReset(n){
   n.rx=new GsmReceiver(); n.foff=0; n.nco=0;
   n.dl={lr:new Float32Array(0), li:new Float32Array(0), frac:1};
   n.ulSt={lr:new Float32Array(0), li:new Float32Array(0), frac:1};
-  n.bid=0; n.log=[]; n.text='ищу FCCH…'; n.lastSchBsic=-1; n.fcchSince=null;
+  n.lastSchBsic=-1; n.fcchSince=null; n.lastInFc=null;
 }
 def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
   ins:[{n:'in',t:'iq'},{n:'ul',t:'iq'}],
@@ -1306,6 +1318,12 @@ def({ id:'gsmRx', title:'GSM: Receive Bursts (IQ)', cat:'Decoders',
     const s=iqIn(I,'in'), su=iqIn(I,'ul');
     if(!s || !s.sr){ n.text='нет входного IQ-потока'; return {rec:null, burst:null, freq:n.foff, sync:0}; }
     if(s.sr<GSM_TARGET_SR*0.98){ n.text='sr слишком низкий: нужно ≥ '+(GSM_TARGET_SR/1e6).toFixed(3)+' MS/s (GSM 270.833k×'+GSM_OSR+')'; return {rec:null, burst:null, freq:n.foff, sync:0}; }
+    // сканер переключает каналы цифровым сдвигом: центр входного IQ меняется на 200 кГц и больше.
+    // Остаточный AFC (foff/NCO) и хвост реземплера от прошлой несущей к новой не относятся — иначе
+    // ложная FCCH на одном канале уводит поиск на следующем. Лог и счётчик бёрстов не трогаем.
+    { const sfc=s.fc||0;
+      if(n.lastInFc!=null && Math.abs(sfc-n.lastInFc)>75000) gsmRxSoftReset(n);
+      n.lastInFc=sfc; }
     // ресемплинг на OSR·270.833 кГц — тот же для 'in' и для 'ul' (аплинк, второй приёмник на пару несущей —
     // своему тестовому стенду), раздельное состояние (остаток блока) на каждый вход
     const dl=gsmResampleStream(n.dl,s);

@@ -109,5 +109,19 @@ const ul=ev(`(()=>{
 })()`);
 ok('uplink physical layer: same carrier on both inputs → TN0 downlink content reappears on TN5 uplink (−3TS)',!ul.err && ul.rec.some(x=>x.dir==='UL' && x.tn===5 && /^(SI1|SI2|SI3|SI4|SI13|Immediate Assignment.*|Paging.*)$/.test(x.msg)),JSON.stringify(ul.err||ul.rec.slice(0,4)));
 
+// SI4 (без CID) до SI3 не должен создать отдельную строку соты: recUniq считает по id, а PLMN-LAC
+// временно совпадает с будущим id без CI и плодит дубль
+const si4only=ev(`(()=>{const r=new GsmReceiver(); const l=gsmL2('SI4',{mcc:'250',mnc:'01',lac:1234,ci:5678});
+  r.emitBcch(gsmParseSI(l),l); return r.rec.map(x=>x.id);})()`);
+ok('SI4 before SI3 has no CID-less cell id',si4only.length===1 && si4only[0]===undefined,JSON.stringify(si4only));
+
+// уровень: средняя мощность по всему таймслоту, а не по первым 156 отсчётам (как было при ii<GSM_TS_BITS без OSR)
+const dbmSlot=ev(`(()=>{const r=new GsmReceiver(); r.len=1000; r.re=new Float32Array(1000); r.im=new Float32Array(1000);
+  for(let i=300;i<700;i++) r.re[i]=1; return r.signalDbm();})()`);
+ok('signal level covers the whole timeslot',isFinite(dbmSlot) && dbmSlot>-25 && dbmSlot<-10,dbmSlot);
+// подсказка аплинка для E-GSM/R-GSM 900 (925–935 / 921–925 МГц), не только P-GSM
+ok('uplink hint covers E-GSM/R-GSM',ev('gsmUplinkFreq(923)')===878 && ev('gsmUplinkFreq(930)')===885 && ev('gsmUplinkFreq(940)')===895,
+  [ev('gsmUplinkFreq(923)'),ev('gsmUplinkFreq(930)'),ev('gsmUplinkFreq(940)')].join(','));
+
 console.log(bad ? bad+' failed' : 'all ok');
 process.exit(bad?1:0);

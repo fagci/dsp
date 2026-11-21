@@ -5878,36 +5878,39 @@ markWiresDirty();
 preset('GSM: ARFCN Scanner (sweep the band, log every cell)', function(){
 clearAll();
 const nt=addNode('note',40,40,{text:'Not every GSM channel you tap on the spectrum carries a receivable BCCH — many peaks are\n'+
-  'neighbours, weak distant cells or just noise. Instead of tuning by hand and hoping, this preset\n'+
-  'sweeps the whole GSM900/DCS1800 downlink automatically: Band Scanner retunes the RTL-SDR across\n'+
-  'the «GSM downlink (ARFCN bands)» list, dwelling on each ~2 MS/s window just long enough for\n'+
-  'GSM: Receive Bursts to try an FCCH/SCH lock (its sync output tells the scanner whether to keep\n'+
-  'listening there or move on). Every cell it manages to decode (SI3/SI4 → PLMN/LAC/CID) lands in\n'+
-  '«Rec: Unique by Key» — one row per cell, deduplicated, with a hit count; save the full list to CSV\n'+
-  'once the sweep loops back around. Raise «listen timeout» if cells near the edge of a window need\n'+
-  'more time to lock; this is the same approach grgsm_scanner / kal use — try an actual FCCH/SCH\n'+
-  'decode on each candidate rather than guessing from spectrum peaks alone.'});
-nt.size.w=700; nt.size.h=240; applySize(nt);
-const rx=addNode('rtlsdr',40,340,{sr:'2048000',freq:942000000,demod:'IQ',auto:false,gainDb:32});
-const bp=addNode('table',40,500,{list:'presets/GSM downlink (ARFCN bands)',initial:false});
+  'neighbours, weak distant cells or just noise. This preset walks the «GSM downlink (ARFCN bands)»\n'+
+  'list channel by channel: Channel Scanner groups the ARFCNs into the fewest ~2 MS/s receiver windows\n'+
+  '(retuning only between windows), steps through the channels inside a window with the digital tuner\n'+
+  '(IQ Shift) and does not move on while GSM: Receive Bursts is synced (its sync output is «active») —\n'+
+  'i.e. the next channel is taken only when the current one has no FCCH/SCH lock or the listen timeout\n'+
+  'fires. This matters: a receiver tuned to a whole window can only find an FCCH above its centre,\n'+
+  'so the old window-per-carrier sweep missed the lower half of every window; shifting each carrier to\n'+
+  '0 Hz first lets every channel be tried. Every decoded cell (SI3/SI4 → PLMN/LAC/CID) lands in\n'+
+  '«Rec: Unique by Key» — one row per cell with a hit count; save the full list to CSV. Set the\n'+
+  'receiver frequency correction (ppm) first: tens of ppm at 900 MHz are tens of kHz and make FCCH\n'+
+  'locks unreliable (the lab R828D needed 54 ppm). DCS1800 needs a tuner that reaches 1880 MHz\n'+
+  '(an R828D RTL-SDR stops at ~1766 MHz, so only GSM900 is usable there).'});
+nt.size.w=720; nt.size.h=270; applySize(nt);
+const rx=addNode('rtlsdr',40,360,{sr:'2048000',freq:942000000,demod:'IQ',auto:false,gainDb:32});
+const bp=addNode('table',40,540,{list:'presets/GSM downlink (ARFCN bands)',initial:false});
 bp.size.w=300; bp.size.h=160; applySize(bp);
-const bs=addNode('bandscan',380,500,{timeout:3000,settle:250});
-bs.size.w=300; bs.size.h=200; applySize(bs);
+const cs=addNode('chanscan',380,540,{edge:10,settle:150,dwell:1000,hang:2000,timeout:6000,senseThr:0,loop:true});
+cs.size.w=320; cs.size.h=200; applySize(cs);
 const sa=addNode('sa',760,40,{auto:true,floor:-90,top:-10,split:1});
 sa.size.w=640; sa.size.h=300; applySize(sa);
-const sh=addNode('iqShift',40,780,{});
-const gsm=addNode('gsmRx',380,780,{afc:true});
+const sh=addNode('iqShift',40,820,{});
+const gsm=addNode('gsmRx',380,820,{afc:true});
 gsm.size.w=760; gsm.size.h=300; applySize(gsm);
 const uniq=addNode('recUniq',1180,80,{key:'id'});
 uniq.size.w=360; uniq.size.h=240; applySize(uniq);
 const log=addNode('recLog',1180,360,{});
 log.size.w=360; applySize(log);
 const nv=addNode('numview',1580,80,{label:'cells'});
-addEdge(rx.id,'spec',sa.id,'spec'); addEdge(bp.id,'rows',sa.id,'bands'); addEdge(bp.id,'rows',bs.id,'bands');
-addEdge(rx.id,'freqLo',bs.id,'freqLo'); addEdge(rx.id,'freqHi',bs.id,'freqHi');
-addEdge(bs.id,'freq',rx.id,'freq');
-addEdge(rx.id,'iq',sh.id,'in'); addEdge(sh.id,'out',gsm.id,'in');
-addEdge(gsm.id,'sync',bs.id,'active');
+addEdge(rx.id,'spec',sa.id,'spec'); addEdge(bp.id,'rows',sa.id,'bands'); addEdge(bp.id,'rows',cs.id,'bands');
+addEdge(rx.id,'freqLo',cs.id,'freqLo'); addEdge(rx.id,'freqHi',cs.id,'freqHi');
+addEdge(cs.id,'freq',rx.id,'freq');
+addEdge(rx.id,'iq',sh.id,'in'); addEdge(cs.id,'tune',sh.id,'freq'); addEdge(sh.id,'out',gsm.id,'in');
+addEdge(gsm.id,'sync',cs.id,'active');
 addEdge(gsm.id,'rec',uniq.id,'rec'); addEdge(uniq.id,'new',log.id,'rec'); addEdge(uniq.id,'count',nv.id,'in');
 markWiresDirty();
 });
