@@ -18,7 +18,8 @@
 - `presets.js` — список патчей, `openPatch/insertPatch/buildDemo`, реестр пресетов `preset()`.
 - `tools/` — `test-*.mjs` (тесты), `node/bridge.mjs` (TCP/прокси/TLS-мост), `android/` (приложение), `termux/`, прошивки.
   `e2e-usb-sdr.mjs` + `lab-chrome.mjs` — живая лаборатория: настоящий донгл через **WebUSB** в Chrome
-  (CDP по pipe, без Playwright), статистика приёмника и IQ-запись; профиль с grant-ом — `~/.cache/dsp-lab/chrome`.
+  (CDP по pipe, без Playwright), статистика приёмника, IQ-запись и стресс-режим (`--stress`: тяжёлый FFT,
+  кадры rAF/long tasks/CPU; `--channels 4` — предел); профиль с grant-ом — `~/.cache/dsp-lab/chrome`.
 - `vendor/` — wasm и библиотеки, ленивая загрузка (не трогать при сканировании).
 - `sw.js` — service worker; `SHELL` — ручной список кэша; `H` — хэши (генерирует stamp.mjs).
 - `styles.css` — вся стилизация (тёмная/светлая темы через CSS-переменные).
@@ -57,6 +58,8 @@
 - Справка модулей: `node tools/gen-modref.mjs` (**нужен playwright — не установлен**, на проверено).
 - Живой SDR через WebUSB (без моста и rtl_tcp): `node tools/e2e-usb-sdr.mjs --grant` один раз (выбрать донгл),
   затем `node tools/e2e-usb-sdr.mjs --freq 104.4M --ppm 54 --gain 20 [--hop 104.4M,104.8M] [--capture out.sigmf]`.
+  Стресс на живом потоке: `node tools/e2e-usb-sdr.mjs --stress --sr 3200000 --freq 104.4M`
+  (по умолчанию 1 канал и FFT 262144; `--channels 4` — предел, `--spec 4096` — мягче).
 - Сборки нет; деплой — push в `main` (GitHub Pages).
 
 ## Ограничения и подводные камни

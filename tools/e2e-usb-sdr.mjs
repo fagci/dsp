@@ -7,12 +7,15 @@
 //   node tools/e2e-usb-sdr.mjs --freq 104.4M --ppm 54 --gain 20 --sec 10 --json /tmp/sdr.jsonl
 //   node tools/e2e-usb-sdr.mjs --hop 104.4M,104.8M --hop-sec 2 --capture /tmp/cap.sigmf
 //   node tools/e2e-usb-sdr.mjs --replay /tmp/cap.sigmf --demod WFM --sec 5   # реальная запись в граф
+//   node tools/e2e-usb-sdr.mjs --stress --sr 3200000 --freq 104.4M   # живой донгл, max sample rate
 //
 // Проверяются: Connect/Disconnect, захват PLL, реальная частота и частота дискретизации, ADC
 // peak/rms/clip/overload, RSSI/SNR, звук, кадры спектра, перестройка, недоборы; --capture пишет IQ
 // через штатный IQ Recorder страницы (SigMF/cu8 по умолчанию, --wav — WAV) и охватывает весь прогон,
 // включая --hop; --capture-sec — минимальная длина прогона. --replay проигрывает такую запись через
 // IQ File Player — тот же путь, что «Open IQ file…», и даёт повторяемые данные (до 64 МБ).
+// --stress — режим нагрузки: max sample rate, тяжёлый непрерывный спектр, плюс кадры rAF, long tasks
+// и счётчики браузера (TaskDuration/ScriptDuration). По умолчанию 1 канал; --channels 4 — предел.
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -28,9 +31,20 @@ const hz = s => { const m = /^([\d.]+)\s*([kKmMgG]?)$/.exec(String(s).trim()); i
 const profile = path.resolve(String(arg('profile', defaultProfile())));
 const deviceFile = path.join(profile, 'device.json');
 const headed = has('headed') || has('grant');
-const sec = +arg('sec', 6), sampleMs = +arg('sample', 500), hopSec = +arg('hop-sec', 2);
-const freqArg = hz(arg('freq', 100e6)), sr = +arg('sr', 1024000), demod = String(arg('demod', 'WFM'));
+const stress = has('stress');
+const sec = +arg('sec', stress ? 10 : 6), sampleMs = +arg('sample', stress ? 250 : 500), hopSec = +arg('hop-sec', 2);
+const freqArg = hz(arg('freq', 100e6)), sr = +arg('sr', stress ? 3200000 : 1024000), demod = String(arg('demod', 'WFM'));
 const gain = String(arg('gain', 'auto')), ppm = +arg('ppm', 0);
+// --stress поднимает самый дорогой спектр; каналы и поля можно переопределить руками.
+const channels = Math.max(1, Math.min(4, +arg('channels', 1)));
+const specOpts = {};
+if(stress || arg('spec', null) != null) specOpts.specSize = String(arg('spec', '262144'));
+if(stress || arg('spec-cont', null) != null) specOpts.specCont = String(arg('spec-cont', '1')) !== '0';
+if(stress || arg('spec-fps', null) != null) specOpts.specFps = String(arg('spec-fps', '60'));
+if(arg('spec-avg', null) != null) specOpts.specAvg = String(arg('spec-avg'));
+if(stress) specOpts.specCover = '100';
+if(has('stereo')) specOpts.stereo = true;
+const nodeExtra = JSON.stringify(specOpts);
 const hops = arg('hop') ? String(arg('hop')).split(',').map(hz) : null;
 const freq = hops ? hops[0] : freqArg;             // с --hop стартуем сразу на первой частоте
 const port = +arg('port', 8124);                    // grant привязан к origin: не меняй без --grant
@@ -56,15 +70,74 @@ const SNAP = `(()=>{const n=Graph.nodes.find(x=>x.type==='rtlsdr');if(!n)return 
     clip:n.adcClip==null?null:+(100*n.adcClip).toFixed(3), ovl:sdrAdcOvl(n)?1:0,
     rssi:o.rssi==null?null:+o.rssi.toFixed(1), snr:o.snr==null?null:+o.snr.toFixed(1), sq:o.sqOpen??null,
     audio:ar, spec:sx, specRev:(n.spec&&n.spec.rev)||0, tuneMs:n._lastTuneMs==null?null:+n._lastTuneMs.toFixed(1),
+    samples:n.specRing?n.specRing.written:null, ch:n.ch.filter(c=>c.active).length,
+    msps:n.msps==null?null:+n.msps.toFixed(3), mspsIo:n.mspsIo==null?null:+n.mspsIo.toFixed(3),
+    workerMs:n.workerMs==null?null:+n.workerMs.toFixed(2), roundtripMs:n.roundtripMs==null?null:+n.roundtripMs.toFixed(2),
+    demMs:n._demMs==null?null:+n._demMs.toFixed(2), specCost:n._specCost==null?null:+n._specCost.toFixed(2),
+    fftMs:n._fftMs==null?null:+n._fftMs.toFixed(3), cover:n._specCover==null?null:+n._specCover.toFixed(2),
+    load:n._specLoad==null?null:+n._specLoad.toFixed(2), inflight:n._inFlight|0,
     under:[n.underrunsWorker|0,n.underrunsOverflow|0,n.underrunsStarve|0]};})()`;
 
 const median = a => { const v = a.filter(x => typeof x === 'number' && isFinite(x)).sort((x, y) => x - y); return v.length ? v[v.length >> 1] : null; };
+const pct = (a, p) => { const v = a.filter(x => typeof x === 'number' && isFinite(x)).sort((x, y) => x - y); return v.length ? v[Math.min(v.length - 1, Math.floor(v.length * p))] : null; };
+
+// Кадры rAF и long tasks — то, что видит пользователь. Счётчики Performance — сколько времени
+// рендерер реально жёг CPU (TaskDuration), отдельно скрипт/вёрстка/стили.
+async function startStress(page){
+  await page.send('Performance.enable').catch(() => {});
+  return evaluate(page, `(()=>{
+    const S=window.__stress={frames:[],long:[],loaf:[],t0:performance.now()};
+    let last=performance.now();
+    const tick=t=>{ const d=t-last; last=t; if(d>0 && d<2000) S.frames.push(d); requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+    try{ S.po=new PerformanceObserver(l=>{ for(const e of l.getEntries()) S.long.push({d:e.duration,t:e.startTime-S.t0}); }); S.po.observe({type:'longtask',buffered:true}); }catch(e){}
+    try{ S.polo=new PerformanceObserver(l=>{ for(const e of l.getEntries()) S.loaf.push({d:e.duration,t:e.startTime-S.t0,
+      scripts:(e.scripts||[]).map(s=>({url:s.sourceURL||'',fn:s.sourceFunctionName||s.functionName||'',inv:s.invoker||'',d:s.duration||0}))}); });
+      S.polo.observe({type:'long-animation-frame',buffered:true}); }catch(e){}
+    return 1; })()`);
+}
+async function perfMetrics(page){
+  try{ const r=await page.send('Performance.getMetrics'); const m={}; for(const x of r.metrics) m[x.name]=x.value; return m; }catch(e){ return null; }
+}
+async function stressStats(page, pm0, pm1, wallSec){
+  const {frames, long, loaf} = await evaluate(page, `({frames:window.__stress?window.__stress.frames.slice():[],
+    long:window.__stress?window.__stress.long.slice():[],loaf:window.__stress?window.__stress.loaf.slice():[]})`);
+  const d = (k) => pm0 && pm1 && pm0[k] != null && pm1[k] != null ? pm1[k] - pm0[k] : null;
+  // buffered:true отдаёт и события до старта монитора — у них t<0 (загрузка страницы/Connect), их не считаем
+  const longRun=long.filter(x=>x.t>=0), loafRun=loaf.filter(x=>x.t>=0);
+  const ld=longRun.map(x=>x.d), scripts=new Map();
+  for(const f of loafRun) for(const s of f.scripts||[]){
+    const k=(s.fn||'?')+' @ '+(s.url||'?').replace(/^.*\//,'');
+    const v=scripts.get(k)||{k,max:0,sum:0,n:0}; v.max=Math.max(v.max,s.d); v.sum+=s.d; v.n++; scripts.set(k,v);
+  }
+  return {
+    frames: {n:frames.length, p50:pct(frames,.5), p95:pct(frames,.95), p99:pct(frames,.99), max:frames.length?Math.max(...frames):null,
+      over33:frames.filter(x=>x>33).length, over50:frames.filter(x=>x>50).length},
+    longtasks: {n:longRun.length, max:ld.length?Math.max(...ld):null, total:ld.reduce((a,b)=>a+b,0),
+      list:longRun.slice(0,8), top:[...scripts.values()].sort((a,b)=>b.sum-a.sum).slice(0,6)},
+    cpu: {task:d('TaskDuration'), script:d('ScriptDuration'), layout:d('LayoutDuration'), recalc:d('RecalcStyleDuration'),
+      ratio:wallSec>0&&d('TaskDuration')!=null?d('TaskDuration')/wallSec:null}
+  };
+}
+function printStress(res, rows, wallSec){
+  const s=res.stress; if(!s) return;
+  const f=s.frames, l=s.longtasks, c=s.cpu, ms=x=>x==null?'-':(+x).toFixed(1);
+  say(`\nstress ${wallSec.toFixed(1)} с · каналов ${median(rows.map(r=>r.ch))||'?'} · ${res.sr} Гц · спектр ${median(rows.map(r=>r.spec&&r.spec.n))||'?'} бинов · ${(res.specFrames/wallSec).toFixed(1)} кадр/с`);
+  say(`  rAF: n=${f.n} p50=${ms(f.p50)} p95=${ms(f.p95)} p99=${ms(f.p99)} max=${ms(f.max)} мс · >33мс ${f.over33} · >50мс ${f.over50}`);
+  say(`  long tasks: n=${l.n} max=${ms(l.max)} мс · сумма ${ms(l.total)} мс · ${l.list.map(x=>`${ms(x.d)}@${ms(x.t)}`).join(' ')}`);
+  if(l.top.length) say(`  LoAF: ${l.top.map(x=>`${x.k} ${x.sum.toFixed(0)}мс/${x.n}`).join(' · ')}`);
+  say(`  CPU renderer: task ${ms(c.task)} с (${c.ratio==null?'-':(100*c.ratio).toFixed(1)}%) · script ${ms(c.script)} · layout ${ms(c.layout)} · style ${ms(c.recalc)}`);
+  const io=median(rows.map(r=>r.mspsIo)), dem=median(rows.map(r=>r.msps)), wr=median(rows.map(r=>r.workerMs));
+  const dr=res.deliveredRate==null?'-':(res.deliveredRate/1e6).toFixed(3);
+  say(`  поток: mspsIo=${io==null?'-':io.toFixed(3)} msps=${dem==null?'-':dem.toFixed(3)} delivered=${dr} MSps worker=${ms(wr)} мс · underruns ${res.underruns.join('/')} (+${res.underrunsRun.join('/')} за прогон, ${res.underrunsSteady.join('/')} после 2 с)`);
+  return {io, dem};
+}
 
 async function connectUsb(page, usbId){
   return evaluate(page, `(async()=>{
     clearAll();
     const n = addNode('rtlsdr', 80, 80, {freq:${freq}, sr:'${sr}', demod:${JSON.stringify(demod)}, usbId:${JSON.stringify(usbId)},
-      ppm:${ppm}, auto:${gain === 'auto'}, gainDb:${gain === 'auto' ? 32 : +gain}});
+      ppm:${ppm}, auto:${gain === 'auto'}, gainDb:${gain === 'auto' ? 32 : +gain}, ...${nodeExtra}});
     await rtlConnect(n, false);
     // канал 1 по умолчанию стоит на центре, но без провода tuneFreq узел не строит полосу
     // канала и не считает SNR (в обычном патче частоту задаёт маркер спектроанализатора) —
@@ -72,6 +145,11 @@ async function connectUsb(page, usbId){
     // железо стоит на sr/4 выше логического центра, и actualFreq увёл бы канал на чужие частоты.
     const c = addNode('const', 80, 300, {v: Math.round(sdrCenter(n))});
     addEdge(c.id, 'out', n.id, 'tuneFreq'); markWiresDirty();
+    // --stress: остальные каналы — NCO-офсеты в захваченной полосе, все демодулируются параллельно
+    for(let i=1;i<${channels};i++){
+      const ci=addNode('const', 80, 300+i*80, {v:Math.round(sdrCenter(n)+i*n.sourceRate*0.15)});
+      addEdge(ci.id, 'out', n.id, 'tuneFreq'+(i+1)); markWiresDirty();
+    }
     await Eng.start();
     return {status:n.status, connected:!!n.connected, tuner:n.dev&&n.dev.tunerName, rate:n.sourceRate, freq:n.actualFreq};
   })()`, {userGesture: true});
@@ -87,12 +165,16 @@ async function connectReplay(page, file){
   }
   return evaluate(page, `(async()=>{
     clearAll();
-    const n = addNode('rtlsdr', 80, 80, {demod:${JSON.stringify(demod)}, iqFmt:'auto', loop:true});
+    const n = addNode('rtlsdr', 80, 80, {demod:${JSON.stringify(demod)}, iqFmt:'auto', loop:true, ...${nodeExtra}});
     const f = new File(window.__labChunks, ${JSON.stringify(name)}, {type:${JSON.stringify(name.endsWith('.sigmf') ? 'application/x-tar' : name.endsWith('.wav') ? 'audio/wav' : 'application/octet-stream')}});
     window.__labChunks = [];
     await iqOpenFile(n, [f]);
     const c = addNode('const', 80, 300, {v: Math.round(sdrCenter(n))});
     addEdge(c.id, 'out', n.id, 'tuneFreq'); markWiresDirty();
+    for(let i=1;i<${channels};i++){
+      const ci=addNode('const', 80, 300+i*80, {v:Math.round(sdrCenter(n)+i*n.sourceRate*0.15)});
+      addEdge(ci.id, 'out', n.id, 'tuneFreq'+(i+1)); markWiresDirty();
+    }
     // SigMF с перестройками: iqFileDevice зовёт onFreq на каждом captures-сегменте —
     // ведём Constant за файлом, иначе канал останется на частоте первого сегмента
     const prev = n.dev && n.dev.onFreq;
@@ -152,7 +234,19 @@ async function collect(page, {total, tuner, kind}){
     if(jsonPath) fs.appendFileSync(path.resolve(String(jsonPath)), JSON.stringify(r) + '\n');
     await sleep(sampleMs);
   }
-  const sum = rows.reduce((a, r) => { a.under[0] += r.under[0]; a.under[1] += r.under[1]; a.under[2] += r.under[2]; a.ovl += r.ovl; return a; }, {under: [0, 0, 0], ovl: 0});
+  const sum = rows.reduce((a, r) => { a.ovl += r.ovl; return a; }, {ovl: 0});
+  const last = rows[rows.length - 1] || {}, first = rows[0] || {};
+  // счётчики в узле накопительные: суммировать их по сэмплам нельзя (каждая строка повторяет итог).
+  // Для стресса важнее прирост за прогон, а не всё с момента Connect.
+  const under = last.under || [0, 0, 0], under0 = first.under || under;
+  const underRun = under.map((v, i) => Math.max(0, v - (under0[i] | 0)));
+  // стартовые догоны кольца и первая перестройка — не показатель: для порога берём участок после 2 с
+  const mid = rows[Math.min(rows.length - 1, Math.max(0, Math.round(2000 / sampleMs)))] || first;
+  const underSteady = under.map((v, i) => Math.max(0, v - ((mid.under || under)[i] | 0)));
+  // реально доехавшие до кольца отсчёты / время между сэмплами (не mspsIo, который меряет интервалы
+  // между чанками и потому видит задержки доставки). Если меньше sourceRate — донгл/хост теряет поток.
+  const secs = rows.length > 1 ? (last.t - first.t) / 1000 : 0;
+  const srcRate = secs > 0 && last.samples != null && first.samples != null ? (last.samples - first.samples) / secs : null;
   const res = {
     kind, ok: rows.length > 0, samples: rows.length, connected: rows.filter(r => r.on).length,
     freq: median(rows.map(r => r.freq)), chanTune: median(rows.map(r => r.tune)), sr: rows[rows.length - 1]?.sr, tuner,
@@ -161,7 +255,8 @@ async function collect(page, {total, tuner, kind}){
     rssi: median(rows.map(r => r.rssi)), snr: median(rows.map(r => r.snr)), audioRms: median(rows.map(r => r.audio)),
     specFrames: rows.length > 1 ? rows[rows.length - 1].specRev - rows[0].specRev : 0,
     specMed: median(rows.map(r => r.spec && r.spec.med)), specP95: median(rows.map(r => r.spec && r.spec.p95)),
-    tuneMsMax: rows.length ? Math.max(...rows.map(r => r.tuneMs ?? 0)) : null, underruns: sum.under,
+    tuneMsMax: rows.length ? Math.max(...rows.map(r => r.tuneMs ?? 0)) : null, underruns: under, underrunsRun: underRun,
+    underrunsSteady: underSteady, deliveredRate: srcRate,
   };
   return {rows, res};
 }
@@ -238,9 +333,13 @@ try{
       // запись стартует до прогона и заканчивается после: --hop перестраивается внутри записи,
       // --capture-sec — минимальная длина прогона, а не отдельный кусок перед ним
       const runSec = Math.max(total, capturePath && !replayPath ? captureSec : 0);
+      let pm0=null;
+      if(stress){ await startStress(page); pm0=await perfMetrics(page); }
+      const stressT0=Date.now();
       const capName = capturePath && !replayPath ? await startCapture(page) : null;
       if(capturePath && !replayPath && !capName) bad.push('capture did not start');
-      const {res} = await collect(page, {total: runSec, tuner: setup.tuner, kind: replayPath ? 'replay' : 'usb'});
+      const {rows, res} = await collect(page, {total: runSec, tuner: setup.tuner, kind: replayPath ? 'replay' : 'usb'});
+      const wallSec=(Date.now()-stressT0)/1000;
       if(capName){
         const cap = await stopCapture(page, capturePath).catch(e => { bad.push('capture: ' + e.message); return null; });
         if(!cap){ if(!bad.length) bad.push('capture produced no blob'); }
@@ -255,6 +354,15 @@ try{
       if(res.specFrames === 0 && !res.audioRms) bad.push('no spectrum and no audio');
       if(pageErrors.length) bad.push('page errors: ' + pageErrors[0]);
       if(res.underruns.some(x => x > 0)) notes.push('underruns: ' + res.underruns.join('/'));
+      if(stress){
+        res.stress = await stressStats(page, pm0, await perfMetrics(page), wallSec);
+        const perf = printStress(res, rows, wallSec);
+        if(res.underrunsSteady.some(x => x > 0)) bad.push('steady-state underruns (worker/overflow/starve): ' + res.underrunsSteady.join('/'));
+        if(perf.io != null && perf.io * 1e6 < sr * 0.95) bad.push(`throughput ${perf.io.toFixed(3)} MSps < ${(sr*0.95/1e6).toFixed(3)}`);
+        if(res.stress.frames.n && res.stress.frames.p95 > 50) bad.push(`rAF p95 ${res.stress.frames.p95.toFixed(1)} ms > 50`);
+        if(res.stress.frames.max > 250) bad.push(`rAF max ${res.stress.frames.max.toFixed(1)} ms > 250`);
+        if(res.stress.longtasks.max > 150) bad.push(`long task ${res.stress.longtasks.max.toFixed(1)} ms > 150`);
+      }
       await evaluate(page, `(async()=>{const n=Graph.nodes.find(x=>x.type==='rtlsdr'); if(n) await rtlDisconnect(n); return 1;})()`).catch(() => {});
     }
   }

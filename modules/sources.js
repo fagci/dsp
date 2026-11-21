@@ -3779,6 +3779,9 @@ function makeLP(fs, pass, stop, maxN){
     h[k]=sinc*besselI0(beta*Math.sqrt(Math.max(0,1-r*r)))/i0b; s+=h[k];
   }
   for(let k=0;k<N;k++) h[k]/=s;
+  // КИХ линейно-фазовый: коэффициенты строго симметричны. Свёртка в демод-воркере складывает
+  // пары отсчётов и умножает один раз на коэффициент — вдвое меньше умножений на 3.2 MSps.
+  for(let k=0;k<M;k++){ const a=(h[k]+h[N-1-k])*0.5; h[k]=h[N-1-k]=a; }
   return h;
 }
 // дециматор: история удвоенной длины — окно всегда непрерывно, без % в свёртке
@@ -4005,14 +4008,20 @@ self.onmessage=function(e){
     if(++posA===NA) posA=0;
     if(--cntA>0) continue;
     cntA=DA;
-    // канальный FIR на выходной частоте ir
+    // канальный FIR на выходной частоте ir; h симметричен — пары отсчётов складываем
     let ci=0, cq=0;
-    for(let t=0;t<NA;t++){ const c=hA[t]; ci+=c*biA[posA+t]; cq+=c*bqA[posA+t]; }
+    { const h=NA>>1;
+      for(let t=0;t<h;t++){ const c=hA[t], a=posA+t, b=posA+NA-1-t; ci+=c*(biA[a]+biA[b]); cq+=c*(bqA[a]+bqA[b]); }
+      if(NA&1){ ci+=hA[h]*biA[posA+h]; cq+=hA[h]*bqA[posA+h]; }
+    }
     if(C){                                       // AM/SAM: крутой канальный фильтр перед детектором
       biC[posC]=ci; biC[posC+NC]=ci; bqC[posC]=cq; bqC[posC+NC]=cq;
       if(++posC===NC) posC=0;
       ci=0; cq=0;
-      for(let t=0;t<NC;t++){ const c=hC[t]; ci+=c*biC[posC+t]; cq+=c*bqC[posC+t]; }
+      { const h=NC>>1;
+        for(let t=0;t<h;t++){ const c=hC[t], a=posC+t, b=posC+NC-1-t; ci+=c*(biC[a]+biC[b]); cq+=c*(bqC[a]+bqC[b]); }
+        if(NC&1){ ci+=hC[h]*biC[posC+h]; cq+=hC[h]*bqC[posC+h]; }
+      }
     }
     if(decM){                                      // мощность в полосе канала — для RSSI
       const hM=decM.h, NM=decM.N, bi=decM.bi, bq=decM.bq; let pM=decM.pos;
@@ -4023,7 +4032,10 @@ self.onmessage=function(e){
         mCnt=mStep;
         let yi=0, yq=0;
         if(mHi) for(let t=0;t<NM;t++){ const hr=hM[t], hi=mHi[t], xi=bi[pM+t], xq=bq[pM+t]; yi+=hr*xi-hi*xq; yq+=hr*xq+hi*xi; }
-        else    for(let t=0;t<NM;t++){ const c=hM[t]; yi+=c*bi[pM+t]; yq+=c*bq[pM+t]; }
+        else { const h=NM>>1;
+          for(let t=0;t<h;t++){ const c=hM[t], a=pM+t, b=pM+NM-1-t; yi+=c*(bi[a]+bi[b]); yq+=c*(bq[a]+bq[b]); }
+          if(NM&1){ yi+=hM[h]*bi[pM+h]; yq+=hM[h]*bq[pM+h]; }
+        }
         chPw+=yi*yi+yq*yq; chPn++;
       }
     } else { chPw+=ci*ci+cq*cq; chPn++; }
@@ -4100,7 +4112,10 @@ self.onmessage=function(e){
           if(--cntR<=0){
             cntR=DR;
             let si=0, sq=0;
-            for(let t=0;t<NR;t++){ const c=hR[t]; si+=c*biR[posR+t]; sq+=c*bqR[posR+t]; }
+            { const h=NR>>1;
+              for(let t=0;t<h;t++){ const c=hR[t], a=posR+t, b=posR+NR-1-t; si+=c*(biR[a]+biR[b]); sq+=c*(bqR[a]+bqR[b]); }
+              if(NR&1){ si+=hR[h]*biR[posR+h]; sq+=hR[h]*bqR[posR+h]; }
+            }
             rdsSample(si,sq);
           }
         }
@@ -4110,11 +4125,17 @@ self.onmessage=function(e){
       if(--cntB>0) continue;
       cntB=DB;
       let y=0;
-      for(let t=0;t<NB;t++) y+=hB[t]*biB[posB+t];
+      { const h=NB>>1;
+        for(let t=0;t<h;t++){ const c=hB[t], a=posB+t, b=posB+NB-1-t; y+=c*(biB[a]+biB[b]); }
+        if(NB&1) y+=hB[h]*biB[posB+h];
+      }
       v=y;
       if(isWFM && stereoOn){
         let ys=0;
-        for(let t=0;t<NB;t++) ys+=hB[t]*biS[S.pos+t];
+        { const h=NB>>1, sp=S.pos;
+          for(let t=0;t<h;t++){ const c=hB[t], a=sp+t, b=sp+NB-1-t; ys+=c*(biS[a]+biS[b]); }
+          if(NB&1) ys+=hB[h]*biS[sp+h];
+        }
         // стерео — только при захваченном пилоте, включается/выключается плавно
         const want=(stereoOn && plLock>0.3 && plAmp>0.01)?1:0;
         stG+=(want-stG)*0.002;
@@ -4282,6 +4303,25 @@ function sdrAdcStat(n, u8, s16){
 }
 const sdrAdcOvl=n=>n.adcOvlT!=null && performance.now()-n.adcOvlT<SDR_ADC_HOLD_MS;
 
+// Запись чанка в кольцо Float32 без проверок на каждый отсчёт: кусками до конца кольца,
+// конверсия u8/s16 — вне ветвления, масштаб умножением. На 3.2 MSps это самый горячий
+// главно-поточный цикл (80k отсчётов × 40 чанков/с), поэтому даже лишний if на отсчёт заметен.
+function rtlRingWrite(ring, u8, s16, cnt){
+  const I=ring.I, Q=ring.Q, size=ring.size, off=127.5, sc=1/127.5;
+  let w=ring.w, filled=ring.filled, k=0;
+  while(k<cnt){
+    const n=Math.min(cnt-k, size-w);
+    if(s16){
+      for(let j=0, o=2*k; j<n; j++, o+=2){ I[w+j]=s16[o]/32768; Q[w+j]=s16[o+1]/32768; }
+    }else{
+      for(let j=0, o=2*k; j<n; j++, o+=2){ I[w+j]=(u8[o]-off)*sc; Q[w+j]=(u8[o+1]-off)*sc; }
+    }
+    if(filled<size) filled=Math.min(size, filled+n);
+    k+=n; w+=n; if(w>=size) w=0;
+  }
+  ring.w=w; ring.filled=filled; ring.written+=cnt;
+}
+
 async function rtlReadLoop(n){
   let errStreak=0;
   n.mspsAcc=0; n.mspsIoMs=0; n.mspsWorkerMs=0; n.mspsWinStart=performance.now(); n.msps=0; n.mspsIo=0;
@@ -4369,28 +4409,14 @@ async function rtlReadLoop(n){
       // иначе картинка мечется между старым и новым местом, а за ней и окно 'sa' со steerFreq
       if(res.epoch==null || res.epoch>=(n._specEpoch||0))
       { if(res.epoch!=null && res.epoch>(n._ringEp||0)) n._ringEp=res.epoch;   // самая новая перестройка, чьи отсчёты уже в кольце
- let w=specRing.w, filled=specRing.filled; const I=specRing.I, Q=specRing.Q, size=specRing.size;
-        for(let k=0;k<cnt;k++){
-          if(s16){ I[w]=s16[2*k]/32768; Q[w]=s16[2*k+1]/32768; } else { I[w]=(u8[2*k]-127.5)/127.5; Q[w]=(u8[2*k+1]-127.5)/127.5; }
-          w++; if(w>=size) w=0;
-          if(filled<size) filled++;
-        }
-        specRing.w=w; specRing.filled=filled; specRing.written+=cnt;
+        rtlRingWrite(specRing, u8, s16, cnt);
         // выход 'iq' — копия сырого буфера; во float его переводит тот, кто читает (часто воркер острова)
         if(n.iqQ){
           n.iqQ.push({raw:s16 ? s16.slice() : u8.slice(), fmt:s16 ? 's16' : 'u8'}); n.iqQN+=cnt;
           while(n.iqQN>n.sourceRate && n.iqQ.length>1){ n.iqQN-=n.iqQ.shift().raw.length>>1; n.iqGap=true; }   // граф стоит
         } }
       if(mode==='IQ'){
-        const ring=n.ring;
-        { let w=ring.w, filled=ring.filled; const I=ring.I, Q=ring.Q, size=ring.size;
-          for(let k=0;k<cnt;k++){
-            if(s16){ I[w]=s16[2*k]/32768; Q[w]=s16[2*k+1]/32768; } else { I[w]=(u8[2*k]-127.5)/127.5; Q[w]=(u8[2*k+1]-127.5)/127.5; }
-            w++; if(w>=size) w=0;
-            if(filled<size) filled++;
-          }
-          ring.w=w; ring.filled=filled; }
-        ring.written+=cnt;
+        rtlRingWrite(n.ring, u8, s16, cnt);
         rtlTrackMsps(n, cnt, ioMs, 0);
         continue;
       }
