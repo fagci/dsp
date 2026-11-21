@@ -675,6 +675,7 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
           {n:'train',t:'range',min:4,max:128,step:1,d:32,label:'training bins'},
           {n:'thr',t:'range',min:1,max:30,step:.5,d:8,label:'threshold, dB'},
           {n:'minW',t:'range',min:1,max:64,step:1,d:2,label:'min width'},
+          {n:'deep',t:'range',min:0,max:60,step:1,d:0,label:'weak signals: deep integration, s (0 — off). Averages the spectrum power for that long before CFAR: signals below the single-frame noise floor show up — lower the threshold too',adv:true},
           {n:'edge',t:'range',min:0,max:40,step:1,d:0,label:'trim edges, % (receiver windows sag at the edges)'},
           {n:'bwDb',t:'range',min:1,max:40,step:1,d:10,label:'occupied bandwidth: dB below peak (not below threshold)'},
           {n:'confM',t:'range',min:1,max:8,step:1,d:2,label:'confirm: hits (M)'},
@@ -720,7 +721,7 @@ def({ id:'cfar', title:'Signal Detector (CFAR)', cat:'Analysis',
     // (спектр rtlsdr обновляется раз в ~80мс, движок тикает чаще). У части узлов объект спектра
     // мутируется на месте — сверяем rev, у кого его нет — ссылку.
     const fresh = s.rev!=null ? s.rev!==n._lastRev : s!==n._lastSpecRef;
-    if(fresh){ n._lastRev=s.rev; n._lastSpecRef=s; cfarFrame(n,s); }
+    if(fresh){ n._lastRev=s.rev; n._lastSpecRef=s; cfarFrame(n,cfarDeep(n,s)); }
     cfarListen(n,performance.now());
     const [a,b,c,d]=n.list;
     const rec=n.recs.length ? n.recs.splice(0) : null;
@@ -865,6 +866,30 @@ function cfarBw(s,pw,nz,pi,lo,hi,db,thr){
   const xl=a>lo ? edge(a,a-1) : a, xr=b<hi ? edge(b,b+1) : b;
   return Math.max(Math.abs(specHz(s,1)-specHz(s,0)), specHz(s,xr)-specHz(s,xl));
 }
+// Глубокое усреднение мощности (EMA с постоянной deep секунд) для слабых сигналов: шум на бине
+// перестаёт «дрожать» на единицы дБ, и сигнал, который в одном кадре ниже пола, становится виден
+// как устойчивое превышение. Ключ сбрасывает накопление при смене оси/размера/частоты.
+function cfarDeep(n,s){
+  const deep=+n.p.deep||0;
+  if(deep<=0){ n._deep=null; return s; }
+  const N=s.mag.length, key=N+'|'+s.sr+'|'+(s.freqs? s.freqs[0]+':'+s.freqs[s.freqs.length-1] : 'a')+'|'+deep;
+  let d=n._deep;
+  if(!d || d.N!==N || d.key!==key){
+    d=n._deep={N,key,acc:new Float64Array(N),t:0,rev:0,
+      sp:{mag:new Float32Array(N),freqs:s.freqs,sr:s.sr,size:N,rev:0,iq:s.iq,sweepView:s.sweepView}};
+  }
+  const now=performance.now(), dt=d.t? Math.min(10,(now-d.t)/1000) : 0;
+  const al=d.t? Math.min(1,Math.max(dt,.02)/deep) : 1;
+  d.t=now;
+  const acc=d.acc, m=s.mag;
+  for(let i=0;i<N;i++){ const p=m[i]*m[i]; acc[i]+=(p-acc[i])*al; }
+  const sp=d.sp;
+  sp.freqs=s.freqs; sp.sr=s.sr; sp.size=N; sp.iq=s.iq; sp.sweepView=s.sweepView;
+  const out=sp.mag;
+  for(let i=0;i<N;i++) out[i]=Math.sqrt(acc[i]);
+  sp.rev=++d.rev;
+  return sp;
+}
 function cfarFrame(n,s){
   const N=s.mag.length, G=n.p.guard, T=n.p.train, meth=n.p.method;
   let [specLo,specHi]=n.p.auto? specSpan(s) : [n.p.fmin,n.p.fmax];
@@ -968,7 +993,7 @@ function cfarFrame(n,s){
   // не дожидаясь hold — иначе он продолжит тянуть tuneFreq к старой частоте.
   n.tracks=n.tracks.filter(t=>inWin(t) || (n.keepOutside && t.ok));
   n.list=n.tracks.filter(t=>t.ok).sort((a,b)=>b.db-a.db).slice(0,n.p.top);
-  n.text='found '+n.list.length+(n.cur ? ' · listening '+fmtHz(cfarF(n.cur),3)+'Hz' : '')+' · floor '+n.floorDb.toFixed(1)+' dB'+(n.skip&&n.skip.length ? ' · skip '+n.skip.length : '')+'\n'+n.list.map(v=>
+  n.text='found '+n.list.length+(n.cur ? ' · listening '+fmtHz(cfarF(n.cur),3)+'Hz' : '')+' · floor '+n.floorDb.toFixed(1)+' dB'+(+n.p.deep>0 ? ' · deep '+n.p.deep+' s' : '')+(n.skip&&n.skip.length ? ' · skip '+n.skip.length : '')+'\n'+n.list.map(v=>
     fmtHz(cfarF(v)).padStart(8)+'Hz  bw '+fmtHz(v.bw).padStart(4)+
     'Hz  '+v.db.toFixed(0).padStart(4)+' dB  SNR '+v.snr.toFixed(0).padStart(3)+'  '+((now-v.t0)/1000).toFixed(1)+' s').join('\n');
 }
