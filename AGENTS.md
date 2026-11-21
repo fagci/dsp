@@ -145,6 +145,26 @@ git diff --stat && git diff          # что именно уходит
 - Браузер: Playwright/Chromium установлены; статику отдавай `python3 -m http.server`,
   дождись `window.crossOriginIsolated === true`; `MOD` — глобальная `const`, а не `window.MOD`.
 
+## Экономия вывода инструментов
+
+Длинный вывод инструмента — главный расход контекста. На практике больше всего съедают
+`ps ... args` (километровые командные строки Chrome), `find /` (тысячи `Permission denied`)
+и repo-wide `grep` по частым словам вроде `localhost:` / `WebSocket` (строки из `presets.js`
+по 1–2 КБ). Правила:
+
+- `ps` — только нужные колонки, без `args`: `ps -o pid=,stat=,comm= -C chrome`; не `ps aux` и не
+  `ps -eo ... args`, если не нужна именно командная строка одного процесса.
+- `find` — только по проекту и с `-maxdepth`; никогда `find /`. Пакет ищи через `which`,
+  `npm root -g`, `node -p "require.resolve('...')"`, а не сканом диска.
+- `rg`/grep — сначала `-l` (только файлы) или `-c`, потом точный символ; ставь `--max-count`/`-m`,
+  `--max-columns 200`, исключай `presets.js`, `vendor/`, `data/`, `.git/`.
+- `Read` — только диапазоном (`offset`/`limit`) после `wc -l` и `rg -n`; не `cat` большой файл
+  и не дампить `/proc/*/status` целиком (`rg '^Groups|^Uid|^Gid' /proc/self/status`).
+- `xwininfo -root -children`, `tree`, `lsusb -t` — только при отладке X11/USB; для одного окна
+  `xprop -id`.
+- Свои скрипты — в `/tmp/kilo/`, не в репозиторий; вывод скрипта — сводкой, не дампом.
+- Ревью небольших инструментов — `quick`: три суб-агента на 300 строк дороже самого кода.
+
 ## Не трогать и не читать целиком
 
 - `vendor/` (wasm/модели), `.git/`, `data/` (крупные данные), `*.min.js`.

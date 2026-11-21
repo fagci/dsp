@@ -17,6 +17,8 @@
 - `help/*.md` — **единый мануал**: GitHub + приложение (кнопка ?) + офлайн-кэш SW. Оглавление — `help/README.md`.
 - `presets.js` — список патчей, `openPatch/insertPatch/buildDemo`, реестр пресетов `preset()`.
 - `tools/` — `test-*.mjs` (тесты), `node/bridge.mjs` (TCP/прокси/TLS-мост), `android/` (приложение), `termux/`, прошивки.
+  `e2e-usb-sdr.mjs` + `lab-chrome.mjs` — живая лаборатория: настоящий донгл через **WebUSB** в Chrome
+  (CDP по pipe, без Playwright), статистика приёмника и IQ-запись; профиль с grant-ом — `~/.cache/dsp-lab/chrome`.
 - `vendor/` — wasm и библиотеки, ленивая загрузка (не трогать при сканировании).
 - `sw.js` — service worker; `SHELL` — ручной список кэша; `H` — хэши (генерирует stamp.mjs).
 - `styles.css` — вся стилизация (тёмная/светлая темы через CSS-переменные).
@@ -53,6 +55,8 @@
 - Тесты: `node tools/test-help.mjs`, `tools/test-flow.mjs` и др. `tools/test-*.mjs` (некоторым нужны pip-пакеты: `pyftpdlib`, `tftpy`, `aiosmtpd`, `async-upnp-client`).
 - Версия после правок: `node tools/stamp.mjs`.
 - Справка модулей: `node tools/gen-modref.mjs` (**нужен playwright — не установлен**, на проверено).
+- Живой SDR через WebUSB (без моста и rtl_tcp): `node tools/e2e-usb-sdr.mjs --grant` один раз (выбрать донгл),
+  затем `node tools/e2e-usb-sdr.mjs --freq 104.4M --ppm 54 --gain 20 [--hop 104.4M,104.8M] [--capture out.sigmf]`.
 - Сборки нет; деплой — push в `main` (GitHub Pages).
 
 ## Ограничения и подводные камни
