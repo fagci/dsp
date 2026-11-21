@@ -134,7 +134,7 @@ rg -n "dmr" tools/test-*.mjs
 ```sh
 node --check modules/<файл>.js
 node tools/test-<протокол>.mjs       # профильный тест
-node tools/test-kernels.mjs          # общий снимок ядер
+timeout 120 node tools/test-kernels.mjs   # общий снимок ядер
 node tools/stamp.mjs                 # после правок
 git diff --stat && git diff          # что именно уходит
 ```
@@ -144,6 +144,13 @@ git diff --stat && git diff          # что именно уходит
   `/tmp/kilo/` и повторяй ту же загрузку (`importScripts` → массив файлов).
 - Браузер: Playwright/Chromium установлены; статику отдавай `python3 -m http.server`,
   дождись `window.crossOriginIsolated === true`; `MOD` — глобальная `const`, а не `window.MOD`.
+- WebUSB-лаборатория (`tools/lab-chrome.mjs`, `tools/e2e-usb-sdr.mjs`): grant привязан к origin,
+  поэтому не меняй порт 8124 без повторного `--grant`. После правок `presets.js`/`modules/*`
+  снимай старый service worker и чисти `caches` — иначе `openApp` отдаёт закешированный старый
+  код и проверка врёт (было: пресет грузил `bandscan` вместо нового `chanscan`).
+- Lab-скрипт обязан закрывать CDP и убивать Chrome в `finally`; при внешнем `timeout` это может не
+  сработать — проверяй `~/.cache/dsp-lab/chrome/SingletonLock` и процессы, lock удаляй только если
+  Chrome уже мёртв, иначе следующий запуск повиснет на профиле/USB.
 
 ## Экономия вывода инструментов
 
@@ -157,7 +164,18 @@ git diff --stat && git diff          # что именно уходит
 - `find` — только по проекту и с `-maxdepth`; никогда `find /`. Пакет ищи через `which`,
   `npm root -g`, `node -p "require.resolve('...')"`, а не сканом диска.
 - `rg`/grep — сначала `-l` (только файлы) или `-c`, потом точный символ; ставь `--max-count`/`-m`,
-  `--max-columns 200`, исключай `presets.js`, `vendor/`, `data/`, `.git/`.
+  `--max-columns 200`, исключай `presets.js`, `vendor/`, `data/`, `.git/`. Короткие общие имена
+  (`f1`, `id`, `data`, `state`) цепляют однострочные гиганты вроде `PALETTES` в `modules/analysis.js`:
+  ищи `n:'f1'`, `function …` или добавляй `--max-columns-preview`.
+- `git diff` по `index.html`/`sw.js` не читай: `const H={...}` — одна строка на десятки КБ, `head`
+  режет строки, но не её длину. Только `git diff --stat`/`--numstat`; содержимое проверяй
+  `node tools/stamp.mjs` и точечным `rg`.
+- Долгие live-сканы (SDR/GSM) не печатай каждый тик/канал и не повторяй `CELL` на каждом изменении:
+  в скрипте — только смена состояния/счётчики, полные записи в `/tmp/kilo/*.jsonl`, в конце один
+  `UNIQUE`/итог. У `background_process` ставь `lines` 20–50; полный сохранённый вывод разбирай
+  `rg 'UNIQUE|CELL|error'`, а не `logs` на 500–1000 строк.
+- Тяжёлые тесты запускай с ограничением: `timeout 120 node tools/test-kernels.mjs` — на Node 20
+  он может не уложиться и молча съесть всё ожидание.
 - `Read` — только диапазоном (`offset`/`limit`) после `wc -l` и `rg -n`; не `cat` большой файл
   и не дампить `/proc/*/status` целиком (`rg '^Groups|^Uid|^Gid' /proc/self/status`).
 - `xwininfo -root -children`, `tree`, `lsusb -t` — только при отладке X11/USB; для одного окна
